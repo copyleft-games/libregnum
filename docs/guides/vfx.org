@@ -1,0 +1,408 @@
+#+title: Visual effects
+#+description: Building particle effects with .rparticles: module stacks, seeds, renderers (billboards, trails, ribbons, mesh debris), sub-emitters, collisions, putting them in a world, and editing them live
+
+* Visual effects
+:PROPERTIES:
+:CUSTOM_ID: vfx
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > Guides > Visual effects
+#+end_quote
+
+This guide builds four effects from scratch (a campfire, smoke trails, sparks that bounce and leave glints, and tumbling debris that kicks up dust), explains the decisions behind each, and shows how they get into a game and into the editor. The reference for every key and function is [[file:../modules/particles/particle-asset.org][Particle assets]]; the renderers have their own pages ([[file:../modules/particles/billboard-renderer.org][billboards]], [[file:../modules/particles/ribbon-renderer.org][ribbons and trails]], [[file:../modules/particles/mesh-renderer.org][mesh particles]]).
+
+** The model in one minute
+:PROPERTIES:
+:CUSTOM_ID: model
+:END:
+- An effect file (=.rparticles=) is a list of *emitters*. Each emitter is one particle system with a *module stack* and a *renderer*.
+- Modules run by *stage*: spawn (how many), shape (where), init (initial values), force (velocity changes), collision, over life (values from the normalized age), event (sub-emitters). Within a stage, stack order.
+- Every random choice comes from a *seeded generator* per emitter: the same seed and steps give the same effect, so you can scrub a timeline and compare frames.
+- *Sub-emitters* connect emitters: a spark's collision spawns a flash, its death spawns glints.
+- At runtime an =LrgParticleEffect= plays the file; in a 3D world an =LrgParticleComponent= does it on an entity and draws through the renderer's transparent pass.
+
+** A campfire
+:PROPERTIES:
+:CUSTOM_ID: campfire
+:END:
+Three emitters: flames (additive, fast, short-lived, shrinking, coloured over life), embers (tiny, long-lived, blown about by turbulence) and smoke (alpha blended, starting above the flames, growing and fading, pushed by wind).
+
+#+begin_src yaml
+version: 1
+name: Campfire
+seed: 7
+emitters:
+- name: flames
+  max-particles: 400
+  renderer:
+    blend: additive               # fire adds light: order independent, no sorting artefacts
+  modules:
+  - type: spawn-rate
+    rate: 110
+  - type: shape
+    shape: cone                   # a narrow cone: the flames rise
+    radius: 0.28
+    angle: 6
+    offset: [0, 0.25, 0]          # start above the ground, or the depth test cuts them
+  - type: velocity
+    speed: [1.6, 2.6]
+  - type: lifetime
+    lifetime: [0.6, 1.0]
+  - type: size
+    size: [0.45, 0.65]
+  - type: rotation
+    rotation: [0, 360]
+    angular-velocity: [-90, 90]
+  - type: turbulence              # licks: a moving noise field bends the column
+    amplitude: 2.5
+    frequency: 1.4
+    scroll-speed: 1.2
+  - type: size-over-life
+    curve: 0 0.6; 0.2 1; 1 0.1    # grow quickly, then taper to a tip
+  - type: color-over-life         # white-hot core to orange to dark red, fading out
+    gradient: '0 #ffe8b090; 0.25 #ff9020b0; 0.65 #d0280070; 1 #20000000'
+- name: embers
+  max-particles: 120
+  renderer:
+    blend: additive
+  modules:
+  - type: spawn-rate
+    rate: 14
+  - type: shape
+    shape: cone
+    radius: 0.3
+    angle: 15
+  - type: velocity
+    speed: [2, 4]
+  - type: lifetime
+    lifetime: [1.2, 2.2]
+  - type: size
+    size: [0.05, 0.09]
+  - type: color
+    color: '#ffd070'
+  - type: turbulence
+    amplitude: 4
+    frequency: 0.8
+  - type: drag
+    drag: 0.4
+  - type: alpha-over-life
+    curve: 0 1; 0.7 1; 1 0
+- name: smoke
+  max-particles: 120
+  start-delay: 0.3                # the fire catches before it smokes
+  modules:
+  - type: spawn-rate
+    rate: 10
+  - type: shape
+    shape: cone
+    radius: 0.3
+    angle: 10
+    offset: [0, 1.2, 0]
+  - type: velocity
+    speed: [0.7, 1.1]
+  - type: lifetime
+    lifetime: [2.5, 3.5]
+  - type: size
+    size: [0.6, 0.9]
+  - type: rotation
+    rotation: [0, 360]
+    angular-velocity: [-20, 20]
+  - type: color
+    color: '#3a3a3a'
+  - type: wind
+    velocity: [0.8, 0.9, 0]
+    strength: 0.4
+  - type: size-over-life
+    curve: 0 0.8; 1 3.2
+  - type: alpha-over-life
+    curve: 0 0; 0.15 0.55; 1 0    # fade in, then out: no popping
+#+end_src
+
+Why the start values matter: =size-over-life= multiplies each particle's own start size, so the random =size= range still gives variety at every age. Additive flames over a bright sky wash out to white; over a dark scene they glow. A torch on a moving character wants =local-space: true=.
+
+** Smoke trails
+:PROPERTIES:
+:CUSTOM_ID: smoke-trails
+:END:
+Rockets that arc up, leave widening smoke trails and pop. The rockets themselves are not drawn as sprites: their renderer is a *ribbon in trail mode*, so each particle drags a strip of the points it passed. The trail widens and fades from head to tail through =width-curve= and =color-gradient=; points live 1.6 s, so the smoke hangs in the air after the rocket.
+
+#+begin_src yaml
+emitters:
+- name: rockets
+  max-particles: 64
+  renderer:
+    kind: ribbon
+    width: 0.35
+    width-curve: 0 0.25; 0.15 1; 1 2.4
+    color-gradient: '0 #ffffffff; 0.15 #d8d8d8c0; 1 #50505000'
+    trail-lifetime: 1.6
+    max-points: 96
+    min-distance: 0.06
+  modules:
+  - type: burst
+    count: 5
+    cycles: 0                     # fire every interval, forever
+    interval: 1.1
+  - type: shape
+    shape: point
+  - type: velocity
+    speed: [7, 9]
+    spread: 28                    # a fan around straight up
+  - type: lifetime
+    lifetime: [1.3, 1.7]
+  - type: gravity
+    gravity: [0, -5, 0]
+  - type: turbulence
+    amplitude: 1.5
+    frequency: 0.6
+  - type: sub-emitter             # pop when the rocket dies
+    trigger: death
+    emitter: pops
+    count: [12, 18]
+    inherit-velocity: 0.2
+- name: pops                      # no spawn modules: only sub-emitters feed it
+  max-particles: 400
+  modules:
+  - type: shape
+    shape: sphere
+    radius: 0.1
+  - type: velocity
+    speed: [1.5, 3]
+  - type: lifetime
+    lifetime: [0.5, 0.9]
+  - type: size
+    size: [0.12, 0.2]
+  - type: color
+    color: '#ffb030'
+    color-max: '#ff3a20'
+  - type: gravity
+    gravity: [0, -3, 0]
+  - type: drag
+    drag: 1.5
+  - type: alpha-over-life
+    curve: 0 1; 1 0
+#+end_src
+
+** Sparks with sub-emitters
+:PROPERTIES:
+:CUSTOM_ID: sparks
+:END:
+Sparks spray from a point, fall, bounce off the ground and lose life with every bounce. Each bounce spawns a short flash; each death spawns a few glints. The sparks are short additive trails (=trail-lifetime: 0.12=) that taper to nothing, which reads as motion-blurred streaks.
+
+#+begin_src yaml
+emitters:
+- name: sparks
+  max-particles: 300
+  renderer:
+    kind: ribbon
+    blend: additive
+    width: 0.06
+    width-curve: 0 1; 1 0
+    color-gradient: '0 #ffffffff; 0.3 #ffd060ff; 1 #ff400000'
+    trail-lifetime: 0.12
+    min-distance: 0.03
+  modules:
+  - type: burst
+    count: [35, 45]
+    cycles: 0
+    interval: 0.8
+  - type: shape
+    shape: hemisphere
+    radius: 0.1
+  - type: velocity
+    speed: [4, 8]
+    spread: 10
+  - type: lifetime
+    lifetime: [0.9, 1.5]
+  - type: gravity
+  - type: collision               # the ground plane y = 0
+    bounce: 0.45
+    friction: 0.2
+    lifetime-loss: 0.25
+  - type: sub-emitter
+    trigger: collision
+    emitter: flash
+    count: 1
+  - type: sub-emitter
+    trigger: death
+    emitter: glints
+    count: [2, 4]
+    inherit-velocity: 0.3
+- name: flash
+  max-particles: 200
+  renderer:
+    blend: additive
+  modules:
+  - type: shape
+    shape: point
+    offset: [0, 0.12, 0]          # lift off the ground: half a billboard would be underground
+  - type: velocity
+    speed: 0
+  - type: lifetime
+    lifetime: 0.15
+  - type: size
+    size: [0.25, 0.4]
+  - type: color
+    color: '#fff4d0'
+  - type: size-over-life
+    curve: 0 1; 1 0.2
+- name: glints
+  max-particles: 400
+  renderer:
+    blend: additive
+  modules:
+  - type: shape
+    shape: sphere
+    radius: 0.05
+  - type: velocity
+    speed: [0.5, 1.5]
+  - type: lifetime
+    lifetime: [0.3, 0.6]
+  - type: size
+    size: [0.05, 0.09]
+  - type: color
+    color: '#ff9a30'
+  - type: gravity
+  - type: alpha-over-life
+    curve: 0 1; 1 0
+#+end_src
+
+For real level geometry instead of a plane, use =collision= with =mode: world=: in a world the particle component casts every step against the physics world.
+
+** Mesh debris
+:PROPERTIES:
+:CUSTOM_ID: debris
+:END:
+Chunks fly up, tumble, bounce with friction and settle, and each impact may raise a dust puff. The chunks are *mesh particles*: one instanced draw of a (squashed) cube, tumbling about a per-particle axis; a model works the same way with =mesh: props/rock.glb=.
+
+#+begin_src yaml
+emitters:
+- name: chunks
+  max-particles: 200
+  renderer:
+    kind: mesh
+    primitive: cube
+    mesh-scale: [1, 0.6, 0.8]
+    align: tumble
+  modules:
+  - type: burst
+    count: 36
+    cycles: 0
+    interval: 3
+  - type: shape
+    shape: sphere
+    radius: 0.4
+    offset: [0, 0.5, 0]
+  - type: velocity
+    direction: [0, 1, 0]
+    speed: [3, 5.5]
+    spread: 35
+  - type: lifetime
+    lifetime: [2.6, 3]
+  - type: size
+    size: [0.15, 0.35]
+  - type: rotation
+    rotation: [0, 360]
+    angular-velocity: [-500, 500]
+  - type: color
+    color: '#7a5a3a'
+    color-max: '#b8a890'
+  - type: gravity
+  - type: collision
+    bounce: 0.3
+    friction: 0.35
+    radius-scale: 0.6             # rest on their faces, not their centres
+  - type: sub-emitter
+    trigger: collision
+    emitter: dust
+    count: 1
+    probability: 0.6
+- name: dust
+  max-particles: 300
+  modules:
+  - type: shape
+    shape: point
+    offset: [0, 0.3, 0]
+  - type: velocity
+    speed: [0.2, 0.5]
+    spread: 70
+  - type: lifetime
+    lifetime: [0.8, 1.3]
+  - type: size
+    size: [0.3, 0.5]
+  - type: color
+    color: '#a09078'
+  - type: size-over-life
+    curve: 0 0.5; 1 1.8
+  - type: alpha-over-life
+    curve: 0 0.6; 1 0
+#+end_src
+
+** Putting effects in a world
+:PROPERTIES:
+:CUSTOM_ID: world
+:END:
+#+begin_src C
+static LrgEntity3D *
+spawn_effect (LrgWorld3D  *world,
+              const gchar *path,
+              gfloat       x,
+              gfloat       z)
+{
+	LrgEntity3D                    *e = lrg_entity3d_new_with_name (path);
+	g_autoptr(LrgParticleComponent) fx = lrg_particle_component_new ();
+
+	lrg_particle_component_set_asset_path (fx, path);   /* resolved through the asset manager */
+	lrg_entity3d_set_position_xyz (e, x, 0.0f, z);
+	lrg_entity3d_add_component (e, LRG_COMPONENT (fx));
+	lrg_world3d_add_entity (world, e);
+	return e;
+}
+
+/* ... */
+spawn_effect (world, "fx/campfire.rparticles", -6.0f, 0.0f);
+spawn_effect (world, "fx/sparks.rparticles", 2.0f, 0.0f);
+
+while (!WindowShouldClose ())
+{
+	lrg_world3d_step (world, GetFrameTime ());        /* the component steps its effect */
+	BeginDrawing ();
+	lrg_world3d_renderer_render (renderer, world, NULL, NULL, 0, 0);   /* particles in the transparent pass */
+	EndDrawing ();
+}
+#+end_src
+
+One-shot effects (an explosion at an impact): give the asset =loop: false= and a =duration=, connect the component's =finished= signal and remove the entity there. For hits that should reuse one playing effect, call =lrg_particle_system_spawn()= on one of its systems (=lrg_particle_effect_find_system()=) at the impact point instead.
+
+** Seeds and determinism
+:PROPERTIES:
+:CUSTOM_ID: determinism
+:END:
+- The asset seed makes an effect repeatable. Copies of one effect in a level look identical unless their components set different =seed= values (or code calls =lrg_particle_effect_set_seed()=).
+- =lrg_particle_effect_seek (fx, t, 1.0f / 60.0f)= restarts and simulates to =t= with fixed steps: the same =t= always shows the same particles. Replays, cutscenes and tests use it.
+- Variable frame times are fine for play, but two machines stepping with different frame times diverge; for lockstep games, step effects with a fixed step.
+
+** Editing live
+:PROPERTIES:
+:CUSTOM_ID: live-editing
+:END:
+Every edit made through the asset API (or by setting a module's properties) emits =changed= on the asset. An effect with =auto-reload= reloads on it: emitters that still match keep their particles, clocks, trails and burst state and get the new modules and renderer settings from the next step; a structural change (emitters added, removed, renamed, capacity changed) rebuilds and restarts. That is the particle editor's live preview: the module stack and property grid edit the asset, the preview effect follows, the timeline calls =seek()=. Unknown keys (typos) are kept and reported by =lrg_particle_asset_get_unknown_keys()=.
+
+** Checklist
+:PROPERTIES:
+:CUSTOM_ID: checklist
+:END:
+- [ ] Emitters named; sub-emitter targets exist; =lrg_particle_asset_validate()= passes
+- [ ] =max-particles= sized for the worst case (rate x max lifetime, plus bursts and sub-emitter spikes)
+- [ ] Additive for light (fire, sparks, magic), alpha for matter (smoke, dust)
+- [ ] Particles that start on a surface are lifted by a shape =offset=
+- [ ] Colours and gradients quoted in YAML
+- [ ] A seed set when the look matters; component =seed= for copies that should differ
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../modules/particles/particle-asset.org][Particle assets]], [[file:../modules/particles/system.org][LrgParticleSystem]]
+- [[file:../modules/world3d/particle-component.org][LrgParticleComponent]], [[file:rendering-pipeline.org][The rendering pipeline]]
+- [[file:../modules/particles/gpu-particles.org][GPU particles]]

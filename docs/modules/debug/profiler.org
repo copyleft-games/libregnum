@@ -332,8 +332,97 @@ int main (void)
 :PROPERTIES:
 :CUSTOM_ID: performance-notes
 :END:
-- Profiling has minimal overhead when disabled
-- Section timing is precise (microsecond resolution)
-- Sample storage uses circular buffer per section
-- Frame aggregation is automatic
-- Safe to call from any thread (internally synchronized)
+- When disabled, =lrg_profiler_begin_section()= / =lrg_profiler_end_section()= return before any allocation, string intern or lock. Measured on CPU 0 with =sched_setaffinity= (=pinned=1=, =tests/test-profiler-capture.c= =/profiler/capture/overhead=, 2 000 000 pairs): 15.43 ns per begin/end pair, and the sample count stayed 0.
+- When enabled, the same process timed 8 000 iterations of a nested =on.outer= / =on.inner= pair inside one open frame: 731.88 ns per nested iteration (two sections, four calls). That number is the whole iteration, not one section.
+- Section times are monotonic microseconds (=g_get_monotonic_time()=).
+- Finished frames sit in a ring. =lrg_profiler_get_frame_capacity()= reads it and =lrg_profiler_set_frame_capacity()= sets it (default 300, clamped to 1..65536). Per-section statistics still use the sample ring (=lrg_profiler_set_max_samples()=).
+- =lrg_profiler_begin_section()= and =lrg_profiler_end_section()= are safe from any thread. Each thread has its own lane, created on first use. Do not combine =g_ptr_array_index()= with a call that grows the lane array: the macro reads =pdata= before the index argument runs.
+- An =lrg_profiler_end_section()= with no matching begin logs a warning. Under GTest that warning is fatal, so tests must pair every begin.
+- GPU timing never calls =glFinish= on the hot path. See [[file:gpu-timer.org][LrgGpuTimer]].
+
+** Hierarchical frames (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: profiler-hierarchy
+:END:
+=LrgProfiler= records a tree of sections per frame, one lane per thread, optional counters, and a GPU lane. =lrg_profiler_begin_frame()= opens a frame; sections begun after that belong to it; =lrg_profiler_end_frame()= closes it and advances =lrg_profiler_get_frame_index()=. During the open frame, =lrg_profiler_get_frame_index()= is that frame's index. =lrg_profiler_get_n_frames()= is how many finished frames the ring still holds.
+
+Nesting is a stack per lane. =parent= on an event is the index of the enclosing section in that frame's event array, or -1 at the root. =depth= is 0 at the root. =lrg_profiler_is_section_active()= is true while =name= is open on any thread. =lrg_profiler_get_active_section_names()= returns those names (free the list, not the interned strings). =lrg_profiler_get_section_names()= returns the hash table's own keys the same way.
+
+=lrg_profiler_set_thread_name()= names the calling thread's lane. The name is copied. The first call creates the lane. =lrg_profiler_set_counter()= stores a double on the open frame under an interned name (draws, shadow passes). It early-outs when the profiler is disabled. Counters do not allocate a new name entry when disabled.
+
+=lrg_profiler_capture()= copies finished ring frames into an =LrgProfilerCapture=. It does not include the frame that is still open: call =lrg_profiler_end_frame()= first. A count of 0 copies every finished frame. Times in the capture are relative to the first copied frame's start, and each event's =start_us= is relative to its own frame's start. The GPU thread id is =LRG_PROFILER_GPU_THREAD= (0xFFFF) and its lane name is the literal "GPU".
+
+=lrg_profiler_add_gpu_event()= does not check =enabled=. It searches the open frame, then the ring from the newest finished frame backward, and attaches the event to the matching frame index. =lrg_profiler_set_gpu_enabled()= creates the =LrgGpuTimer= when turning the lane on, so =lrg_gpu_timer_is_supported()= can run before the next =lrg_profiler_begin_frame()=. =lrg_profiler_get_gpu_timer()= borrows that timer (transfer none; NULL until GPU timing has been enabled). =lrg_profiler_begin_gpu_section()= / =lrg_profiler_end_gpu_section()= no-op unless the profiler is enabled, the GPU lane is enabled, and a timer exists. =lrg_profiler_get_gpu_enabled()= is the lane flag.
+
+=lrg_profiler_get_default()= is a process singleton created with =lrg_profiler_new()= (one reference, transfer none). A test that stores it in =g_autoptr= must =g_object_ref()= first. =lrg_profiler_clear()= drops samples, the ring and the open frame. =lrg_profiler_clear_section()= drops one section's samples. The older flat statistics remain: =lrg_profiler_get_last_sample()=, =lrg_profiler_sample_get_name()=, =lrg_profiler_sample_get_duration_us()=, =lrg_profiler_sample_get_duration_ms()=, =lrg_profiler_sample_copy()=, =lrg_profiler_sample_free()=, =lrg_profiler_sample_get_type()=, =lrg_profiler_get_average_ms()=, =lrg_profiler_get_min_ms()=, =lrg_profiler_get_max_ms()=, =lrg_profiler_get_sample_count()=, =lrg_profiler_get_frame_time_ms()=, =lrg_profiler_get_fps()=, =lrg_profiler_get_max_samples()=, =lrg_profiler_set_max_samples()=, =lrg_profiler_is_enabled()=, =lrg_profiler_set_enabled()=, =lrg_profiler_get_type()=.
+
+** Capture object
+:PROPERTIES:
+:CUSTOM_ID: profiler-capture
+:END:
+=LrgProfilerCapture= is a GObject snapshot. Construct an empty one with =lrg_profiler_capture_new()=, or load with =lrg_profiler_capture_new_from_file()= and =lrg_profiler_capture_new_from_data()=. Save with =lrg_profiler_capture_save_to_file()= and =lrg_profiler_capture_save_to_data()= (NUL-terminated; =length= receives the byte count without the NUL).
+
+Reading: =lrg_profiler_capture_get_n_frames()=, =lrg_profiler_capture_find_frame()= (slot of a monotonic index, or -1), =lrg_profiler_capture_get_frame_index()=, =lrg_profiler_capture_get_frame_start_us()=, =lrg_profiler_capture_get_frame_duration_us()=, =lrg_profiler_capture_get_frame_gpu_us()= (sum of depth-0 GPU events, or -1 when the frame has none). =lrg_profiler_capture_get_events()=, =lrg_profiler_capture_get_gpu_events()= and =lrg_profiler_capture_get_counters()= return borrowed arrays and write the count; the pointers die with the capture. =lrg_profiler_capture_get_n_threads()= and =lrg_profiler_capture_get_thread_name()= name lanes. =lrg_profiler_capture_get_section_total_us()= is the inclusive time of the outermost events of that name (a same-name ancestor is not added twice). =lrg_profiler_capture_get_section_names()= is a real =g_strdupv()= (free with =g_strfreev()=).
+
+Events and counters are boxed: =lrg_profiler_event_get_type()=, =lrg_profiler_event_copy()=, =lrg_profiler_event_free()=, =lrg_profiler_counter_get_type()=, =lrg_profiler_counter_copy()=, =lrg_profiler_counter_free()=. Errors use =lrg_profiler_error_get_type()=, =lrg_profiler_error_quark()= and =LRG_PROFILER_ERROR= with =LRG_PROFILER_ERROR_IO=, =LRG_PROFILER_ERROR_PARSE= and =LRG_PROFILER_ERROR_INVALID=. File reads wrap =G_FILE_ERROR= into =LRG_PROFILER_ERROR_IO= and keep the original message ("Failed to open file …: No such file or directory").
+
+** .rprof
+:PROPERTIES:
+:CUSTOM_ID: profiler-rprof
+:END:
+The writer emits a comment line, then the document. Two saves of the same capture compare equal byte for byte. The comment is not a prefix of =format:=; tests should search for the format line.
+
+#+begin_src yaml
+# libregnum profiler capture: events are [name, thread, depth, parent, start_us, duration_us]
+format: rprof
+version: 1
+threads:
+  - "Main"
+frames:
+  - index: 3
+    start_us: 0
+    duration_us: 16670
+    events:
+      - ["world3d.opaque", 0, 0, -1, 1200, 800]
+      - ["world3d.opaque.mesh", 0, 1, 0, 1400, 400]
+    gpu:
+      - ["world3d.opaque", 0, -1, 1300, 600]
+    counters:
+      "world3d.draws": 12
+#+end_src
+
+=format= must be =rprof= and =version= must be 1. Anything else is =LRG_PROFILER_ERROR_INVALID=. CPU events are a 6-tuple: name, thread index, depth, parent index, start_us, duration_us. GPU events are a 5-tuple: name, depth, parent, start_us, duration_us (the thread is always =LRG_PROFILER_GPU_THREAD=). Counters are a mapping of name to number. Thread names are a sequence of strings, index-aligned with the event =thread= field.
+
+** Worked example
+:PROPERTIES:
+:CUSTOM_ID: profiler-worked
+:END:
+#+begin_src C
+LrgProfiler *profiler = lrg_profiler_get_default ();
+g_autoptr(LrgProfilerCapture) cap = NULL;
+g_autoptr(GError) error = NULL;
+const LrgProfilerEvent *events = NULL;
+guint n = 0;
+
+lrg_profiler_set_enabled (profiler, TRUE);
+lrg_profiler_set_thread_name (profiler, "Main");
+lrg_profiler_begin_frame (profiler);
+lrg_profiler_begin_section (profiler, "world3d.opaque");
+lrg_profiler_set_counter (profiler, "world3d.draws", 1);
+lrg_profiler_end_section (profiler, "world3d.opaque");
+lrg_profiler_end_frame (profiler);
+
+cap = lrg_profiler_capture (profiler, 1);
+events = lrg_profiler_capture_get_events (cap, 0, &n);
+lrg_profiler_capture_save_to_file (cap, "frame.rprof", &error);
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: profiler-pitfalls
+:END:
+- Do not call =lrg_profiler_begin_frame()= from =LrgWorld3DRenderer=. The editor already brackets =lrg_editor_app_process_frame()= with a frame, and a second pair splits the editor's sections. The renderer only adds =world3d.shadow=, =world3d.prepass=, =world3d.ssao=, =world3d.sky=, =world3d.opaque=, =world3d.cutout=, =world3d.volumetric=, =world3d.transparent=, =world3d.debug= and =world3d.post=, plus the counters =world3d.draws= and =world3d.shadow_passes=.
+- =lrg_profiler_capture()= ignores the open frame.
+- Unmatched =lrg_profiler_end_section()= warns.
+- Enabling or clearing the profiler from the editor panel is deferred to an idle so it never happens while a section is open. =profiler.set= over IPC enables synchronously so the reply's =enabled= flag is true.
+- The editor UI is [[file:../../editor/profiling.org][Profiling]]. GPU queries are [[file:gpu-timer.org][LrgGpuTimer]]. Draw-call lists are [[file:frame-capture.org][LrgFrameCapture]].

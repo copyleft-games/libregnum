@@ -412,6 +412,155 @@ lrg_tilemap_layer_set_tile (LrgTilemapLayer *self,
     self->tiles[index] = tile_id;
 }
 
+/* ==========================================================================
+ * Per-tile transform bits
+ *
+ * The three flag bits (H = bit 31, V = bit 30, D = bit 29) follow Tiled:
+ * the diagonal flip is applied first, then the horizontal, then the
+ * vertical one.  Internally every transform is handled in the canonical
+ * "mirror left-right (optional), then rotate clockwise by r quarter
+ * turns" form, which makes composing transforms simple arithmetic.  The
+ * two tables below convert between the forms; flags_index is the value
+ * of the top three bits (tile >> 29): H = 4, V = 2, D = 1.
+ *
+ * Derivation (screen space, y down, R = 90 degrees clockwise:
+ * (x, y) -> (-y, x), M = mirror: (x, y) -> (-x, y)):
+ *   D = R^3 M, H D = R, V D = R^3, H V D = R M, V = R^2 M, H V = R^2.
+ * ========================================================================== */
+
+/* flags_index -> rotation (quarter turns) and mirrored */
+static const guint8 flags_to_rotation[8] = { 0, 3, 2, 3, 0, 1, 2, 1 };
+static const guint8 flags_to_mirrored[8] = { 0, 1, 1, 0, 1, 0, 0, 1 };
+
+/* (mirrored * 4 + rotation) -> flags_index */
+static const guint8 transform_to_flags[8] = { 0, 5, 6, 3, 4, 7, 2, 1 };
+
+guint
+lrg_tile_get_id (guint tile)
+{
+    return tile & LRG_TILE_ID_MASK;
+}
+
+guint
+lrg_tile_make (guint    tile_id,
+               gboolean mirrored,
+               guint    rotation)
+{
+    guint index;
+
+    tile_id &= LRG_TILE_ID_MASK;
+    if (tile_id == LRG_TILEMAP_EMPTY_TILE)
+        return LRG_TILEMAP_EMPTY_TILE;
+
+    index = (mirrored ? 4u : 0u) + (rotation & 3u);
+    return tile_id | ((guint) transform_to_flags[index] << 29);
+}
+
+guint
+lrg_tile_get_rotation (guint tile)
+{
+    return flags_to_rotation[tile >> 29];
+}
+
+gboolean
+lrg_tile_get_mirrored (guint tile)
+{
+    return flags_to_mirrored[tile >> 29] != 0;
+}
+
+guint
+lrg_tile_rotate (guint tile,
+                 gint  quarter_turns)
+{
+    guint rotation;
+
+    /* (R^q)(R^r M^m) = R^(r+q) M^m */
+    rotation = (guint) (((gint) lrg_tile_get_rotation (tile) + quarter_turns % 4 + 4) % 4);
+    return lrg_tile_make (tile, lrg_tile_get_mirrored (tile), rotation);
+}
+
+guint
+lrg_tile_flip_horizontally (guint tile)
+{
+    guint rotation;
+
+    /* M R^r M^m = R^-r M^(m+1) */
+    rotation = (4u - lrg_tile_get_rotation (tile)) % 4u;
+    return lrg_tile_make (tile, !lrg_tile_get_mirrored (tile), rotation);
+}
+
+guint
+lrg_tile_flip_vertically (guint tile)
+{
+    guint rotation;
+
+    /* a vertical mirror is R^2 M: R^2 M R^r M^m = R^(2-r) M^(m+1) */
+    rotation = (6u - lrg_tile_get_rotation (tile)) % 4u;
+    return lrg_tile_make (tile, !lrg_tile_get_mirrored (tile), rotation);
+}
+
+void
+lrg_tile_transform_point (guint   tile,
+                          gfloat  width,
+                          gfloat  height,
+                          gfloat *x,
+                          gfloat *y)
+{
+    gfloat px;
+    gfloat py;
+    gfloat out_w;
+    gfloat out_h;
+    guint  rotation;
+    guint  i;
+
+    g_return_if_fail (x != NULL && y != NULL);
+
+    /* about the tile centre: mirror, then rotate clockwise */
+    px = *x - width * 0.5f;
+    py = *y - height * 0.5f;
+    if (lrg_tile_get_mirrored (tile))
+        px = -px;
+    rotation = lrg_tile_get_rotation (tile);
+    for (i = 0; i < rotation; i++)
+    {
+        gfloat t = px;
+
+        px = -py;
+        py = t;
+    }
+
+    /* quarter turns swap the extents of the transformed tile */
+    out_w = (rotation & 1u) != 0 ? height : width;
+    out_h = (rotation & 1u) != 0 ? width : height;
+    *x = px + out_w * 0.5f;
+    *y = py + out_h * 0.5f;
+}
+
+guint
+lrg_tilemap_layer_get_tile_id (LrgTilemapLayer *self,
+                               guint            x,
+                               guint            y)
+{
+    return lrg_tile_get_id (lrg_tilemap_layer_get_tile (self, x, y));
+}
+
+void
+lrg_tilemap_layer_set_tile_transform (LrgTilemapLayer *self,
+                                      guint            x,
+                                      guint            y,
+                                      gboolean         mirrored,
+                                      guint            rotation)
+{
+    guint tile;
+
+    g_return_if_fail (LRG_IS_TILEMAP_LAYER (self));
+
+    tile = lrg_tilemap_layer_get_tile (self, x, y);
+    if (lrg_tile_get_id (tile) == LRG_TILEMAP_EMPTY_TILE)
+        return;
+    lrg_tilemap_layer_set_tile (self, x, y, lrg_tile_make (tile, mirrored, rotation));
+}
+
 /*
  * lrg_tilemap_layer_fill:
  * @self: an #LrgTilemapLayer

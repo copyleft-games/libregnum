@@ -103,6 +103,17 @@ The window is an =LrgEditorWindow=: an =LrgMenuBar= (File, Edit, Create, Node, V
 | Profiler | =profiler= | 300-frame graph and a section table | [[file:editor-app.org::#editor-panel-profiler][Profiler panel]] |
 | Code | =code= | Tabs of =LrgTextEditor= with syntax colours | [[file:editor-app.org::#editor-panel-code][Code editor]] |
 | Data editors | per file | Input maps, locales, sound banks, themes, HUD and UI layouts, dialog trees, dungeons | [[file:data-editors.org::#data-editors-panel-base][Data editor panels]] |
+| Material editor | per =.rmat= | Live lit preview, PBR grid, instances with overrides, uniform inspector (0.9.0) | [[file:material-editor.org][Material Editor]] |
+| Environment | right (tab of the Inspector) | The level's sky, IBL, ambient, fog, volumetric fog and post stack, undoable, with a sky preview and a Bake progress bar (0.9.0) | [[file:environment.org::#environment-panel][Environment panel]] |
+| Physics | right (tab of the Inspector) | The selected node's =physics:= block: body, shapes, joints, fit to mesh, undoable; live body state while playing (0.9.0) | [[file:physics.org::#editor-physics-panel][Physics panel]] |
+| Terrain | right (tab of the Inspector) | The selected terrain's brushes (sculpt, paint, holes, foliage), surface and foliage layers, chunk grid, Rebake, Save; water outline handles in the viewport (0.9.0) | [[file:terrain.org::#editor-terrain-panel][Terrain panel]] |
+| Navigation | right (tab of the Inspector) | The level's =navigation:= block and =.rnav= settings: areas, links, Bake, Save; agents and ORCA debug while playing (0.9.0) | [[file:navigation.org][Navigation]] |
+| AI | right (tab of the Inspector) | Live agents with blackboards and events while playing; the LLM decisions inspector (0.9.0) | [[file:ai.org][AI]] |
+| Mixer | bottom (tab next to Assets) | The project mixer as channel strips with live meters (0.9.0) | [[file:audio.org::#editor-audio-mixer-panel][Mixer panel]] |
+| Lighting | right (tab of the Inspector) | The level's lighting bake: settings, async bake with progress and cancel, atlas pages, light at cursor, save / clear with undo (0.9.0 M3) | [[file:bake.org][Lighting Bake]] |
+| Post-stack editor | per =.rpost= | Effect chain, per-effect parameters, live viewport preview, save current look (0.9.0) | [[file:environment.org::#post-stack-editor][Post-stack editor]] |
+| Sequencer | bottom (tab next to Timeline) | =.rseq= sequences: tracks by binding, Bézier curve editor, sections, events, scrub/play preview on level nodes with camera piloting (0.9.0) | [[file:sequencer.org][Sequencer]] |
+| Shader graph editor | per =.rshadergraph= | Node shaders on the graph canvas, validation, GLSL, preview (0.9.0) | [[file:shader-graph-editor.org][Shader Graph Editor]] |
 
 The command palette and quick open, Preferences, Project Settings and the other dialogs are described in [[file:editor-app.org::#editor-panel-palette][Command palette]], [[file:editor-app.org::#editor-panel-preferences][Preferences]] and [[file:editor-app.org::#editor-panel-dialogs][Dialogs]].
 
@@ -266,6 +277,21 @@ The Fedora packages the application needs beyond the base build are listed in [[
 - [[file:editor-app.org][The Editor Application]]: window, every panel, preferences, shortcuts, embedding
 - [[file:view-model.org][View Model]]: =LrgEditorViewState=, =LrgEditorViewportNav=, =LrgEditorPlaySession=
 - [[file:data-editors.org][Data Editors]]: =LrgEditorDocument= and the eight data editor panels
+- [[file:material-editor.org][Material Editor]]: =.rmat= materials, preview, instances, assignment
+- [[file:environment.org][Level Look]]: the Environment panel, the =.rpost= post-stack editor, debug view modes and render layers, volume gizmos, the LOD preview
+- [[file:physics.org][Physics in Levels]]: the Physics panel, collider and joint gizmos, the Physics overlay, =physics.*= IPC
+- [[file:navigation.org][Navigation in Levels]]: the Navigation panel, navmesh overlay and handles, agent debug view, =nav.*= IPC
+- [[file:ai.org][AI in the Editor]]: behaviour tree and state-machine editors with live state, the AI panel and decisions inspector, =bt.*= / =fsm.*= / =ai.*= IPC
+- [[file:vfx.org][Effects in the Editor]]: the particle and weather editors, =particles.*= / =weather.*= IPC
+- [[file:audio.org][Audio in the Editor]]: the mixer editor and Mixer panel, the attenuation gizmo, =mixer.*= / =audio.*= IPC
+- [[file:terrain.org][Terrain and Water in the Editor]]: Create > Terrain / Water, the Terrain panel and viewport brushes, foliage layers, water handles, the =.rwater= editor, =terrain.*= / =water.*= IPC
+- [[file:physics-asset-editor.org][Physics Asset Editor and Layers]]: =.rphysasset= ragdolls, Project Settings > Physics, =physasset.*= and =physics.layers.*= IPC
+- [[file:bake.org][Lighting Bake]]: the Lighting panel, static lighting rows, probe volumes, baked lighting in the viewport
+- [[file:sequencer.org][Sequencer]]: =.rseq= sequences, the curve editor, preview and =sequence.*= IPC
+- [[file:2d-tools.org][2D Tools]]: rule tile painting, tile transforms, iso/hex grids and tile properties in the Tiles panel, the =.rtileset= and =.rsprite= editors, =tiles.*= / =tileset.*= / =sprite.*= IPC
+- [[file:skeleton2d-editor.org][2D Rig Editor]]: =.rskel2d= rigs, the canvas tools, weights, skins, animation mode and =skel2d.*= IPC
+- [[file:shader-graph-editor.org][Shader Graph Editor]]: =.rshadergraph= node shaders
+- [[file:visual-scripting.org][Visual Scripting]]: =.rvscript= node graph and blocks, =vscript.*= IPC
 - [[file:prefabs.org][Prefabs]]: reusable node subtrees and linked instances
 - [[file:projects-and-assets.org][Projects and Assets]]: =LrgProject=, =LrgAssetDatabase=, =.meta= sidecars, thumbnails, git status
 - [[file:asset-sources.org][Asset Sources]]: =LrgAssetSource= virtual asset trees from game modules (game archives), the Sources panel, cached exports and imports

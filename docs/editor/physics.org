@@ -1,0 +1,273 @@
+#+title: Physics in Levels: Physics Panel, Collider Gizmos and the Physics Overlay
+#+description: The lrgeditor tools that edit a node's physics: block in 0.9.0: the Physics panel (body, collision shapes, joints, fit to mesh, live state while playing), collider and joint gizmos with drag handles, 2D collider gizmos, the viewport's Physics overlay (authoring and play), the inspector's Physics summary, the hierarchy badge and the physics.* IPC methods
+#+authors: Zach Podbielniak
+#+categories: libregnum editor physics gizmo ipc
+#+created: 2026-11-07T09:30:00-05:00
+#+updated: 2026-11-07T09:30:00-05:00
+#+version: 0.9.0
+
+* Physics in Levels
+:PROPERTIES:
+:CUSTOM_ID: editor-physics
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Physics in Levels
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-overview
+:END:
+A node's physics is the =physics:= block of the =.rlevel= / =.rprefab= (=LrgNodePhysics= with its ordered =LrgNodePhysicsShape= and =LrgNodePhysicsJoint= lists, see [[file:../modules/level/node-physics.org][LrgNodePhysics]]). =lrg_level_instantiate_3d()= turns it into a rigid body, colliders and joints on the node's entity, so play-in-editor and the game simulate exactly what the editor authored. Project-wide collision layers and the collide matrix live in =project.ryaml= and are edited in Project Settings > Physics ([[file:physics-asset-editor.org][Physics Asset Editor and Layers]]).
+
+The editor tools that author and inspect the block:
+
+| Tool | Where | Edits | Source |
+|------+-------+-------+--------|
+| Physics panel | Tab next to the Inspector (View > Panels > Physics, action =physics.show=) | the selected node's =physics:= block, undoable with the level | =src/editor/ui/lrg-editor-physics-panel.{h,c}= |
+| Collider and joint gizmos | The viewport, for the selected node | shape dimensions, joint anchors, 2D collider sizes | =src/editor/ui/lrg-editor-gizmo-paint.{h,c}=, the viewport panel |
+| Physics overlay | Each viewport's overlays menu, "Physics" section | nothing (a view setting) | =src/editor/ui/lrg-editor-viewport-panel.{h,c}= |
+| Physics summary | Inspector, "Physics" section | nothing (links to the panel) | =src/editor/ui/lrg-editor-inspector-panel.c= |
+| Physics badge | Hierarchy rows | nothing | =src/editor/ui/lrg-editor-hierarchy-panel.c= |
+| =physics.*= IPC | lrgeditorctl, MCP, scripts | everything the panel edits | the panel and viewport files |
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-concepts
+:END:
+- *One block per node.* A node has a body or not. Removing the body removes its shapes and joints. A body without shapes does not collide (the panel says so in the empty shape list).
+- *Shapes are in node units.* Dimensions and offsets are in the node's local units before scale; the runtime bakes the node's world scale into them exactly like =lrg_collider_component3d_build_shape()= (box half extents per axis, sphere radius by the largest axis, capsule and cylinder radius by the larger of X and Z, half height by Y). The gizmos draw that baked result.
+- *Joint targets are GUIDs.* The block stores the target node's GUID (empty: the world). The panel and the IPC accept and show name paths ("Level/Post") and convert.
+- *Every edit is one level command.* Each change takes a node-state snapshot (=lrg_editor_snapshot_node()=), works on a deep copy of the block (=lrg_node_physics_copy()=), installs it and records =lrg_editor_commit_node_state()=. Undo restores deep copies, so no history entry ever aliases the live block. A property-grid gesture (a drag, typing) is one step; a gizmo drag is one step; an IPC call that sets several fields is one step.
+- *2D colliders* are not a =physics:= block: a 2D node describes its collider as a =collider= component description with the keys =shape= (=box= or =circle=), =width=, =height=, =radius=, =offset_x=, =offset_y= (node units, defaults 1, 1, 0.5, 0, 0). The game's registered =collider= component reads them; the editor shows them with a gizmo and edits them through the inspector (component section) or the gizmo handles.
+
+** Physics panel
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-panel
+:END:
+=LrgEditorPhysicsPanel= (dock id =LRG_EDITOR_PHYSICS_PANEL_ID=, "physics") follows the primary selection. =lrg_editor_physics_panel_find()= returns an app's panel; =lrg_editor_physics_panel_get_node()= the node it shows.
+
+*** Layout
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-panel-layout
+:END:
+- *Header*: "Physics", the node's name, *Add Body* (when the node has none) or a trash chip that removes the body.
+- *Live* (only while playing, on top): the live body's velocity (and its length), angular velocity, sleeping or awake, body id and the contact manifolds touching it this step (=lrg_editor_physics_panel_describe_live()=). It refreshes every frame.
+- *Body*: a property grid (=lrg_editor_physics_panel_get_body_grid()=): Body (kind), Mass, Layer (a picker of the project's layer names), Friction, Bounce (restitution), Damping (linear), Spin damping (angular), Gravity (factor), CCD.
+- *Shapes*: a kind picker and *Add* (the new shape is fitted to the node's geometry and selected), then the list: one row per shape with a colour dot (green, yellow for triggers), its index, kind and size ("Box 1.00 x 1.00 x 1.00", "Capsule r 0.30 h 0.80"), "trigger" and its layer; per row move up, move down and remove buttons. Click a row to select it.
+- *Fit to mesh as* [kind] *Fit*: refits the selected shape (box, sphere, capsule, cylinder, convex hull or triangle mesh).
+- *Selected shape* grid (=lrg_editor_physics_panel_get_shape_grid()=): Shape (kind), then only the dimensions the kind uses (Half extents as a vector for boxes; Radius; Half height for capsules and cylinders; Mesh for convex and mesh shapes, empty for the node's own model), Offset and Rotation (degrees) vectors, Trigger, Layer (=(body)= for the body's), Friction and Bounce overrides (-1: the body's).
+- *Joints*: a kind picker and *Add* (a joint to the world, selected), the list ("0 Hinge -> Post [-0.80, 0.80] breakable") with a remove button per row, and the *selected joint* grid (=lrg_editor_physics_panel_get_joint_grid()=): Joint (kind), Target (a drop-down of every other node's path, empty for the world), Anchor and Axis vectors (node space), Limits, Limit min / max (radians for hinge, cone and swing-twist; metres for slider and distance), Spring Hz and damping, Motor speed and force (0: off), Break force (0: unbreakable).
+- *Empty state*: a hint (nothing selected; a 2D node; a node without a body) and, for a node, a body kind picker with *Add Body* (a fitted first shape comes with it).
+
+*** Fit to mesh
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-fit
+:END:
+The node's local bounds are the model file's bounding box for a mesh asset when a window exists (=grl_model_get_bounding_box()=), else the editor's pick bounds (=lrg_editor_node_get_local_bounds()=: primitives use their unit extents). =lrg_editor_physics_fit_shape_to_bounds()= then sizes the shape: a box of the half extents, a sphere of the largest half extent, a capsule or cylinder along Y with the larger of the X and Z half extents as radius (a capsule's half height leaves room for its caps), offset = the bounds' centre, rotation reset. Convex and mesh shapes take the node's own model with a zero offset. The automatic first shape (Add Body, =fit=) is a sphere for sphere primitives, a cylinder for cylinders and cones, a convex hull for a dynamic mesh asset, a triangle mesh for a static or kinematic one, a box otherwise.
+
+*** Actions
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-actions
+:END:
+| Action | Label | Enabled |
+|--------+-------+---------|
+| =physics.show= | Physics Panel | always |
+| =physics.add-body= | Add Physics Body | a selected node without a body |
+| =physics.remove-body= | Remove Physics Body | a selected node with a body |
+| =physics.add-shape= | Add Collision Shape | a selected node (a fitted box) |
+| =physics.fit= | Fit Shape to Mesh | a selected node with a body (refits the selected shape as its kind) |
+
+** Collider and joint gizmos
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-gizmos
+:END:
+With the Gizmos overlay on (and outside play and tile painting), the selected, unlocked node's physics draws in the viewport: every shape in the runtime debug-draw colours (green dynamic, blue kinematic, grey static, yellow triggers; boxes as 12 edges, spheres as three great circles, capsules and cylinders as rings, side lines and cap arcs, planes as a 4 m square with the normal, convex and mesh shapes as the node's bounds, faint), the Physics panel's selected shape outlined in yellow on top, and joints in orange: the axis from the anchor, a hinge's limit arc (a faint full ring when free), a cone / swing-twist's swing cone (half angle = the upper limit, 45 degrees when off), a slider's or distance joint's travel range with end ticks, and a faint line to the target node.
+
+Handles (=LrgEditorPhysicsHandle=) sit on the outline; the hovered one turns yellow and names its field and value in a chip:
+
+| Handle | Shape / joint | Field | Where |
+|--------+---------------+-------+-------|
+| =HALF_X= / =HALF_Y= / =HALF_Z= | box | =half-extent-x/y/z= | the centre of the +X / +Y / +Z face |
+| =RADIUS= | sphere, capsule, cylinder | =radius= | on the shape's local +X |
+| =HALF_HEIGHT= | capsule, cylinder | =half-height= | the top (a capsule's cap tip) |
+| =ANCHOR= | every joint | =anchor= (x, y, z) | the anchor; dragged on the camera-facing plane through it |
+| =WIDTH_2D= / =HEIGHT_2D= / =RADIUS_2D= | 2D =collider= description | =width=, =height=, =radius= | right edge, top edge, circle rim |
+
+Dragging a handle writes the value under the pointer live (the distance along the handle's axis divided by the node's world scale; minimum 0.01, a capsule's half height 0) and commits one undo step on release ("Resize half-extent-x"); Escape or another button cancels and restores the snapshot; Ctrl snaps to centimetres (anchors to decimetres). Grabbing a shape's handle selects that shape in the Physics panel. Volume handles (lights, decals, probes) win over physics handles, which win over the transform gizmo.
+
+The geometry functions are public so tools and tests use the same math the viewport hit tests with: =lrg_editor_physics_has_gizmo()=, =lrg_editor_physics_get_shape_frame()= (the runtime collider frame: the node's world position and rotation, the offset times the world scale, the shape rotation), =lrg_editor_physics_get_handle_position()=, =lrg_editor_physics_hit_test()=, =lrg_editor_physics_drag_value()=, =lrg_editor_physics_handle_get_field()=, and the painters =lrg_editor_gizmo_paint_physics()= and =lrg_editor_gizmo_paint_physics_shapes()=.
+
+** Physics overlay
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-overlay
+:END:
+Each viewport's overlays menu has a "Physics" section (per viewport, not saved; =lrg_editor_viewport_panel_set_physics_overlay()= with =LrgDynamicsDebugFlags=):
+
+| Menu item | Flag | Authoring | Playing |
+|-----------+------+-----------+---------|
+| Collision Shapes | =SHAPES= | every node's authored shapes and 2D colliders, faded | the bodies' shapes, coloured by kind |
+| Joints | =CONSTRAINTS= | authored joints | each constraint's debug draw |
+| Bounding Boxes | =AABBS= | the world box around each node's shapes | the bodies' world AABBs |
+| Contacts (playing) | =CONTACTS= | - | contact points and normals |
+| Sleeping Bodies (playing) | =SLEEPING= | - | sleeping bodies dimmed |
+| Centres of Mass | =CENTER_OF_MASS= | body origin axes | centre-of-mass axes |
+| Velocities (playing) | =VELOCITY= | - | velocity arrows |
+| Broadphase Tree (playing) | =BROADPHASE= | - | the AABB tree's fat boxes |
+
+While authoring the overlay paints the authored blocks into the viewport's paint list (the selected node shows its gizmo instead). While a 3D level plays, the viewport records the play world with =lrg_world3d_debug_draw_physics()= into its own =LrgDebugDraw= (=lrg_editor_viewport_panel_get_physics_debug_draw()=) before each render and draws it from the runtime renderer's ="draw-overlay"= hook inside the 3D pass, so contacts and shapes are depth tested against the scene. =lrg_editor_viewport_panel_record_physics()= records without rendering (tests, tools); =lrg_editor_viewport_panel_get_physics_painted()= counts what the last authoring paint drew.
+
+** Inspector and hierarchy
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-inspector
+:END:
+- *Inspector*: a compact "Physics" section for one inspected 3D node: "dynamic body, 20 kg, layer debris / 2 shapes: box, sphere (trigger) / 1 joint: hinge", or "No physics body". Its button runs =physics.add-body= (when there is no body) and =physics.show=. Full editing is the panel's.
+- *Hierarchy*: a node with a body shows a small ball-on-ground badge before the row toggles, coloured by body kind (green dynamic, blue kinematic, grey static), with a link when it has joints. =hierarchy.state= rows carry ="physics"=: the body kind nick or =null=.
+
+** IPC
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-ipc
+:END:
+The methods are listed in [[file:ipc-protocol.org::#ipc-physics][IPC Protocol > Physics methods]]. Field names are the GObject property names of =LrgNodePhysics=, =LrgNodePhysicsShape= and =LrgNodePhysicsJoint= ('_' works for '-'); enums are nicks (="dynamic"=, ="capsule"=, ="hinge"=) or numbers; vectors are =[x, y, z]=.
+
+#+begin_src sh
+# a crate: dynamic, 20 kg, fitted box, a trigger sphere around it
+lrgeditorctl call physics.add_body '{"node":"Crate","kind":"dynamic"}'
+lrgeditorctl call physics.set_body '{"node":"Crate","values":{"mass":20,"layer":"debris"}}'
+lrgeditorctl call physics.add_shape '{"node":"Crate","kind":"sphere","values":{"radius":2,"trigger":true}}'
+# a door hinged to its frame, limited to +-90 degrees
+lrgeditorctl call physics.add_joint '{"node":"Door","kind":"hinge","target":"Frame","values":{"anchor":[-0.5,0,0],"axis":[0,1,0],"limits-enabled":true,"limit-min":-1.57,"limit-max":1.57}}'
+# show shapes and contacts in every viewport, play, read the live body
+lrgeditorctl call physics.overlay '{"flags":["shapes","contacts"]}'
+lrgeditorctl play start
+lrgeditorctl call physics.state '{"node":"Crate"}'
+#+end_src
+
+** C API
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-api
+:END:
+*** LrgEditorPhysicsPanel
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-api-panel
+:END:
+Every editing function takes a nullable node (=NULL=: the shown node) and records one undoable command.
+
+| Function | Notes |
+|----------+-------|
+| =lrg_editor_physics_panel_new (app)= | registers the =physics.*= IPC methods and actions |
+| =lrg_editor_physics_panel_find (app)= | the app's panel, transfer none, nullable |
+| =lrg_editor_physics_panel_get_node ()= | the primary selection the panel shows |
+| =lrg_editor_physics_panel_get_body_grid ()= | rows named after =LrgNodePhysics= properties |
+| =lrg_editor_physics_panel_get_shape_grid ()= | rows of the selected shape (vectors: =half-extents=, =offset=, =rotation=) |
+| =lrg_editor_physics_panel_get_joint_grid ()= | rows of the selected joint (=target= as a path; =anchor=, =axis=) |
+| =lrg_editor_physics_panel_get_selected_shape ()= / =lrg_editor_physics_panel_set_selected_shape (index)= | -1: none |
+| =lrg_editor_physics_panel_get_selected_joint ()= / =lrg_editor_physics_panel_set_selected_joint (index)= | -1: none |
+| =lrg_editor_physics_panel_add_body (node, kind, fit)= | =FALSE= when the node has a body |
+| =lrg_editor_physics_panel_remove_body (node)= | |
+| =lrg_editor_physics_panel_set_body_field (node, name, value)= | creates a dynamic body when there is none |
+| =lrg_editor_physics_panel_add_shape (node, kind, fit)= | returns the index; creates a body when needed |
+| =lrg_editor_physics_panel_remove_shape (node, index)= | |
+| =lrg_editor_physics_panel_move_shape (node, index, to)= | the compound's build order |
+| =lrg_editor_physics_panel_set_shape_field (node, index, name, value)= | vectors as =GrlVector3= or ="x,y,z"= |
+| =lrg_editor_physics_panel_fit_shape (node, index, kind)= | see [[#editor-physics-fit][Fit to mesh]] |
+| =lrg_editor_physics_panel_add_joint (node, kind, target)= | target GUID or path, =NULL= for the world; -1 for an unknown target or the node itself |
+| =lrg_editor_physics_panel_remove_joint (node, index)= | |
+| =lrg_editor_physics_panel_set_joint_field (node, index, name, value)= | =target= takes a path or GUID ("" = world) |
+| =lrg_editor_physics_panel_describe_live ()= | the Live text, =NULL= when not playing |
+| =lrg_editor_physics_fit_shape_to_bounds (shape, kind, min, max)= | pure helper |
+
+*** Gizmo geometry and painting
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-api-gizmo
+:END:
+| Function | Notes |
+|----------+-------|
+| =LrgEditorPhysicsHandle=, =lrg_editor_physics_handle_get_type ()= | handle enum (nicks =half-x=, =radius=, =anchor=, =width-2d=, ...) |
+| =lrg_editor_physics_handle_get_field (handle)= | the field a handle edits |
+| =lrg_editor_physics_has_gizmo (node)= | shapes or joints, or a 2D =collider= description |
+| =lrg_editor_physics_get_shape_frame (node, index, matrix, scale)= | the runtime collider frame |
+| =lrg_editor_physics_get_handle_position (view, node, handle, index, out)= | world position |
+| =lrg_editor_physics_hit_test (view, node, x, y, out_index)= | nearest handle within the pick radius |
+| =lrg_editor_physics_drag_value (view, node, handle, index, x, y, out)= | the value under the pointer |
+| =lrg_editor_gizmo_paint_physics_shapes (list, view, level, node, flags, emphasis, ox, oy, scale)= | authored wireframes; returns shapes + joints painted |
+| =lrg_editor_gizmo_paint_physics (list, theme, view, level, node, hot, hot_index, selected_shape, dragging, ox, oy, scale)= | the selected node's gizmo with handles |
+
+*** Viewport
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-api-viewport
+:END:
+| Function | Notes |
+|----------+-------|
+| =lrg_editor_viewport_panel_set_physics_overlay (flags)= / =lrg_editor_viewport_panel_get_physics_overlay ()= | =LrgDynamicsDebugFlags= |
+| =lrg_editor_viewport_panel_record_physics ()= | records the play world, returns the primitive count |
+| =lrg_editor_viewport_panel_get_physics_debug_draw ()= | the batch drawn in the 3D pass |
+| =lrg_editor_viewport_panel_get_physics_painted ()= | what the last authoring paint drew |
+| =lrg_editor_viewport_panel_get_physics_handle (index)= | dragged, else hovered handle |
+
+** Example (C)
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-example
+:END:
+#+begin_src C
+/* An embedder builds a swinging sign: a static post and a dynamic board
+ * hinged to it, every step undoable in the editor's history. */
+LrgEditorPhysicsPanel *phys = lrg_editor_physics_panel_find (app);
+LrgNode               *post = lrg_editor_find_node (editor, "Post");
+LrgNode               *board = lrg_editor_find_node (editor, "Sign");
+g_auto(GValue)         mass = G_VALUE_INIT;
+gint                   hinge;
+
+lrg_editor_physics_panel_add_body (phys, post, LRG_DYNAMICS_BODY_STATIC, TRUE);
+lrg_editor_physics_panel_add_body (phys, board, LRG_DYNAMICS_BODY_DYNAMIC, TRUE);
+g_value_init (&mass, G_TYPE_DOUBLE);
+g_value_set_double (&mass, 4.0);
+lrg_editor_physics_panel_set_body_field (phys, board, "mass", &mass);
+
+hinge = lrg_editor_physics_panel_add_joint (phys, board, LRG_JOINT_HINGE, "Post");
+if (hinge >= 0)
+{
+	g_auto(GValue) axis = G_VALUE_INIT;
+
+	g_value_init (&axis, G_TYPE_STRING);
+	g_value_set_string (&axis, "1,0,0");
+	lrg_editor_physics_panel_set_joint_field (phys, board, (guint) hinge, "axis", &axis);
+}
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-performance
+:END:
+- An edit copies one block (one object per shape and joint) twice: the working copy and the history snapshot. Even large compounds are cheap.
+- The authoring overlay walks the level once per viewport paint and projects a few dozen segments per shape (32 per circle); with hundreds of bodies keep it off and rely on the selected node's gizmo.
+- While playing, the overlay records the physics world once per viewport render (=lrg_world3d_debug_draw_physics()=) and draws it in one or two batched draw calls.
+- Fit to mesh on a mesh asset loads the model file once per click (a window is needed); primitives cost nothing.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-pitfalls
+:END:
+- A body without shapes does not collide; the shape list says so.
+- Triangle mesh shapes are for static and kinematic bodies only; dynamic bodies want convex hulls or primitives.
+- A layer name that is not in the project's table falls back to layer 0 at runtime with a warning. The pickers only offer existing names; the IPC accepts any string.
+- Joint limits are radians for angular joints; =limit-min= / =limit-max= in the grid are not degrees.
+- 2D play has no =LrgPhysicsWorld= in the editor's play session, so the Physics overlay draws nothing while a 2D level plays; the 2D collider gizmo works while authoring.
+- The physics gizmo hides while playing (edits during play are discarded on stop anyway); use the Live readout and the overlay instead.
+
+** Testing
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-testing
+:END:
+=tests/test-editor-app-physics.c= (11 cases): body add / remove with fitted shapes and undo; field edits, enums by nick, a grid gesture as one step; shapes add / move / remove / fit, the list's row and button clicks; joints with targets by path and GUID; every =physics.*= method with its errors and one undo step per call; the gizmo math, a handle drag on the canvas (one step), Escape, capsule and joint handles, a 2D collider drag; the overlay flags through IPC and the menu actions, authoring paint counts; the inspector summary and the hierarchy badge; play-in-editor live state and the play world's debug draw; the level round trip; a GPU frame with the overlay under =build-aux/xrun.sh=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: editor-physics-see-also
+:END:
+- [[file:../modules/level/node-physics.org][LrgNodePhysics]] (the block, its format and instantiation)
+- [[file:../guides/physics.org][Physics guide]]
+- [[file:physics-asset-editor.org][Physics Asset Editor and Layers]]
+- [[file:editor-app.org::#editor-panel-physics][Editor app > Physics panel]]
+- [[file:ipc-protocol.org::#ipc-physics][IPC Protocol > Physics methods]]
+- [[file:environment.org::#level-look][Level Look]] (volume gizmos, the model the physics gizmos follow)

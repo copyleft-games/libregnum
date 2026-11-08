@@ -59,6 +59,7 @@ struct _LrgSkinnedMesh
     guint16    *indices;
 
     GrlTexture *texture;
+    LrgMaterial *material;      /* nullable, wins over texture/tint/cutoff */
     GrlShader  *shader;
     Color       tint;
     gfloat      alpha_cutoff;
@@ -78,9 +79,19 @@ struct _LrgSkinnedMesh
     gint        loc_use_skinning;
     gint        loc_alpha_cutoff;
     gint        loc_bone_matrices;
+
+    /* morph targets: blended on the CPU before skinning */
+    LrgMorphTargets *morph;          /* nullable */
+    gfloat          *morph_weights;  /* one per target */
+    gfloat          *morphed_positions;
+    gfloat          *morphed_normals;
+    gboolean         morph_dirty;    /* morphed_* need recomputing */
+    gboolean         morph_gpu_dirty;/* GPU vertex buffers need the morphed data */
 };
 
 static void lrg_skinned_mesh_prewarmable_init (LrgPrewarmableInterface *iface);
+static void morph_clear (LrgSkinnedMesh *self);
+static void morph_touch (LrgSkinnedMesh *self);
 
 G_DEFINE_FINAL_TYPE_WITH_CODE (LrgSkinnedMesh, lrg_skinned_mesh, G_TYPE_OBJECT,
                                G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
@@ -268,7 +279,12 @@ lrg_skinned_mesh_finalize (GObject *object)
     g_free (self->palette);
     g_free (self->normal_palette);
     g_clear_object (&self->texture);
+    g_clear_object (&self->material);
     g_clear_object (&self->shader);
+    g_clear_object (&self->morph);
+    g_free (self->morph_weights);
+    g_free (self->morphed_positions);
+    g_free (self->morphed_normals);
 
     G_OBJECT_CLASS (lrg_skinned_mesh_parent_class)->finalize (object);
 }
@@ -401,6 +417,9 @@ lrg_skinned_mesh_set_geometry (LrgSkinnedMesh  *self,
         small[k] = (guint16)indices[k];
 
     lrg_skinned_mesh_unload (self);
+    /* morph targets cover a vertex count; a new count invalidates them */
+    if (self->morph != NULL && n_vertices != self->n_vertices)
+        morph_clear (self);
     free_geometry (self);
     self->n_vertices = n_vertices;
     self->positions = g_memdup2 (positions, 3 * n_vertices * sizeof (gfloat));
@@ -416,6 +435,12 @@ lrg_skinned_mesh_set_geometry (LrgSkinnedMesh  *self,
     self->n_indices = n_indices;
     self->indices = g_steal_pointer (&small);
     self->palette_dirty = TRUE;
+    if (self->morph != NULL)
+    {
+        g_clear_pointer (&self->morphed_positions, g_free);
+        g_clear_pointer (&self->morphed_normals, g_free);
+        morph_touch (self);
+    }
     return TRUE;
 }
 
@@ -580,6 +605,238 @@ lrg_skinned_mesh_get_palette (LrgSkinnedMesh *self)
 }
 
 /* ------------------------------------------------------------------------ */
+/* Morph targets on the mesh                                                */
+/* ------------------------------------------------------------------------ */
+
+/* drop the morph targets and their caches */
+static void
+morph_clear (LrgSkinnedMesh *self)
+{
+    g_clear_object (&self->morph);
+    g_clear_pointer (&self->morph_weights, g_free);
+    g_clear_pointer (&self->morphed_positions, g_free);
+    g_clear_pointer (&self->morphed_normals, g_free);
+    self->morph_dirty = FALSE;
+    self->morph_gpu_dirty = FALSE;
+}
+
+/* the weights changed: the blend, the CPU skin and the GPU buffers are stale */
+static void
+morph_touch (LrgSkinnedMesh *self)
+{
+    self->morph_dirty = TRUE;
+    self->morph_gpu_dirty = TRUE;
+    self->palette_dirty = TRUE;
+}
+
+/*
+ * base_positions / base_normals:
+ * What skinning starts from: the bind geometry, blended with the morph
+ * weights when the mesh has targets (recomputed lazily after a weight
+ * change).
+ */
+static void
+morph_ensure (LrgSkinnedMesh *self)
+{
+    if (self->morph == NULL || !self->morph_dirty || self->n_vertices == 0)
+        return;
+    if (self->morphed_positions == NULL)
+        self->morphed_positions = g_new (gfloat, 3 * self->n_vertices);
+    if (self->normals != NULL && self->morphed_normals == NULL)
+        self->morphed_normals = g_new (gfloat, 3 * self->n_vertices);
+    lrg_morph_targets_apply (self->morph, self->morph_weights,
+                             lrg_morph_targets_get_target_count (self->morph),
+                             self->positions, self->normals,
+                             self->morphed_positions, self->morphed_normals);
+    self->morph_dirty = FALSE;
+}
+
+static const gfloat *
+base_positions (LrgSkinnedMesh *self)
+{
+    if (self->morph == NULL)
+        return self->positions;
+    morph_ensure (self);
+    return self->morphed_positions;
+}
+
+static const gfloat *
+base_normals (LrgSkinnedMesh *self)
+{
+    if (self->morph == NULL || self->normals == NULL)
+        return self->normals;
+    morph_ensure (self);
+    return self->morphed_normals;
+}
+
+gboolean
+lrg_skinned_mesh_set_morph_targets (LrgSkinnedMesh  *self,
+                                    LrgMorphTargets *targets)
+{
+    guint n;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_SKINNED_MESH (self), FALSE);
+    g_return_val_if_fail (targets == NULL || LRG_IS_MORPH_TARGETS (targets), FALSE);
+
+    if (targets != NULL && lrg_morph_targets_get_vertex_count (targets) != self->n_vertices)
+        return FALSE;
+
+    /* referenced before the old set is dropped: @targets may be it */
+    if (targets != NULL)
+        g_object_ref (targets);
+    morph_clear (self);
+    if (targets == NULL)
+    {
+        /* back to the bind geometry on the GPU too */
+        self->morph_gpu_dirty = TRUE;
+        self->palette_dirty = TRUE;
+        return TRUE;
+    }
+    self->morph = targets;   /* the reference taken above */
+    n = lrg_morph_targets_get_target_count (targets);
+    self->morph_weights = g_new0 (gfloat, MAX (n, 1));
+    for (i = 0; i < n; i++)
+        self->morph_weights[i] = lrg_morph_targets_get_default_weight (targets, i);
+    morph_touch (self);
+    /* an uploaded mesh needs dynamic vertex buffers now */
+    if (self->uploaded)
+        lrg_skinned_mesh_unload (self);
+    return TRUE;
+}
+
+LrgMorphTargets *
+lrg_skinned_mesh_get_morph_targets (LrgSkinnedMesh *self)
+{
+    g_return_val_if_fail (LRG_IS_SKINNED_MESH (self), NULL);
+    return self->morph;
+}
+
+void
+lrg_skinned_mesh_set_morph_weights (LrgSkinnedMesh *self,
+                                    const gfloat   *weights,
+                                    guint           n_weights)
+{
+    guint n;
+
+    g_return_if_fail (LRG_IS_SKINNED_MESH (self));
+    g_return_if_fail (weights != NULL || n_weights == 0);
+
+    if (self->morph == NULL)
+        return;
+    n = MIN (n_weights, lrg_morph_targets_get_target_count (self->morph));
+    if (n == 0 || memcmp (self->morph_weights, weights, n * sizeof (gfloat)) == 0)
+        return;
+    memcpy (self->morph_weights, weights, n * sizeof (gfloat));
+    morph_touch (self);
+}
+
+gboolean
+lrg_skinned_mesh_set_morph_weight (LrgSkinnedMesh *self,
+                                   guint           target,
+                                   gfloat          weight)
+{
+    g_return_val_if_fail (LRG_IS_SKINNED_MESH (self), FALSE);
+
+    if (self->morph == NULL || target >= lrg_morph_targets_get_target_count (self->morph))
+        return FALSE;
+    if (self->morph_weights[target] != weight)
+    {
+        self->morph_weights[target] = weight;
+        morph_touch (self);
+    }
+    return TRUE;
+}
+
+gboolean
+lrg_skinned_mesh_set_morph_group_weights (LrgSkinnedMesh *self,
+                                          const gchar    *group,
+                                          const gfloat   *weights,
+                                          guint           n_weights)
+{
+    gint  first;
+    guint count = 0;
+    guint n;
+
+    g_return_val_if_fail (LRG_IS_SKINNED_MESH (self), FALSE);
+    g_return_val_if_fail (group != NULL, FALSE);
+    g_return_val_if_fail (weights != NULL || n_weights == 0, FALSE);
+
+    if (self->morph == NULL)
+        return FALSE;
+    first = lrg_morph_targets_find_group (self->morph, group, &count);
+    if (first < 0)
+        return FALSE;
+    n = MIN (n_weights, count);
+    if (n > 0 && memcmp (self->morph_weights + first, weights, n * sizeof (gfloat)) != 0)
+    {
+        memcpy (self->morph_weights + first, weights, n * sizeof (gfloat));
+        morph_touch (self);
+    }
+    return TRUE;
+}
+
+const gfloat *
+lrg_skinned_mesh_get_morph_weights (LrgSkinnedMesh *self,
+                                    guint          *n_weights)
+{
+    g_return_val_if_fail (LRG_IS_SKINNED_MESH (self), NULL);
+
+    if (n_weights != NULL)
+        *n_weights = self->morph != NULL ? lrg_morph_targets_get_target_count (self->morph) : 0;
+    return self->morph != NULL ? self->morph_weights : NULL;
+}
+
+const gfloat *
+lrg_skinned_mesh_get_morphed_positions (LrgSkinnedMesh *self)
+{
+    g_return_val_if_fail (LRG_IS_SKINNED_MESH (self), NULL);
+    return base_positions (self);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Skeleton helpers                                                         */
+/* ------------------------------------------------------------------------ */
+
+guint
+lrg_skinned_mesh_set_inverse_binds_from_skeleton (LrgSkinnedMesh *self,
+                                                  LrgSkeleton    *skeleton)
+{
+    guint b;
+    guint copied = 0;
+
+    g_return_val_if_fail (LRG_IS_SKINNED_MESH (self), 0);
+    g_return_val_if_fail (LRG_IS_SKELETON (skeleton), 0);
+
+    for (b = 0; b < self->n_bones; b++)
+    {
+        const gfloat *m = lrg_skeleton_get_inverse_bind_matrix (skeleton, (gint)b);
+
+        if (m == NULL)
+            continue;
+        memcpy (self->inverse_bind + 16 * b, m, 16 * sizeof (gfloat));
+        copied++;
+    }
+    return copied;
+}
+
+gboolean
+lrg_skinned_mesh_apply_skeleton (LrgSkinnedMesh *self,
+                                 LrgSkeleton    *skeleton)
+{
+    g_autofree gfloat *palette = NULL;
+
+    g_return_val_if_fail (LRG_IS_SKINNED_MESH (self), FALSE);
+    g_return_val_if_fail (LRG_IS_SKELETON (skeleton), FALSE);
+
+    palette = g_new (gfloat, 16 * self->n_bones);
+    if (!lrg_skinned_mesh_compute_palette_from_skeleton (self, skeleton, palette))
+        return FALSE;
+    lrg_skinned_mesh_set_palette (self, palette);
+    return TRUE;
+}
+
+/* ------------------------------------------------------------------------ */
 /* CPU skinning                                                             */
 /* ------------------------------------------------------------------------ */
 
@@ -588,14 +845,19 @@ lrg_skinned_mesh_skin (LrgSkinnedMesh *self,
                        gfloat         *out_positions,
                        gfloat         *out_normals)
 {
-    guint v;
+    const gfloat *positions;
+    const gfloat *normals;
+    guint         v;
 
     g_return_if_fail (LRG_IS_SKINNED_MESH (self));
     g_return_if_fail (out_positions != NULL || self->n_vertices == 0);
 
+    /* skin the morph-blended geometry when the mesh has targets */
+    positions = base_positions (self);
+    normals = base_normals (self);
     for (v = 0; v < self->n_vertices; v++)
     {
-        const gfloat *p = self->positions + 3 * v;
+        const gfloat *p = positions + 3 * v;
         gfloat        acc[3] = { 0.0f, 0.0f, 0.0f };
         gfloat        nacc[3] = { 0.0f, 0.0f, 0.0f };
         guint         k;
@@ -611,9 +873,9 @@ lrg_skinned_mesh_skin (LrgSkinnedMesh *self,
             acc[0] += w * (m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12]);
             acc[1] += w * (m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]);
             acc[2] += w * (m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14]);
-            if (self->normals != NULL)
+            if (normals != NULL)
             {
-                const gfloat *n = self->normals + 3 * v;
+                const gfloat *n = normals + 3 * v;
                 const gfloat *normal = self->normal_palette + 16 * self->bone_indices[v * 4 + k];
 
                 nacc[0] += w * (normal[0] * n[0] + normal[4] * n[1] + normal[8] * n[2]);
@@ -712,6 +974,22 @@ lrg_skinned_mesh_set_alpha_cutoff (LrgSkinnedMesh *self,
 }
 
 void
+lrg_skinned_mesh_set_material (LrgSkinnedMesh *self,
+                               LrgMaterial    *material)
+{
+    g_return_if_fail (LRG_IS_SKINNED_MESH (self));
+    g_return_if_fail (material == NULL || LRG_IS_MATERIAL (material));
+    g_set_object (&self->material, material);
+}
+
+LrgMaterial *
+lrg_skinned_mesh_get_material (LrgSkinnedMesh *self)
+{
+    g_return_val_if_fail (LRG_IS_SKINNED_MESH (self), NULL);
+    return self->material;
+}
+
+void
 lrg_skinned_mesh_set_shader (LrgSkinnedMesh *self,
                              GrlShader      *shader)
 {
@@ -772,12 +1050,14 @@ lrg_skinned_mesh_upload (LrgSkinnedMesh  *self,
     memset (&mesh, 0, sizeof mesh);
     mesh.vertexCount = (gint)self->n_vertices;
     mesh.triangleCount = (gint)(self->n_indices / 3);
-    mesh.vertices = self->gpu ? self->positions : self->scratch_positions;
-    mesh.normals = self->gpu ? self->normals : self->scratch_normals;
+    /* with morph targets the GPU skins the blended positions, which
+     * change with the weights: the buffers are dynamic then */
+    mesh.vertices = self->gpu ? (gfloat *)base_positions (self) : self->scratch_positions;
+    mesh.normals = self->gpu ? (gfloat *)base_normals (self) : self->scratch_normals;
     mesh.texcoords = self->texcoords;
     mesh.colors = self->colors;
     mesh.indices = self->indices;
-    UploadMesh (&mesh, !self->gpu);
+    UploadMesh (&mesh, !self->gpu || self->morph != NULL);
     mesh.vertices = NULL;
     mesh.normals = NULL;
     mesh.texcoords = NULL;
@@ -828,6 +1108,7 @@ lrg_skinned_mesh_upload (LrgSkinnedMesh  *self,
     self->mesh = mesh;
     self->uploaded = TRUE;
     self->palette_dirty = FALSE;
+    self->morph_gpu_dirty = FALSE;
     return TRUE;
 }
 
@@ -892,6 +1173,17 @@ lrg_skinned_mesh_draw (LrgSkinnedMesh  *self,
                               (gint)(3 * self->n_vertices * sizeof (gfloat)), 0);
         self->palette_dirty = FALSE;
     }
+    /* the GPU path re-uploads the morph blend when the weights moved */
+    if (self->gpu && self->morph_gpu_dirty)
+    {
+        const gfloat *bp = base_positions (self);
+        const gfloat *bn = base_normals (self);
+
+        UpdateMeshBuffer (self->mesh, 0, bp, (gint)(3 * self->n_vertices * sizeof (gfloat)), 0);
+        if (bn != NULL)
+            UpdateMeshBuffer (self->mesh, 2, bn, (gint)(3 * self->n_vertices * sizeof (gfloat)), 0);
+        self->morph_gpu_dirty = FALSE;
+    }
 
     memset (maps, 0, sizeof maps);
     memset (&material, 0, sizeof material);
@@ -908,6 +1200,20 @@ lrg_skinned_mesh_draw (LrgSkinnedMesh  *self,
         maps[MATERIAL_MAP_ALBEDO].texture.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
     }
     maps[MATERIAL_MAP_ALBEDO].color = self->tint;
+    if (self->material != NULL)
+    {
+        /* the material's maps on the same units lrg_material_apply()
+         * binds, its base colour times the tint */
+        Color c;
+
+        lrg_material_fill_raylib_maps (self->material, maps);
+        c = maps[MATERIAL_MAP_ALBEDO].color;
+        maps[MATERIAL_MAP_ALBEDO].color.r = (unsigned char)((c.r * self->tint.r) / 255);
+        maps[MATERIAL_MAP_ALBEDO].color.g = (unsigned char)((c.g * self->tint.g) / 255);
+        maps[MATERIAL_MAP_ALBEDO].color.b = (unsigned char)((c.b * self->tint.b) / 255);
+        maps[MATERIAL_MAP_ALBEDO].color.a = (unsigned char)((c.a * self->tint.a) / 255);
+        lrg_material_apply (self->material, material.shader.id);
+    }
     material.maps = maps;
 
     /* the uniforms DrawMesh() does not set: the palette, the skinning
@@ -926,7 +1232,7 @@ lrg_skinned_mesh_draw (LrgSkinnedMesh  *self,
     if (loc >= 0)
         rlSetUniform (loc, &use_skinning, RL_SHADER_UNIFORM_INT, 1);
     loc = self->loc_alpha_cutoff;
-    if (loc >= 0)
+    if (loc >= 0 && self->material == NULL)
         rlSetUniform (loc, &self->alpha_cutoff, RL_SHADER_UNIFORM_FLOAT, 1);
     if (self->gpu)
     {
@@ -953,7 +1259,15 @@ lrg_skinned_mesh_draw (LrgSkinnedMesh  *self,
         mat4_identity (identity);
         model = to_raylib_matrix (identity);
     }
-    DrawMesh (mesh, material, model);
+    if (self->material != NULL)
+    {
+        lrg_material_apply_state (self->material);
+        DrawMesh (mesh, material, model);
+        lrg_material_restore_state (self->material);
+        lrg_material_reset_uniforms (material.shader.id);
+    }
+    else
+        DrawMesh (mesh, material, model);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -976,4 +1290,280 @@ static void
 lrg_skinned_mesh_prewarmable_init (LrgPrewarmableInterface *iface)
 {
     iface->prewarm = lrg_skinned_mesh_prewarm;
+}
+
+/* ------------------------------------------------------------------------ */
+/* LrgMorphTargets                                                          */
+/* ------------------------------------------------------------------------ */
+
+typedef struct
+{
+    gchar  *group;
+    gchar  *name;
+    gfloat *positions;   /* 3 per vertex */
+    gfloat *normals;     /* 3 per vertex, nullable */
+    gfloat  default_weight;
+} MorphTarget;
+
+struct _LrgMorphTargets
+{
+    GObject    parent_instance;
+
+    guint      n_vertices;
+    GPtrArray *targets;  /* MorphTarget* */
+};
+
+G_DEFINE_FINAL_TYPE (LrgMorphTargets, lrg_morph_targets, G_TYPE_OBJECT)
+
+static void
+morph_target_free (gpointer data)
+{
+    MorphTarget *t = data;
+
+    g_free (t->group);
+    g_free (t->name);
+    g_free (t->positions);
+    g_free (t->normals);
+    g_free (t);
+}
+
+static void
+lrg_morph_targets_finalize (GObject *object)
+{
+    LrgMorphTargets *self = LRG_MORPH_TARGETS (object);
+
+    g_clear_pointer (&self->targets, g_ptr_array_unref);
+    G_OBJECT_CLASS (lrg_morph_targets_parent_class)->finalize (object);
+}
+
+static void
+lrg_morph_targets_class_init (LrgMorphTargetsClass *klass)
+{
+    G_OBJECT_CLASS (klass)->finalize = lrg_morph_targets_finalize;
+}
+
+static void
+lrg_morph_targets_init (LrgMorphTargets *self)
+{
+    self->targets = g_ptr_array_new_with_free_func (morph_target_free);
+}
+
+LrgMorphTargets *
+lrg_morph_targets_new (guint n_vertices)
+{
+    LrgMorphTargets *self;
+
+    if (n_vertices == 0)
+        return NULL;
+    self = g_object_new (LRG_TYPE_MORPH_TARGETS, NULL);
+    self->n_vertices = n_vertices;
+    return self;
+}
+
+guint
+lrg_morph_targets_add_target (LrgMorphTargets *self,
+                              const gchar     *group,
+                              const gchar     *name,
+                              const gfloat    *position_deltas,
+                              const gfloat    *normal_deltas,
+                              gfloat           default_weight)
+{
+    MorphTarget *t;
+    guint        in_group = 0;
+    guint        i;
+
+    g_return_val_if_fail (LRG_IS_MORPH_TARGETS (self), 0);
+    g_return_val_if_fail (position_deltas != NULL, 0);
+
+    if (group == NULL)
+        group = "";
+    for (i = 0; i < self->targets->len; i++)
+        if (g_strcmp0 (((MorphTarget *)g_ptr_array_index (self->targets, i))->group, group) == 0)
+            in_group++;
+
+    t = g_new0 (MorphTarget, 1);
+    t->group = g_strdup (group);
+    t->name = name != NULL ? g_strdup (name) : g_strdup_printf ("%s.%u", group, in_group);
+    t->positions = g_memdup2 (position_deltas, 3 * (gsize)self->n_vertices * sizeof (gfloat));
+    t->normals = normal_deltas != NULL
+                 ? g_memdup2 (normal_deltas, 3 * (gsize)self->n_vertices * sizeof (gfloat)) : NULL;
+    t->default_weight = default_weight;
+    g_ptr_array_add (self->targets, t);
+    return self->targets->len - 1;
+}
+
+guint
+lrg_morph_targets_get_vertex_count (LrgMorphTargets *self)
+{
+    g_return_val_if_fail (LRG_IS_MORPH_TARGETS (self), 0);
+    return self->n_vertices;
+}
+
+guint
+lrg_morph_targets_get_target_count (LrgMorphTargets *self)
+{
+    g_return_val_if_fail (LRG_IS_MORPH_TARGETS (self), 0);
+    return self->targets->len;
+}
+
+static MorphTarget *
+morph_target_at (LrgMorphTargets *self,
+                 guint            target)
+{
+    if (target >= self->targets->len)
+        return NULL;
+    return g_ptr_array_index (self->targets, target);
+}
+
+const gchar *
+lrg_morph_targets_get_target_name (LrgMorphTargets *self,
+                                   guint            target)
+{
+    MorphTarget *t;
+
+    g_return_val_if_fail (LRG_IS_MORPH_TARGETS (self), NULL);
+    t = morph_target_at (self, target);
+    return t != NULL ? t->name : NULL;
+}
+
+const gchar *
+lrg_morph_targets_get_target_group (LrgMorphTargets *self,
+                                    guint            target)
+{
+    MorphTarget *t;
+
+    g_return_val_if_fail (LRG_IS_MORPH_TARGETS (self), NULL);
+    t = morph_target_at (self, target);
+    return t != NULL ? t->group : NULL;
+}
+
+gint
+lrg_morph_targets_find_target (LrgMorphTargets *self,
+                               const gchar     *name)
+{
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_MORPH_TARGETS (self), -1);
+    g_return_val_if_fail (name != NULL, -1);
+
+    for (i = 0; i < self->targets->len; i++)
+        if (g_strcmp0 (((MorphTarget *)g_ptr_array_index (self->targets, i))->name, name) == 0)
+            return (gint)i;
+    return -1;
+}
+
+gint
+lrg_morph_targets_find_group (LrgMorphTargets *self,
+                              const gchar     *group,
+                              guint           *out_count)
+{
+    guint i;
+    guint j;
+
+    g_return_val_if_fail (LRG_IS_MORPH_TARGETS (self), -1);
+    g_return_val_if_fail (group != NULL, -1);
+
+    if (out_count != NULL)
+        *out_count = 0;
+    for (i = 0; i < self->targets->len; i++)
+    {
+        if (g_strcmp0 (((MorphTarget *)g_ptr_array_index (self->targets, i))->group, group) != 0)
+            continue;
+        /* the contiguous run starting here */
+        for (j = i; j < self->targets->len &&
+             g_strcmp0 (((MorphTarget *)g_ptr_array_index (self->targets, j))->group, group) == 0; j++)
+            ;
+        if (out_count != NULL)
+            *out_count = j - i;
+        return (gint)i;
+    }
+    return -1;
+}
+
+gfloat
+lrg_morph_targets_get_default_weight (LrgMorphTargets *self,
+                                      guint            target)
+{
+    MorphTarget *t;
+
+    g_return_val_if_fail (LRG_IS_MORPH_TARGETS (self), 0.0f);
+    t = morph_target_at (self, target);
+    return t != NULL ? t->default_weight : 0.0f;
+}
+
+const gfloat *
+lrg_morph_targets_get_position_deltas (LrgMorphTargets *self,
+                                       guint            target)
+{
+    MorphTarget *t;
+
+    g_return_val_if_fail (LRG_IS_MORPH_TARGETS (self), NULL);
+    t = morph_target_at (self, target);
+    return t != NULL ? t->positions : NULL;
+}
+
+const gfloat *
+lrg_morph_targets_get_normal_deltas (LrgMorphTargets *self,
+                                     guint            target)
+{
+    MorphTarget *t;
+
+    g_return_val_if_fail (LRG_IS_MORPH_TARGETS (self), NULL);
+    t = morph_target_at (self, target);
+    return t != NULL ? t->normals : NULL;
+}
+
+void
+lrg_morph_targets_apply (LrgMorphTargets *self,
+                         const gfloat    *weights,
+                         guint            n_weights,
+                         const gfloat    *base_positions_in,
+                         const gfloat    *base_normals_in,
+                         gfloat          *out_positions,
+                         gfloat          *out_normals)
+{
+    gsize n3;
+    guint i;
+    gsize k;
+
+    g_return_if_fail (LRG_IS_MORPH_TARGETS (self));
+    g_return_if_fail (base_positions_in != NULL && out_positions != NULL);
+    g_return_if_fail (weights != NULL || n_weights == 0);
+
+    n3 = 3 * (gsize)self->n_vertices;
+    memmove (out_positions, base_positions_in, n3 * sizeof (gfloat));
+    if (base_normals_in != NULL && out_normals != NULL)
+        memmove (out_normals, base_normals_in, n3 * sizeof (gfloat));
+
+    /* accumulate every target with a non-zero weight */
+    for (i = 0; i < self->targets->len && i < n_weights; i++)
+    {
+        MorphTarget *t = g_ptr_array_index (self->targets, i);
+        gfloat       w = weights[i];
+
+        if (w == 0.0f || !isfinite (w))
+            continue;
+        for (k = 0; k < n3; k++)
+            out_positions[k] += w * t->positions[k];
+        if (t->normals != NULL && base_normals_in != NULL && out_normals != NULL)
+            for (k = 0; k < n3; k++)
+                out_normals[k] += w * t->normals[k];
+    }
+
+    /* blended normals are no longer unit length */
+    if (base_normals_in != NULL && out_normals != NULL)
+    {
+        for (k = 0; k < n3; k += 3)
+        {
+            gfloat len = sqrtf (out_normals[k] * out_normals[k] + out_normals[k + 1] * out_normals[k + 1] +
+                                out_normals[k + 2] * out_normals[k + 2]);
+
+            if (len > 1e-8f)
+            {
+                out_normals[k] /= len;
+                out_normals[k + 1] /= len;
+                out_normals[k + 2] /= len;
+            }
+        }
+    }
 }

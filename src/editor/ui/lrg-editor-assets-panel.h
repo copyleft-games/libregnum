@@ -281,4 +281,80 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_editor_assets_panel_show_import_settings (LrgEditorAssetsPanel *self,
                                                        const gchar          *path);
 
+/**
+ * lrg_editor_assets_panel_create_variant:
+ * @self: an #LrgEditorAssetsPanel
+ * @path: a `.rprefab` or `.rmat` file (absolute or project-relative)
+ * @error: return location for a #GError
+ *
+ * The entry menu's Create Variant: a prefab gets a variant through
+ * lrg_editor_create_prefab_variant() (undoable), a material an instance
+ * file through lrg_editor_material_editor_create_variant(); both are
+ * written next to @path as `<stem>_variant` (numbered when taken).
+ *
+ * Returns: (transfer full) (nullable): the new file's path, or %NULL
+ *   with @error set
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_editor_assets_panel_create_variant (LrgEditorAssetsPanel  *self,
+                                                const gchar           *path,
+                                                GError               **error);
+
+/**
+ * lrg_editor_assets_panel_preview_clips:
+ * @self: an #LrgEditorAssetsPanel
+ * @path: a glTF model (`.glb` / `.gltf`), absolute or project-relative
+ * @clip: (nullable): the animation to play first, %NULL for the first one
+ *
+ * Opens the Animations dialog of @path (the entry menu's "Preview
+ * Animations..."): the model on a turntable playing a clip, a clip list,
+ * a scrub bar, a track summary and one slider per morph target.
+ *
+ * Returns: %TRUE if the dialog opened (the model loaded)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_assets_panel_preview_clips (LrgEditorAssetsPanel *self,
+                                                const gchar          *path,
+                                                const gchar          *clip);
+
+/**
+ * lrg_editor_assets_panel_get_clip_preview_model:
+ * @self: an #LrgEditorAssetsPanel
+ *
+ * Returns: (nullable): the absolute path of the model the open Animations
+ *   dialog shows, %NULL when it is closed
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_assets_panel_get_clip_preview_model (LrgEditorAssetsPanel *self);
+
+/**
+ * lrg_editor_assets_panel_create_asset:
+ * @path: (type filename): the new file (absolute; its folder is created)
+ * @kind: what to write: a document format nick
+ *   (lrg_editor_document_format_to_string(): "bt", "fsm", "particles",
+ *   "weather", "mixer", "tileset", "sprite", "water", "nav-settings",
+ *   "material", ...) or "terrain"
+ * @image: (nullable) (type filename): for "sprite", an image to slice:
+ *   the .rsprite references it (relative to @path when it lies below
+ *   @path's folder) and gets one frame per opaque island of it
+ *   (lrg_sprite_sheet_slice_alpha(), bottom-centre pivots)
+ * @error: return location for a #GError
+ *
+ * The background menu's New entries of the gameplay and effect formats
+ * (and the `asset.new` IPC method): a document format writes the
+ * smallest file its engine loader accepts (lrg_editor_document_new());
+ * "terrain" writes a flat 4x4-chunk #LrgTerrainAsset (64 cells, 32 units
+ * per chunk) with its sidecars.
+ *
+ * Returns: %TRUE on success; %G_IO_ERROR_EXISTS when @path exists,
+ *   %G_IO_ERROR_INVALID_ARGUMENT for an unknown @kind
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_assets_panel_create_asset (const gchar  *path,
+                                               const gchar  *kind,
+                                               const gchar  *image,
+                                               GError      **error);
+
 G_END_DECLS

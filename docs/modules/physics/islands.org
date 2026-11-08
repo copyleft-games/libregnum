@@ -1,0 +1,62 @@
+#+title: Islands - LrgIslandBuilder
+#+description: The deterministic union-find that groups touching and constrained bodies into islands so LrgDynamicsWorld can sleep and wake them together.
+
+* Islands - LrgIslandBuilder
+:PROPERTIES:
+:CUSTOM_ID: islands
+:END:
+=LrgIslandBuilder= (=src/physics/lrg-island.h=, 0.9) groups elements (body slots) linked by contacts or constraints into *islands*. [[file:dynamics.org][LrgDynamicsWorld]] rebuilds its islands every substep over the awake dynamic bodies: a manifold or an enabled constraint between two of them links them; static and kinematic bodies never link (a box on the ground and a box on another part of the ground are separate islands). A whole island goes to sleep when every body in it has been quiet long enough, and wakes as a unit. Islands are independent for the solver, which is what a later parallel solve would split on (Jolt's =IslandBuilder=, MIT, Copyright 2021 Jorrit Rouwe, single-threaded here).
+
+It is a public type so tools and tests can use it on their own (any "which things are connected?" question: connected rooms, linked switches).
+
+** Algorithm
+:PROPERTIES:
+:CUSTOM_ID: algorithm
+:END:
+Union-find with path halving. A link always hangs the larger root under the smaller one, so an island's representative is its smallest element and the result depends only on the set of links, never on the order they were added. =lrg_island_builder_finish()= numbers the islands 0 .. n-1 in order of their smallest active element and groups the members with a counting sort, in ascending order. Storage is reused between rounds (no allocation per substep once warm).
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | What it does |
+|----------+--------------|
+| =lrg_island_builder_new()= | an empty builder |
+| =lrg_island_builder_reset()= | start a round with n elements, each alone |
+| =lrg_island_builder_link()= | put two elements in one island (out-of-range elements, e.g. =G_MAXUINT= for a static body, are ignored) |
+| =lrg_island_builder_find()= | the representative of an element's island |
+| =lrg_island_builder_finish()= | number the islands; an optional =active= array excludes elements (they get no island) |
+| =lrg_island_builder_get_island_count()= | islands of the last finish |
+| =lrg_island_builder_get_island_of()= | an element's island index, or =G_MAXUINT= |
+| =lrg_island_builder_get_island()= | the members of an island (ascending, owned by the builder) |
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src c
+g_autoptr(LrgIslandBuilder) b = lrg_island_builder_new ();
+const guint *members;
+guint n;
+
+lrg_island_builder_reset (b, 6);
+lrg_island_builder_link (b, 4, 1);
+lrg_island_builder_link (b, 1, 3);
+lrg_island_builder_link (b, 5, 2);
+g_assert_cmpuint (lrg_island_builder_finish (b, NULL, 0), ==, 3);   /* {0} {1,3,4} {2,5} */
+members = lrg_island_builder_get_island (b, lrg_island_builder_get_island_of (b, 4), &n);
+/* members = { 1, 3, 4 }, n = 3 */
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Inactive elements passed to =lrg_island_builder_finish()= get no island but still carry the links made through them (two active elements linked only through an inactive one share an island): do not link through bodies that should separate islands (the world never links static or sleeping bodies).
+- Member arrays are invalidated by the next reset.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:dynamics.org#sleeping][Sleeping in LrgDynamicsWorld]], [[file:contact-solver.org][Contact solver]]

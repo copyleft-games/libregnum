@@ -1,0 +1,13 @@
+# metal.rmat - libregnum pbr-showcase
+#
+# Copyright 2026 Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The parent of the metal row: a polished gold. Each sphere of the row is
+# an instance (parent: metal.rmat) overriding only the roughness.
+version: 1
+name: metal
+shading_model: lit
+base_color: [1.0, 0.78, 0.34, 1.0]
+metallic: 1.0
+roughness: 0.5

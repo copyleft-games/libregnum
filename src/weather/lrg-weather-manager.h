@@ -256,6 +256,35 @@ LRG_AVAILABLE_IN_ALL
 void lrg_weather_manager_render (LrgWeatherManager *self);
 
 /**
+ * lrg_weather_manager_set_render_size:
+ * @self: an #LrgWeatherManager
+ * @width: render-target width in pixels, or 0 to unset
+ * @height: render-target height in pixels, or 0 to unset
+ *
+ * The framebuffer lrg_weather_manager_render() covers. Stored on every
+ * effect of the weathers drawn this frame, before they render, so a
+ * headless caller can read it back. Zero on either axis unsets it and
+ * effects fall back to the live render target.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_weather_manager_set_render_size (LrgWeatherManager *self,
+                                          gint               width,
+                                          gint               height);
+
+/**
+ * lrg_weather_manager_get_render_size:
+ * @self: an #LrgWeatherManager
+ * @width: (out) (nullable): stored width, 0 when unset
+ * @height: (out) (nullable): stored height, 0 when unset
+ *
+ * Reads the size from lrg_weather_manager_set_render_size().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_weather_manager_get_render_size (LrgWeatherManager *self,
+                                          gint              *width,
+                                          gint              *height);
+
+/**
  * lrg_weather_manager_render_world:
  * @self: an #LrgWeatherManager
  * @camera_position: the eye of the active 3D camera

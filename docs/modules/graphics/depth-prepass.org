@@ -1,0 +1,225 @@
+#+title: LrgDepthPrepass
+#+description: Offscreen depth and view-space normal target for screen-space effects
+#+authors: Zach Podbielniak
+#+categories: graphics rendering
+#+created: 2026-11-07
+#+version: 0.9.0
+
+* LrgDepthPrepass - Depth and Normal Prepass
+:PROPERTIES:
+:CUSTOM_ID: lrgdepthprepass
+:END:
+
+=LrgDepthPrepass= is an offscreen render target with a sampleable depth texture and an RGBA8 colour texture that holds view-space normals. Once per frame you draw the frame's opaque geometry into it from the main camera; screen-space effects then read it: [[file:ssao.org][LrgSsao]] rebuilds view-space positions from the depth to compute ambient occlusion, and [[file:../lighting/volumetric-fog.org][volumetric fog]] marches against it. The prepass records the camera's projection and view matrices at =begin()=, so consumers need nothing but the prepass object.
+
+Everything except the GPU work is headless: you can create, resize and configure a prepass without a window; GPU objects are made lazily at the first =lrg_depth_prepass_begin()=.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgDepthPrepass= - *Final GObject Class*, =LRG_TYPE_DEPTH_PREPASS=, GIR =Libregnum.DepthPrepass=
+- =LrgDepthPrepassDrawFunc= - callback =void (*) (LrgDepthPrepass *prepass, GrlShader *shader, gpointer user_data)= used by =lrg_depth_prepass_record()=
+- *Header* - =graphics/lrg-depth-prepass.h= (through =<libregnum.h>=)
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+
+*** What a prepass is
+:PROPERTIES:
+:CUSTOM_ID: concepts-prepass
+:END:
+A depth prepass draws the opaque scene once with a trivial shader to fill a depth buffer before (or instead of) the expensive lit pass. In libregnum the forward lit pass keeps its own depth buffer; the prepass exists to give screen-space passes a depth (and normal) image of the frame that the lit pass can sample through the hooks of the [[file:light-set.org::#shader-contract-090][light-set shader contract]] - for example =lrg_ssao()=.
+
+*** Depth texture
+:PROPERTIES:
+:CUSTOM_ID: concepts-depth
+:END:
+The depth attachment is a real texture (=rlLoadTextureDepth (w, h, false)=), point sampled and clamped. It holds window depth in 0 .. 1 (1 = far plane, the clear value). =lrg_depth_prepass_linearize_depth()= turns a value back into the distance in front of the camera with the recorded projection (perspective and orthographic both work). In GLSL the usual reconstruction is:
+
+#+begin_src glsl
+vec3 view_pos (vec2 uv)   /* uv = gl_FragCoord.xy / prepass size */
+{
+    float d = texture (depthTex, uv).r;
+    vec4  v = invProjection * vec4 (uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
+    return v.xyz / v.w;
+}
+#+end_src
+
+*** Normal texture
+:PROPERTIES:
+:CUSTOM_ID: concepts-normals
+:END:
+The colour attachment is RGBA8 with the view-space normal encoded as =n * 0.5 + 0.5= (cleared to (0.5, 0.5, 1), a normal facing the viewer). Only geometry drawn with the prepass shader writes normals: =lrg_depth_prepass_get_shader()= returns it, =lrg_depth_prepass_draw_model()= draws a model with it, and the record callback receives it. Geometry drawn with any other shader still writes correct depth but garbage "normals"; in that case call =lrg_depth_prepass_set_normals (prepass, FALSE)= so consumers ignore the texture (SSAO then rebuilds normals from depth).
+
+*** Prepass shader
+:PROPERTIES:
+:CUSTOM_ID: concepts-shader
+:END:
+A GLSL 330 shader with raylib's default attribute and matrix names (=vertexPosition=, =vertexTexCoord=, =vertexNormal=, =mvp=, =matView=, =matNormal=), so =DrawMesh()= feeds it as it feeds any material. It writes =normalize (mat3 (matView) * matNormal * n)=, flipped on back faces, and discards fragments whose =texture0= alpha times =colDiffuse= alpha is below the alpha cutoff (foliage, fences).
+
+*** Coordinate conventions
+:PROPERTIES:
+:CUSTOM_ID: concepts-coords
+:END:
+Texel (x, y) of both textures is the fragment at =gl_FragCoord= (x, y) of the prepass target, GL convention (row 0 at the bottom). A lit pass drawn from the same camera into a target of the same size covers the same texels at the same =gl_FragCoord=, which is what =lrg_ssao()= relies on.
+
+** Parameters
+:PROPERTIES:
+:CUSTOM_ID: parameters
+:END:
+
+| Property       | Type    | Default | Visual effect                                                                                       |
+|----------------+---------+---------+-----------------------------------------------------------------------------------------------------|
+| =width=        | int     | (ctor)  | target width; match the lit pass's target (half of it is enough for half-resolution consumers)     |
+| =height=       | int     | (ctor)  | target height                                                                                       |
+| =normals=      | boolean | TRUE    | consumers read the normal texture; off when the scene is not drawn with the prepass shader          |
+| =alpha-cutoff= | float   | 0       | alpha test of the prepass shader: cut-out leaves stop occluding where their texture is transparent  |
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+
+#+begin_src C
+LrgDepthPrepass * lrg_depth_prepass_new                (gint width, gint height);
+void              lrg_depth_prepass_resize             (LrgDepthPrepass *self, gint width, gint height);
+gint              lrg_depth_prepass_get_width          (LrgDepthPrepass *self);
+gint              lrg_depth_prepass_get_height         (LrgDepthPrepass *self);
+void              lrg_depth_prepass_set_normals        (LrgDepthPrepass *self, gboolean normals);
+gboolean          lrg_depth_prepass_get_normals        (LrgDepthPrepass *self);
+void              lrg_depth_prepass_set_alpha_cutoff   (LrgDepthPrepass *self, gfloat cutoff);
+gfloat            lrg_depth_prepass_get_alpha_cutoff   (LrgDepthPrepass *self);
+GrlShader *       lrg_depth_prepass_get_shader         (LrgDepthPrepass *self);
+gboolean          lrg_depth_prepass_begin              (LrgDepthPrepass *self, LrgCamera *camera);
+void              lrg_depth_prepass_end                (LrgDepthPrepass *self);
+gboolean          lrg_depth_prepass_record             (LrgDepthPrepass *self, LrgCamera *camera,
+                                                        LrgDepthPrepassDrawFunc func, gpointer user_data);
+void              lrg_depth_prepass_draw_model         (LrgDepthPrepass *self, GrlModel *model,
+                                                        const gfloat *transform);
+gboolean          lrg_depth_prepass_is_valid           (LrgDepthPrepass *self);
+guint             lrg_depth_prepass_get_depth_texture_id  (LrgDepthPrepass *self);
+guint             lrg_depth_prepass_get_normal_texture_id (LrgDepthPrepass *self);
+void              lrg_depth_prepass_get_projection     (LrgDepthPrepass *self, gfloat *out_matrix);
+void              lrg_depth_prepass_get_view           (LrgDepthPrepass *self, gfloat *out_matrix);
+gfloat            lrg_depth_prepass_linearize_depth    (LrgDepthPrepass *self, gfloat depth);
+void              lrg_depth_prepass_release            (LrgDepthPrepass *self);
+#+end_src
+
+| Function | Description |
+|----------+-------------|
+| =lrg_depth_prepass_new()= | a prepass of the given size (>= 1); no GL needed |
+| =lrg_depth_prepass_resize()= | new size; textures are remade at the next =begin()=, =is_valid()= is FALSE until then |
+| =lrg_depth_prepass_get_width()= / =lrg_depth_prepass_get_height()= | the requested size |
+| =lrg_depth_prepass_set_normals()= / =lrg_depth_prepass_get_normals()= | whether the normal texture is meaningful for consumers |
+| =lrg_depth_prepass_set_alpha_cutoff()= / =lrg_depth_prepass_get_alpha_cutoff()= | the alpha test (0 .. 1, 0 = off) |
+| =lrg_depth_prepass_get_shader()= | the prepass shader (transfer none), NULL without GL 3.3 |
+| =lrg_depth_prepass_begin()= | binds the target, clears, begins the camera with =lrg_camera_begin()= and records its matrices; FALSE without a context (then do not call =end()=) |
+| =lrg_depth_prepass_end()= | ends the camera and the target; the prepass becomes valid |
+| =lrg_depth_prepass_record()= | =begin()=, the callback, =end()= |
+| =lrg_depth_prepass_draw_model()= | draws each mesh of a #GrlModel with a copy of its material whose shader is the prepass shader; =transform= (column-major, nullable) applies after the model's own transform |
+| =lrg_depth_prepass_is_valid()= | a recording finished at the current size |
+| =lrg_depth_prepass_get_depth_texture_id()= / =lrg_depth_prepass_get_normal_texture_id()= | the GL texture ids (0 before the first =begin()=) |
+| =lrg_depth_prepass_get_projection()= / =lrg_depth_prepass_get_view()= | the recorded matrices (column-major float[16]; identity before any recording) |
+| =lrg_depth_prepass_linearize_depth()= | depth value -> view distance |
+| =lrg_depth_prepass_release()= | frees the GPU objects (call before =CloseWindow()=) |
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+
+*** Record a prepass with a callback
+:PROPERTIES:
+:CUSTOM_ID: example-record
+:END:
+#+begin_src C
+typedef struct
+{
+	GrlModel *ground;
+	GrlModel *crate;
+	gfloat    crate_matrix[16];
+} Scene;
+
+static void
+draw_opaque (LrgDepthPrepass *prepass,
+             GrlShader       *shader,
+             gpointer         user_data)
+{
+	Scene *scene = user_data;
+
+	(void) shader;   /* draw_model() uses it for us */
+	lrg_depth_prepass_draw_model (prepass, scene->ground, NULL);
+	lrg_depth_prepass_draw_model (prepass, scene->crate, scene->crate_matrix);
+}
+
+/* once */
+g_autoptr(LrgDepthPrepass) prepass = lrg_depth_prepass_new (GetScreenWidth (), GetScreenHeight ());
+
+/* every frame, before BeginDrawing()'s main pass and outside any texture mode */
+if (IsWindowResized ())
+	lrg_depth_prepass_resize (prepass, GetScreenWidth (), GetScreenHeight ());
+lrg_depth_prepass_record (prepass, LRG_CAMERA (camera), draw_opaque, &scene);
+
+/* ... and before CloseWindow () */
+lrg_depth_prepass_release (prepass);
+#+end_src
+
+*** Depth only, geometry drawn with its own shaders
+:PROPERTIES:
+:CUSTOM_ID: example-depth-only
+:END:
+#+begin_src C
+/* The static batch draws with the light set's shader: depth is right,
+ * the normal texture is not, so tell consumers to ignore it. */
+lrg_depth_prepass_set_normals (prepass, FALSE);
+if (lrg_depth_prepass_begin (prepass, LRG_CAMERA (camera)))
+{
+	lrg_static_batch_draw (batch, LRG_STATIC_BATCH_ALL_LAYERS);
+	lrg_depth_prepass_end (prepass);
+}
+#+end_src
+
+*** Read a distance back
+:PROPERTIES:
+:CUSTOM_ID: example-linearize
+:END:
+#+begin_src C
+gfloat distance = lrg_depth_prepass_linearize_depth (prepass, 0.995f);   /* metres in front */
+#+end_src
+
+** Performance notes
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- The prepass costs one extra geometry pass with a cheap fragment shader: vertex work doubles for the opaque scene. Skip far or tiny objects, and draw only what consumers need (SSAO only cares about what is within a few radii of visible surfaces).
+- Half resolution is usually enough: SSAO at half resolution reads a full-size prepass at half the density; a half-size prepass (=lrg_depth_prepass_new (w / 2, h / 2)=) halves the fill cost too, at the price of thin features flickering.
+- =draw_model()= copies each =Material= struct per mesh (no allocation); textures stay bound per mesh as raylib does.
+- Resizing frees and remakes the textures at the next =begin()=; do it only when the window size changes.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *No nesting.* =begin()= uses =BeginTextureMode()=; raylib render targets do not nest, so record the prepass before the main pass or any other offscreen pass, never inside one.
+- *Same camera, same size.* Consumers map =gl_FragCoord= to prepass texels. Draw the lit pass from the camera you recorded with, into a target of the prepass size (or tell =lrg_ssao_set_viewport()= where the lit pass draws).
+- *Normals need the prepass shader.* Geometry drawn with another shader leaves the cleared normal (facing the viewer) or that shader's colour output in the normal texture; turn =normals= off then.
+- *Immediate-mode shapes* (=DrawCube()= and the rlgl batch) do not set =matNormal=/=matView= per object; their depth is right but their normals are not.
+- *Release before =CloseWindow()=.* Finalizing after the context is gone skips the GL frees (the driver drops them with the context), but releasing first is the clean path.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The 0.9.0 wave 2a ships the prepass as an engine API only. Wave 2b records it inside [[file:../world3d/renderer.org][LrgWorld3DRenderer]] (and therefore in the editor viewport and play-in-editor) when SSAO or volumetric fog is on, and adds a "Depth" and "Normals" debug view mode to the viewport. Until then, use it from game code as in the examples above.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:ssao.org][LrgSsao]] - the main consumer
+- [[file:light-set.org::#shader-contract-090][Light-set shader contract]] - how screen-space results reach the lit shader
+- [[file:../lighting/volumetric-fog.org][Volumetric fog]] - marches against the depth texture
+- [[file:camera-zoom.org][Cameras]] - =lrg_camera_begin()= / =lrg_camera_end()=

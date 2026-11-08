@@ -12,6 +12,25 @@ The World3D module provides comprehensive 3D level management with spatial optim
 :PROPERTIES:
 :CUSTOM_ID: key-components
 :END:
+*** 3D runtime (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: runtime-types
+:END:
+- *LrgEntity3D* - Runtime scene entity: GUID, name, tags, flags, quaternion TRS with authored Euler, hierarchy, cached world matrices, ordered components ([[file:entity3d.org][page]])
+- *LrgWorld3D* - Runtime world: root entity, GUID map, frame phases (fixed/update/late), fixed-step accumulator, render lists, light/camera registries, audio listener, octree-backed queries ([[file:world3d.org][page]])
+- *LrgRenderList* (boxed) / *LrgRenderItem* - The per-camera render contract between components and renderers ([[file:world3d.org::#render-list-contract][contract]])
+- *LrgLight3DDesc* (boxed) - Renderer-facing light description ([[file:world3d.org::#lights][lights]])
+
+#+begin_example
+ LrgWorld3D
+ └── root LrgEntity3D
+     ├── LrgEntity3D ──► [LrgComponent, LrgComponent, ...]
+     │   └── LrgEntity3D ──► [...]
+     └── LrgEntity3D ──► [...]
+
+ frame:  fixed_update* -> update -> late_update -> collect_render(camera) -> LrgRenderList -> renderer
+#+end_example
+
 *** Core Types
 :PROPERTIES:
 :CUSTOM_ID: core-types
@@ -139,6 +158,8 @@ g_autoptr(GPtrArray) visible = lrg_portal_system_get_visible_sectors(portal_sys)
 :PROPERTIES:
 :CUSTOM_ID: module-documentation
 :END:
+- [[file:entity3d.org][LrgEntity3D]] - Runtime 3D entity (0.9.0)
+- [[file:world3d.org][LrgWorld3D]] - Runtime 3D world, phases, render lists, lights and cameras (0.9.0)
 - [[file:level3d.org][LrgLevel3D]] - 3D level container with spatial indexing
 - [[file:portal-system.org][LrgPortalSystem]] - Portal-based visibility system
 - [[file:octree.org][LrgOctree]] - Octree spatial data structure
@@ -231,11 +252,15 @@ lrg_level3d_rebuild_octree(level);
 :END:
 #+begin_example
 GObject
+  LrgEntity3D         (derivable)
+  LrgWorld3D          (final)
   LrgLevel3D          (final)
   LrgOctree           (final)
   LrgPortalSystem     (final)
 
 Boxed Types
+  LrgRenderList       (refcounted)
+  LrgLight3DDesc      (value type)
   LrgBoundingBox3D    (immutable value type)
   LrgSpawnPoint3D     (immutable value type)
   LrgTrigger3D        (immutable value type)
@@ -250,3 +275,6 @@ Boxed Types
 - [[../../reference/glossary.md][Glossary]] - Terminology and concepts
 - [[../../reference/signals.md][Signals]] - Level and system signals
 - [[../../reference/error-codes.md][Error Codes]] - World3D error domains
+- [[file:components.org][3D Components]] - mesh renderer, light, camera, audio source/listener, billboard, tilemap, spawn, trigger and skinned model components
+- [[file:particle-component.org][LrgParticleComponent]] - plays a =.rparticles= effect on an entity through the renderer's transparent pass (0.9.0)
+- *LrgWorld3DRenderer* - The shared 3D renderer (lights, shadow passes, sky, opaque/cutout/transparent, static batching, post, headless recording); games and the editor viewport draw through it ([[file:renderer.org][page]])

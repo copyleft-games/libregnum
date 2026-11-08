@@ -1,0 +1,4 @@
+version: 1
+parent: red_instance.rmat
+emission_color: [0.0, 1.0, 0.0]
+emission_strength: 2.0

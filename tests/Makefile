@@ -70,6 +70,56 @@ TEST_SOURCES := \
 	test-atlas-packing.c \
 	test-registry.c \
 	test-data-loader.c \
+	test-math3d.c \
+	test-debug-draw.c \
+	test-data-loader-composite.c \
+	test-format-writers.c \
+	test-render-layers.c \
+	test-level-runtime.c \
+	test-entity3d.c \
+	test-world3d-renderer.c \
+	test-world3d-components.c \
+	test-level-instantiate-3d.c \
+	test-material.c \
+	test-shader-asset.c \
+	test-shader-graph.c \
+	test-pbr.c \
+	test-environment.c \
+	test-reflection-probe.c \
+	test-ssao.c \
+	test-decal.c \
+	test-mesh-simplify.c \
+	test-lod.c \
+	test-post-stack.c \
+	test-render-pipeline.c \
+	test-level-look.c \
+	test-shape.c \
+	test-broadphase.c \
+	test-physics-solver.c \
+	test-joint.c \
+	test-ragdoll.c \
+	test-physics-bodies.c \
+	test-cloth.c \
+	test-fracture.c \
+	test-nav-bake.c \
+	test-nav-agent.c \
+	test-bt-asset.c \
+	test-logic-machine.c \
+	test-particle-asset.c \
+	test-gpu-particles.c \
+	test-weather-asset.c \
+	test-terrain-asset.c \
+	test-mixer-asset.c \
+	test-rule-tile.c \
+	test-sprite-animation.c \
+	test-lightmap-bake.c \
+	test-probe-grid.c \
+	test-gltf-animation.c \
+	test-anim-graph.c \
+	test-sequence.c \
+	test-skeleton2d.c \
+	test-runtime-prefab.c \
+	test-runtime-import-settings.c \
 	test-asset-dependencies.c \
 	test-asset-manager.c \
 	test-graphics.c \
@@ -108,6 +158,17 @@ TEST_SOURCES := \
 	test-save.c \
 	test-save-migrator.c \
 	test-script-scheduler.c \
+	test-script-reload.c \
+	test-script-debugger.c \
+	test-dap-server.c \
+	test-vscript.c \
+	test-pack-writer.c \
+	test-workflows.c \
+	test-profiler-capture.c \
+	test-frame-capture.c \
+	test-memory-profiler.c \
+	test-net-stats.c \
+	test-ui-dock-overflow.c \
 	test-binding-catalog.c \
 	test-action-bar.c \
 	test-dialog.c \
@@ -251,6 +312,26 @@ TEST_SOURCES := \
 	test-editor-app-hierarchy.c \
 	test-editor-app-inspector.c \
 	test-editor-app-viewport.c \
+	test-editor-app-material.c \
+	test-editor-app-environment.c \
+	test-editor-app-bake.c \
+	test-editor-app-physics.c \
+	test-editor-app-physasset.c \
+	test-editor-app-nav.c \
+	test-editor-app-ai.c \
+	test-editor-app-vfx.c \
+	test-editor-app-terrain.c \
+	test-editor-app-audio.c \
+	test-editor-app-2d.c \
+	test-lsp-client.c \
+	test-editor-app-debug.c \
+	test-editor-app-vscript.c \
+	test-editor-app-toolscript.c \
+	test-editor-app-frame.c \
+	test-editor-app-memnet.c \
+	test-editor-app-anim.c \
+	test-editor-app-sequencer.c \
+	test-editor-app-rig.c \
 	test-editor-app-assets.c \
 	test-editor-app-panels.c \
 	test-editor-app-dialogs.c \

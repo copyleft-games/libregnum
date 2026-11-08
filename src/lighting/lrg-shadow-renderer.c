@@ -19,7 +19,9 @@
  * the cascades in a 2 x 2 (or 1 x 2, 1 x 1) layout and stores the
  * window depth of the light's orthographic view; the point atlas holds
  * three by two faces per light, one light above the other, and stores
- * the distance to the light over its radius. Face culling is off while
+ * the distance to the light over its radius. The spot atlas holds one
+ * perspective tile per shadowed spot light in a row and stores the same
+ * distance over radius (the caster's mode 1). Face culling is off while
  * casters draw, so walls cast from both sides (Daggerfall's models are
  * one sided). The lookups are LRG_SHADOW_GLSL in the light set's shader.
  */
@@ -35,15 +37,18 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "lighting/lrg-shadow-renderer.h"
+#include "graphics/lrg-camera.h"
 #include "lighting/lrg-shadow-renderer-private.h"
 #include "graphics/lrg-light-set-private.h"
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-lod-group.h"
 
 /* how far behind the fitted sphere the light camera starts, so tall
  * casters outside the view still throw their shadow into it */
 #define CASTER_REACH_FACTOR (2.0f)
 #define CASTER_REACH_MIN    (60.0f)
-#define MAX_PASSES          (LRG_SHADOW_MAX_CASCADES + 6 * LRG_SHADOW_MAX_POINT_LIGHTS)
+#define MAX_PASSES          (LRG_SHADOW_MAX_CASCADES + 6 * LRG_SHADOW_MAX_POINT_LIGHTS \
+                             + LRG_SHADOW_MAX_SPOT_LIGHTS)
 
 typedef struct
 {
@@ -67,6 +72,9 @@ struct _LrgShadowRenderer
     guint    point_resolution;
     guint    max_points;
     gfloat   point_distance;
+    guint    spot_resolution;
+    guint    max_spots;
+    gfloat   spot_distance;
     gfloat   depth_bias;
     gfloat   normal_offset;
     guint    filter;
@@ -85,6 +93,14 @@ struct _LrgShadowRenderer
     guint    point_ids[LRG_SHADOW_MAX_POINT_LIGHTS];
     gfloat   point_pos[LRG_SHADOW_MAX_POINT_LIGHTS][3];
     gfloat   point_radius[LRG_SHADOW_MAX_POINT_LIGHTS];
+    gfloat   point_bias[LRG_SHADOW_MAX_POINT_LIGHTS];
+    guint    n_spots;
+    guint    spot_ids[LRG_SHADOW_MAX_SPOT_LIGHTS];
+    gfloat   spot_pos[LRG_SHADOW_MAX_SPOT_LIGHTS][3];
+    gfloat   spot_dir[LRG_SHADOW_MAX_SPOT_LIGHTS][3];
+    gfloat   spot_outer[LRG_SHADOW_MAX_SPOT_LIGHTS];   /* degrees */
+    gfloat   spot_radius[LRG_SHADOW_MAX_SPOT_LIGHTS];
+    gfloat   spot_bias[LRG_SHADOW_MAX_SPOT_LIGHTS];
     guint64  rendered;      /* bit per pass rendered since the update */
 
     /* the pass cache: what each pass's tile holds and how old it is */
@@ -98,6 +114,7 @@ struct _LrgShadowRenderer
     /* GPU */
     Atlas      sun;
     Atlas      point;
+    Atlas      spot;
     GrlShader *caster;
     gboolean   caster_tried;
     gint       loc_mode;
@@ -107,6 +124,11 @@ struct _LrgShadowRenderer
     gint       pass_mode;       /* 0 cascade, 1 cube face */
     gfloat     pass_light[4];   /* cube: position, radius */
     gfloat     pass_dir[3];     /* cascade: the way the light travels */
+
+    /* render layers: which layers cast, and the active mask a pass
+     * replaced (restored by end_pass) */
+    guint32    caster_mask;
+    guint32    saved_mask;
 };
 
 static void lrg_shadow_renderer_prewarmable_init (LrgPrewarmableInterface *iface);
@@ -118,7 +140,8 @@ G_DEFINE_TYPE_WITH_CODE (LrgShadowRenderer, lrg_shadow_renderer, G_TYPE_OBJECT,
 G_DEFINE_ENUM_TYPE (LrgShadowPassKind, lrg_shadow_pass_kind,
                     G_DEFINE_ENUM_VALUE (LRG_SHADOW_PASS_NONE, "none"),
                     G_DEFINE_ENUM_VALUE (LRG_SHADOW_PASS_CASCADE, "cascade"),
-                    G_DEFINE_ENUM_VALUE (LRG_SHADOW_PASS_CUBE_FACE, "cube-face"))
+                    G_DEFINE_ENUM_VALUE (LRG_SHADOW_PASS_CUBE_FACE, "cube-face"),
+                    G_DEFINE_ENUM_VALUE (LRG_SHADOW_PASS_SPOT, "spot"))
 
 /* The caster: raylib's names, so DrawMesh() feeds mvp, matModel and the
  * diffuse map; mode 0 writes the window depth (cascades), mode 1 the
@@ -152,6 +175,26 @@ static const gchar caster_fs[] =
     "                              : gl_FragCoord.z;\n"
     "    finalColor = vec4(d, 0.0, 0.0, 1.0);\n"
     "}\n";
+
+
+/*
+ * The fragment source @fs with the LOD cross-fade spliced in: the
+ * lrg_lod_get_glsl() snippet (the lodFade uniform and
+ * lrg_lod_fade_discard()) before main() and the discard as main()'s
+ * first statement, so items fading between LOD levels dither out here
+ * exactly like in the other passes (lrg_lod_bind_fade() sets lodFade;
+ * 0, the default, keeps every fragment).
+ */
+static gchar *
+caster_fs_with_lod (const gchar *fs)
+{
+    const gchar *main_start = strstr (fs, "void main() {\n");
+
+    if (main_start == NULL)
+        return g_strdup (fs);
+    return g_strdup_printf ("%.*s%svoid main() {\n    lrg_lod_fade_discard ();\n%s", (gint) (main_start - fs), fs,
+                            lrg_lod_get_glsl (), main_start + strlen ("void main() {\n"));
+}
 
 /* ------------------------------------------------------------------------ */
 /* Matrix helpers                                                           */
@@ -411,6 +454,43 @@ lrg_shadow_cube_face_matrices (guint         face,
     return TRUE;
 }
 
+gboolean
+lrg_shadow_spot_matrices (const gfloat *light,
+                          const gfloat *direction,
+                          gfloat        outer_degrees,
+                          gfloat        radius,
+                          gfloat       *out_view,
+                          gfloat       *out_proj)
+{
+    gfloat dir[3];
+    gfloat target[3];
+    gfloat up[3] = { 0.0f, 1.0f, 0.0f };
+    gfloat fov;
+    guint  k;
+
+    g_return_val_if_fail (light != NULL && direction != NULL, FALSE);
+    g_return_val_if_fail (out_view != NULL && out_proj != NULL, FALSE);
+
+    memcpy (dir, direction, sizeof dir);
+    if (!vec_normalize (dir))
+        return FALSE;
+    /* a spot shining straight up or down needs another up vector */
+    if (fabsf (dir[1]) > 0.99f)
+    {
+        up[1] = 0.0f;
+        up[2] = 1.0f;
+    }
+    for (k = 0; k < 3; k++)
+        target[k] = light[k] + dir[k];
+    lrg_shadow_look_at (light, target, up, out_view);
+    /* the cone plus a margin, so the filter's outer taps stay inside */
+    fov = 2.0f * CLAMP (isfinite (outer_degrees) ? outer_degrees : 45.0f, 1.0f, 89.0f) + 2.0f;
+    fov = MIN (fov, 179.0f);
+    lrg_shadow_perspective (fov, 1.0f, MAX (radius * 0.002f, 0.02f), MAX (radius, 0.1f),
+                            out_proj);
+    return TRUE;
+}
+
 /* ------------------------------------------------------------------------ */
 /* Lifecycle and settings                                                   */
 /* ------------------------------------------------------------------------ */
@@ -436,6 +516,7 @@ lrg_shadow_renderer_finalize (GObject *object)
 
     atlas_free (&self->sun);
     atlas_free (&self->point);
+    atlas_free (&self->spot);
     g_clear_object (&self->caster);
 
     G_OBJECT_CLASS (lrg_shadow_renderer_parent_class)->finalize (object);
@@ -456,10 +537,14 @@ lrg_shadow_renderer_init (LrgShadowRenderer *self)
     self->lambda = 0.6f;
     self->point_resolution = 256;
     self->max_points = 0;
+    self->spot_resolution = 512;
+    self->max_spots = 0;
     self->depth_bias = 0.05f;
     self->normal_offset = 1.5f;
     self->filter = 1;
     self->strength = 1.0f;
+    self->caster_mask = LRG_RENDER_LAYERS_MASK_ALL;
+    self->saved_mask = LRG_RENDER_LAYERS_MASK_ALL;
 
     /* build the GPU resources behind a loading screen, not on the
      * first draw (see lrg_prewarm_track()) */
@@ -533,6 +618,35 @@ lrg_shadow_renderer_get_points (LrgShadowRenderer *self,
         *out_resolution = self->point_resolution;
     if (out_max_lights != NULL)
         *out_max_lights = self->max_points;
+}
+
+void
+lrg_shadow_renderer_set_spots (LrgShadowRenderer *self,
+                               guint              resolution,
+                               guint              max_lights,
+                               gfloat             max_distance)
+{
+    g_return_if_fail (LRG_IS_SHADOW_RENDERER (self));
+    g_return_if_fail (resolution >= 32 && resolution <= 4096);
+    g_return_if_fail (max_lights <= LRG_SHADOW_MAX_SPOT_LIGHTS);
+    g_return_if_fail (max_distance >= 0.0f);
+
+    self->spot_resolution = resolution;
+    self->max_spots = max_lights;
+    self->spot_distance = isfinite (max_distance) ? max_distance : 0.0f;
+}
+
+void
+lrg_shadow_renderer_get_spots (LrgShadowRenderer *self,
+                               guint             *out_resolution,
+                               guint             *out_max_lights)
+{
+    g_return_if_fail (LRG_IS_SHADOW_RENDERER (self));
+
+    if (out_resolution != NULL)
+        *out_resolution = self->spot_resolution;
+    if (out_max_lights != NULL)
+        *out_max_lights = self->max_spots;
 }
 
 void
@@ -681,10 +795,20 @@ pass_light (LrgShadowRenderer *self,
     guint face;
 
     memset (out, 0, 4 * sizeof (gfloat));
-    if (pass_kind (self, pass, &index, &face) == LRG_SHADOW_PASS_CUBE_FACE)
+    switch (pass_kind (self, pass, &index, &face))
     {
+    case LRG_SHADOW_PASS_CUBE_FACE:
         memcpy (out, self->point_pos[index], 3 * sizeof (gfloat));
         out[3] = self->point_radius[index];
+        break;
+    case LRG_SHADOW_PASS_SPOT:
+        memcpy (out, self->spot_pos[index], 3 * sizeof (gfloat));
+        out[3] = self->spot_radius[index];
+        break;
+    case LRG_SHADOW_PASS_NONE:
+    case LRG_SHADOW_PASS_CASCADE:
+    default:
+        break;
     }
 }
 
@@ -716,6 +840,7 @@ lrg_shadow_renderer_update (LrgShadowRenderer *self,
 
     self->n_cascades = 0;
     self->n_points = 0;
+    self->n_spots = 0;
     self->rendered = 0;
     self->current = 0;
 
@@ -765,12 +890,31 @@ lrg_shadow_renderer_update (LrgShadowRenderer *self,
     {
         self->n_points = lrg_light_set_pick_shadow_lights (lights, camera_world,
                                                            self->point_distance,
-                                                           self->max_points, picked);
+                                                           self->max_points, FALSE, picked);
         for (i = 0; i < self->n_points; i++)
         {
             self->point_ids[i] = picked[i].id;
             memcpy (self->point_pos[i], picked[i].position, sizeof (self->point_pos[i]));
             self->point_radius[i] = picked[i].radius;
+            self->point_bias[i] = picked[i].bias;
+        }
+    }
+    /* 2b. the spot lights with a perspective map */
+    if (self->max_spots > 0)
+    {
+        LrgLightSetShadowCandidate spots[LRG_SHADOW_MAX_SPOT_LIGHTS];
+
+        self->n_spots = lrg_light_set_pick_shadow_lights (lights, camera_world,
+                                                          self->spot_distance,
+                                                          self->max_spots, TRUE, spots);
+        for (i = 0; i < self->n_spots; i++)
+        {
+            self->spot_ids[i] = spots[i].id;
+            memcpy (self->spot_pos[i], spots[i].position, sizeof (self->spot_pos[i]));
+            memcpy (self->spot_dir[i], spots[i].direction, sizeof (self->spot_dir[i]));
+            self->spot_outer[i] = spots[i].outer_degrees;
+            self->spot_radius[i] = spots[i].radius;
+            self->spot_bias[i] = spots[i].bias;
         }
     }
     /* 3. the cache: a pass whose camera and light are what its tile was
@@ -896,7 +1040,53 @@ lrg_shadow_renderer_get_pass_count (LrgShadowRenderer *self)
 {
     g_return_val_if_fail (LRG_IS_SHADOW_RENDERER (self), 0);
 
-    return self->n_cascades + 6 * self->n_points;
+    return self->n_cascades + 6 * self->n_points + self->n_spots;
+}
+
+guint
+lrg_shadow_renderer_get_spot_count (LrgShadowRenderer *self)
+{
+    g_return_val_if_fail (LRG_IS_SHADOW_RENDERER (self), 0);
+
+    return self->n_spots;
+}
+
+guint
+lrg_shadow_renderer_get_spot_light (LrgShadowRenderer *self,
+                                    guint              slot)
+{
+    g_return_val_if_fail (LRG_IS_SHADOW_RENDERER (self), G_MAXUINT);
+
+    return slot < self->n_spots ? self->spot_ids[slot] : G_MAXUINT;
+}
+
+gint
+lrg_shadow_renderer_get_spot_slot (LrgShadowRenderer *self,
+                                   guint              light)
+{
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_SHADOW_RENDERER (self), LRG_SHADOW_NO_SLOT);
+
+    for (i = 0; i < self->n_spots; i++)
+        if (self->spot_ids[i] == light)
+            return (gint)i;
+    return LRG_SHADOW_NO_SLOT;
+}
+
+/* the matrices of spot pass @slot */
+static void
+spot_pass_matrices (LrgShadowRenderer *self,
+                    guint              slot,
+                    gfloat            *view,
+                    gfloat            *proj)
+{
+    if (!lrg_shadow_spot_matrices (self->spot_pos[slot], self->spot_dir[slot],
+                                   self->spot_outer[slot], self->spot_radius[slot], view, proj))
+    {
+        identity (view);
+        identity (proj);
+    }
 }
 
 /* the matrices of point pass @slot / @face */
@@ -929,6 +1119,13 @@ pass_kind (LrgShadowRenderer *self,
         *index = pass / 6;
         *face = pass % 6;
         return LRG_SHADOW_PASS_CUBE_FACE;
+    }
+    pass -= 6 * self->n_points;
+    if (pass < self->n_spots)
+    {
+        *index = pass;
+        *face = 0;
+        return LRG_SHADOW_PASS_SPOT;
     }
     return LRG_SHADOW_PASS_NONE;
 }
@@ -972,6 +1169,23 @@ lrg_shadow_renderer_get_pass (LrgShadowRenderer *self,
         }
         return LRG_SHADOW_PASS_CUBE_FACE;
     }
+    pass -= 6 * self->n_points;
+    if (pass < self->n_spots)
+    {
+        if (out_index != NULL)
+            *out_index = pass;
+        if (out_face != NULL)
+            *out_face = 0;
+        if (out_view_proj != NULL)
+        {
+            gfloat view[16];
+            gfloat proj[16];
+
+            spot_pass_matrices (self, pass, view, proj);
+            lrg_shadow_multiply (proj, view, out_view_proj);
+        }
+        return LRG_SHADOW_PASS_SPOT;
+    }
     return LRG_SHADOW_PASS_NONE;
 }
 
@@ -993,7 +1207,11 @@ lrg_shadow_renderer_get_caster_shader (LrgShadowRenderer *self)
         return NULL;
     self->caster_tried = TRUE;
 
-    self->caster = grl_shader_new_from_memory (caster_vs, caster_fs, &error);
+    {
+        g_autofree gchar *fs = caster_fs_with_lod (caster_fs);
+
+        self->caster = grl_shader_new_from_memory (caster_vs, fs, &error);
+    }
     if (self->caster == NULL)
         return NULL;
     handle = grl_shader_get_handle (self->caster);
@@ -1127,6 +1345,21 @@ lrg_shadow_renderer_begin_pass (LrgShadowRenderer *self,
         memcpy (proj, self->proj[index], sizeof proj);
         mode = 0;
     }
+    else if (kind == LRG_SHADOW_PASS_SPOT)
+    {
+        res = (gint)self->spot_resolution;
+        atlas = &self->spot;
+        if (atlas->fbo == 0 || atlas->width != res * (gint)self->max_spots || atlas->height != res)
+            drop_cache (self);
+        if (!atlas_ensure (atlas, res * (gint)self->max_spots, res))
+            return FALSE;
+        x = (gint)index * res;
+        y = 0;
+        spot_pass_matrices (self, index, view, proj);
+        memcpy (light, self->spot_pos[index], 3 * sizeof (gfloat));
+        light[3] = self->spot_radius[index];
+        mode = 1;
+    }
     else
     {
         res = (gint)self->point_resolution;
@@ -1149,6 +1382,8 @@ lrg_shadow_renderer_begin_pass (LrgShadowRenderer *self,
     rlActiveTextureSlot (LRG_SHADOW_SUN_UNIT);
     rlDisableTexture ();
     rlActiveTextureSlot (LRG_SHADOW_POINT_UNIT);
+    rlDisableTexture ();
+    rlActiveTextureSlot (LRG_SHADOW_SPOT_UNIT);
     rlDisableTexture ();
     rlActiveTextureSlot (0);
 
@@ -1184,6 +1419,10 @@ lrg_shadow_renderer_begin_pass (LrgShadowRenderer *self,
     handle = grl_shader_get_handle (self->caster);
     SetShaderValue (*handle, self->loc_mode, &mode, SHADER_UNIFORM_INT);
     SetShaderValue (*handle, self->loc_light, light, SHADER_UNIFORM_VEC4);
+
+    /* only layers in the caster mask cast: every layer-aware drawable
+     * drawn in the pass consults the active mask */
+    self->saved_mask = lrg_render_layers_set_active_mask (self->caster_mask);
     self->in_pass = TRUE;
     self->pass = pass;
     return TRUE;
@@ -1220,6 +1459,7 @@ lrg_shadow_renderer_end_pass (LrgShadowRenderer *self)
     rlDisableDepthTest ();
     /* the screen, its viewport and 2D matrices, as after a texture mode */
     EndTextureMode ();
+    lrg_render_layers_set_active_mask (self->saved_mask);
     self->in_pass = FALSE;
     lrg_shadow_renderer_mark_rendered (self, self->pass);
 }
@@ -1264,6 +1504,7 @@ lrg_shadow_renderer_release_gpu (LrgShadowRenderer *self)
         lrg_shadow_renderer_end_pass (self);
     atlas_free (&self->sun);
     atlas_free (&self->point);
+    atlas_free (&self->spot);
     g_clear_object (&self->caster);
     self->caster_tried = FALSE;
     self->rendered = 0;
@@ -1298,6 +1539,28 @@ lrg_shadow_renderer_pass_is_current (LrgShadowRenderer *self,
     if (pass >= lrg_shadow_renderer_get_pass_count (self) || pass >= MAX_PASSES)
         return FALSE;
     return (self->current & (G_GUINT64_CONSTANT (1) << pass)) != 0;
+}
+
+void
+lrg_shadow_renderer_set_caster_mask (LrgShadowRenderer *self,
+                                     guint32            mask)
+{
+    g_return_if_fail (LRG_IS_SHADOW_RENDERER (self));
+
+    if (self->caster_mask == mask)
+        return;
+    self->caster_mask = mask;
+    /* the cached tiles were rendered with other casters */
+    drop_cache (self);
+    if (self->in_pass)
+        lrg_render_layers_set_active_mask (mask);
+}
+
+guint32
+lrg_shadow_renderer_get_caster_mask (LrgShadowRenderer *self)
+{
+    g_return_val_if_fail (LRG_IS_SHADOW_RENDERER (self), LRG_RENDER_LAYERS_MASK_ALL);
+    return self->caster_mask;
 }
 
 void
@@ -1408,11 +1671,20 @@ lrg_shadow_locations (Shader              shader,
     out_locs->point_lights = GetShaderLocation (shader, "pointShadowLight");
     out_locs->point_params = GetShaderLocation (shader, "pointShadowParams");
     out_locs->point_map = GetShaderLocation (shader, "pointShadowMap");
+    out_locs->point_bias = GetShaderLocation (shader, "pointShadowBias");
+    out_locs->spot_count = GetShaderLocation (shader, "spotShadowCount");
+    out_locs->spot_matrices = GetShaderLocation (shader, "spotShadowMatrix");
+    out_locs->spot_lights = GetShaderLocation (shader, "spotShadowLight");
+    out_locs->spot_info = GetShaderLocation (shader, "spotShadowInfo");
+    out_locs->spot_params = GetShaderLocation (shader, "spotShadowParams");
+    out_locs->spot_map = GetShaderLocation (shader, "spotShadowMap");
 
     unit = LRG_SHADOW_SUN_UNIT;
     SetShaderValue (shader, out_locs->sun_map, &unit, SHADER_UNIFORM_INT);
     unit = LRG_SHADOW_POINT_UNIT;
     SetShaderValue (shader, out_locs->point_map, &unit, SHADER_UNIFORM_INT);
+    unit = LRG_SHADOW_SPOT_UNIT;
+    SetShaderValue (shader, out_locs->spot_map, &unit, SHADER_UNIFORM_INT);
 }
 
 void
@@ -1422,6 +1694,7 @@ lrg_shadow_renderer_upload (LrgShadowRenderer        *self,
 {
     gint   cascades = 0;
     gint   points = 0;
+    gint   spots = 0;
     gint   filter;
     guint  i;
 
@@ -1429,6 +1702,7 @@ lrg_shadow_renderer_upload (LrgShadowRenderer        *self,
     {
         SetShaderValue (shader, locs->cascades, &cascades, SHADER_UNIFORM_INT);
         SetShaderValue (shader, locs->point_count, &points, SHADER_UNIFORM_INT);
+        SetShaderValue (shader, locs->spot_count, &spots, SHADER_UNIFORM_INT);
         return;
     }
 
@@ -1505,12 +1779,55 @@ lrg_shadow_renderer_upload (LrgShadowRenderer        *self,
         params[3] = self->normal_offset;
         points = (gint)self->n_points;
         SetShaderValueV (shader, locs->point_lights, lights, SHADER_UNIFORM_VEC4, points);
+        SetShaderValueV (shader, locs->point_bias, self->point_bias, SHADER_UNIFORM_FLOAT, points);
         SetShaderValue (shader, locs->point_params, params, SHADER_UNIFORM_VEC4);
         rlActiveTextureSlot (LRG_SHADOW_POINT_UNIT);
         rlEnableTexture (self->point.color);
         rlActiveTextureSlot (0);
     }
     SetShaderValue (shader, locs->point_count, &points, SHADER_UNIFORM_INT);
+
+    /* the spot maps: matrices, light spheres, per-light bias and the
+     * cone's tan (for the normal offset's texel size) */
+    if (self->n_spots > 0 && self->spot.color != 0)
+    {
+        Matrix mats[LRG_SHADOW_MAX_SPOT_LIGHTS];
+        gfloat lights[LRG_SHADOW_MAX_SPOT_LIGHTS * 4];
+        gfloat info[LRG_SHADOW_MAX_SPOT_LIGHTS * 4];
+        gfloat params[4];
+
+        for (i = 0; i < self->n_spots; i++)
+        {
+            gfloat view[16];
+            gfloat proj[16];
+            gfloat vp[16];
+            gfloat half = CLAMP (self->spot_outer[i], 1.0f, 89.0f) + 1.0f;
+
+            spot_pass_matrices (self, i, view, proj);
+            lrg_shadow_multiply (proj, view, vp);
+            mats[i] = to_matrix (vp);
+            memcpy (lights + i * 4, self->spot_pos[i], 3 * sizeof (gfloat));
+            lights[i * 4 + 3] = self->spot_radius[i];
+            info[i * 4 + 0] = self->spot_bias[i];
+            info[i * 4 + 1] = tanf (MIN (half, 89.5f) * (gfloat)G_PI / 180.0f);
+            info[i * 4 + 2] = 0.0f;
+            info[i * 4 + 3] = 0.0f;
+        }
+        params[0] = (gfloat)self->spot_resolution;
+        params[1] = (gfloat)self->spot.width;
+        params[2] = (gfloat)self->spot.height;
+        params[3] = self->normal_offset;
+        spots = (gint)self->n_spots;
+        rlEnableShader (shader.id);
+        rlSetUniformMatrices (locs->spot_matrices, mats, spots);
+        SetShaderValueV (shader, locs->spot_lights, lights, SHADER_UNIFORM_VEC4, spots);
+        SetShaderValueV (shader, locs->spot_info, info, SHADER_UNIFORM_VEC4, spots);
+        SetShaderValue (shader, locs->spot_params, params, SHADER_UNIFORM_VEC4);
+        rlActiveTextureSlot (LRG_SHADOW_SPOT_UNIT);
+        rlEnableTexture (self->spot.color);
+        rlActiveTextureSlot (0);
+    }
+    SetShaderValue (shader, locs->spot_count, &spots, SHADER_UNIFORM_INT);
 }
 
 /* ------------------------------------------------------------------------ */

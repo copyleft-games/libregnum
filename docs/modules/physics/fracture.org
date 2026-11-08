@@ -1,0 +1,276 @@
+#+title: LrgFracture - Voronoi Pre-Fracture
+#+description: Pre-fracturing convex meshes into convex Voronoi chunks for libregnum 0.9: seed modes, interior material tagging, exact mass properties, the .rfracture cache format, and swapping chunks into an LrgDynamicsWorld on impact.
+#+authors: Zach Podbielniak
+#+created: 2026-11-07
+#+version: 0.9.0
+
+* LrgFracture - Voronoi Pre-Fracture
+:PROPERTIES:
+:CUSTOM_ID: fracture
+:END:
+=LrgFracture= (=src/physics/lrg-fracture.h=, GIR =Libregnum.Fracture=) breaks a closed convex mesh (a wall, a crate, a pillar, a rock) into convex chunks ahead of time, so that at run time an object can be swapped for its pieces in one call. The pieces are the cells of a 3D Voronoi diagram of a set of seed points, clipped to the mesh. They keep the original surface (its material ids and texture coordinates) and gain flat *interior* faces where they were cut, tagged with an interior material id so a renderer can give the inside its own look (raw concrete, splintered wood).
+
+Everything but =lrg_fracture_chunk_create_mesh()= is headless. Results are deterministic (seeds come from a seeded =GRand=, clipping runs in doubles in a fixed order) and can be cached in a =.rfracture= file. In a 3D world use [[file:../world3d/components.org::#destructible-component][LrgDestructibleComponent]], which derives the fracture from the entity's cube, listens for hard hits and does the swap.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Voronoi cells
+:PROPERTIES:
+:CUSTOM_ID: concepts-voronoi
+:END:
+The cell of seed /i/ is every point closer to /i/ than to any other seed: the intersection of the half-spaces behind the bisector planes of (/i/, /j/) for all /j/. Intersected with a convex mesh it is a convex polyhedron, so every chunk is convex (and a cheap convex-hull collision shape).
+
+The builder starts each cell as the source mesh's faces (as polygons) and clips them by the bisector planes, nearest seed first: each face is cut with Sutherland-Hodgman, the points created on the plane are deduplicated and sorted by angle round their centroid into one convex *cap* face (the new interior face), and points left collinear on any face are dropped. A seed further away than twice the cell's current radius cannot cut it, so the loop stops early: building is roughly O(seeds x neighbours) rather than O(seeds²).
+
+Every cap records the seed that cut it: chunks that share a cap are *neighbours* (=lrg_fracture_chunk_get_neighbors()=), the connectivity a progressive or structural destruction model walks.
+
+*** Source mesh
+:PROPERTIES:
+:CUSTOM_ID: concepts-source
+:END:
+=lrg_fracture_set_mesh()= takes a closed (every directed edge has exactly one opposite), counter-clockwise (outward) wound, convex triangle mesh with optional per-vertex texture coordinates and per-triangle material ids. Non-convex meshes are refused with =LRG_FRACTURE_ERROR_NOT_CONVEX=: split them into convex parts (each a destructible of its own) or give a convex proxy. =lrg_fracture_set_box()= makes the common case (walls, crates, slabs) a one-liner with per-face 0..1 texture coordinates.
+
+*** Seeds
+:PROPERTIES:
+:CUSTOM_ID: concepts-seeds
+:END:
+| Mode (=LrgFractureSeedMode=) | Placement |
+|------------------------------+-----------|
+| =LRG_FRACTURE_SEED_RANDOM= | =chunk-count= uniform points inside the mesh (rejection sampling in the bounds) |
+| =LRG_FRACTURE_SEED_IMPACT= | points round the impact point (=lrg_fracture_set_impact_point()=), radius r u³ for uniform u, r = =impact-radius= (0: half the bounds diagonal): small shards at the hit, large pieces far away |
+| =LRG_FRACTURE_SEED_GRID= | a grid whose cell count is closest to =chunk-count= with cells as cubic as possible, each seed jittered by =grid-jitter= of a cell (0: regular bricks) |
+| =LRG_FRACTURE_SEED_CUSTOM= | the points of =lrg_fracture_set_seed_points()= |
+
+Seeds outside the mesh, and duplicates, make no chunk.
+
+*** Chunks
+:PROPERTIES:
+:CUSTOM_ID: concepts-chunks
+:END:
+An =LrgFractureChunk= is an immutable, reference-counted boxed record in the *source frame* (not centred): render geometry with one corner per face vertex (flat normals), triangles wound outward, a material id per triangle, its distinct corner points (its hull), neighbours, and exact mass properties computed from the polyhedron with Eberly's polyhedral integrals: volume, centre of mass and the inertia tensor about it (=lrg_fracture_chunk_get_mass_properties()= follows the =lrg_physics_shape_get_mass_properties()= contract). The chunk volumes sum to the source volume up to float rounding.
+
+*** Swap-in
+:PROPERTIES:
+:CUSTOM_ID: concepts-swap
+:END:
+A chunk's body has its origin at the chunk's centre of mass: =lrg_fracture_chunk_create_shape()= is a convex hull of the chunk relative to it, =lrg_fracture_get_chunk_transform()= places it under the intact object's (rigid) world matrix, and =lrg_fracture_chunk_create_mesh (chunk, TRUE, ...)= is the matching render mesh. =lrg_fracture_swap_in()= does all of it: one dynamic body per chunk in an =LrgDynamicsWorld= with mass =density= x volume, in the given object layer (usually =LRG_PHYSICS_LAYER_DEBRIS=), launched by =lrg_fracture_get_chunk_velocity()=. Removing the intact object's body is the caller's job (the component does it).
+
+The break-up velocity model: every chunk gets the impulse divided by the object's total mass, weighted by =2 r / (r + d)= (d: the chunk centre's distance to the impact, r: the object's bounding radius), plus an outward burst of 10 % of that speed away from the impact. Chunks at the hit fly up to twice the mean speed, the far side barely moves; the total momentum is of the order of the impulse (not exactly it).
+
+=lrg_fracture_should_break()= compares an impulse magnitude with =impulse-threshold=.
+
+** The .rfracture format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+A YAML document (flow sequences for the arrays). Floats are written with nine significant digits, enough for an exact float round trip. Unknown keys are ignored; =format= and =version= are required, the parameters keep the loading object's values when missing, =chunks= is required.
+
+#+begin_src yaml
+# libregnum pre-fractured mesh (Voronoi chunks)
+format: rfracture            # required
+version: 1                   # LRG_FRACTURE_FORMAT_VERSION; others are refused
+source_hash: "9f2c...e1"     # SHA-256 of the source mesh and every build parameter
+                             # (lrg_fracture_get_source_hash); absent when saved without a source
+seed_mode: random            # random | impact | grid | custom (LrgFractureSeedMode nick)
+chunk_count: 12              # requested seeds
+seed: 7                      # GRand seed
+interior_material: 1         # material id of the cut faces
+impact_radius: 0             # 0 = half the bounds diagonal
+grid_jitter: 0.300000012
+impulse_threshold: 50        # N s
+density: 1000                # kg / m^3
+impact_point: [0.5, 0.35, 0.150000006]   # only when set
+source_volume: 0.400000006   # informational
+source_bounds: [-1, -0.5, -0.100000001, 1, 0.5, 0.100000001]   # min xyz, max xyz
+seeds: [0.12, -0.3, 0.02, ...]           # 3 floats per seed actually used
+chunks:
+  - seed: [0.12, -0.3, 0.02]             # the cell's seed
+    volume: 0.0312
+    center_of_mass: [0.1, -0.28, 0.0]    # source frame
+    inertia: [ ...9 floats... ]          # unit density, about the COM, column-major
+    bounds: [ ...6 floats... ]           # min xyz, max xyz
+    neighbors: [3, 5, 8]                 # chunk indices sharing a cut face
+    positions: [ ... ]                   # 3 floats per corner, source frame
+    normals: [ ... ]                     # 3 floats per corner (flat)
+    texcoords: [ ... ]                   # 2 floats per corner
+    indices: [0, 1, 2, ...]              # triangles, outward winding
+    materials: [0, 0, 1, ...]            # one id per triangle; interior_material = cut face
+    hull: [ ... ]                        # distinct corner points (collision hull)
+#+end_src
+
+=lrg_fracture_load_or_build()= is the cache workflow: when the file exists and its =source_hash= equals the hash of the current source and parameters it is loaded, otherwise the fracture is built and the file rewritten. A game can also ship only the =.rfracture= (=lrg_fracture_new_from_file()=): chunks and parameters load without a source mesh.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Types, constants and errors
+:PROPERTIES:
+:CUSTOM_ID: api-types
+:END:
+| Symbol | Meaning |
+|--------+---------|
+| =LrgFracture= | final GObject, =LRG_TYPE_FRACTURE=, =lrg_fracture_get_type()= |
+| =LrgFractureChunk= | boxed, =LRG_TYPE_FRACTURE_CHUNK=, =lrg_fracture_chunk_get_type()=, =lrg_fracture_chunk_ref()= / =lrg_fracture_chunk_unref()= (g_autoptr) |
+| =LRG_FRACTURE_FORMAT_VERSION= | 1 |
+| =LRG_FRACTURE_MAX_CHUNKS= | 1024 seeds at most |
+| =LRG_FRACTURE_ERROR= / =lrg_fracture_error_quark()= | =LrgFractureError= (=lrg_fracture_error_get_type()=): =LRG_FRACTURE_ERROR_INVALID=, =LRG_FRACTURE_ERROR_NOT_CLOSED=, =LRG_FRACTURE_ERROR_NOT_CONVEX=, =LRG_FRACTURE_ERROR_NO_SOURCE=, =LRG_FRACTURE_ERROR_PARSE=, =LRG_FRACTURE_ERROR_NO_GPU= |
+| =LrgFractureSeedMode= (=lrg_fracture_seed_mode_get_type()=) | =LRG_FRACTURE_SEED_RANDOM=, =LRG_FRACTURE_SEED_IMPACT=, =LRG_FRACTURE_SEED_GRID=, =LRG_FRACTURE_SEED_CUSTOM= |
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: api-properties
+:END:
+| Property | Type | Default | Meaning |
+|----------+------+---------+---------|
+| =chunk-count= | uint 1..1024 | 8 | seeds to place |
+| =seed= | uint | 1 | random seed |
+| =seed-mode= | =LrgFractureSeedMode= | random | placement |
+| =interior-material= | uint | 1 | material id of cut faces |
+| =impact-radius= | float | 0 | impact mode spread (0: auto) |
+| =grid-jitter= | float 0..1 | 0.3 | grid mode jitter |
+| =impulse-threshold= | float | 50 | N·s that break the object |
+| =density= | float | 1000 | kg/m³ for chunk masses |
+
+*** LrgFracture
+:PROPERTIES:
+:CUSTOM_ID: api-fracture
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_fracture_new()= | empty |
+| =lrg_fracture_new_from_file (path, error)= | load a cache (no source) |
+| =lrg_fracture_set_mesh (self, n_vertices, positions, texcoords, n_indices, indices, materials, error)= | source mesh (4 .. 65535 vertices; validated; failure changes nothing; clears chunks) |
+| =lrg_fracture_set_box (self, half_extents, error)= | box source |
+| =lrg_fracture_has_source()=, =lrg_fracture_get_source_volume()=, =lrg_fracture_get_source_bounds()= | the source |
+| =lrg_fracture_set_impact_point()= / =lrg_fracture_get_impact_point()= | impact point (source frame; NULL / FALSE: bounds centre) |
+| =lrg_fracture_set_seed_points()= / =lrg_fracture_get_seed_points()= | custom seeds (switches to custom mode) / the seeds of the last build |
+| =lrg_fracture_build (self, error)= | place seeds and clip the cells |
+| =lrg_fracture_is_built()=, =lrg_fracture_get_chunk_count()=, =lrg_fracture_get_chunk()= (transfer none), =lrg_fracture_get_total_volume()= | results |
+| =lrg_fracture_get_source_hash()= | SHA-256 hex of source + parameters |
+| =lrg_fracture_save_to_data()=, =lrg_fracture_save_to_file()= | write =.rfracture= |
+| =lrg_fracture_load_from_data()=, =lrg_fracture_load_from_file()= | read (keeps the source; failure changes nothing) |
+| =lrg_fracture_load_or_build (self, path, error)= | cache workflow |
+| =lrg_fracture_should_break (self, impulse)= | threshold test |
+| =lrg_fracture_get_chunk_transform (self, index, object_matrix, out_matrix)= | body placement |
+| =lrg_fracture_get_chunk_velocity (self, index, object_matrix, impact_point, impulse, out_linear)= | break-up velocity |
+| =lrg_fracture_swap_in (self, world, object_matrix, impact_point, impulse, layer, error)= | add one body per chunk; returns the ids (=GArray= of guint) |
+
+*** LrgFractureChunk
+:PROPERTIES:
+:CUSTOM_ID: api-chunk
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_fracture_chunk_get_index()=, =lrg_fracture_chunk_get_seed()= | identity |
+| =lrg_fracture_chunk_get_vertex_count()=, =lrg_fracture_chunk_get_positions()=, =lrg_fracture_chunk_get_normals()=, =lrg_fracture_chunk_get_texcoords()=, =lrg_fracture_chunk_get_indices()= | render geometry (source frame) |
+| =lrg_fracture_chunk_get_triangle_materials()=, =lrg_fracture_chunk_get_interior_triangle_count (self, interior_material)= | material tagging |
+| =lrg_fracture_chunk_get_hull_points()=, =lrg_fracture_chunk_get_neighbors()= | hull and connectivity |
+| =lrg_fracture_chunk_get_volume()=, =lrg_fracture_chunk_get_center_of_mass()=, =lrg_fracture_chunk_get_mass_properties (self, density, &mass, com, inertia)=, =lrg_fracture_chunk_get_bounds()= | mass and extent |
+| =lrg_fracture_chunk_create_shape (self, error)= | convex hull shape about the COM (=lrg_physics_shape_new_convex_hull()=) |
+| =lrg_fracture_chunk_create_mesh (self, centered, error)= | =GrlMesh= (needs GL) |
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** Pre-fracture a wall and cache it
+:PROPERTIES:
+:CUSTOM_ID: example-cache
+:END:
+#+begin_src c
+g_autoptr(LrgFracture) wall = lrg_fracture_new ();
+const gfloat           half[3] = { 2.0f, 1.25f, 0.15f };      /* 4 x 2.5 x 0.3 m */
+g_autoptr(GError)      error = NULL;
+
+lrg_fracture_set_box (wall, half, NULL);
+g_object_set (wall, "chunk-count", 40, "seed-mode", LRG_FRACTURE_SEED_GRID,
+              "grid-jitter", 0.5f, "density", 2400.0f, "impulse-threshold", 400.0f, NULL);
+if (!lrg_fracture_load_or_build (wall, "levels/wall.rfracture", &error))
+	g_warning ("fracture: %s", error->message);
+#+end_src
+
+*** Break it on a hard hit
+:PROPERTIES:
+:CUSTOM_ID: example-break
+:END:
+#+begin_src c
+static void
+on_contact (LrgDynamicsWorld *world, LrgDynamicsContact *c, Wall *w)
+{
+	if ((c->body_a == w->body || c->body_b == w->body)
+	    && lrg_fracture_should_break (w->fracture, c->normal_impulse))
+	{
+		w->hit_pending = TRUE;               /* swap outside the signal emission */
+		memcpy (w->hit_point, c->point, sizeof w->hit_point);
+		w->hit_impulse = c->normal_impulse;
+	}
+}
+
+/* next fixed step */
+if (w->hit_pending)
+{
+	gfloat            impulse[3] = { 0.0f, 0.0f, -w->hit_impulse };
+	g_autoptr(GArray) ids = lrg_fracture_swap_in (w->fracture, world, w->matrix, w->hit_point,
+	                                              impulse, LRG_PHYSICS_LAYER_DEBRIS, NULL);
+
+	lrg_dynamics_world_remove_body (world, w->body, NULL);
+	w->hit_pending = FALSE;
+}
+#+end_src
+
+*** Draw the chunks
+:PROPERTIES:
+:CUSTOM_ID: example-draw
+:END:
+#+begin_src c
+for (i = 0; i < ids->len; i++)
+{
+	gfloat m[16];
+
+	if (meshes[i] == NULL)    /* once, with GL */
+		meshes[i] = lrg_fracture_chunk_create_mesh (lrg_fracture_get_chunk (wall, i), TRUE, NULL);
+	lrg_dynamics_world_get_transform (world, g_array_index (ids, guint, i), m, NULL);
+	draw_mesh_with_matrix (meshes[i], m);      /* the body origin is the chunk's COM */
+}
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+=tests/test-fracture.c= (=/fracture/perf=, release build, one core): a 4 x 3 x 0.3 m wall into 64 random chunks builds in 5.7 .. 6.0 ms pinned with =taskset= (up to 9 ms unpinned on a loaded machine). A swap-in costs one convex hull build plus one body insertion per chunk (tens of microseconds each). =.rfracture= files take a few kilobytes per chunk; loading parses YAML (a few ms for 64 chunks). Build at load time (=lrg_destructible_component_prepare()=) or ship the cache; never build in the frame of the hit.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Convex only.* Non-convex sources are refused; fracture convex parts separately.
+- *Welded, outward wound.* Positions must be shared between triangles (texture coordinates may differ only through =set_box='s internal handling); inward winding reads as non-convex.
+- *Scale is baked.* Chunks live in the source frame; the swap's object matrix must be rigid. Bake the entity's scale into the source (the component does).
+- *Impact seeds are small.* With few seeds most land near the hit; raise =chunk-count= or =impact-radius= for a more even break.
+- *Do not swap inside a physics signal.* Queue the break and swap in the next fixed step (adding bodies while the world emits is not supported).
+- *The hash covers the parameters,* not =impulse-threshold= or =density= (they do not change the geometry): changing those keeps the cache.
+- *One material per chunk mesh.* =lrg_fracture_chunk_create_mesh()= is one mesh; use the per-triangle material ids to build submeshes when the interior needs its own material.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+Destructibles are authored as [[file:../world3d/components.org::#destructible-component][LrgDestructibleComponent]] on a node with a cube visual; its properties (chunk count, seed, mode, threshold, density, cache path) are ordinary inspector properties. A fracture preview tool and the physics asset editor arrive with the editor wave of 0.9.0.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-fracture.c=: a wall into 12 chunks: every chunk convex, inside the source bounds, centre of mass inside its bounds, cut faces tagged, neighbours symmetric, volumes summing to the source within 1e-5; one seed reproduces the box's closed-form inertia; two seeds split a box into exact halves with one quad cap; a custom octahedron keeps its per-triangle materials; open, inside-out and dented (non-convex) sources fail with the right errors; grid and impact seed modes; determinism; =.rfracture= round trip (bit-exact geometry and mass properties); the cache loads on a matching hash and rebuilds on a changed one; swap-in helpers; swap-in creates one dynamic debris body per chunk with the right total mass and momentum, and they fall; the chunk hull shape matches the chunk volume; and =LrgDestructibleComponent= (a sphere breaking a wall, rendering, restore, lifetime, errors).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:cloth.org][LrgCloth]]
+- [[file:dynamics.org][LrgDynamicsWorld]], [[file:physics-shape.org][LrgPhysicsShape]], [[file:physics-layers.org][physics layers]]
+- [[file:../../guides/physics.org::#soft][Physics guide: cloth and destruction]]

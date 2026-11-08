@@ -2,7 +2,7 @@
 :PROPERTIES:
 :CUSTOM_ID: lrgshadowrenderer---3d-shadow-maps
 :END:
-Shadow maps for [[file:../graphics/light-set.org][LrgLightSet]]: cascaded shadow maps for the directional light (the sun or moon) and cube shadow maps for a budget of point lights (a torch, spell lights, key lights in a dungeon). The planning is headless (splits, light matrices, which point lights get a cube); the passes and the two atlases need GL.
+Shadow maps for [[file:../graphics/light-set.org][LrgLightSet]]: cascaded shadow maps for the directional light (the sun or moon), cube shadow maps for a budget of point lights (a torch, spell lights, key lights in a dungeon) and, since 0.9.0, perspective shadow maps for a budget of spot lights (a flashlight, a street lamp, a stage light). The planning is headless (splits, light matrices, which point and spot lights get a map); the passes and the three atlases need GL.
 
 ** Types
 :PROPERTIES:
@@ -11,9 +11,9 @@ Shadow maps for [[file:../graphics/light-set.org][LrgLightSet]]: cascaded shadow
 | Type | Kind | Notes |
 |------+------+-------|
 | =LrgShadowRenderer= | final GObject | settings, the frame's plan, the atlases, the caster shader |
-| =LrgShadowPassKind= | enum (=none=, =cascade=, =cube-face=) | what a pass renders |
+| =LrgShadowPassKind= | enum (=none=, =cascade=, =cube-face=, =spot=) | what a pass renders |
 
-Constants: =LRG_SHADOW_MAX_CASCADES= (4), =LRG_SHADOW_MAX_POINT_LIGHTS= (8), =LRG_SHADOW_NO_SLOT= (-1), =LRG_SHADOW_SUN_UNIT= (12) and =LRG_SHADOW_POINT_UNIT= (13), the texture units of the two atlases while a light set draws.
+Constants: =LRG_SHADOW_MAX_CASCADES= (4), =LRG_SHADOW_MAX_POINT_LIGHTS= (8), =LRG_SHADOW_MAX_SPOT_LIGHTS= (4), =LRG_SHADOW_NO_SLOT= (-1), =LRG_SHADOW_SPOT_UNIT= (11), =LRG_SHADOW_SUN_UNIT= (12) and =LRG_SHADOW_POINT_UNIT= (13), the texture units of the three atlases while a light set draws.
 
 ** API
 :PROPERTIES:
@@ -24,20 +24,22 @@ Constants: =LRG_SHADOW_MAX_CASCADES= (4), =LRG_SHADOW_MAX_POINT_LIGHTS= (8), =LR
 | =lrg_shadow_renderer_new()= | one 2048-texel cascade to 80 units, no point shadows, bias 0.05 units, normal offset 1.5 texels, 3 x 3 filter, strength 1 |
 | =set_sun (res, cascades, distance, lambda)= / =get_sun()= | the directional shadow: cascade side (0: off), 1 .. 4 cascades, reach, split blend |
 | =set_points (res, max_lights, max_distance)= / =get_points()= | cube face side and the budget of shadowed point lights |
-| =set_bias (depth, normal_offset)= | depth bias in world units, normal offset in texels |
+| =set_spots (res, max_lights, max_distance)= / =get_spots()= | spot map side (32 .. 4096, default 512) and the budget of shadowed spot lights (0 .. 4, default 0) |
+| =set_bias (depth, normal_offset)= | depth bias in world units, normal offset in texels; a light's own bias (=lrg_light_set_set_light_shadow_bias()=) wins for its cube or spot map |
 | =set_filter (radius)= | percentage-closer filter: 0 (1 tap) .. 2 (5 x 5) |
 | =set_strength()= / =get_strength()= | how much light a shadow removes |
 | =update (lights, camera, forward, up, fovy, aspect, near)= | plans the frame (headless); returns the pass count |
 | =get_cascade_count()=, =get_cascade (i, &near, &far, matrix)= | the planned cascades (draw space) |
 | =get_point_count()=, =get_point_light (slot)=, =get_light_slot (id)= | the shadowed point lights |
-| =get_pass_count()=, =get_pass (pass, &index, &face, view_proj)= | the passes: cascades first, then six faces per light |
+| =get_spot_count()=, =get_spot_light (slot)=, =get_spot_slot (id)= | the shadowed spot lights |
+| =get_pass_count()=, =get_pass (pass, &index, &face, view_proj)= | the passes: cascades first, then six faces per point light, then one per spot light |
 | =begin_pass (pass)= / =end_pass()= | bind the pass's atlas tile and matrices; restore the screen |
 | =get_caster_shader()= | the depth shader casters draw with |
 | =is_ready()= | every pass of the last update was rendered |
 | =release_gpu()= | free the atlases and the shader (before the window closes) |
 | =set_refresh (frames)=, =get_refresh()=, =pass_is_current (pass)=, =invalidate()=, =invalidate_box (min, max)= | the pass cache (below); =LRG_SHADOW_REFRESH_NEVER= keeps tiles until they change |
 
-Matrix helpers (column-major 4 x 4 like OpenGL and raylib's =Matrix=): =lrg_shadow_look_at()=, =lrg_shadow_ortho()=, =lrg_shadow_perspective()=, =lrg_shadow_multiply()=, =lrg_shadow_transform_point()=, =lrg_shadow_split_distances()=, =lrg_shadow_cube_face_matrices()=.
+Matrix helpers (column-major 4 x 4 like OpenGL and raylib's =Matrix=): =lrg_shadow_look_at()=, =lrg_shadow_ortho()=, =lrg_shadow_perspective()=, =lrg_shadow_multiply()=, =lrg_shadow_transform_point()=, =lrg_shadow_split_distances()=, =lrg_shadow_cube_face_matrices()=, =lrg_shadow_spot_matrices()= (0.9.0: a spot's look-at and a perspective projection of twice the outer half-angle plus two degrees, near =max (radius / 500, 0.02)=, far the radius).
 
 ** Semantics
 :PROPERTIES:
@@ -55,11 +57,17 @@ The view from =near= to the shadow distance is split by the practical split sche
 :END:
 A light competes for a cube when its shadow priority (=lrg_light_set_set_point_light_shadow()=) is above 0: highest priority first, then the smallest distance from the camera to its sphere, then the lowest id, up to the budget and within the =max_distance= reach. Each cube is six 90 degree faces (+X, -X, +Y, -Y, +Z, -Z; up is +Y except +Z for the Y faces) that store the distance to the light over its radius. The light shader finds the face and its coordinates with the same axes (=LRG_SHADOW_GLSL=; =tests/test-shadow-renderer.c= checks the two agree).
 
+*** Spot lights (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: spot-lights
+:END:
+A spot light ([[file:../graphics/light-set.org::#spot-lights][lrg_light_set_add_spot_light()]]) with a shadow priority above 0 competes for a spot map under the same order as point lights (priority, then distance to its sphere, then id), within =set_spots()='s budget and reach; spots never take cubes and points never take spot maps.  Each picked spot costs one pass (=LRG_SHADOW_PASS_SPOT=): a perspective camera at the light looking along its direction, wide enough for the outer cone plus a two degree margin for the filter.  The caster writes the distance to the light over its radius (mode 1, like a cube face), so one caster shader serves all three kinds.  The spot atlas is one row of =max_lights= tiles of =res= texels.  In the light shader =lrg_spot_shadow (slot, p, n)= pushes the fragment along its normal by =normal_offset= texels (the texel's world size at that distance from the cone's tangent), projects it into the tile and runs the same percentage-closer filter as the other maps (=set_filter()=, taps clamped to the tile), with the light's own bias or the renderer's.  =get_pass_state()= reports mode 1 and the light's position and radius during a spot pass.
+
 *** Atlases and passes
 :PROPERTIES:
 :CUSTOM_ID: atlases-and-passes
 :END:
-Both atlases are a 32-bit float colour texture with a depth renderbuffer on a framebuffer of their own: the sun atlas holds the cascades two per row, the point atlas three by two faces per light, one light above the other. =begin_pass()= clears an atlas at its first pass of the frame, sets the tile's viewport, loads the pass's view and projection into rlgl (so =DrawMesh()= and any frustum culling that reads rlgl's matrices follow the light), turns depth testing on and face culling off (one-sided models cast from both sides) and points the caster shader at the pass. =end_pass()= flushes and restores the screen as =EndTextureMode()= does. Call the passes outside =BeginMode3D()= and any texture mode, with the screen as the target.
+Each atlas is a 32-bit float colour texture with a depth renderbuffer on a framebuffer of its own: the sun atlas holds the cascades two per row, the point atlas three by two faces per light, one light above the other, the spot atlas one tile per spot in a row. =begin_pass()= clears an atlas at its first pass of the frame, sets the tile's viewport, loads the pass's view and projection into rlgl (so =DrawMesh()= and any frustum culling that reads rlgl's matrices follow the light), turns depth testing on and face culling off (one-sided models cast from both sides) and points the caster shader at the pass. =end_pass()= flushes and restores the screen as =EndTextureMode()= does. Call the passes outside =BeginMode3D()= and any texture mode, with the screen as the target.
 
 The caster shader uses raylib's attribute and uniform names; texels whose alpha is below 0.5 cast nothing (cut-out foliage, fences).
 
@@ -81,7 +89,7 @@ Each tile is cleared on its own (a scissored clear), so a tile keeps what it hol
 :PROPERTIES:
 :CUSTOM_ID: lookups
 :END:
-A light set with a renderer (=lrg_light_set_set_shadow_renderer()=) binds both atlases in =lrg_light_set_apply()= once the renderer =is_ready()=, and its shader multiplies the directional light's Lambert term by the cascade lookup and each shadowed point light by its cube lookup. Before the lookup the fragment is pushed along its normal by =normal_offset= texels (against acne on slopes) and its depth reduced by the depth bias (in world units, converted per cascade). =strength= mixes the filtered result toward lit. Billboards (=LrgBillboardBatch=) are lit without shadows.
+A light set with a renderer (=lrg_light_set_set_shadow_renderer()=) binds the atlases in =lrg_light_set_apply()= once the renderer =is_ready()=, and its shader multiplies the directional light's term by the cascade lookup, each shadowed point light by its cube lookup and each shadowed spot light by its spot lookup (=pointShadowBias[k]= and =spotShadowInfo[k].x= carry per-light biases, 0 for the renderer's). Before the lookup the fragment is pushed along its normal by =normal_offset= texels (against acne on slopes) and its depth reduced by the depth bias (in world units, converted per cascade). =strength= mixes the filtered result toward lit. Billboards (=LrgBillboardBatch=) are lit without shadows.
 
 ** Example
 :PROPERTIES:
@@ -93,6 +101,8 @@ guint pass;
 
 lrg_shadow_renderer_set_sun (shadows, 2048, 3, 120.0f, 0.6f);
 lrg_shadow_renderer_set_points (shadows, 512, 2, 40.0f);
+lrg_shadow_renderer_set_spots (shadows, 1024, 1, 60.0f);   /* the player's flashlight */
+lrg_light_set_set_point_light_shadow (lights, flashlight, 20);
 lrg_shadow_renderer_set_refresh (shadows, LRG_SHADOW_REFRESH_NEVER);
 lrg_light_set_set_point_light_shadow (lights, torch, 10);
 lrg_light_set_set_shadow_renderer (lights, shadows);
@@ -119,4 +129,50 @@ lrg_static_batch_set_shader (world, lrg_light_set_get_shader (lights));
 :PROPERTIES:
 :CUSTOM_ID: tests
 :END:
-=tests/test-shadow-renderer.c=: the matrix helpers, the split scheme, every slice corner inside its cascade with a floating origin, texel snapping, the cube faces against the shader's lookup, the point plan (priority, budget, reach, removal). =tests/test-light-set.c= =/light-set/shader-shadows=: the sun and a point light behind an occluder darken the floor under it in a hidden window, the open floor stays lit, strength 0 removes the shadow.
+=tests/test-shadow-renderer.c=: the matrix helpers, the split scheme, every slice corner inside its cascade with a floating origin, texel snapping, the cube faces against the shader's lookup, the point plan (priority, budget, reach, removal). =tests/test-light-set.c= =/light-set/shader-shadows=: the sun and a point light behind an occluder darken the floor under it in a hidden window, the open floor stays lit, strength 0 removes the shadow. =tests/test-pbr.c= =/pbr/spot-shadow-plan= (spot budget and priority, spots kept apart from cubes, pass order, the spot camera) and =/pbr/gpu/spot-shadow= (a shadowed spot above an occluder darkens the floor under it and lights the floor beside it).
+
+** Render layers
+:PROPERTIES:
+:CUSTOM_ID: render-layers
+:END:
+=lrg_shadow_renderer_set_caster_mask()= / =lrg_shadow_renderer_get_caster_mask()= choose which render layers cast (all by default). =lrg_shadow_renderer_begin_pass()= installs the caster mask as the active mask and =lrg_shadow_renderer_end_pass()= restores the previous one, so layer-aware casters (static batch chunks, terrain chunks, billboard batches) on other layers draw nothing in the pass. Changing the mask drops the pass cache. See [[file:../graphics/render-layers.org][Render layers]].
+
+** Further API
+:PROPERTIES:
+:CUSTOM_ID: further-api
+:END:
+Accessors and helpers not covered above (the header holds the full GIR documentation):
+
+- =lrg_shadow_pass_kind_get_type()= - the GType of =LrgShadowPassKind=
+- =lrg_shadow_renderer_get_cascade()= - a planned cascade's near and far view distances and light view-projection; FALSE out of range
+- =lrg_shadow_renderer_get_cascade_count()= - Returns: cascades planned by the last update (0: no directional shadow)
+- =lrg_shadow_renderer_get_light_slot()= - Returns: the shadow slot of @light, or LRG_SHADOW_NO_SLOT
+- =lrg_shadow_renderer_get_point_count()= - Returns: point lights with a cube after the last update
+- =lrg_shadow_renderer_get_point_light()= - Returns: the light set's id of the light in @slot, or G_MAXUINT
+- =lrg_shadow_renderer_get_points()= - reads the point-light cube face size and light budget
+- =lrg_shadow_renderer_get_refresh()= - Returns: the cache's refresh in frames, 0 when off
+- =lrg_shadow_renderer_get_strength()= - Returns: the shadow strength
+- =lrg_shadow_renderer_get_sun()= - reads the cascade size (0 when off), cascade count and reach
+- =lrg_shadow_renderer_is_ready()= - TRUE when every pass of the last update was rendered or is current, so a light set may sample the atlases
+- =lrg_shadow_renderer_release_gpu()= - Frees the atlases and the caster shader (call before the window closes); they are made again on the next pass.
+- =lrg_shadow_renderer_set_bias()= - depth bias and normal offset (in shadow texels) against shadow acne
+- =lrg_shadow_renderer_set_filter()= - percentage-closer filter radius in texels, 0 (one tap) .. 2 (5 x 5 taps)
+- =lrg_shadow_renderer_set_strength()= - how much light a shadow removes, 0 .. 1
+- =lrg_shadow_renderer_set_spots()= / =lrg_shadow_renderer_get_spots()= - spot map side and budget (0.9.0)
+- =lrg_shadow_renderer_get_spot_count()= - Returns: spot lights with a map after the last update
+- =lrg_shadow_renderer_get_spot_light()= - Returns: the light set's id of the spot in @slot, or G_MAXUINT
+- =lrg_shadow_renderer_get_spot_slot()= - Returns: the spot shadow slot of @light, or LRG_SHADOW_NO_SLOT
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- A spot's shadow priority is set with =lrg_light_set_set_point_light_shadow()= (spots are point lights with a cone); without =set_spots (..., n > 0, ...)= it never gets a map.
+- Spot maps cover the outer cone only: a light whose cone is wider than about 85 degrees half-angle loses resolution fast; use a point light with a cube instead.
+- Peter-panning (shadows detached from their casters) means the bias is too large for that light; acne means too small.  Tune it per light with =lrg_light_set_set_light_shadow_bias()= or the light component's =shadow-bias=.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+A light node's =cast_shadows= and =shadow_bias= params reach the light component (=cast-shadows=, =shadow-bias=); the world renderer gives cast-shadow lights priority 1 and plans the passes.

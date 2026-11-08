@@ -802,6 +802,160 @@ test_code_ipc (Fixture       *f,
 	g_assert_cmpstr (lrg_editor_code_panel_get_active_path (panel), ==, path);
 }
 
+static void
+append_file (const gchar *path,
+             const gchar *extra)
+{
+	g_autofree gchar *text = NULL;
+	g_autofree gchar *joined = NULL;
+	g_autoptr(GError) error = NULL;
+
+	g_assert_true (g_file_get_contents (path, &text, NULL, &error));
+	g_assert_no_error (error);
+	joined = g_strconcat (text, "\n", extra, NULL);
+	g_assert_true (g_file_set_contents (path, joined, -1, &error));
+	g_assert_no_error (error);
+}
+
+static void
+test_export_dialog (Fixture      *f,
+                    gconstpointer data)
+{
+	g_autofree gchar *out = NULL;
+	g_autofree gchar *dialog = NULL;
+	const gchar * const *ids;
+	LrgWidget *log;
+	guint i;
+	guint rres;
+
+	(void) data;
+	new_project (f);
+	out = g_build_filename (f->project, "out.rres", NULL);
+	g_assert_true (lrg_editor_app_activate_action (f->app, "file.export"));
+	efx_frames (f, 2);
+	dialog = ui_dialog (f);
+	g_assert_cmpstr (dialog, ==, "export");
+	ids = lrg_pack_writer_profile_ids ();
+	rres = 0;
+	for (i = 0; ids != NULL && ids[i] != NULL; i++)
+	{
+		if (g_strcmp0 (ids[i], "rres") == 0)
+			rres = i;
+	}
+	lrg_combo_box_set_selected (LRG_COMBO_BOX (popup_find (f, "export-profile")), rres);
+	lrg_text_input_set_text (LRG_TEXT_INPUT (popup_find (f, "export-output")), out);
+	efx_click_widget (f, popup_find (f, "export-run"));
+	efx_frames (f, 2);
+	log = popup_find (f, "export-log");
+	g_assert_nonnull (log);
+	g_assert_cmpuint (strlen (lrg_label_get_text (LRG_LABEL (log))), >, 0);
+	g_assert_true (g_file_test (out, G_FILE_TEST_IS_REGULAR));
+	g_free (dialog);
+	dialog = ui_dialog (f);
+	g_assert_cmpstr (dialog, ==, "export");
+}
+
+static void
+test_steam_page (Fixture      *f,
+                 gconstpointer data)
+{
+	g_autofree gchar *manifest = NULL;
+	g_autofree gchar *dialog = NULL;
+
+	(void) data;
+	new_project (f);
+	manifest = g_build_filename (f->project, "project.ryaml", NULL);
+	append_file (manifest,
+	             "steam:\n"
+	             "  app-id: \"4242\"\n"
+	             "  achievements: \"true\"\n");
+	g_assert_true (lrg_editor_app_activate_action (f->app, "file.project-settings"));
+	efx_frames (f, 2);
+	dialog = ui_dialog (f);
+	g_assert_cmpstr (dialog, ==, "project-settings");
+	g_assert_cmpstr (lrg_label_get_text (LRG_LABEL (popup_find (f, "project-steam-app-id"))), ==, "4242");
+	g_assert_cmpstr (lrg_label_get_text (LRG_LABEL (popup_find (f, "project-steam-achievements"))), ==, "true");
+}
+
+static const gchar dialog_plugin_src[] =
+	"typedef struct {\n"
+	"  void (*add_action) (void *, const char *, const char *, const char *);\n"
+	"  void (*add_panel) (void *, const char *, const char *);\n"
+	"  void (*add_inspector) (void *, const char *);\n"
+	"} Api;\n"
+	"void lrg_plugin_init (void *manager, const Api *api)\n"
+	"{\n"
+	"  api->add_action (manager, \"demo.hello\", \"Hello\", \"Demo\");\n"
+	"  api->add_panel (manager, \"demo-panel\", \"Demo\");\n"
+	"  api->add_inspector (manager, \"LrgNode\");\n"
+	"}\n";
+
+static void
+test_plugin_dock (Fixture      *f,
+                  gconstpointer data)
+{
+	g_autofree gchar *plug = NULL;
+	g_autofree gchar *src = NULL;
+	g_autofree gchar *so = NULL;
+	g_autofree gchar *yaml = NULL;
+	g_autoptr(GError) error = NULL;
+	LrgDockArea *dock;
+	GMenu *menu;
+	gchar *argv[7];
+	gint status;
+	const gchar *last;
+
+	(void) data;
+	if (g_find_program_in_path ("gcc") == NULL)
+	{
+		g_test_skip ("gcc is not on PATH");
+		return;
+	}
+	new_project (f);
+	plug = g_build_filename (f->project, "plugins", "demo", NULL);
+	src = g_build_filename (plug, "plugin.c", NULL);
+	so = g_build_filename (plug, "plugin.so", NULL);
+	yaml = g_build_filename (plug, "plugin.yaml", NULL);
+	g_assert_cmpint (g_mkdir_with_parents (plug, 0755), ==, 0);
+	g_assert_true (g_file_set_contents (src, dialog_plugin_src, -1, &error));
+	g_assert_no_error (error);
+	g_assert_true (g_file_set_contents (yaml, "name: demo\nentry: plugin.so\n", -1, &error));
+	g_assert_no_error (error);
+	argv[0] = (gchar *) "gcc";
+	argv[1] = (gchar *) "-shared";
+	argv[2] = (gchar *) "-fPIC";
+	argv[3] = (gchar *) "-o";
+	argv[4] = so;
+	argv[5] = src;
+	argv[6] = NULL;
+	g_assert_true (g_spawn_sync (NULL, argv, NULL, G_SPAWN_SEARCH_PATH,
+	                             NULL, NULL, NULL, NULL, &status, &error));
+	g_assert_no_error (error);
+	g_assert_true (g_spawn_check_wait_status (status, &error));
+	g_assert_no_error (error);
+
+	g_assert_true (lrg_editor_app_open_project (f->app, f->project, &error));
+	g_assert_no_error (error);
+	efx_frames (f, 2);
+	dock = lrg_editor_window_get_dock (lrg_editor_app_get_window (f->app));
+	g_assert_nonnull (lrg_dock_area_get_panel (dock, "demo-panel"));
+	g_assert_nonnull (lrg_widget_find (LRG_WIDGET (lrg_editor_app_get_canvas (f->app)), "demo-panel"));
+	g_assert_nonnull (lrg_widget_find (LRG_WIDGET (lrg_editor_app_get_canvas (f->app)),
+	                                   "plugin-inspector-LrgNode"));
+	g_assert_true (lrg_editor_actions_has (lrg_editor_app_get_actions (f->app), "demo.hello"));
+	menu = g_object_get_data (G_OBJECT (f->app), "lrg-editor-plugins-menu");
+	g_assert_nonnull (menu);
+	g_assert_cmpuint (g_menu_model_get_n_items (G_MENU_MODEL (menu)), ==, 1);
+	g_assert_true (lrg_editor_actions_activate (lrg_editor_app_get_actions (f->app), "demo.hello"));
+	last = g_object_get_data (G_OBJECT (f->app), "lrg-plugin-last-action");
+	g_assert_cmpstr (last, ==, "demo.hello");
+
+	g_assert_true (lrg_editor_app_open_project (f->app, f->project, &error));
+	g_assert_no_error (error);
+	g_assert_cmpuint (g_menu_model_get_n_items (G_MENU_MODEL (menu)), ==, 1);
+	g_assert_nonnull (lrg_dock_area_get_panel (dock, "demo-panel"));
+}
+
 #endif /* LRG_BUILD_EDITOR_UI */
 
 int
@@ -820,6 +974,9 @@ main (int   argc,
 	ADD ("palette", test_palette_actions);
 	ADD ("quick-open", test_palette_quick_open);
 	ADD ("project-settings", test_project_settings);
+	ADD ("export-dialog", test_export_dialog);
+	ADD ("steam-page", test_steam_page);
+	ADD ("plugin-dock", test_plugin_dock);
 	ADD ("new-script", test_new_script);
 	ADD ("shortcuts-about", test_shortcuts_and_about);
 	ADD ("code-panel", test_code_panel);

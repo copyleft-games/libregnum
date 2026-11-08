@@ -1955,8 +1955,15 @@ lrg_editor_save_prefab (LrgEditor    *self,
 	    lrg_prefab_find_owner (node) == node)
 		return lrg_editor_prefab_apply (self, node, NULL, error);
 
-	if (!lrg_prefab_save (node, path, error))
-		return FALSE;
+	/* Saving an instance under another name makes an independent prefab
+	 * (since 0.9.0 lrg_prefab_save() keeps a root link, which would make
+	 * it a variant: that is lrg_editor_prefab_create_variant()). */
+	{
+		g_autoptr(LrgNode) copy = lrg_prefab_copy (node, FALSE);
+
+		if (!lrg_prefab_save (copy, path, error))
+			return FALSE;
+	}
 
 	sync_dependents (self, path);
 	return TRUE;
@@ -2122,6 +2129,135 @@ lrg_editor_prefab_unlink (LrgEditor *self,
 	changed = lrg_prefab_unlink (instance);
 	finish_tree_command (self, cmd, changed);
 	return changed;
+}
+
+/* --------------------------------------------------------------------------
+ * Prefab variants (since 0.9.0)
+ * -------------------------------------------------------------------------- */
+
+gchar *
+lrg_editor_prefab_suggest_variant_path (const gchar *source_path)
+{
+	g_autofree gchar *dir = NULL;
+	g_autofree gchar *base = NULL;
+	gchar            *dot;
+	guint             n;
+
+	g_return_val_if_fail (source_path != NULL, NULL);
+
+	dir = g_path_get_dirname (source_path);
+	base = g_path_get_basename (source_path);
+	dot = strrchr (base, '.');
+	if (dot != NULL && dot != base)
+		*dot = '\0';
+
+	/* "<stem>_variant.rprefab", then "_variant2", "_variant3", ... */
+	for (n = 1; n < 10000; n++)
+	{
+		g_autofree gchar *name = (n == 1) ? g_strdup_printf ("%s_variant.rprefab", base)
+		                                  : g_strdup_printf ("%s_variant%u.rprefab", base, n);
+		gchar            *path = (g_strcmp0 (dir, ".") == 0) ? g_strdup (name)
+		                                                     : g_build_filename (dir, name, NULL);
+
+		if (!g_file_test (path, G_FILE_TEST_EXISTS))
+			return path;
+		g_free (path);
+	}
+	return NULL;
+}
+
+/* Writes @variant to @path (which must not exist) and records the file
+ * creation; on success *contents holds what was written. */
+static gboolean
+write_new_prefab (LrgNode      *variant,
+                  const gchar  *path,
+                  gchar       **contents,
+                  GError      **error)
+{
+	if (g_file_test (path, G_FILE_TEST_EXISTS))
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_EXISTS, "%s already exists", path);
+		return FALSE;
+	}
+	if (!lrg_prefab_save (variant, path, error))
+		return FALSE;
+	if (!g_file_get_contents (path, contents, NULL, error))
+		return FALSE;
+	return TRUE;
+}
+
+gboolean
+lrg_editor_create_prefab_variant (LrgEditor    *self,
+                                  const gchar  *base_path,
+                                  const gchar  *variant_path,
+                                  GError      **error)
+{
+	g_autoptr(LrgNode)  base = NULL;
+	g_autoptr(LrgNode)  variant = NULL;
+	g_autofree gchar   *base_guid = NULL;
+	g_autofree gchar   *contents = NULL;
+
+	g_return_val_if_fail (LRG_IS_EDITOR (self), FALSE);
+	g_return_val_if_fail (base_path != NULL, FALSE);
+	g_return_val_if_fail (variant_path != NULL, FALSE);
+
+	/* The base is resolved so a variant of a variant starts from what the
+	 * chain looks like now. */
+	base = lrg_prefab_load_resolved (base_path, NULL, error);
+	if (base == NULL)
+		return FALSE;
+	base_guid = asset_guid_for (base_path);
+	variant = lrg_prefab_create_variant (base, base_path, base_guid);
+
+	if (!write_new_prefab (variant, variant_path, &contents, error))
+		return FALSE;
+	record_applied (self, lrg_editor_command_new_prefab_create (variant_path, contents));
+	return TRUE;
+}
+
+gboolean
+lrg_editor_prefab_create_variant (LrgEditor    *self,
+                                  LrgNode      *instance,
+                                  const gchar  *variant_path,
+                                  GError      **error)
+{
+	LrgPrefabLink      *link;
+	LrgEditorCommand   *cmd;
+	g_autoptr(LrgNode)  variant = NULL;
+	g_autofree gchar   *contents = NULL;
+
+	g_return_val_if_fail (LRG_IS_EDITOR (self), FALSE);
+	g_return_val_if_fail (LRG_IS_NODE (instance), FALSE);
+	g_return_val_if_fail (variant_path != NULL, FALSE);
+
+	link = require_link (instance, error);
+	if (link == NULL)
+		return FALSE;
+	if (g_file_test (variant_path, G_FILE_TEST_EXISTS))
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_EXISTS, "%s already exists", variant_path);
+		return FALSE;
+	}
+
+	/* 1. Split the instance: its overrides move into a new variant file
+	 *    and the instance is relinked to the variant (snapshot first). */
+	cmd = lrg_editor_command_new_prefab_sync (self->level, instance, "Create Variant");
+	variant = lrg_prefab_derive_variant (instance, variant_path, NULL);
+	if (variant == NULL || !write_new_prefab (variant, variant_path, &contents, error))
+	{
+		lrg_editor_command_undo (cmd);
+		g_object_unref (cmd);
+		if (variant == NULL)
+			g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "Cannot derive a variant");
+		return FALSE;
+	}
+
+	/* 2. One undo step: the file appears and the instance is relinked. */
+	lrg_editor_begin_group (self, "Create Variant");
+	record_applied (self, lrg_editor_command_new_prefab_create (variant_path, contents));
+	finish_tree_command (self, cmd, TRUE);
+	lrg_editor_end_group (self);
+	return TRUE;
 }
 
 gboolean

@@ -124,6 +124,23 @@ void                lrg_snow_set_area                   (LrgSnow *self,
                                                          gfloat   width,
                                                          gfloat   height);
 
+/**
+ * lrg_snow_get_area:
+ * @self: A #LrgSnow
+ * @x: (out) (optional): left edge of the screen-space area
+ * @y: (out) (optional): top edge
+ * @width: (out) (optional): width
+ * @height: (out) (optional): height
+ *
+ * Gets the screen-space spawn area (see lrg_snow_set_area()).
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_snow_get_area                   (LrgSnow *self,
+                                                         gfloat  *x,
+                                                         gfloat  *y,
+                                                         gfloat  *width,
+                                                         gfloat  *height);
+
 /* Inspection */
 
 /**

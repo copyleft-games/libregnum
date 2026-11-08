@@ -41,6 +41,9 @@
 #include "../../ui/lrg-viewport.h"
 #include "../lrg-node.h"
 #include "lrg-editor-app.h"
+#include "lrg-editor-gizmo-paint.h"
+#include "../../physics/lrg-dynamics.h"
+#include "../../debug/lrg-debug-draw.h"
 
 G_BEGIN_DECLS
 
@@ -192,5 +195,192 @@ LrgNode * lrg_editor_viewport_panel_drop_asset (LrgEditorViewportPanel *self,
 LRG_AVAILABLE_IN_ALL
 void lrg_editor_viewport_panel_set_gpu_enabled (LrgEditorViewportPanel *self,
                                                 gboolean                enabled);
+
+/**
+ * lrg_editor_viewport_panel_set_layer_mask:
+ * @self: an #LrgEditorViewportPanel
+ * @mask: the render layers this viewport shows (bit N = layer N,
+ *   %LRG_RENDER_LAYERS_MASK_ALL for every layer)
+ *
+ * The per-viewport render-layer picker (the layers button of the header):
+ * hands @mask to the scene renderer as this viewport's cull mask
+ * (lrg_editor_scene_renderer_set_cull_mask()) and renders again. The mask
+ * is a view setting; it is not saved in the level. Since 0.9.0.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_viewport_panel_set_layer_mask (LrgEditorViewportPanel *self,
+                                               guint32                 mask);
+
+/**
+ * lrg_editor_viewport_panel_get_layer_mask:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Returns: the render layers this viewport shows (default all)
+ */
+LRG_AVAILABLE_IN_ALL
+guint32 lrg_editor_viewport_panel_get_layer_mask (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_queue_render:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Renders the scene again at the next frame. The panel follows the level,
+ * selection and view state by itself; call this after changing something
+ * else the image depends on (a post stack previewed on the runtime
+ * renderer, a baked environment). Since 0.9.0.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_viewport_panel_queue_render (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_set_show_bones:
+ * @self: an #LrgEditorViewportPanel
+ * @show: whether to draw skeletons
+ *
+ * The "Bones" overlay (overlays menu, Animation section): the selected
+ * nodes' skeletons as joint dots and bone lines, animated while playing
+ * (the entity's animator or skinned model), else the bind pose of the
+ * node's glTF model. Off by default; a view setting, not saved. Since 0.9.0.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_viewport_panel_set_show_bones (LrgEditorViewportPanel *self,
+                                               gboolean                show);
+
+/**
+ * lrg_editor_viewport_panel_get_show_bones:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Returns: whether the Bones overlay is on
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_viewport_panel_get_show_bones (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_set_show_ik_targets:
+ * @self: an #LrgEditorViewportPanel
+ * @show: whether to draw IK targets
+ *
+ * The "IK Targets" overlay: while playing, every enabled IK goal of a
+ * selected node's #LrgAnimatorComponent3D draws its last solved target
+ * (lrg_ik_goal_get_last_target()) as a ring labelled with the goal name,
+ * with a line from the effector bone. On by default. Since 0.9.0.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_viewport_panel_set_show_ik_targets (LrgEditorViewportPanel *self,
+                                                    gboolean                show);
+
+/**
+ * lrg_editor_viewport_panel_get_show_ik_targets:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Returns: whether the IK Targets overlay is on
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_viewport_panel_get_show_ik_targets (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_get_anim_overlay_counts:
+ * @self: an #LrgEditorViewportPanel
+ * @n_bones: (out) (optional): joints the last overlay pass drew
+ * @n_targets: (out) (optional): IK targets the last overlay pass drew
+ *
+ * What the animation overlays drew in the last paint (tests, tooling).
+ * Since 0.9.0.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_viewport_panel_get_anim_overlay_counts (LrgEditorViewportPanel *self,
+                                                        guint                  *n_bones,
+                                                        guint                  *n_targets);
+
+/**
+ * lrg_editor_viewport_panel_set_physics_overlay:
+ * @self: an #LrgEditorViewportPanel
+ * @flags: what the Physics overlay draws (#LrgDynamicsDebugFlags), 0 for
+ *   nothing
+ *
+ * The "Physics" section of the overlays menu. While authoring the
+ * viewport paints every node's authored `physics:` block (and 2D
+ * `collider` descriptions): %LRG_DYNAMICS_DEBUG_SHAPES the shapes,
+ * %LRG_DYNAMICS_DEBUG_AABBS their bounds, %LRG_DYNAMICS_DEBUG_CONSTRAINTS
+ * the joints and %LRG_DYNAMICS_DEBUG_CENTER_OF_MASS the body origins.
+ * While a 3D level plays it draws the play world's physics through
+ * lrg_world3d_debug_draw_physics() with all the flags (contacts,
+ * sleeping, velocities, broadphase included) inside the 3D pass. The
+ * selected node's collider and joint gizmo is independent of this (the
+ * Gizmos overlay). A view setting, not saved. Since 0.9.0.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_viewport_panel_set_physics_overlay (LrgEditorViewportPanel *self,
+                                                    LrgDynamicsDebugFlags   flags);
+
+/**
+ * lrg_editor_viewport_panel_get_physics_overlay:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Returns: the Physics overlay flags (#LrgDynamicsDebugFlags)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgDynamicsDebugFlags lrg_editor_viewport_panel_get_physics_overlay (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_record_physics:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Records the play world's physics into the panel's debug draw batch
+ * (what the next 3D pass draws) with the Physics overlay flags. The
+ * render does this every frame; tests and tools call it to inspect the
+ * batch without a GPU.
+ *
+ * Returns: the number of primitives recorded (0 when not playing a 3D
+ *   level, without a physics world or with the overlay off)
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_viewport_panel_record_physics (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_get_physics_debug_draw:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Returns: (transfer none): the debug draw batch the Physics overlay
+ *   records the play world into
+ */
+LRG_AVAILABLE_IN_ALL
+LrgDebugDraw * lrg_editor_viewport_panel_get_physics_debug_draw (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_get_physics_painted:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Returns: the shapes and joints the last overlay paint drew for the
+ *   authoring Physics overlay and the selected node's physics gizmo
+ *   (tests, tooling)
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_viewport_panel_get_physics_painted (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_get_terrain_painted:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Returns: the terrain brush rings and water outline handles the last
+ *   overlay paint drew (lrg_editor_terrain_panel_paint_overlay(); tests,
+ *   tooling)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_viewport_panel_get_terrain_painted (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_get_physics_handle:
+ * @self: an #LrgEditorViewportPanel
+ * @index: (out) (optional): the handle's shape or joint index
+ *
+ * Returns: the physics gizmo handle being dragged, else the hovered one,
+ *   else %LRG_EDITOR_PHYSICS_HANDLE_NONE
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorPhysicsHandle lrg_editor_viewport_panel_get_physics_handle (LrgEditorViewportPanel *self,
+                                                                     guint                  *index);
 
 G_END_DECLS

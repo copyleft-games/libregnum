@@ -5159,6 +5159,11 @@ GType lrg_level_error_get_type (void) G_GNUC_CONST;
  * @LRG_NODE_VISUAL_AUDIO_EMITTER: A positional audio emitter
  * @LRG_NODE_VISUAL_PREFAB_INSTANCE: An instance of a saved prefab
  * @LRG_NODE_VISUAL_CAD_PART: A parametric CAD part (cad-glib document)
+ * @LRG_NODE_VISUAL_DECAL: A projected decal box (0.9.0; becomes an #LrgDecalComponent)
+ * @LRG_NODE_VISUAL_REFLECTION_PROBE: A box-projected reflection probe (0.9.0)
+ * @LRG_NODE_VISUAL_PROBE_VOLUME: A box of baked SH light probes (0.9.0; an #LrgProbeGrid volume for the lightmap baker)
+ * @LRG_NODE_VISUAL_TERRAIN: A heightfield terrain (0.9.0; the asset is a .rterrain, becomes an #LrgTerrainComponent)
+ * @LRG_NODE_VISUAL_WATER: A water body (0.9.0; the asset is a .rwater, becomes an #LrgWaterComponent)
  *   referenced by source path; parameters live in the visual's param
  *   bag under "cad:"-prefixed keys
  *
@@ -5179,7 +5184,12 @@ typedef enum
     LRG_NODE_VISUAL_CAMERA,
     LRG_NODE_VISUAL_AUDIO_EMITTER,
     LRG_NODE_VISUAL_PREFAB_INSTANCE,
-    LRG_NODE_VISUAL_CAD_PART
+    LRG_NODE_VISUAL_CAD_PART,
+    LRG_NODE_VISUAL_DECAL,
+    LRG_NODE_VISUAL_REFLECTION_PROBE,
+    LRG_NODE_VISUAL_PROBE_VOLUME,
+    LRG_NODE_VISUAL_TERRAIN,
+    LRG_NODE_VISUAL_WATER
 } LrgNodeVisualKind;
 
 LRG_AVAILABLE_IN_ALL
@@ -5300,7 +5310,7 @@ GType lrg_editor_gizmo_handle_get_type (void) G_GNUC_CONST;
  * LrgAssetType:
  * @LRG_ASSET_TYPE_UNKNOWN: unrecognized asset
  * @LRG_ASSET_TYPE_TEXTURE: image/texture (png, jpg, tga, bmp)
- * @LRG_ASSET_TYPE_MODEL: 3D mesh/model (gltf, glb, obj, fbx, ply)
+ * @LRG_ASSET_TYPE_MODEL: 3D mesh/model (gltf, glb, obj, fbx)
  * @LRG_ASSET_TYPE_AUDIO: sound/music (wav, ogg, flac, mp3)
  * @LRG_ASSET_TYPE_FONT: font (ttf, otf)
  * @LRG_ASSET_TYPE_SCRIPT: script source (lua, py, js, c)

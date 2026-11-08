@@ -136,6 +136,18 @@ LrgBlackboard *bb = lrg_behavior_tree_get_blackboard(tree);
 lrg_blackboard_set_int(bb, "health", 100);
 #+end_src
 
+*** lrg_behavior_tree_set_blackboard() (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: lrg_behavior_tree_set_blackboard
+:END:
+#+begin_src C
+void
+lrg_behavior_tree_set_blackboard (LrgBehaviorTree *self,
+                                  LrgBlackboard   *blackboard)
+#+end_src
+
+Replaces the tree's blackboard (a tree creates its own otherwise), so several trees, or a tree and an [[file:logic-machine.org][LrgLogicMachine]], share one: =lrg_bt_asset_build()= and [[file:ai-component.org][LrgAiComponent]] use it. Notifies =blackboard=.
+
 ** Tree Execution
 :PROPERTIES:
 :CUSTOM_ID: tree-execution

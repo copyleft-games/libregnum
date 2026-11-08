@@ -130,6 +130,20 @@ LrgBTStatus         lrg_behavior_tree_get_status     (LrgBehaviorTree *self);
 LRG_AVAILABLE_IN_ALL
 gboolean            lrg_behavior_tree_is_running     (LrgBehaviorTree *self);
 
+/**
+ * lrg_behavior_tree_set_blackboard:
+ * @self: an #LrgBehaviorTree
+ * @blackboard: the blackboard the tree reads and writes from now on
+ *
+ * Replaces the tree's blackboard, so several trees (or a tree and an
+ * #LrgLogicMachine) can share one, as #LrgAiComponent does.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_behavior_tree_set_blackboard (LrgBehaviorTree *self,
+                                                      LrgBlackboard   *blackboard);
+
 G_END_DECLS
 
 #endif /* LRG_BEHAVIOR_TREE_H */

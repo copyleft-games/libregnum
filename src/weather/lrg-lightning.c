@@ -414,8 +414,9 @@ lrg_lightning_render (LrgWeatherEffect *effect)
     if (!lrg_weather_effect_is_active (effect) || !self->flashing || !lrg_weather_can_draw ())
         return;
 
-    width = GetScreenWidth ();
-    height = GetScreenHeight ();
+    /* Explicit render-target size when the manager stored one,
+     * otherwise the framebuffer (not the window). */
+    lrg_weather_effect_resolve_viewport (effect, &width, &height);
     draw_flash (self, width, height);
 
     alpha = bolt_alpha (self);
@@ -454,19 +455,26 @@ lrg_lightning_render_world (LrgWeatherEffect *effect,
 {
     LrgLightning *self = LRG_LIGHTNING (effect);
     gfloat        eye[3];
-    guint8        color[4];
+    guint8        core[4];
+    guint8        halo[4];
+    gfloat        core_w;
+    gfloat        halo_w;
     guint         i;
 
-    if (!lrg_weather_effect_is_active (effect) || !self->flashing || !self->bolts_enabled
-        || !self->has_bolt || !lrg_weather_can_draw ())
+    if (!lrg_weather_can_draw ())
         return;
 
-    color[0] = self->color_r;
-    color[1] = self->color_g;
-    color[2] = self->color_b;
-    color[3] = bolt_alpha (self);
-    if (color[3] == 0)
+    /* Halo first (wide, the flash's alpha), then a full-white core.
+     * The numbers are the ones lrg_lightning_get_bolt_layers() reports. */
+    if (!lrg_lightning_get_bolt_layers (self, &core[3], &core_w, &halo[3], &halo_w))
         return;
+
+    core[0] = self->color_r;
+    core[1] = self->color_g;
+    core[2] = self->color_b;
+    halo[0] = self->color_r;
+    halo[1] = self->color_g;
+    halo[2] = self->color_b;
     eye[0] = camera_position->x;
     eye[1] = camera_position->y;
     eye[2] = camera_position->z;
@@ -479,7 +487,8 @@ lrg_lightning_render_world (LrgWeatherEffect *effect,
 
         bolt_point (self, i, TRUE, 0, 0, a);
         bolt_point (self, i + 1, TRUE, 0, 0, b);
-        lrg_weather_emit_ribbon (a, b, self->bolt_width, eye, color, color);
+        lrg_weather_emit_ribbon (a, b, halo_w, eye, halo, halo);
+        lrg_weather_emit_ribbon (a, b, core_w, eye, core, core);
     }
     lrg_weather_end_particles ();
 }
@@ -770,5 +779,36 @@ lrg_lightning_get_bolt_point (LrgLightning *self,
     out_position->x = p[0];
     out_position->y = p[1];
     out_position->z = p[2];
+    return TRUE;
+}
+
+gboolean
+lrg_lightning_get_bolt_layers (LrgLightning *self,
+                               guint8       *core_alpha,
+                               gfloat       *core_width,
+                               guint8       *halo_alpha,
+                               gfloat       *halo_width)
+{
+    gfloat level;
+    gfloat core;
+    gfloat halo;
+
+    g_return_val_if_fail (LRG_IS_LIGHTNING (self), FALSE);
+
+    /* get_flash_level is 0 unless the effect is active and flashing. */
+    level = lrg_lightning_get_flash_level (self);
+    if (!self->bolts_enabled || !self->has_bolt || level <= 0.0f)
+        return FALSE;
+
+    core = self->bolt_width;
+    halo = core * 3.0f;
+    if (core_alpha != NULL)
+        *core_alpha = 255;
+    if (core_width != NULL)
+        *core_width = core;
+    if (halo_alpha != NULL)
+        *halo_alpha = bolt_alpha (self);
+    if (halo_width != NULL)
+        *halo_width = halo;
     return TRUE;
 }

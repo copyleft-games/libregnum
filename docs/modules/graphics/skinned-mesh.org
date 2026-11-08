@@ -81,6 +81,70 @@ Every bone starts with an identity inverse bind and the palette starts as identi
 
 The built-in fragment shader multiplies the texture, tint and vertex colour, discards fragments below the alpha cutoff (hair, fur) and shades with a fixed key light. A custom shader (=set_shader()=) starts from =get_vertex_shader_source()= and keeps those attribute and uniform names. The built-in program is shared by every mesh and released with the last upload.
 
+** Materials
+:PROPERTIES:
+:CUSTOM_ID: materials
+:END:
+=lrg_skinned_mesh_set_material (mesh, material)= draws the mesh with an [[file:material.org][LrgMaterial]] (referenced; %NULL goes back to the texture, tint and alpha-cutoff setters; =lrg_skinned_mesh_get_material()= reads it): =lrg_material_apply()= on the mesh's shader, the material's maps for =DrawMesh()= (its albedo map replaces =lrg_skinned_mesh_set_texture()= when it has one), its base colour times the tint, its alpha cutoff, and its render state around the draw.
+
+** Skeletons
+:PROPERTIES:
+:CUSTOM_ID: skeletons
+:END:
+#+begin_src C
+guint    lrg_skinned_mesh_set_inverse_binds_from_skeleton (LrgSkinnedMesh *self, LrgSkeleton *skeleton);
+gboolean lrg_skinned_mesh_apply_skeleton (LrgSkinnedMesh *self, LrgSkeleton *skeleton);
+#+end_src
+=set_inverse_binds_from_skeleton()= copies the skeleton's inverse bind matrices (=lrg_skeleton_get_inverse_bind_matrix()=, set by the glTF importer) into the mesh, bone /i/ to bone /i/, and returns how many it copied. =apply_skeleton()= is the per-frame call: the palette of the skeleton's current world poses (=compute_palette_from_skeleton()=) set on the mesh. Meshes from =lrg_gltf_animation_create_skinned_mesh()= arrive with both done for the bind pose.
+
+** Morph targets
+:PROPERTIES:
+:CUSTOM_ID: morph-targets
+:END:
+Morph targets (blend shapes) deform the bind geometry before skinning: a morphed vertex is =base + sum(weight[i] * delta[i])= for positions and normals (normals renormalised). They live in an =LrgMorphTargets= (*Final GObject Class*, =LRG_TYPE_MORPH_TARGETS=, declared in the same header) set on the mesh.
+
+#+begin_src C
+LrgMorphTargets *lrg_morph_targets_new (guint n_vertices);                  /* NULL for 0 */
+guint        lrg_morph_targets_add_target (LrgMorphTargets *self, const gchar *group, const gchar *name,
+                                           const gfloat *position_deltas, const gfloat *normal_deltas,
+                                           gfloat default_weight);           /* the target's index */
+guint        lrg_morph_targets_get_vertex_count (LrgMorphTargets *self);
+guint        lrg_morph_targets_get_target_count (LrgMorphTargets *self);
+const gchar *lrg_morph_targets_get_target_name  (LrgMorphTargets *self, guint target);
+const gchar *lrg_morph_targets_get_target_group (LrgMorphTargets *self, guint target);
+gint         lrg_morph_targets_find_target (LrgMorphTargets *self, const gchar *name);
+gint         lrg_morph_targets_find_group  (LrgMorphTargets *self, const gchar *group, guint *out_count);
+gfloat       lrg_morph_targets_get_default_weight  (LrgMorphTargets *self, guint target);
+const gfloat *lrg_morph_targets_get_position_deltas (LrgMorphTargets *self, guint target);
+const gfloat *lrg_morph_targets_get_normal_deltas   (LrgMorphTargets *self, guint target);   /* nullable */
+void         lrg_morph_targets_apply (LrgMorphTargets *self, const gfloat *weights, guint n_weights,
+                                      const gfloat *base_positions, const gfloat *base_normals,
+                                      gfloat *out_positions, gfloat *out_normals);
+
+gboolean         lrg_skinned_mesh_set_morph_targets (LrgSkinnedMesh *self, LrgMorphTargets *targets);
+LrgMorphTargets *lrg_skinned_mesh_get_morph_targets (LrgSkinnedMesh *self);
+void             lrg_skinned_mesh_set_morph_weights (LrgSkinnedMesh *self, const gfloat *weights, guint n_weights);
+gboolean         lrg_skinned_mesh_set_morph_weight  (LrgSkinnedMesh *self, guint target, gfloat weight);
+gboolean         lrg_skinned_mesh_set_morph_group_weights (LrgSkinnedMesh *self, const gchar *group,
+                                                           const gfloat *weights, guint n_weights);
+const gfloat    *lrg_skinned_mesh_get_morph_weights (LrgSkinnedMesh *self, guint *n_weights);
+const gfloat    *lrg_skinned_mesh_get_morphed_positions (LrgSkinnedMesh *self);
+#+end_src
+
+- *Groups* - every target belongs to a group (the glTF importer uses the node name, the target name of that node's clip weight channels) and targets of a group are stored next to each other; =find_group()= returns the first index and the count, =set_morph_group_weights()= sets them from a sampled weight channel (=lrg_animation_clip_sample_weights()=).
+- *Setting targets* - =set_morph_targets()= needs the mesh's vertex count (set the geometry first), references the targets, starts the weights at the defaults and makes an uploaded mesh re-upload with dynamic vertex buffers. =NULL= removes them. New geometry with another vertex count drops them.
+- *Where blending runs* - on the CPU, lazily: a weight change marks the blend stale; =lrg_skinned_mesh_skin()=, =get_morphed_positions()= and the next =draw()= recompute it once (O(vertices x targets with a non-zero weight)). The GPU path then re-uploads the blended positions and normals (=UpdateMeshBuffer()=) and skins them in the shader; the CPU fallback skins the blended geometry. Unchanged weights cost nothing (the setters compare first).
+- *Bounds and skinning* - =get_skinned_bounds()= and =skin()= include the morph.
+
+#+begin_src C
+/* drive a face from a clip's weight channel */
+gfloat w[8];
+guint  n = lrg_animation_clip_get_weights_channel_width (clip, 0);
+
+lrg_animation_clip_sample_weights (clip, 0, time, w);
+lrg_skinned_mesh_set_morph_group_weights (face, lrg_animation_clip_get_weights_channel_target (clip, 0), w, n);
+#+end_src
+
 ** Example
 :PROPERTIES:
 :CUSTOM_ID: example
@@ -104,4 +168,6 @@ lrg_skinned_mesh_draw (arm, &model);
 :PROPERTIES:
 :CUSTOM_ID: tests
 :END:
+=tests/test-gltf-animation.c= covers the skeleton palette, morph targets (CPU against =LrgGltfGeometry=, group weights, removal) and GPU drawing of an imported character and a morph mesh; see [[file:../animation/gltf-animation.org#tests][glTF animation: Tests]].
+
 =tests/test-skinned-mesh.c=: bone count limits, every geometry failure leaving the mesh unchanged, weight renormalisation, the palette product, CPU skinning of a two-bone arm bent 90 degrees at the elbow (positions, normals, blended joint, bounds), =lrg_bone_pose_to_matrix()=, a palette from an =LrgSkeleton= (which needs the hierarchical =lrg_bone_pose_compose()=), the CPU fallback past 64 bones, upload without a context, and two readbacks: a square on bone 3 of 4 drawn by the GPU path moves when its bone does, and one on bone 69 of 70 drawn by the CPU fallback does the same.

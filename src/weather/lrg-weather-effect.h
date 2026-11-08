@@ -432,4 +432,86 @@ LRG_AVAILABLE_IN_ALL
 void                lrg_weather_effect_set_render_layer     (LrgWeatherEffect *self,
                                                              gint              layer);
 
+/**
+ * lrg_weather_effect_get_level:
+ * @self: A #LrgWeatherEffect
+ *
+ * Gets the full-strength intensity (see #LrgWeatherEffect:level).
+ *
+ * Returns: the level from 0.0 to 1.0, or -1.0 when unset
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat              lrg_weather_effect_get_level            (LrgWeatherEffect *self);
+
+/**
+ * lrg_weather_effect_set_level:
+ * @self: A #LrgWeatherEffect
+ * @level: intensity from 0.0 to 1.0 at full weather strength, or a
+ *   negative value to unset it
+ *
+ * Sets the intensity the weather manager crossfades this effect to (see
+ * #LrgWeatherEffect:level). Does not change the current intensity.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_weather_effect_set_level            (LrgWeatherEffect *self,
+                                                             gfloat            level);
+
+/**
+ * lrg_weather_effect_get_full_intensity:
+ * @self: A #LrgWeatherEffect
+ *
+ * The intensity the effect reaches when its weather is fully on: the
+ * level, or 1.0 when it is unset.
+ *
+ * Returns: the full-strength intensity
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat              lrg_weather_effect_get_full_intensity   (LrgWeatherEffect *self);
+
+/**
+ * lrg_weather_effect_set_viewport:
+ * @self: a #LrgWeatherEffect
+ * @width: render-target width in pixels, or 0 to unset
+ * @height: render-target height in pixels, or 0 to unset
+ *
+ * Stores the framebuffer the 2D pass should cover. The weather manager
+ * sets this from lrg_weather_manager_set_render_size() before each
+ * render, including when no window exists. Zero on either axis unsets
+ * it, and drawing then falls back to the live render target.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_weather_effect_set_viewport         (LrgWeatherEffect *self,
+                                                             gint              width,
+                                                             gint              height);
+
+/**
+ * lrg_weather_effect_get_viewport:
+ * @self: a #LrgWeatherEffect
+ * @width: (out) (nullable): stored width, 0 when unset
+ * @height: (out) (nullable): stored height, 0 when unset
+ *
+ * Reads the viewport stored by lrg_weather_effect_set_viewport().
+ * Headless.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_weather_effect_get_viewport         (LrgWeatherEffect *self,
+                                                             gint             *width,
+                                                             gint             *height);
+
+/**
+ * lrg_weather_effect_resolve_viewport:
+ * @self: a #LrgWeatherEffect
+ * @width: (out) (nullable): width to draw, or 0
+ * @height: (out) (nullable): height to draw, or 0
+ *
+ * The size a 2D overlay should use: the stored viewport when both axes
+ * are positive, otherwise the live render target when a window is
+ * ready, otherwise 0. Headless callers observe 0 until a viewport is
+ * stored.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_weather_effect_resolve_viewport     (LrgWeatherEffect *self,
+                                                             gint             *width,
+                                                             gint             *height);
+
 G_END_DECLS

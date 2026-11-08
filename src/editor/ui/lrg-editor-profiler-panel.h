@@ -130,4 +130,24 @@ guint lrg_editor_profiler_panel_get_n_sections (LrgEditorProfilerPanel *self);
 LRG_AVAILABLE_IN_ALL
 gint lrg_editor_profiler_panel_get_hovered_frame (LrgEditorProfilerPanel *self);
 
+/**
+ * lrg_editor_profiler_panel_get_capture:
+ * @self: an #LrgEditorProfilerPanel
+ *
+ * The capture held by the last profiler.capture or profiler.load.
+ *
+ * Returns: (transfer none) (nullable): the capture, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgProfilerCapture * lrg_editor_profiler_panel_get_capture (LrgEditorProfilerPanel *self);
+
+/**
+ * lrg_editor_profiler_panel_get_view_mode:
+ * @self: an #LrgEditorProfilerPanel
+ *
+ * Returns: (transfer none): "timeline", "flame", "table" or "compare"
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_profiler_panel_get_view_mode (LrgEditorProfilerPanel *self);
+
 G_END_DECLS

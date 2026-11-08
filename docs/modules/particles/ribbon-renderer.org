@@ -1,0 +1,111 @@
+#+title: Ribbons and trails
+#+description: LrgParticleRibbonRenderer: camera-facing strips for particle trails and connecting ribbons, with width curves, colour gradients and UV modes
+
+* LrgParticleRibbonRenderer
+:PROPERTIES:
+:CUSTOM_ID: ribbon-renderer
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Particles]] > Ribbons and trails
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgParticleRibbonRenderer= (=particles/lrg-particle-ribbon-renderer.h=, 0.9.0) draws a particle system as camera-facing strips. In /trail/ mode every particle drags the path it flew (sparks, tracers, smoke trails behind rockets, sword swooshes); in /connect/ mode one ribbon runs through all live particles in spawn order (beams, magic streams, lightning, tentacles). Width varies along the strip with a curve, colour with a gradient, and the texture's u coordinate stretches, tiles or repeats per segment. Geometry is built headless by =lrg_particle_ribbon_renderer_build()=, which tests check; =draw()= submits exactly those quads through rlgl. The =ribbon= renderer kind of a [[file:particle-asset.org][.rparticles]] emitter creates and configures one.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+- *Trail history*: =lrg_particle_ribbon_renderer_update()= (called after every system step; an =LrgParticleEffect= does it) records, per particle id (=LrgParticle.id=), a point whenever the particle travelled =min-distance= since its last one, with the particle's width (=width= x size) and colour at that moment. Points age; points older than =trail-lifetime= are dropped, and a trail keeps at most =max-points= (oldest dropped first). The live particle itself is the trail's /head/, added at build time at its current position, so a trail never lags. When a particle dies its trail stays and fades out point by point until the last one expires.
+- *Connect mode* needs no history: build sorts the live particles by id, newest first, and strings them together (head = newest particle).
+- *Strip geometry*: for each strip point the tangent is the direction between its neighbours, the side vector is =normalize (cross (tangent, eye - point))= scaled to half its width (times =width-curve= at the point's position =f= along the strip, 0 head .. 1 tail); a degenerate side (looking straight along the strip) keeps the previous one. Consecutive points make a quad; points closer than 1e-5 are merged.
+- *Colour*: the point's colour times =color-gradient= at =f=.
+- *UVs*: =v= runs 0 .. 1 across. =u= is =f= with =STRETCH=, distance-from-head / =uv-tile-length= with =TILE=, and 0 .. 1 per quad with =PER_SEGMENT=.
+- *Default texture*: without a texture, a generated 4 x 32 texture that is opaque along the centre line and fades to the edges (bilinear), which reads as a soft streak.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Symbol | Description |
+|--------+-------------|
+| =LrgParticleRibbonMode=, =lrg_particle_ribbon_mode_get_type()= | =LRG_PARTICLE_RIBBON_TRAIL=, =LRG_PARTICLE_RIBBON_CONNECT= (nicks =trail=, =connect=) |
+| =LrgParticleRibbonUvMode=, =lrg_particle_ribbon_uv_mode_get_type()= | =STRETCH=, =TILE=, =PER_SEGMENT= (nicks =stretch=, =tile=, =per-segment=) |
+| =LRG_PARTICLE_RIBBON_FLOATS_PER_VERTEX= (9), =LRG_PARTICLE_RIBBON_FLOATS_PER_QUAD= (36) | vertex layout: x y z, u v, r g b a |
+| =lrg_particle_ribbon_renderer_new ()= | trail mode, width 0.2, stretch, 32 points, 0.05 spacing, 0.5 s lifetime |
+| =lrg_particle_ribbon_renderer_get_mode=, =set_mode= | property =mode=; changing it drops recorded trails |
+| =lrg_particle_ribbon_renderer_get_uv_mode=, =set_uv_mode= | property =uv-mode= |
+| =lrg_particle_ribbon_renderer_get_uv_tile_length=, =set_uv_tile_length= | property =uv-tile-length= (> 0) |
+| =lrg_particle_ribbon_renderer_get_width=, =set_width= | property =width= (>= 0), at particle size 1 |
+| =lrg_particle_ribbon_renderer_get_width_curve=, =set_width_curve= | property =width-curve= (=LrgKeyframeCurve=, nullable) |
+| =lrg_particle_ribbon_renderer_get_color_gradient=, =set_color_gradient= | property =color-gradient= (=LrgColorGradient=, nullable) |
+| =lrg_particle_ribbon_renderer_get_max_points=, =set_max_points= | property =max-points= (2 .. 1024) |
+| =lrg_particle_ribbon_renderer_get_min_distance=, =set_min_distance= | property =min-distance= (>= 0) |
+| =lrg_particle_ribbon_renderer_get_trail_lifetime=, =set_trail_lifetime= | property =trail-lifetime= (> 0) |
+| =lrg_particle_ribbon_renderer_get_texture=, =set_texture= | property =texture= (=GrlTexture=, nullable) |
+| =lrg_particle_ribbon_renderer_update (self, system, dt)= | records and ages trail points (trail mode) |
+| =lrg_particle_ribbon_renderer_clear (self)= | drops every trail (after a stop or restart) |
+| =lrg_particle_ribbon_renderer_get_n_trails (self)=, =get_n_points (self)= | live and fading trails; recorded points (heads excluded) |
+| =lrg_particle_ribbon_renderer_build (self, system, eye, out)= | appends quads to a =GArray= of floats; returns the quad count |
+| =lrg_particle_ribbon_renderer_draw (self, system, eye)= | builds and draws with the system's blend mode: depth test on, depth writes and back-face culling off; nothing without a window or when the system's layer is hidden |
+| =lrg_particle_ribbon_renderer_release_gpu (self)= | frees the generated texture |
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgParticleRibbonRenderer) trails = lrg_particle_ribbon_renderer_new ();
+g_autoptr(LrgKeyframeCurve)          taper = lrg_keyframe_curve_new ();
+g_autoptr(LrgColorGradient)          fade = lrg_color_gradient_new_from_string ("0 #ffffffff; 1 #ff400000", NULL);
+gfloat                               eye[3];
+
+lrg_keyframe_curve_add_key (taper, 0.0f, 1.0f, LRG_EASING_LINEAR);
+lrg_keyframe_curve_add_key (taper, 1.0f, 0.0f, LRG_EASING_LINEAR);
+lrg_particle_ribbon_renderer_set_width (trails, 0.05f);
+lrg_particle_ribbon_renderer_set_width_curve (trails, taper);
+lrg_particle_ribbon_renderer_set_color_gradient (trails, fade);
+lrg_particle_ribbon_renderer_set_trail_lifetime (trails, 0.15f);
+
+/* each frame */
+lrg_particle_system_update (sparks, dt);
+lrg_particle_ribbon_renderer_update (trails, sparks, dt);
+BeginMode3D (camera);
+lrg_particle_ribbon_renderer_draw (trails, sparks, eye);
+EndMode3D ();
+#+end_src
+
+In a =.rparticles= file the same is =renderer: {kind: ribbon, width: 0.05, width-curve: "0 1; 1 0", color-gradient: "0 #ffffffff; 1 #ff400000", trail-lifetime: 0.15}=.
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+On an i7-1280P core (=taskset -c 2=): 1 480 trails holding 39 400 points build 37 000 quads in 6.2 ms; recording 1 000 particles costs about 0.3 ms per step on top of their simulation. Cost is linear in points: =max-points= and =min-distance= are the levers. Drawing is one rlgl batch (flushed as it fills).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Call =update()= after every system step; without it trail mode shows only heads (no strip). =LrgParticleEffect= does it for you.
+- The renderer is per system and keyed by particle id: do not share one between systems.
+- Connect mode strings particles in spawn order: a burst of particles flying apart makes a zigzag. Use it with a steady rate and coherent motion.
+- Trails outlive particles by up to =trail-lifetime=: an effect is not "finished" while a trail is still fading (=lrg_particle_effect_is_alive()= counts them).
+
+
+** Symbol index
+:PROPERTIES:
+:CUSTOM_ID: symbol-index
+:END:
+The remaining public symbols of =particles/lrg-particle-ribbon-renderer.h=, by their full names (the tables above abbreviate getter and setter pairs): =lrg_particle_ribbon_renderer_set_mode ()=, =lrg_particle_ribbon_renderer_set_uv_mode ()=, =lrg_particle_ribbon_renderer_set_uv_tile_length ()=, =lrg_particle_ribbon_renderer_set_max_points ()=, =lrg_particle_ribbon_renderer_set_min_distance ()=, =lrg_particle_ribbon_renderer_set_texture ()=, =lrg_particle_ribbon_renderer_get_n_points ()=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:particle-asset.org][Particle assets]] (the =renderer:= block)
+- [[file:billboard-renderer.org][Billboards]], [[file:mesh-renderer.org][mesh particles]]
+- [[file:../core/color-gradient.org][LrgColorGradient]]

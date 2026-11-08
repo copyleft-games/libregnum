@@ -188,6 +188,70 @@ lrg_pitch_shift_finalize (GObject *object)
     G_OBJECT_CLASS (lrg_pitch_shift_parent_class)->finalize (object);
 }
 
+/* ==========================================================================
+ * Properties (the .rmixer format, snapshots and inspectors set parameters
+ * by name; each one goes through its setter, so the clamps are the same)
+ * ========================================================================== */
+
+enum
+{
+    PROP_0,
+    PROP_RATIO,
+    PROP_WINDOW,
+    N_PROPS
+};
+
+static GParamSpec *properties[N_PROPS];
+
+static void
+lrg_pitch_shift_get_property (GObject    *object,
+                              guint       prop_id,
+                              GValue     *value,
+                              GParamSpec *pspec)
+{
+    LrgPitchShift *self = (LrgPitchShift *)object;
+
+    switch (prop_id)
+    {
+    case PROP_RATIO:
+        g_value_set_float (value, self->ratio);
+        break;
+    case PROP_WINDOW:
+        g_value_set_float (value, self->window);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
+static void
+lrg_pitch_shift_set_property (GObject      *object,
+                              guint         prop_id,
+                              const GValue *value,
+                              GParamSpec   *pspec)
+{
+    LrgPitchShift *self = (LrgPitchShift *)object;
+    gfloat before;
+
+    switch (prop_id)
+    {
+    case PROP_RATIO:
+        before = self->ratio;
+        lrg_pitch_shift_set_ratio (self, g_value_get_float (value));
+        if (before != self->ratio)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_WINDOW:
+        before = self->window;
+        lrg_pitch_shift_set_window (self, g_value_get_float (value));
+        if (before != self->window)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
 static void
 lrg_pitch_shift_class_init (LrgPitchShiftClass *klass)
 {
@@ -197,6 +261,28 @@ lrg_pitch_shift_class_init (LrgPitchShiftClass *klass)
     object_class->finalize = lrg_pitch_shift_finalize;
     effect_class->process = lrg_pitch_shift_process;
     effect_class->reset = lrg_pitch_shift_reset;
+    object_class->get_property = lrg_pitch_shift_get_property;
+    object_class->set_property = lrg_pitch_shift_set_property;
+
+    /**
+     * LrgPitchShift:ratio:
+     *
+     * Pitch ratio (lrg_pitch_shift_set_ratio()).
+     */
+    properties[PROP_RATIO] =
+        g_param_spec_float ("ratio", NULL, NULL, LRG_PITCH_SHIFT_MIN_RATIO, LRG_PITCH_SHIFT_MAX_RATIO, 1.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgPitchShift:window:
+     *
+     * Grain window in seconds (lrg_pitch_shift_set_window()).
+     */
+    properties[PROP_WINDOW] =
+        g_param_spec_float ("window", NULL, NULL, LRG_PITCH_SHIFT_MIN_WINDOW, LRG_PITCH_SHIFT_MAX_WINDOW, 0.04f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
 static void

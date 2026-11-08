@@ -1,0 +1,486 @@
+#+title: LrgSkeleton2D - 2D Skeletal Animation
+#+description: 2D bones, slots, skins of deformable sprite meshes, 2D clips with crossfades, automatic weights and the .rskel2d format
+#+created: 2026-11-07
+
+* LrgSkeleton2D - 2D Skeletal Animation
+:PROPERTIES:
+:CUSTOM_ID: lrgskeleton2d
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Animation]] > LrgSkeleton2D
+#+end_quote
+
+=LrgSkeleton2D= animates 2D characters made of image pieces that bend: a hierarchy of 2D bones moves deformable sprite meshes (=LrgSkinnedSprite=), clips (=LrgSkeleton2DClip=) key bone transforms, attachment swaps, draw order, colours and events, and the whole rig is stored in libregnum's own =.rskel2d= YAML format. =LrgSkeleton2DComponent= plays it on an =LrgGameObject= in an =LrgWorld= with crossfades.
+
+- *Header*: =animation/lrg-skeleton2d.h= (plus =graphics/lrg-skinned-sprite.h=, =ecs/components/lrg-skeleton2d-component.h=)
+- *Types*: =LrgSkeleton2D= and =LrgSkeleton2DClip= (final GObjects, =LRG_TYPE_SKELETON2D=, =LRG_TYPE_SKELETON2D_CLIP=, GIR =Libregnum.Skeleton2D=, =Libregnum.Skeleton2DClip=); enums =LrgSkeleton2DError=, =LrgSkeleton2DCurve=, =LrgSkeleton2DChannel=
+- *Since*: 0.9.0
+- *Headless*: everything except drawing (=lrg_skeleton2d_draw()=, =lrg_skeleton2d_draw_bones()=, =lrg_skeleton2d_load_textures()=) runs without a window
+- *Format*: =.rskel2d= (version 1), our own design. Spine and DragonBones files are not read or written: their formats are proprietary or restrictively licensed. Rigs are authored in code, by hand in YAML, or with the editor's [[file:../../editor/skeleton2d-editor.org][2D Rig Editor]].
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+
+A frame of a 2D skeletal character goes through four steps:
+
+1. *Pose*: reset to the setup pose (=lrg_skeleton2d_reset_pose()=), then apply one or more clips at a time and weight (=lrg_skeleton2d_clip_apply()=). Procedural changes (look at the mouse, IK) set bones directly with =lrg_skeleton2d_set_bone_local()=.
+2. *World transforms*: =lrg_skeleton2d_update_world()= turns local poses into world matrices and the skinning palette.
+3. *Deform*: every visible attachment is skinned on the CPU with the palette (=lrg_skeleton2d_deform()=, done by draw).
+4. *Draw*: slots are drawn back to front in the current draw order, each attachment tinted by its slot colour (=lrg_skeleton2d_draw()=).
+
+=LrgSkeleton2DComponent= runs steps 1 and 2 in its update and 3 and 4 in its draw, at the owning game object's position, rotation and scale.
+
+#+begin_example
+LrgSkeleton2D
+ +-- bones      root > hip > torso > head ...        (hierarchy, setup + current pose)
+ +-- slots      arm_r, leg_r, torso, head, ...       (draw order, bone, attachment, colour)
+ +-- skins      default, big-head ...                (slot + name -> LrgSkinnedSprite)
+ +-- clips      walk, wave ...                       (LrgSkeleton2DClip: keys by bone/slot name)
+#+end_example
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+
+*** Coordinates
+:PROPERTIES:
+:CUSTOM_ID: coordinates
+:END:
+- Screen space: x right, *y down* (raylib's 2D convention). Units are pixels at scale 1.
+- Rotations are in *degrees*; positive turns *clockwise* on screen (the same sense as =DrawTexturePro()= and =GrlEntity= rotation). A bone rotated 90 points down.
+- A bone's length lies along its local +X axis. Length is only used for drawing, picking and automatic weights; it does not move children (place children with their own =x=).
+- 2D affine matrices are six floats =(a, b, c, d, tx, ty)=: =x' = a*x + c*y + tx=, =y' = b*x + d*y + ty=. A bone's local matrix is =T(x, y) * R(rotation) * S(scale_x, scale_y)=; its world matrix is =parent_world * local= (the root transform for root bones).
+
+*** Bones, setup pose and current pose
+:PROPERTIES:
+:CUSTOM_ID: bones
+:END:
+Bones are stored in an array where every parent precedes its children, so world transforms are a single pass in index order. Each bone has two poses relative to its parent:
+- the *setup pose* (rest pose; =lrg_skeleton2d_get_bone_setup()= / =lrg_skeleton2d_set_bone_setup()=), which is what the file stores and what meshes are bound to;
+- the *current pose* (=lrg_skeleton2d_get_bone_local()= / =lrg_skeleton2d_set_bone_local()=), which clips and code change every frame.
+
+The *root transform* (=lrg_skeleton2d_set_root_transform()=) places the whole skeleton; the component sets it from its game object. Negative scales mirror the character.
+
+*** Slots and draw order
+:PROPERTIES:
+:CUSTOM_ID: slots
+:END:
+A slot is a drawing layer bound to one bone. It shows one attachment at a time (by name, or none) tinted by a colour (RGBA 0 .. 1, multiplied into the texture). The order in which slots were added is the *setup draw order*, back to front; clips can reorder slots for a while (an arm swinging in front of the body) with draw-order keys. =lrg_skeleton2d_get_draw_order()= / =lrg_skeleton2d_set_draw_order()= read and set the current order.
+
+*** Skins and attachments
+:PROPERTIES:
+:CUSTOM_ID: skins
+:END:
+An attachment is an =LrgSkinnedSprite= stored in a skin under (slot, name). Every skeleton has the skin named =default= (=LRG_SKELETON2D_DEFAULT_SKIN=); further skins hold variants (armour, a big-head mode). Lookups go to the active skin first (=lrg_skeleton2d_set_skin()=), then to the default skin, so a variant skin only holds what differs.
+
+Attachment meshes are authored in *setup space*: the coordinates of the skeleton in its setup pose with an identity root transform. A vertex is weighted to up to four bones (=LRG_SKINNED_SPRITE_MAX_WEIGHTS=); a vertex without weights moves rigidly with its slot's bone. A "region attachment" (a rigid image on one bone) is a four-vertex quad, made with =lrg_skinned_sprite_new_quad()=.
+
+*** Skinning
+:PROPERTIES:
+:CUSTOM_ID: skinning
+:END:
+The palette entry of a bone is =world(bone) * inverse(bind(bone))=, where =bind(bone)= is the bone's setup-pose world matrix without the root transform (=lrg_skeleton2d_get_palette()=). Linear blend skinning gives each vertex =sum(weight_k * palette[bone_k] * bind_position)=. In the setup pose with an identity root every palette entry is the identity, so meshes draw exactly where they were authored. Changing a bone's setup pose recomputes the bind matrices on the next update.
+
+*** Clips
+:PROPERTIES:
+:CUSTOM_ID: clips
+:END:
+An =LrgSkeleton2DClip= has a name, a duration in seconds and a default loop flag, and timelines keyed by bone or slot *name* (so a clip plays on any skeleton with those names):
+
+| Channel | Target | Values | Meaning |
+|---------+--------+--------+---------|
+| =LRG_SKELETON2D_CHANNEL_TRANSLATE= | bone | x, y | offset added to the setup translation |
+| =LRG_SKELETON2D_CHANNEL_ROTATE= | bone | degrees | offset added to the setup rotation |
+| =LRG_SKELETON2D_CHANNEL_SCALE= | bone | x, y | factors multiplied into the setup scale |
+| =LRG_SKELETON2D_CHANNEL_COLOR= | slot | r, g, b, a | absolute slot colour |
+| =LRG_SKELETON2D_CHANNEL_ATTACHMENT= | slot | name or none | attachment swap (always stepped) |
+
+Bone values are *relative to the setup pose*, so re-rigging (moving a bone's rest position) keeps clips valid. Clips also hold draw-order keys (the full slot order back to front, or none for the setup order) and events (a name at a time, several may share a time).
+
+Each numeric key carries the curve of the span to the next key (=LrgSkeleton2DCurve=): =LRG_SKELETON2D_CURVE_LINEAR=, =LRG_SKELETON2D_CURVE_STEPPED= (hold until the next key) or =LRG_SKELETON2D_CURVE_BEZIER= (a cubic Bézier timing curve like CSS =cubic-bezier(x1, y1, x2, y2)=, set with =lrg_skeleton2d_clip_set_key_bezier()=). Before the first key a timeline holds the first value, after the last key the last value. Rotation keys interpolate the stored numbers, so =0 -> 360= is a full turn.
+
+Adding a key later than the duration extends the duration; a key at the time of an existing key (within 1 µs) replaces it.
+
+*** Mixing and crossfades
+:PROPERTIES:
+:CUSTOM_ID: mixing
+:END:
+=lrg_skeleton2d_clip_apply (clip, skeleton, time, alpha)= moves every keyed channel of the current pose toward the clip's value by =alpha=:
+- translation, scale and colour lerp; rotation turns along the shorter arc (=alpha= 1 sets the exact value, even beyond ±180);
+- attachment and draw-order keys apply when =alpha >= 0.5=;
+- channels the clip does not key are left alone.
+
+So a crossfade from A to B at weight =w= is: reset, apply A at 1, apply B at =w=. Layering (an upper-body wave on top of a walk) is: reset, apply walk at 1, apply wave at 1 (wave only keys the arm). =LrgSkeleton2DComponent= does the crossfade for you with two tracks.
+
+** The =.rskel2d= format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+A YAML document. Loading is strict: unknown keys, wrong types, unknown bone or slot names, duplicates and out-of-range indices are errors whose message names the source and the node path (=figure.rskel2d: /bones/3/parent: unknown bone "hip" (a parent must come before its children)=). Saving is deterministic and leaves out defaults; loading a saved file and saving it again gives the same bytes. Floats are written in their shortest exact form.
+
+*** Annotated example
+:PROPERTIES:
+:CUSTOM_ID: format-example
+:END:
+#+begin_src yaml
+rskel2d: 1                    # required; format version (integer, only 1)
+name: arm                     # optional; informational name (string)
+bones:                        # optional; list, parents before children
+  - name: upper               # required; unique string
+    length: 50                # optional; >= 0, default 0 (drawing, picking, auto weights)
+  - name: fore
+    parent: upper             # optional; an earlier bone's name; omitted = root bone
+    x: 50                     # optional; setup translation relative to the parent, default 0
+    y: 0                      # optional; default 0
+    rotation: -12.5           # optional; degrees, clockwise on screen, default 0
+    scale: [1.5, 1]           # optional; [x, y], default [1, 1]
+    length: 50
+slots:                        # optional; list, setup draw order back to front
+  - name: arm                 # required; unique string
+    bone: upper               # required; a bone name
+    attachment: arm           # optional; attachment shown in the setup pose (null or omitted = none)
+    color: [1, 0.5, 0.25, 1]  # optional; RGBA 0..1, default [1, 1, 1, 1]
+  - name: hand
+    bone: fore
+skins:                        # optional; list; "default" is implicit and written only when non-empty
+  - name: default             # required; unique (other than "default", which may appear once)
+    attachments:              # optional; list
+      - slot: arm             # required; a slot name
+        name: arm             # required; unique per skin and slot
+        image: limbs/arm.png  # optional; image path relative to this file (lrg_skeleton2d_load_textures)
+        region: [0, 16, 64, 16]  # optional; [x, y, w, h] pixels in the image, default [0, 0, 0, 0] = whole image
+        vertices:             # optional; one row per vertex: [x, y, u, v]
+          - [0, -5, 0, 0]     #   x, y in setup space; u, v 0..1 across the region
+          - [100, -5, 1, 0]
+          - [0, 5, 0, 1]
+          - [100, 5, 1, 1]
+        weights:              # optional; one row per vertex, up to 4 [bone, weight] pairs
+          - [upper, 1]        #   bone names; weights >= 0, normalised on load
+          - [fore, 0.7, upper, 0.3]
+          - []                #   no influences: the vertex follows the slot's bone
+          - [fore, 1]
+        triangles:            # optional; rows of three vertex indices (any winding)
+          - [0, 1, 2]
+          - [1, 3, 2]
+  - name: "gold skin"         # strings that are not plain identifiers are double-quoted
+    attachments:
+      - slot: hand
+        name: fist
+        vertices:             # no weights: rigid on the slot's bone ("fore")
+          - [95, -4, 0, 0]
+          - [105, -4, 1, 0]
+          - [100, 4, 0.5, 1]
+        triangles:
+          - [0, 1, 2]
+animations:                   # optional; list of clips
+  - name: wave                # required; unique
+    duration: 1.5             # optional; seconds >= 0, default 0 (keys extend it)
+    loop: true                # optional; default false (the component's "clip" property honours it)
+    bones:                    # optional; one entry per animated bone
+      - bone: fore            # required; a bone name
+        translate:            # optional; keys {time, x, y[, curve]}; offsets from setup (x, y default 0)
+          - {time: 0, x: 0, y: 0}
+          - {time: 1, x: 2, y: -1.25, curve: stepped}
+        rotate:               # optional; keys {time, angle[, curve]}; degrees offset from setup
+          - {time: 0, angle: 0, curve: [0.42, 0, 0.58, 1]}   # Bézier ease to the next key
+          - {time: 0.5, angle: 45}
+        scale:                # optional; keys {time, x, y[, curve]}; factors (x, y default 1)
+          - {time: 0.25, x: 1, y: 1.1}
+    slots:                    # optional; one entry per animated slot
+      - slot: hand            # required; a slot name
+        attachment:           # optional; keys {time, name}; name null hides the slot
+          - {time: 0, name: fist}
+          - {time: 1, name: null}
+        color:                # optional; keys {time, color: [r, g, b, a][, curve]}; absolute
+          - {time: 0.5, color: [1, 1, 1, 0.5]}
+    draw_order:               # optional; keys {time, order}; order = every slot once, back to front
+      - {time: 0.5, order: [hand, arm]}
+      - {time: 1.5, order: null}  # null = back to the setup order
+    events:                   # optional; {time, name}
+      - {time: 0.5, name: "wave hello"}
+  - name: idle
+#+end_src
+
+Key rules common to every timeline: =time= is required and >= 0; =curve= is optional: =linear= (default, omitted when saving), =stepped=, or =[x1, y1, x2, y2]= with =x1=, =x2= in 0 .. 1.
+
+*** Errors
+:PROPERTIES:
+:CUSTOM_ID: format-errors
+:END:
+| Code | When |
+|------+------|
+| =LRG_SKELETON2D_ERROR_PARSE= | not YAML, or a value of the wrong type or shape (=expected a number, got "left"=, =expected a list of 2 numbers=, =expected true or false=) |
+| =LRG_SKELETON2D_ERROR_INVALID= | unknown key, missing required key, unknown bone/slot, duplicate name, negative time/length/size, out-of-range vertex index, a weights list whose length is not the vertex count, a draw order that does not name every slot once |
+| =LRG_SKELETON2D_ERROR_VERSION= | =rskel2d:= missing or not 1 |
+| =LRG_SKELETON2D_ERROR_IO= | the file cannot be read or written |
+
+The error domain is =LRG_SKELETON2D_ERROR= (=lrg_skeleton2d_error_quark()=); the enum's GType is =lrg_skeleton2d_error_get_type()=.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+
+*** Constants and enums
+:PROPERTIES:
+:CUSTOM_ID: api-constants
+:END:
+| Symbol | Meaning |
+|--------+---------|
+| =LRG_SKELETON2D_FORMAT_VERSION= | 1, the =rskel2d:= value read and written |
+| =LRG_SKELETON2D_DEFAULT_SKIN= | ="default"=, the skin every skeleton has |
+| =LrgSkeleton2DError=, =lrg_skeleton2d_error_get_type()=, =lrg_skeleton2d_error_quark()= | see [[#format-errors][Errors]] |
+| =LrgSkeleton2DCurve=, =lrg_skeleton2d_curve_get_type()= | =LINEAR=, =STEPPED=, =BEZIER= |
+| =LrgSkeleton2DChannel=, =lrg_skeleton2d_channel_get_type()= | =TRANSLATE=, =ROTATE=, =SCALE=, =COLOR=, =ATTACHMENT= |
+
+*** Construction, files and properties
+:PROPERTIES:
+:CUSTOM_ID: api-files
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_skeleton2d_new (void)= | empty skeleton with the default skin |
+| =lrg_skeleton2d_new_from_file (path, error)= | load a =.rskel2d=; sets =base-dir= to the file's directory; no textures |
+| =lrg_skeleton2d_new_from_data (data, length, error)= | load from text (source =<data>= in messages); the editor validates with it |
+| =lrg_skeleton2d_save_to_data (self, &length)= | write the document (transfer full); deterministic, byte stable |
+| =lrg_skeleton2d_save_to_file (self, path, error)= | write atomically |
+| =lrg_skeleton2d_load_textures (self, error)= | load every attachment's =image= (relative to =base-dir=) that has no texture; attachments sharing an image share one =GrlTexture=; needs a window |
+| =lrg_skeleton2d_get_name= / =lrg_skeleton2d_set_name= | the =name:= key (property =name=) |
+| =lrg_skeleton2d_get_base_dir= / =lrg_skeleton2d_set_base_dir= | image directory (property =base-dir=) |
+
+Properties: =name= (string), =base-dir= (string), =skin= (string, the active skin). Signal: =changed= (no arguments), emitted after structural edits (bones, slots, skins, attachments, clips added/removed/replaced; setup pose, setup attachment, setup colour, bone length changed); posing does not emit it.
+
+*** Bones and transforms
+:PROPERTIES:
+:CUSTOM_ID: api-bones
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_skeleton2d_add_bone (self, name, parent, x, y, rotation, scale_x, scale_y, length)= | append a bone; returns its index or -1 (empty/taken name, unknown parent) |
+| =lrg_skeleton2d_get_bone_count= | number of bones |
+| =lrg_skeleton2d_find_bone (self, name)= | index or -1 |
+| =lrg_skeleton2d_get_bone_name=, =lrg_skeleton2d_get_bone_parent= | name, parent index (-1 for roots) |
+| =lrg_skeleton2d_get_bone_length= / =lrg_skeleton2d_set_bone_length= | length along local +X |
+| =lrg_skeleton2d_get_bone_setup= / =lrg_skeleton2d_set_bone_setup= | setup pose (setting it rebinds meshes) |
+| =lrg_skeleton2d_get_bone_local= / =lrg_skeleton2d_set_bone_local= | current pose |
+| =lrg_skeleton2d_set_root_transform (self, x, y, rotation, scale_x, scale_y)= | place the skeleton |
+| =lrg_skeleton2d_update_world (self)= | world matrices + palette from the current pose |
+| =lrg_skeleton2d_get_bone_world_matrix (self, bone, m[6])= | world matrix as of the last update |
+| =lrg_skeleton2d_get_bone_world_position=, =lrg_skeleton2d_get_bone_world_tip= | world origin and tip of a bone |
+| =lrg_skeleton2d_get_bone_world_rotation= | world angle of the bone's +X, -180 .. 180 |
+| =lrg_skeleton2d_get_palette (self, &n_floats)= | skinning palette, 6 floats per bone (transfer none) |
+| =lrg_skeleton2d_pick_bone (self, x, y, radius)= | bone whose world segment is nearest within =radius=, children win ties; -1 if none |
+
+*** Slots and draw order
+:PROPERTIES:
+:CUSTOM_ID: api-slots
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_skeleton2d_add_slot (self, name, bone, attachment)= | append a slot (front of the setup order); index or -1 |
+| =lrg_skeleton2d_get_slot_count=, =lrg_skeleton2d_find_slot=, =lrg_skeleton2d_get_slot_name=, =lrg_skeleton2d_get_slot_bone= | queries |
+| =lrg_skeleton2d_get_slot_attachment= / =lrg_skeleton2d_set_slot_attachment= | current attachment name (NULL = hidden) |
+| =lrg_skeleton2d_get_slot_setup_attachment= / =lrg_skeleton2d_set_slot_setup_attachment= | setup attachment (setting also sets the current one) |
+| =lrg_skeleton2d_get_slot_color (self, slot, rgba[4])= / =lrg_skeleton2d_set_slot_color= | current colour |
+| =lrg_skeleton2d_set_slot_setup_color= | setup colour (and current) |
+| =lrg_skeleton2d_get_draw_order (self, &n)= / =lrg_skeleton2d_set_draw_order (self, order, n)= | current order of slot indices, back to front; set refuses a non-permutation |
+| =lrg_skeleton2d_reset_pose (self)= | bones, slot attachments and colours, and draw order back to setup |
+
+*** Skins and attachments
+:PROPERTIES:
+:CUSTOM_ID: api-skins
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_skeleton2d_add_skin (self, name)= | add an empty skin (no-op if it exists) |
+| =lrg_skeleton2d_get_skin_count=, =lrg_skeleton2d_get_skin_name (self, index)= | skins in order; index 0 is =default= |
+| =lrg_skeleton2d_set_skin (self, name)= / =lrg_skeleton2d_get_skin= | active skin (NULL = default) |
+| =lrg_skeleton2d_set_attachment (self, skin, slot, name, sprite)= | add/replace (keeps its place)/remove (=sprite= NULL); creates the skin; the skeleton refs the sprite |
+| =lrg_skeleton2d_get_skin_attachment (self, skin, slot, name)= | lookup in one skin |
+| =lrg_skeleton2d_get_attachment (self, slot, name)= | active skin then default; =name= NULL = what the slot shows |
+| =lrg_skeleton2d_list_attachments (self, skin, slot)= | names in insertion order (transfer full, NULL-terminated) |
+| =lrg_skeleton2d_compute_auto_weights (self, sprite, bones, n_bones, falloff, max_influences, smooth_iterations)= | weight a mesh to the setup-pose segments of =bones= (NULL = all); see [[file:../graphics/skinned-sprite.org::#auto-weights][automatic weights]] |
+
+*** Clips on the skeleton
+:PROPERTIES:
+:CUSTOM_ID: api-skeleton-clips
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_skeleton2d_add_clip (self, clip)= | add, or replace the clip of the same name in place |
+| =lrg_skeleton2d_remove_clip (self, name)= | remove |
+| =lrg_skeleton2d_get_clip (self, name)=, =lrg_skeleton2d_get_clip_at (self, index)=, =lrg_skeleton2d_get_clip_count= | lookups (transfer none) |
+
+*** Drawing
+:PROPERTIES:
+:CUSTOM_ID: api-drawing
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_skeleton2d_deform (self)= | skin every visible attachment (no window needed) |
+| =lrg_skeleton2d_draw (self, tint)= | deform + draw in draw order, slot colour times =tint=; current 2D mode |
+| =lrg_skeleton2d_draw_bones (self, color)= | bone overlay: a line origin to tip and a dot (default yellow) |
+
+*** LrgSkeleton2DClip
+:PROPERTIES:
+:CUSTOM_ID: api-clip
+:END:
+Properties: =name= (string), =duration= (float >= 0), =loop= (boolean).
+
+| Function | Description |
+|----------+-------------|
+| =lrg_skeleton2d_clip_new (name)= | empty clip |
+| =lrg_skeleton2d_clip_get_name= / =lrg_skeleton2d_clip_set_name= | name (rename before adding to a skeleton) |
+| =lrg_skeleton2d_clip_get_duration= / =lrg_skeleton2d_clip_set_duration= | length in seconds |
+| =lrg_skeleton2d_clip_get_loop= / =lrg_skeleton2d_clip_set_loop= | default loop flag |
+| =lrg_skeleton2d_clip_add_translate_key (self, bone, time, x, y, curve)= | translation offset key |
+| =lrg_skeleton2d_clip_add_rotate_key (self, bone, time, degrees, curve)= | rotation offset key |
+| =lrg_skeleton2d_clip_add_scale_key (self, bone, time, x, y, curve)= | scale factor key |
+| =lrg_skeleton2d_clip_add_color_key (self, slot, time, r, g, b, a, curve)= | slot colour key |
+| =lrg_skeleton2d_clip_add_attachment_key (self, slot, time, attachment)= | attachment swap (NULL hides) |
+| =lrg_skeleton2d_clip_add_draw_order_key (self, time, slots)= | full order of slot names, or NULL for setup |
+| =lrg_skeleton2d_clip_add_event_key (self, time, name)= | event |
+| =lrg_skeleton2d_clip_set_key_bezier (self, target, channel, index, cx1, cy1, cx2, cy2)= | make a key ease along a Bézier curve |
+| =lrg_skeleton2d_clip_get_key_count (self, target, channel)= | keys of a timeline |
+| =lrg_skeleton2d_clip_get_key (self, target, channel, index, &time, values[4], &curve)= | read a numeric key |
+| =lrg_skeleton2d_clip_get_attachment_key (self, slot, index, &time, &attachment)= | read an attachment key |
+| =lrg_skeleton2d_clip_remove_key (self, target, channel, index)= | delete a key |
+| =lrg_skeleton2d_clip_sample (self, target, channel, time, values[4])= | sample one timeline (stored offsets/factors) |
+| =lrg_skeleton2d_clip_get_targets (self, slots)= | animated bone (or slot) names in first-keyed order (transfer full) |
+| =lrg_skeleton2d_clip_get_draw_order_key_count=, =lrg_skeleton2d_clip_get_draw_order_key (self, index, &time)= | draw-order keys |
+| =lrg_skeleton2d_clip_get_event_count=, =lrg_skeleton2d_clip_get_event (self, index, &time)= | events in time order |
+| =lrg_skeleton2d_clip_apply (self, skeleton, time, alpha)= | pose a skeleton (see [[#mixing][Mixing]]) |
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+
+*** A bending arm in code
+:PROPERTIES:
+:CUSTOM_ID: example-arm
+:END:
+#+begin_src C
+g_autoptr(LrgSkeleton2D)     skel = lrg_skeleton2d_new ();
+g_autoptr(LrgSkinnedSprite)  strip = lrg_skinned_sprite_new_grid (0, -8, 100, 16, 10, 1);
+g_autoptr(LrgSkeleton2DClip) bend = lrg_skeleton2d_clip_new ("bend");
+gint upper, fore, slot;
+
+upper = lrg_skeleton2d_add_bone (skel, "upper", -1, 0, 0, 0, 1, 1, 50);
+fore  = lrg_skeleton2d_add_bone (skel, "fore", upper, 50, 0, 0, 1, 1, 50);
+slot  = lrg_skeleton2d_add_slot (skel, "arm", upper, "arm");
+
+/* weights from the bones' setup segments: 2 influences, one smoothing pass */
+lrg_skeleton2d_compute_auto_weights (skel, strip, NULL, 0, 4.0f, 2, 1);
+lrg_skinned_sprite_set_texture (strip, arm_texture);  /* or set_image + load_textures */
+lrg_skeleton2d_set_attachment (skel, NULL, slot, "arm", strip);
+
+lrg_skeleton2d_clip_add_rotate_key (bend, "fore", 0.0f, 0.0f, LRG_SKELETON2D_CURVE_BEZIER);
+lrg_skeleton2d_clip_set_key_bezier (bend, "fore", LRG_SKELETON2D_CHANNEL_ROTATE, 0, 0.42f, 0, 0.58f, 1);
+lrg_skeleton2d_clip_add_rotate_key (bend, "fore", 1.0f, 90.0f, LRG_SKELETON2D_CURVE_LINEAR);
+lrg_skeleton2d_add_clip (skel, bend);
+
+/* every frame */
+lrg_skeleton2d_reset_pose (skel);
+lrg_skeleton2d_clip_apply (bend, skel, t, 1.0f);
+lrg_skeleton2d_set_root_transform (skel, 200, 150, 0, 1, 1);
+lrg_skeleton2d_update_world (skel);
+BeginDrawing ();
+ClearBackground (BLACK);
+lrg_skeleton2d_draw (skel, NULL);
+EndDrawing ();
+#+end_src
+
+*** Loading a rig and playing it on a game object
+:PROPERTIES:
+:CUSTOM_ID: example-component
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+LrgGameObject *hero = lrg_game_object_new_at (320, 400);
+LrgSkeleton2DComponent *rig = lrg_skeleton2d_component_new ();
+
+if (!lrg_skeleton2d_component_load (rig, "assets/hero.rskel2d", &error))
+	g_error ("%s", error->message);
+lrg_game_object_add_component (hero, LRG_COMPONENT (rig));
+lrg_world_add_object (world, hero);
+lrg_skeleton2d_component_play (rig, "idle", TRUE);
+g_signal_connect (rig, "event", G_CALLBACK (on_footstep), NULL);
+
+/* later: blend into a run over 0.15 s, face left */
+lrg_skeleton2d_component_crossfade (rig, "run", 0.15f, TRUE);
+g_object_set (rig, "flip-x", TRUE, NULL);
+#+end_src
+=lrg_world_draw()= draws the rig with its game object; see [[file:../ecs/components/skeleton2d-component.org][LrgSkeleton2DComponent]].
+
+*** Layering two clips by hand
+:PROPERTIES:
+:CUSTOM_ID: example-layering
+:END:
+#+begin_src C
+lrg_skeleton2d_reset_pose (skel);
+lrg_skeleton2d_clip_apply (walk, skel, walk_time, 1.0f);   /* whole body */
+lrg_skeleton2d_clip_apply (wave, skel, wave_time, 1.0f);   /* keys only the right arm */
+lrg_skeleton2d_update_world (skel);
+#+end_src
+
+*** Swapping a skin and an attachment
+:PROPERTIES:
+:CUSTOM_ID: example-skin
+:END:
+#+begin_src C
+lrg_skeleton2d_set_skin (skel, "gold skin");            /* falls back to "default" */
+lrg_skeleton2d_set_slot_attachment (skel, lrg_skeleton2d_find_slot (skel, "hand"), "fist");
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Measured by =tests/test-skeleton2d.c= (=/skeleton2d/perf=, release build, x86_64, one core; run it with =--verbose= to see the numbers on your machine):
+
+| Work | Time |
+|------+------|
+| Pose a 12-bone figure: reset + apply the 13-timeline walk clip + =update_world= | 1.8 .. 2.5 µs |
+| Skin a 1024-vertex grid with 4 influences per vertex | 24 .. 39 µs (24 .. 38 ns per vertex) |
+| Deform the 6-slot, 112-vertex figure | 1.7 .. 2.8 µs |
+
+So a hundred animated 100-vertex characters cost well under a millisecond of CPU per frame. Skinning runs on the CPU; drawing goes through rlgl's batch (one batch per texture change; triangles are submitted in chunks of 1024). A GPU skinning path was not added: at these sizes the CPU cost is small next to the draw submission, and the CPU path keeps exact deformed positions available for picking and bounds. Clip lookups resolve names through hash tables each apply; keep clips small (tens of timelines).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Reset before applying.* =lrg_skeleton2d_clip_apply()= leaves unkeyed channels alone and mixes from the current pose; without =lrg_skeleton2d_reset_pose()= poses accumulate.
+- *Update before reading or drawing.* World transforms and the palette are only computed by =lrg_skeleton2d_update_world()=.
+- *Meshes live in setup space*, not in bone space: author vertices where the image sits in the setup pose. Moving a bone's setup pose afterwards moves its bind, so meshes keep their place in the setup pose but deform from the new joint.
+- *One skeleton per character.* A skeleton holds its current pose; two components sharing one fight over it. Load the file once per character (or save to data and load copies).
+- *Attachments are shared by reference*, also across copies made with =lrg_skinned_sprite_copy()= for textures; changing a sprite's geometry changes it everywhere it is attached.
+- *Rotation keys are not wrapped*: =350 -> 10= turns 340 degrees backwards. Key =350 -> 370= for the short way.
+- *Draw-order keys must name every slot*; a key written for an older version of the rig with fewer slots is skipped when applied.
+- *Attachment swaps and draw order switch at mix weight 0.5* during crossfades; bones blend smoothly.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The editor's 2D rig editor ([[file:../../editor/skeleton2d-editor.org][2D Rig Editor]]) is built on these hooks:
+- *Bone tool*: create bones by dragging (=lrg_skeleton2d_add_bone()=), select with =lrg_skeleton2d_pick_bone()=, edit the rest pose with =lrg_skeleton2d_set_bone_setup()= and =lrg_skeleton2d_set_bone_length()=; the overlay is =lrg_skeleton2d_draw_bones()=.
+- *Mesh tool*: cut a sprite into a grid (=lrg_skinned_sprite_new_grid()=) or place vertices (=lrg_skinned_sprite_add_vertex()=, =lrg_skinned_sprite_set_vertex()=, =lrg_skinned_sprite_add_triangle()=), wireframe with =lrg_skinned_sprite_draw_wireframe()=.
+- *Weights*: an "automatic weights" button calls =lrg_skeleton2d_compute_auto_weights()=; weight painting edits =lrg_skinned_sprite_set_weights()=.
+- *Slots, skins, attachments panel*: =lrg_skeleton2d_list_attachments()=, =lrg_skeleton2d_set_attachment()=, =lrg_skeleton2d_set_skin()=; the =changed= signal refreshes the inspector.
+- *Dopesheet / clip preview*: rows from =lrg_skeleton2d_clip_get_targets()=, keys from =lrg_skeleton2d_clip_get_key()= and friends, scrubbing with =lrg_skeleton2d_component_set_time()=.
+- *Validation*: the document editor runs =lrg_skeleton2d_new_from_data()= on the =.rskel2d= text; messages carry the node path.
+
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../graphics/skinned-sprite.org][LrgSkinnedSprite]] (meshes, skinning, automatic weights)
+- [[file:../ecs/components/skeleton2d-component.org][LrgSkeleton2DComponent]]
+- [[file:skeleton.org][LrgSkeleton]] (3D skeletons) and [[file:clip.org][LrgAnimationClip]]
+- [[file:../../guides/writing-a-data-format.org][Writing a data format]]

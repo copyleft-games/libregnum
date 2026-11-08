@@ -1,0 +1,123 @@
+#+title: Editor Tool Scripts
+#+description: LrgEditorScriptApi, the console REPL, editor_scripts/ and run-in-editor bindings
+#+authors: Zach Podbielniak
+#+categories: libregnum editor
+#+created: 2026-11-07T15:20:00-05:00
+#+updated: 2026-11-07T15:20:00-05:00
+#+version: 1.0
+
+* Editor Tool Scripts
+:PROPERTIES:
+:CUSTOM_ID: tool-scripts
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Tool Scripts
+#+end_quote
+
+=LrgEditorScriptApi= (=src/editor/lrg-editor-script-api.h=) is the =editor= global of an editor-time tool script. One object exists per editor session. It runs Lua, Python and Gjs against the open level, records every run as one undo step, lets a script register menu items and actions, and ticks script bindings that have =run-in-editor= set while the level is being authored.
+
+The console panel owns the object for =lrgeditor=. =lrg_editor_console_panel_new()= builds it with =lrg_editor_script_api_new()=, points it at the app server, action map and log, sets the project directory and calls =lrg_editor_script_api_register_methods()=. =lrg_editor_console_panel_step()= calls =lrg_editor_script_api_set_project_dir()= every frame, =lrg_editor_script_api_stop_editor_scripts()= while the app is playing, and =lrg_editor_script_api_tick()= otherwise.
+
+** Session object
+:PROPERTIES:
+:CUSTOM_ID: session
+:END:
+
+=lrg_editor_script_api_new()= takes the =LrgEditor=. The =editor= property is construct-only. =lrg_editor_script_api_get_editor()= returns it.
+
+=lrg_editor_script_api_set_server()= / =lrg_editor_script_api_get_server()= attach the IPC server scripts call through. =get_server= creates a private, never-started server when none was set, so =lrg_editor_script_api_call()= works in a headless test. =lrg_editor_script_api_set_actions()= / =lrg_editor_script_api_get_actions()= attach the action map tool items are added to. =lrg_editor_script_api_set_log()= is where =log= and =warn= lines are appended (domain =script=).
+
+=lrg_editor_script_api_set_project_dir()= / =lrg_editor_script_api_get_project_dir()= are the open project. The same canonical path is a no-op. A new path drops tool contexts, resets the directory watch and reloads =<project>/editor_scripts/=. The property name is =project-dir= and notifies only when the path changes.
+
+=lrg_editor_script_api_register_methods()= registers the =script.*= IPC methods on a server. The names use underscores: =script.run=, =script.languages=, =script.tools=, =script.run_tool=, =script.reload=, =script.run_in_editor=, =script.editor_running=. Shapes are in =handoff/v0.9.0/scratch/m8-ipc/TOOLSCRIPT.md=.
+
+** Languages and runs
+:PROPERTIES:
+:CUSTOM_ID: runs
+:END:
+
+=lrg_editor_script_api_language_from_name()= accepts =lua=, =python= / =py=, and =gjs= / =js= / =javascript=, case-insensitive. Anything else, including =pygobject= and =NULL=, is =LRG_SCRIPT_LANGUAGE_NONE=. The IPC method =script.run= treats =pygobject= as Python; that alias is not part of =language_from_name=.
+
+=lrg_editor_script_api_language_is_supported()= is true for Lua, Python and Gjs when that backend is in this build.
+
+=lrg_editor_script_api_run_string()= runs a chunk in the session's REPL context for that language. The context lives as long as the API, so an assignment survives the next call. =label= is the undo group name (a =NULL= label still opens one group). =result= is a transfer-full string of the expression value, or =NULL= for a statement. Lua tries =return <code>= first and joins multiple returns with tabs; otherwise the chunk is a statement. Python uses =ast.parse= in eval mode and =repr()=, and falls back to =exec= so assignments persist. Gjs loads the chunk directly and does not produce a result string.
+
+=lrg_editor_script_api_run_file()= runs a file in a fresh context. A relative path resolves against the project directory. =LRG_SCRIPT_LANGUAGE_NONE= picks the language from the extension. A file whose canonical path is inside =editor_scripts/= is a tool script: its menu items stay until that file is run again or the tools are reloaded. The undo label is =Run <basename>=. =result= is the same transfer-full string as =run_string()=: Lua joins every returned value with tabs, Python stores =repr()=, and a statement or a Gjs chunk leaves it =NULL=. The chunk name is the canonical path, so a failure is =file:line: what=.
+
+Both entry points expose the API as the global =editor=. A file run also adds the file's directory to the language search path. =print= (and the Python / Gjs stand-ins installed for the run) emits =LrgEditorScriptApi::output= and, when a log is set, appends there. One trailing newline is stripped. Failures are =LRG_SCRIPTING_ERROR= and are prefixed =file:line:= when the backend reports a location and the message does not already contain it. A missing file is =G_IO_ERROR_NOT_FOUND=.
+
+** Tools and the menu
+:PROPERTIES:
+:CUSTOM_ID: tools
+:END:
+
+=LRG_EDITOR_SCRIPTS_DIR= is =editor_scripts=. =LRG_EDITOR_SCRIPT_TOOL_PREFIX= is =script.tool.=.
+
+=lrg_editor_script_api_add_menu_item()= registers a tool. =name= matches =[a-z0-9_-]+=. The action id is =script.tool.<name>=. =label= is the menu path: =Hello/Greet= is a =Greet= row under a =Hello= submenu, and =A/B/C= nests the same way. =function_name= is the name of a function in the context that is currently running (the REPL context, or the file context). =shortcut= may be =NULL=. Registering the same name again updates that tool. The C function and the script method both take the function's name. A non-string argument returns =FALSE=.
+
+=lrg_editor_script_api_get_tools()= is a =NULL=-terminated list of the active tools' action ids, in registration order. Inactive tools stay allocated (the action's user data must remain valid) but are omitted here and from the menu. =lrg_editor_script_api_get_tool_label()= returns the full label, including slashes. =lrg_editor_script_api_run_tool()= runs the function by action id or bare name. A missing or inactive tool is =LRG_EDITOR_SERVER_ERROR_NOT_FOUND=. A missing function is =LRG_SCRIPTING_ERROR_NOT_FOUND=.
+
+=lrg_editor_script_api_get_menu()= is the =GMenu= of active tools (transfer none). The console mirrors it onto the app data key =lrg-editor-scripts-menu= when that menu exists. The window does not create that menu yet; the unapplied patch is =handoff/v0.9.0/scratch/m8-patches/lrg-editor-window.TOOLSCRIPT.patch=. It adds a Tools section: a =Scripts= submenu stored on the app, =Run Script...= (=editor.script.run=) and =Reload Tool Scripts= (=editor.script.reload=).
+
+=lrg_editor_script_api_reload_tools()= drops tool contexts whose path is inside =editor_scripts/=, then runs every Lua, Python and Gjs file directly in that directory, sorted by basename. It returns how many ran. Failures are remembered and emitted on =output= as warnings. REPL tools (no owner path) and file runs outside that directory are kept. The returned count is what =script.reload= reports as =loaded=.
+
+Hot reload also uses =LrgScriptReloader=. =lrg_script_reloader_get_default()= is used when that symbol is linked, otherwise =lrg_script_reloader_new()=. =lrg_script_reloader_watch_path()=, =lrg_script_reloader_unwatch_path()= and =lrg_script_reloader_process_pending()= are weak and called only when the link provides them, so a stub reloader still links. This tree's reloader defines them, so =tick= uses them. =tick= also compares a basename/mtime/size stamp of =editor_scripts/=, so a reload happens with no main loop. A same-second edit is what the monitor is for; tests call =reload_tools= themselves.
+
+** Authoring scripts
+:PROPERTIES:
+:CUSTOM_ID: run-in-editor
+:END:
+
+=lrg_script_binding_get_run_in_editor()= and =lrg_script_binding_set_run_in_editor()= are the per-binding flag (default =FALSE=). =lrg_script_binding_equal()= includes it. The level serializer writes =run_in_editor= when the flag is true and reads it back. Instantiating a level copies the flag onto the live binding. =LrgScriptComponent= has the same property; =lrg_script_component_should_update()= is true while authoring only when the flag is set.
+
+=lrg_editor_script_api_set_run_in_editor()= sets the flag on binding =index= of a node through the editor's property command, so it is one undo step labelled =Run in Editor= when the value changes. A missing binding is =LRG_EDITOR_SERVER_ERROR_NOT_FOUND=.
+
+=lrg_editor_script_api_tick()= walks the level. An enabled binding with the flag set gets a context (globals =editor= and =node=), =lrg_script_start= on the first tick it is seen, then =lrg_script_update(dt)= on that tick and every later tick. Missing hooks are success. The whole walk is one undo group, also labelled =Run in Editor=. A binding that disappears, is disabled, or clears the flag is detached (=lrg_script_detach=) if it had started. A failed start or update is stored and is not retried until the script path, the language or the file mtime changes. =lrg_editor_script_api_get_n_editor_scripts()= counts those failed runs as well as the live ones. =lrg_editor_script_api_stop_editor_scripts()= detaches every one of them and is safe to call twice. The console calls it when play mode starts.
+
+** Level, selection, undo, assets
+:PROPERTIES:
+:CUSTOM_ID: level-ops
+:END:
+
+=lrg_editor_script_api_find_node()= is =lrg_editor_find_node()= (guid, then name path). =lrg_editor_script_api_find_nodes()= is the name substring search. A =NULL= needle searches for the empty string. The C function returns a =GPtrArray= of =LrgNode= (transfer container). The script method returns a =GStrv= of guids.
+
+=lrg_editor_script_api_create_node()= creates a node, optionally with a primitive visual (=cube= and the other =LrgPrimitiveType= nicks; underscores and a =primitive-= prefix are accepted). The visual is set before the node is added, so a scripted create is one undo command inside the run's group. An unknown primitive creates nothing. A =NULL= parent is the level root. A =NULL= or empty name becomes =Node=. The returned node is the tree's (transfer none). =lrg_editor_script_api_delete_node()=, =lrg_editor_script_api_reparent_node()= (=NULL= parent moves to the root) and =lrg_editor_script_api_rename_node()= are the matching editor commands.
+
+=lrg_editor_script_api_set_value()= writes a =GValue= through =lrg_editor_set_object_property()=. The name is =set_value= so it does not shadow =GObject.set_property= in Gjs or PyGObject. =lrg_editor_script_api_set_location()=, =lrg_editor_script_api_set_rotation_degrees()= (degrees, converted to radians) and =lrg_editor_script_api_set_scale()= change one channel of the node's transform and keep the other two.
+
+=lrg_editor_script_api_get_selection()= is the selected roots (transfer container). =lrg_editor_script_api_select()= adds or replaces. =lrg_editor_script_api_clear_selection()= clears it. The script methods return guids, not node objects.
+
+=lrg_editor_script_api_begin_undo()= / =lrg_editor_script_api_end_undo()= nest inside the run. =end_undo= cannot close the group the run itself opened. =lrg_editor_script_api_undo()= and =lrg_editor_script_api_redo()= do nothing while a run is on the stack, because the editor refuses to undo with a group open. Outside a run they are the editor's undo and redo.
+
+=lrg_editor_script_api_list_assets()= is the project files, relative, sorted, skipping symlinks. =pattern= is a =GPatternSpec= (=*= matches =/=). =NULL= lists everything. No project yields an empty list. =lrg_editor_script_api_import_asset()= copies a file into the project (no overwrite). A =NULL= dest is the basename at the project root. =lrg_editor_script_api_create_asset()= writes a new file, creating parent directories. An existing dest is an error. Absolute dests and paths that escape the project are rejected. Both return the project-relative path. With no project they fail with =No project open=.
+
+** Notify and IPC from a script
+:PROPERTIES:
+:CUSTOM_ID: notify
+:END:
+
+=lrg_editor_script_api_log()= and =lrg_editor_script_api_warn()= emit =output= at message and warning. They do not call =g_warning=, so a tool failure does not abort a test that treats warnings as fatal. =lrg_editor_script_api_toast()= calls the IPC method =ui.notify= when that method is registered, and otherwise logs the text. =lrg_editor_script_api_call()= dispatches one IPC request (=method= plus a params JSON object) and returns the result node serialised as text, or =NULL= with =error= set when the response carries an error.
+
+** Two ways in
+:PROPERTIES:
+:CUSTOM_ID: bridges
+:END:
+
+Every script-facing operation is both a GI-annotated C function and an =LrgScriptable= method of the same name. Gjs and PyGObject can call the C function through the typelib. Lua and the Python bridge call the method table (=editor:create_node(...)= in Lua, =editor.create_node(...)= in the bridge).
+
+The Lua and Python bridges do not convert a =GPtrArray= or a =GStrv=. Lua pushes nil. Python logs a warning and returns =None=. The script methods that return lists therefore return a =GStrv= of guids or strings (=find_nodes=, =get_selection=, =list_assets=, =get_tools=). The C functions keep the real containers. Call those list methods from C (or from Gjs via the typelib), not from the Python bridge: the warning is fatal under GTest. =add_menu_item= cannot take a function object across the bridge either; pass the function's name.
+
+** Console REPL
+:PROPERTIES:
+:CUSTOM_ID: repl
+:END:
+
+=lrg_editor_console_panel_get_script_api()= is the panel's API.
+
+=lrg_editor_console_panel_set_repl_language()= / =lrg_editor_console_panel_get_repl_language()= select the line. =LRG_SCRIPT_LANGUAGE_NONE= is the existing command line; =execute()= is unchanged. Lua, Python and Gjs are the REPL. The language chip cycles none, Lua, Python, Gjs. Each language has its own history. Changing language drops a half-typed continuation.
+
+=lrg_editor_console_panel_repl()= runs one chunk immediately in the selected language (label =REPL=) and returns the expression text the same way =lrg_editor_script_api_run_string()= does. Prints during that call are also stored for =lrg_editor_console_panel_get_repl_output()= (lines joined with newlines, =""= when the run printed nothing).
+
+A trailing backslash in the command line continues. The backslash is dropped and a newline is inserted. =lrg_editor_console_panel_get_repl_buffer()= is that continuation (=""= when the next submit will run). History stores the joined chunk. Up and Down walk the REPL history only while a script language is selected. Leading whitespace is kept, so a continued Python block keeps its indentation.
+
+The panel registers the actions =script.run= (a file dialog; a dismissed or cancelled dialog is silent; other failures are logged) and =script.reload= ( =lrg_editor_script_api_reload_tools()= ).

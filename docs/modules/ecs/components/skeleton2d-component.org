@@ -1,0 +1,123 @@
+#+title: LrgSkeleton2DComponent - 2D Skeletal Animation on Game Objects
+#+description: Plays LrgSkeleton2D clips with crossfades and events on an LrgGameObject and draws the deformed rig
+#+created: 2026-11-07
+
+* LrgSkeleton2DComponent
+:PROPERTIES:
+:CUSTOM_ID: lrgskeleton2dcomponent
+:END:
+#+begin_quote
+*[[file:../../../index.org][Home]]* > [[file:../index.org][ECS]] > LrgSkeleton2DComponent
+#+end_quote
+
+=LrgSkeleton2DComponent= gives an =LrgGameObject= a 2D skeletal character: it plays [[file:../../animation/skeleton2d.org][LrgSkeleton2D]] clips (with crossfades, events and a finished signal) in its update, and draws the deformed rig at the object's render pose (position, rotation, scale; interpolated under fixed-step templates).
+
+- *Header*: =ecs/components/lrg-skeleton2d-component.h=
+- *Type*: final, derives from =LrgComponent=, =LRG_TYPE_SKELETON2D_COMPONENT=
+- *Since*: 0.9.0
+
+** Playback model
+:PROPERTIES:
+:CUSTOM_ID: playback
+:END:
+Two tracks: the *current* clip and, during a crossfade, the clip *fading out*. Each update:
+1. advances both by =delta * speed= (looping clips wrap; one-shot clips stop at their end, hold the last pose and emit =finished=);
+2. advances the fade; when it completes, the old clip is dropped;
+3. resets the skeleton to its setup pose, applies the fading-out clip at weight 1 and the current clip at the mix weight (=lrg_skeleton2d_component_get_mix_weight()=).
+
+Starting a crossfade during another drops the clip that was fading out (two clips at most). Events of the current clip fire when playback crosses them, once per loop; events at time 0 fire as the clip starts; scrubbing with =lrg_skeleton2d_component_set_time()= fires none. Speed 0 pauses both playback and fades.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_skeleton2d_component_new (void)=, =lrg_skeleton2d_component_new_with_skeleton (skeleton)= | construction |
+| =lrg_skeleton2d_component_set_skeleton= / =lrg_skeleton2d_component_get_skeleton= | the skeleton (setting stops playback) |
+| =lrg_skeleton2d_component_load (self, path, error)= | load a =.rskel2d= as the skeleton |
+| =lrg_skeleton2d_component_play (self, clip, loop)= | start a clip at once |
+| =lrg_skeleton2d_component_crossfade (self, clip, duration, loop)= | fade a clip in over =duration= (negative = =default-mix=) |
+| =lrg_skeleton2d_component_stop (self)= | stop; skeleton back to setup |
+| =lrg_skeleton2d_component_get_clip=, =lrg_skeleton2d_component_is_playing= | state |
+| =lrg_skeleton2d_component_get_time= / =lrg_skeleton2d_component_set_time= | playback time; set scrubs and poses at once |
+| =lrg_skeleton2d_component_get_mix_weight= | 0 .. 1 progress of the crossfade (1 when none) |
+| =lrg_skeleton2d_component_get_speed= / =lrg_skeleton2d_component_set_speed= | speed factor |
+| =lrg_skeleton2d_component_set_tint= / =lrg_skeleton2d_component_get_tint= | colour multiplied into every slot |
+| =lrg_skeleton2d_component_sync_pose (self)= | place the skeleton at the owner's render pose and update world transforms (call before reading bone positions, e.g. to attach a weapon to a hand) |
+| =lrg_skeleton2d_component_draw (self)= | sync, load textures on first use, draw (and bones if =show-bones=); the owning =LrgGameObject= calls it from =lrg_world_draw()= when the component is enabled |
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property | Type | Default | Meaning |
+|----------+------+---------+---------|
+| =skeleton= | =LrgSkeleton2D= | NULL | the rig |
+| =skeleton-path= | string | NULL | a =.rskel2d= to load (level/prefab parameter =skeleton_path=); failures are logged |
+| =clip= | string | NULL | current clip; setting plays it (looping per the clip's =loop=); NULL stops |
+| =speed= | float 0 .. 100 | 1 | playback speed |
+| =scale= | float 0 .. 1000 | 1 | uniform scale on top of the owner's scale |
+| =flip-x=, =flip-y= | boolean | FALSE | mirror |
+| =default-mix= | float 0 .. 60 | 0.2 | crossfade length for a negative duration |
+| =show-bones= | boolean | FALSE | draw the bone overlay |
+
+*** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+| Signal | Arguments | When |
+|--------+-----------+------|
+| =event= | =clip= (string), =event= (string) | playback of the current clip crosses an event key |
+| =finished= | =clip= (string) | a non-looping current clip reaches its end |
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+static void
+on_event (LrgSkeleton2DComponent *rig, const gchar *clip, const gchar *event, gpointer user_data)
+{
+	if (g_strcmp0 (event, "step") == 0)
+		play_footstep ();
+}
+
+LrgGameObject          *hero = lrg_game_object_new_at (320, 400);
+LrgSkeleton2DComponent *rig = lrg_skeleton2d_component_new ();
+
+g_object_set (rig, "skeleton-path", "assets/hero.rskel2d", "clip", "idle", NULL);
+g_signal_connect (rig, "event", G_CALLBACK (on_event), NULL);
+lrg_game_object_add_component (hero, LRG_COMPONENT (rig));
+lrg_world_add_object (world, hero);
+
+/* game loop */
+lrg_world_update (world, dt);
+BeginDrawing ();
+ClearBackground (BLACK);
+BeginMode2D (camera);
+lrg_world_draw (world);                /* draws the rig with its game object */
+EndMode2D ();
+EndDrawing ();
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- One skeleton per component: the component poses its skeleton every update.
+- A component without an owner draws at the origin (useful for previews).
+- Bone positions read right after =lrg_world_update()= are relative to the last synced root; call =lrg_skeleton2d_component_sync_pose()= first.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+Every setting is a property, so the inspector edits it like any component. The next editor wave adds a clip preview (play, crossfade and scrub with =lrg_skeleton2d_component_set_time()=) and the 2D rigging tools described on the [[file:../../animation/skeleton2d.org::#editor][LrgSkeleton2D page]].
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../../animation/skeleton2d.org][LrgSkeleton2D]] and [[file:../../graphics/skinned-sprite.org][LrgSkinnedSprite]]
+- [[file:sprite-component.org][LrgSpriteComponent]], [[file:animator-component.org][LrgAnimatorComponent]] (frame animation)

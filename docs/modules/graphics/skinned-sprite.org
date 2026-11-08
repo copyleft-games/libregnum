@@ -1,0 +1,115 @@
+#+title: LrgSkinnedSprite - Deformable 2D Sprite Meshes
+#+description: Weighted 2D triangle meshes cut from a texture region, CPU skinning, drawing and automatic weights
+#+created: 2026-11-07
+
+* LrgSkinnedSprite - Deformable 2D Sprite Meshes
+:PROPERTIES:
+:CUSTOM_ID: lrgskinnedsprite
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Graphics]] > LrgSkinnedSprite
+#+end_quote
+
+=LrgSkinnedSprite= is a small 2D triangle mesh cut out of a texture (or an atlas region) whose vertices are weighted to bones. Given a palette of bone matrices it deforms on the CPU (linear blend skinning) and draws through rlgl. It is the attachment type of [[file:../animation/skeleton2d.org][LrgSkeleton2D]], and usable on its own with any palette.
+
+- *Header*: =graphics/lrg-skinned-sprite.h=
+- *Type*: =LrgSkinnedSprite=, final GObject, =LRG_TYPE_SKINNED_SPRITE=, GIR =Libregnum.SkinnedSprite=
+- *Since*: 0.9.0
+- *Headless*: everything except =lrg_skinned_sprite_draw()=, =lrg_skinned_sprite_draw_wireframe()= and =lrg_skinned_sprite_load_texture()=
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+- *Vertices* have a bind position =(x, y)= in skeleton setup space, a texture coordinate =(u, v)= in 0 .. 1 across the region, and up to =LRG_SKINNED_SPRITE_MAX_WEIGHTS= (4) =(bone, weight)= influences kept heaviest first and normalised to sum to 1. A mesh holds at most =LRG_SKINNED_SPRITE_MAX_VERTICES= (65535) vertices (16-bit indices).
+- *Triangles* index vertices; their winding does not matter: draw emits every triangle front-facing (raylib culls back faces), also after a deformation or mirror flips it.
+- *Region*: a pixel rectangle of the texture (=lrg_skinned_sprite_set_region()=); 0 width or height means the whole texture. The final texture coordinate is =region.xy + uv * region.wh=, normalised by the texture size.
+- *Palette*: six floats per bone =(a, b, c, d, tx, ty)= with =x' = a*x + c*y + tx=, =y' = b*x + d*y + ty=, normally =world(bone) * inverse_bind(bone)= from =lrg_skeleton2d_get_palette()=. Influences naming a bone outside the palette are skipped and the rest renormalised. Vertices with no usable influence take the *default bone*'s matrix (the slot's bone under a skeleton), or stay at their bind position when the default bone is -1.
+- *Deformed positions* are cached in the sprite after =lrg_skinned_sprite_deform()=; =lrg_skinned_sprite_get_deformed()= and =lrg_skinned_sprite_get_deformed_bounds()= read them for picking and culling.
+- *Texture*: set a =GrlTexture= directly, or set an =image= path and call =lrg_skinned_sprite_load_texture()= (the skeleton loads all of its images with =lrg_skeleton2d_load_textures()=). Untextured meshes draw in the tint colour.
+
+** Automatic weights
+:PROPERTIES:
+:CUSTOM_ID: auto-weights
+:END:
+=lrg_skinned_sprite_compute_auto_weights()= weights the mesh to bone *segments* (origin to tip in setup space):
+1. Each vertex gets =1 / (d + e)^falloff= per segment, where =d= is the distance to the segment and =e= is 1% of the mesh size (so a vertex on a bone does not divide by zero), normalised per vertex.
+2. Optional smoothing: =smooth_iterations= passes blend each vertex's weights halfway toward the mean of its triangle neighbours. This is a few explicit steps of heat diffusion over the mesh graph: weights spread along the surface instead of jumping across gaps.
+3. The heaviest =max_influences= are kept and normalised.
+
+The nearest bone always dominates a vertex lying on it. =falloff= 2 .. 4 gives soft elbows, 6 .. 8 sharp ones; =max_influences= 2 is right for limbs. =lrg_skeleton2d_compute_auto_weights()= builds the segments from a skeleton's setup pose.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_skinned_sprite_new (void)= | empty mesh |
+| =lrg_skinned_sprite_new_quad (x, y, width, height, bone)= | 4 vertices, 2 triangles, UVs (0,0) .. (1,1); fully on =bone= (or unweighted for -1): a region attachment |
+| =lrg_skinned_sprite_new_grid (x, y, width, height, columns, rows)= | regular grid, vertices row by row from the top left, no weights; a strip (=rows= 1) for a limb |
+| =lrg_skinned_sprite_copy (self)= | copy geometry, weights, image, region; shares the texture |
+| =lrg_skinned_sprite_add_vertex (self, x, y, u, v)= | append; index or -1 when full |
+| =lrg_skinned_sprite_get_vertex_count=, =lrg_skinned_sprite_get_vertex (self, i, &x, &y, &u, &v)=, =lrg_skinned_sprite_set_vertex= | vertices (setting keeps weights) |
+| =lrg_skinned_sprite_set_weights (self, i, n, bones, weights)= | replace influences; drops weights <= 0, sorts, normalises (already normalised input is kept bit for bit) |
+| =lrg_skinned_sprite_get_weights (self, i, bones[4], weights[4])= | number of influences; unused entries -1 / 0 |
+| =lrg_skinned_sprite_clear_weights=, =lrg_skinned_sprite_has_weights=, =lrg_skinned_sprite_get_max_bone= | weight helpers |
+| =lrg_skinned_sprite_add_triangle (self, a, b, c)=, =lrg_skinned_sprite_get_triangle_count=, =lrg_skinned_sprite_get_triangle= | triangles |
+| =lrg_skinned_sprite_clear (self)= | remove vertices and triangles |
+| =lrg_skinned_sprite_set_texture= / =lrg_skinned_sprite_get_texture= | the =texture= property |
+| =lrg_skinned_sprite_set_image= / =lrg_skinned_sprite_get_image= | the =image= property (path stored in =.rskel2d=) |
+| =lrg_skinned_sprite_load_texture (self, base_dir, error)= | load =image= relative to =base_dir= unless a texture is set; =G_IO_ERROR= on failure; needs a window |
+| =lrg_skinned_sprite_set_region= / =lrg_skinned_sprite_get_region= | atlas region in pixels |
+| =lrg_skinned_sprite_deform (self, palette, n_floats, default_bone)= | CPU skinning into the deformed buffer |
+| =lrg_skinned_sprite_get_deformed (self, &n_floats)=, =lrg_skinned_sprite_get_deformed_bounds= | read the result |
+| =lrg_skinned_sprite_draw (self, tint)= | draw the deformed mesh in the current 2D mode |
+| =lrg_skinned_sprite_draw_wireframe (self, color)= | triangle edges (rigging overlay) |
+| =lrg_skinned_sprite_compute_auto_weights (self, segments, n_floats, bones, n_bones, falloff, max_influences, smooth_iterations)= | see [[#auto-weights][Automatic weights]] |
+
+Properties: =texture= (=GrlTexture=), =image= (string).
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+/* a tail: a 12-cell strip over three bones, weighted automatically */
+gfloat segs[] = { 0, 0, 30, 0,   30, 0, 60, 0,   60, 0, 90, 0 };
+g_autoptr(LrgSkinnedSprite) tail = lrg_skinned_sprite_new_grid (0, -6, 90, 12, 12, 1);
+
+lrg_skinned_sprite_compute_auto_weights (tail, segs, G_N_ELEMENTS (segs), NULL, 0, 3.0f, 2, 2);
+lrg_skinned_sprite_set_texture (tail, tail_texture);
+lrg_skinned_sprite_set_region (tail, 0, 64, 128, 16);
+
+/* each frame, with a palette of 3 bones (18 floats) */
+lrg_skinned_sprite_deform (tail, palette, 18, 0);
+lrg_skinned_sprite_draw (tail, NULL);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+CPU skinning costs about 24 .. 38 ns per vertex with four influences (1024 vertices in 24 .. 39 µs; =tests/test-skeleton2d.c= =/skeleton2d/perf=). Drawing submits triangles to rlgl's batch in chunks of 1024 with one texture bind per chunk, so many small meshes sharing an atlas batch together. There is no GPU skinning path in 0.9.0 (see the skeleton page).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Call =lrg_skinned_sprite_deform()= before =lrg_skinned_sprite_draw()=; draw uses the last deformed positions (the bind positions before the first deform).
+- Weights are skeleton bone *indices*; a palette shorter than the largest index (=lrg_skinned_sprite_get_max_bone()=) skips those influences.
+- =new_grid= vertices have no weights; without weights or a default bone the mesh never moves.
+- A region needs a texture to mean anything; untextured meshes ignore UVs and draw flat.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The [[file:../../editor/skeleton2d-editor.org][2D Rig Editor]] has a 2D mesh tool on top of this API: cutting sprites into grids, adding and moving vertices, triangulating, painting weights and an automatic-weights button; the wireframe overlay is =lrg_skinned_sprite_draw_wireframe()=. See [[file:../animation/skeleton2d.org::#editor][LrgSkeleton2D: using it from the editor]].
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../animation/skeleton2d.org][LrgSkeleton2D]]
+- [[file:skinned-mesh.org][LrgSkinnedMesh]] (the 3D counterpart, GPU skinned)

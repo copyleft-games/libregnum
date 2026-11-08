@@ -131,3 +131,56 @@ lrgeditor --validate levels/arena.rlevel
 # React to saves
 lrgeditorctl events saved | while read -r line; do echo "saved: ${line}"; done
 ```
+
+## 0.9.0 rendering verbs
+Positionals fill named params in order; file args are sent absolute when they exist in cwd, else resolved against the project; VALUE/INDEX/FROM/TO/LEVEL/ENABLED parse like assignment values (JSON, numbers, true/false, null, a,b,c vectors, on/off); extra key=value pass through; output YAML (-o json). Bad sub-command: usage, exit 2.
+- material open|create|get|save PATH; material create PATH [parent=P] [shading_model=lit|unlit|custom] [shader=S]; material variant PATH [DEST]; material set PATH KEY VALUE; material revert PATH KEY; material preview PATH [sphere|cube|plane] [rotate=BOOL]; material assign NODE PATH; material list (alias mat)
+- shader create PATH [lit=BOOL] | shader compile|diagnostics|uniforms|reload PATH
+- shadergraph open|create|get|validate|glsl|save PATH; shadergraph types; shadergraph add PATH TYPE [id= x= y=]; remove PATH ID; connect PATH FROM FROM_PORT TO TO_PORT; disconnect PATH TO TO_PORT; param PATH ID KEY VALUE; input PATH ID PORT VALUE|null (alias sg)
+- env [get] | env set KEY VALUE | env reset | env bake [--wait] | env progress | env show
+- post types | post open|get|save|assign PATH | post create PATH [preset=default|empty] | post add PATH TYPE [index=N] | post remove PATH INDEX | post move PATH FROM TO | post set PATH INDEX KEY VALUE | post preview [PATH] on|off | post look PATH [viewport=N]
+- lod get NODE | lod force NODE LEVEL|auto
+- view layers [MASK|all|none|0xHEX] | view layers LAYER on|off [viewport=N]; view render-mode|mode MODE (10 modes)
+Examples: lrgeditorctl material set materials/steel.rmat metallic 1; lrgeditorctl env set fog.density 0.02 && lrgeditorctl env bake --wait; lrgeditorctl post add looks/night.rpost vignette; lrgeditorctl view mode light-complexity viewport=1
+
+## 0.9.0 bake, sequence, 2D skeleton, animation and clip verbs
+- bake [get] | bake set KEY VALUE | bake reset | bake start [--wait] [save=false] | bake progress | bake cancel | bake save [DIR] | bake clear | bake evaluate [X Y Z [NX NY NZ]] | bake preview on|off | bake page N | bake show
+- seq list|open PATH|create PATH [length= fps= play_mode=]|get|set|add-track KIND [binding=]|add-key TRACK TIME [VALUE] [channel=]|set-key TRACK key=N|at=T ...|add-section TRACK START name=|remove ...|bind NODE|play|scrub TIME|save [save_as=]|undo [redo=true]|from-timeline TL PATH   (path=P for a sequence other than the open one)
+- timeline tangent NODE TIME MODE [name=TL channel=C slope=S]  (MODE eased|auto|user|broken|linear|constant)
+- skel2d create|open|get|save PATH; add-bone PATH NAME; set-bone|remove-bone PATH BONE; add-slot PATH NAME BONE; set-slot|remove-slot PATH SLOT; draw-order PATH '[..]'; attach|detach|mesh|auto-weights PATH SLOT NAME; paint-weights PATH SLOT NAME BONE X Y; skin|clip PATH NAME OP; key PATH TARGET CHANNEL TIME; play|mode PATH; pick PATH X Y
+- anim open|create|get|enter|preview|validate|save PATH; add-layer|remove-layer|add-state|remove-state|set-state PATH NAME; add-transition|set-transition|remove-transition PATH FROM TO; add-param PATH NAME TYPE; remove-param PATH NAME; set-param PATH NAME VALUE; blend-tree PATH STATE
+- bonemap open|create|get|auto-fill|rules|models|preview|save PATH; bonemap set PATH SOURCE TARGET|null
+- clip list|info|preview MODEL [CLIP]; clip morph MODEL TARGET WEIGHT
+Examples: lrgeditorctl bake set samples 256 && lrgeditorctl bake start --wait; lrgeditorctl bake evaluate 0 0.01 0 0 1 0
+
+## Physics verbs (0.9.0)
+- `physics [get] | add-body [KIND] [shape=auto|KIND|none] | remove-body | set-body K=V.. | add-shape [KIND] [fit=true] [K=V..] | remove-shape I | set-shape I K=V.. | move-shape I TO | add-joint [KIND] [--target N] [K=V..] | remove-joint I | set-joint I K=V.. | fit [I] [--kind K] | overlay [NAME..|+NAME|-NAME] [viewport=N] | state | show` (acts on `--node/-n NODE`, default the primary selection; K=V go into `values`)
+- `physics layers [get] | name I NAME|- | collide A B on|off | settings [K=V..] | reset [empty=true] | open`
+- `physasset open|get|stabilize|save PATH | create PATH [model= total_mass= radius_ratio=] | model PATH MODEL | add-part PATH BONE [K=V..] | set-part PATH PART K=V.. | remove-part|select PATH PART | generate PATH [total_mass= radius_ratio=] | exclude|unexclude PATH A B | set PATH [name= exclude_adjacent=] | simulate PATH [advance=S run=false reset=true]`
+Examples: lrgeditorctl physics add-joint hinge --target Door/Frame axis=0,1,0 --node Door; lrgeditorctl physasset set-part chars/hero.rphysasset shin_l joint=hinge twist_degrees=0,140
+
+## 0.9.0 navigation, AI, effects, terrain, audio, 2D, scripting, debugging and profiling verbs
+
+<!-- m67e-generated: begin -->
+- `nav get | set | new PATH | bake | cancel | save | clear | area-add NAME | area-remove AREA | area-set AREA | area-box-add AREA | area-box-remove AREA BOX | area-box-set AREA BOX | link-add | link-remove INDEX | link-set INDEX | select | overlay | agents | debug-agent | show` [key=value..]
+- `bt open PATH | create PATH | get PATH | palette | add-node PATH TYPE | remove-node PATH ID | move-node PATH ID PARENT | set-node PATH ID | set-position PATH ID X Y | layout PATH | select PATH ID | show PATH SUBTREE | add-key PATH NAME TYPE | remove-key PATH NAME | set-subtree PATH NAME | remove-subtree PATH NAME | open-subtree PATH ID | validate PATH | save PATH | live PATH` [key=value..]
+- `fsm open PATH | create PATH | get PATH | enter PATH STATE | up PATH | add-state PATH NAME | remove-state PATH STATE | rename-state PATH STATE NAME | set-initial PATH STATE | add-transition PATH FROM TO | set-transition PATH FROM INDEX | remove-transition PATH FROM INDEX | set-actions PATH STATE PHASE | set-position PATH STATE X Y | select PATH | add-key PATH NAME TYPE | remove-key PATH NAME | validate PATH | save PATH | live PATH | send-event PATH EVENT` [key=value..]
+- `ai show | entities | select ENTITY | state | set-key KEY VALUE | send-event EVENT | brains | topic BRAIN TOPIC | log` [key=value..]
+- `particles open PATH | create PATH | get PATH | kinds | set PATH KEY VALUE | add-emitter PATH | remove-emitter PATH EMITTER | move-emitter PATH FROM TO | duplicate-emitter PATH EMITTER | add-module PATH EMITTER KIND | remove-module PATH EMITTER MODULE | move-module PATH EMITTER FROM TO | select PATH EMITTER | solo PATH EMITTER | play PATH PLAYING | restart PATH | seek PATH TIME | preview PATH | stats PATH | save PATH | render PATH FILE` [key=value..]
+- `weather open PATH | create PATH | get PATH | kinds | set PATH KEY VALUE | add-preset PATH ID | remove-preset PATH PRESET | set-preset PATH PRESET | add-layer PATH PRESET KIND | remove-layer PATH PRESET LAYER | move-layer PATH PRESET FROM TO | set-layer PATH PRESET LAYER | set-param PATH PRESET LAYER NAME VALUE | set-transition PATH FROM TO DURATION | remove-transition PATH FROM TO | select PATH PRESET | preview PATH | save PATH | render PATH FILE` [key=value..]
+- `terrain get | brush | stroke | sample X Z | add-layer | remove-layer INDEX | set-layer INDEX | add-foliage | remove-foliage INDEX | set-foliage INDEX | rebake | save | create | show` [key=value..]
+- `water get | set | set-wave | add-point X Z | set-point INDEX | remove-point INDEX | save` [key=value..]
+- `mixer show | open | create PATH | set-default PATH | get | effect-types | add-bus NAME | remove-bus NAME | set-bus NAME | set-send SOURCE TARGET LEVEL | remove-send SOURCE TARGET | add-effect BUS TYPE | remove-effect BUS ID | move-effect BUS ID INDEX | set-effect BUS ID | add-snapshot NAME | remove-snapshot NAME | set-snapshot NAME | capture-snapshot NAME | set-duck TRIGGER TARGET | remove-duck TRIGGER TARGET | preview | meters | save` [key=value..]
+- `audio get NODE | set NODE | curve NODE | buses` [key=value..]
+- `tiles state | grid | brush | autopaint | refresh | cell-at | tile-info TILE` [key=value..]
+- `tileset create PATH | open PATH | get | set | select | tile TILE | collision TILE OP | rule-tile OP NAME | rule RULE_TILE OP | preview RULE_TILE | save` [key=value..]
+- `sprite create PATH | open PATH | get | slice MODE | frame OP | clip OP NAME | clip-frame CLIP OP | event CLIP OP FRAME | play | save` [key=value..]
+- `debug state | show | breakpoints | set-breakpoint PATH LINE | remove-breakpoint PATH LINE | toggle-breakpoint LINE | clear-breakpoints | continue | pause | step-over | step-in | step-out | stop | stack | scopes | variables REFERENCE | evaluate EXPRESSION | watches | add-watch EXPRESSION | remove-watch EXPRESSION | dap-start | dap-stop` [key=value..]
+- `lsp servers | status | diagnostics | complete | hover | definition | references | rename NEW_NAME | format | restart` [key=value..]
+- `profiler set | capture | save PATH | load PATH | frames | frame | compare | view` [key=value..]
+- `frame capture | status | calls | call INDEX | scrub INDEX | texture PATH | save PATH | load PATH | show` [key=value..]
+- `script run CODE | languages | tools | run-tool ID | reload | run-in-editor NODE | editor-running` [key=value..]
+- `vscript create PATH | open PATH | get PATH | node-types QUERY | gi-search QUERY | add-node TYPE | remove-node ID | set-node ID | connect FROM TO | disconnect FROM TO | set-variable NAME | add-subgraph NAME | remove-subgraph NAME | add-comment TEXT | remove-comment ID | set-program | select | validate PATH | run | live PATH | breakpoint NODE | continue | save PATH` [key=value..]
+- `memory status | types | resources | snapshot | snapshots | diff FROM | clear-snapshots | history | show` [key=value..]
+- `network stats | history METRIC | enable | reset | show` [key=value..]
+<!-- m67e-generated: end -->

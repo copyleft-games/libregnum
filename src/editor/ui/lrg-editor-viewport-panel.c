@@ -45,6 +45,24 @@
  * active camera; only the panel that took the press ("nav owner") reacts
  * to its gesture signals, so a split layout picks and box-selects once.
  *
+ * Animation overlays (0.9.0): with "Bones" on (the overlays menu or
+ * lrg_editor_viewport_panel_set_show_bones()) the selected nodes' skeletons
+ * are drawn as joint dots and bone lines: the live, animated skeleton of
+ * the play world's entity while playing (its LrgAnimatorComponent3D's or
+ * LrgSkinnedModelComponent's), else the bind pose of the node's glTF
+ * model. With "IK Targets" on (the default) every IK goal of a selected
+ * animator draws its last solved target as a ring with its name and a
+ * line from the effector bone. Both are painted in the 2D overlay pass.
+ *
+ * Terrain and water (0.9.0 M6/M7): with a brush tool picked in the Terrain
+ * panel and a terrain node selected, a left press paints a stroke (the
+ * panel's lrg_editor_terrain_panel_viewport_press() and friends: cursor
+ * ring, Ctrl inverts, Shift smooths, [ ] radius, one undo step per
+ * stroke); with a water lake or river selected its outline points are
+ * handles. The press reaches the terrain tools after tile painting and
+ * before navigation (Alt still orbits), the ring and handles are painted
+ * in the overlay pass, and a held brush dabs every frame from the tick.
+ *
  * Everything works headless: LrgViewport maps pointer positions with the
  * size its texture is heading for, so tests drive the viewport through
  * lrg_canvas_process_input() without a GL context.
@@ -55,6 +73,7 @@
 #include "lrg-editor-app-private.h"
 #include "lrg-editor-viewport-split.h"
 #include "lrg-editor-gizmo-paint.h"
+#include "lrg-editor-tiles-panel.h"
 #include "../lrg-asset-database.h"
 #include "../../ui/lrg-menu.h"
 #include "../../ui/lrg-hbox.h"
@@ -64,6 +83,21 @@
 #include "../../ui/lrg-drop-target.h"
 #include "../../paint/lrg-paint-icons.h"
 #include "../../tween/lrg-spring.h"
+#include "../../graphics/lrg-camera.h"
+#include "data/lrg-editor-material-editor.h"
+#include "data/lrg-editor-post-stack-editor.h"
+#include "../../animation/lrg-gltf-animation.h"
+#include "../../animation/lrg-anim-graph.h"
+#include "../../animation/lrg-bone.h"
+#include "../../world3d/lrg-entity3d.h"
+#include "../../world3d/components/lrg-animator-component3d.h"
+#include "../../world3d/components/lrg-skinned-model-component.h"
+#include "../../world3d/lrg-world3d.h"
+#include "../../world3d/lrg-world3d-renderer.h"
+#include "../../level/lrg-component-desc.h"
+#include "lrg-editor-physics-panel.h"
+#include "lrg-editor-terrain-panel.h"
+#include "lrg-editor-nav-panel.h"
 #include <math.h>
 #include <string.h>
 
@@ -93,8 +127,18 @@ static const gchar * const preset_labels[N_PRESETS] = {
 	"Perspective", "Orthographic", "Top", "Bottom", "Front", "Back", "Right", "Left", "2D"
 };
 
+/* Render modes of the header combo box, in LrgEditorRenderMode order.
+ * The combo lists as many as the enum has (the 0.9.0 debug views
+ * included); a mode without a label here shows its enum nick. */
 static const gchar * const mode_labels[] = {
-	"Lit", "Unlit", "Wireframe", "Normals", "Lighting"
+	"Lit", "Unlit", "Wireframe", "Normals", "Lighting",
+	"Overdraw", "UV", "Light Count", "AO", "Reflections"
+};
+
+/* Render layers with an engine name (lrg-camera.h); the rest are
+ * "Layer N". */
+static const gchar * const layer_names[] = {
+	"Default", "UI", "Editor Only", "Ignore Raycast", "Transparent FX", "Water", "Sky"
 };
 
 /* Overlay flags of the overlays menu: action suffix (the flag nick) and
@@ -116,10 +160,11 @@ static const struct
 	{ LRG_EDITOR_VIEW_OVERLAY_POST, "post", "Post Processing" },
 };
 
-/* The header's two icon toggles. */
+/* The header's icon toggles. */
 typedef enum
 {
 	ICON_OVERLAYS,
+	ICON_LAYERS,
 	ICON_PREVIEW,
 	ICON_MAXIMIZE
 } IconKind;
@@ -135,6 +180,9 @@ struct _LrgEditorViewportPanel
 	LrgComboBox         *preset_combo;
 	LrgComboBox         *mode_combo;
 	LrgCustomWidget     *overlay_button;
+	LrgCustomWidget     *layers_button;
+	LrgMenu             *layers_menu;
+	guint32              cull_mask;    /* render layers this viewport shows */
 	LrgHBox             *tools;        /* the icon buttons, right aligned */
 	LrgCustomWidget     *preview_button;
 	LrgCustomWidget     *max_button;
@@ -161,6 +209,12 @@ struct _LrgEditorViewportPanel
 	gfloat               pointer_v;
 	gboolean             hovered;
 	gboolean             gizmo_drag;   /* the left button drags the transform gizmo */
+
+	/* Volume gizmo (light range / cone, decal and probe boxes) */
+	LrgEditorVolumeHandle vol_hot;     /* hovered handle */
+	LrgEditorVolumeHandle vol_handle;  /* dragged handle, NONE when idle */
+	LrgNode             *vol_node;     /* weak: the node being resized */
+	LrgNode             *vol_before;   /* owned: its state before the drag */
 
 	/* Tile painting (paint mode, left button) */
 	gboolean             tile_drag;
@@ -196,11 +250,60 @@ struct _LrgEditorViewportPanel
 
 	/* Active-viewport outline */
 	LrgSpring            active_spring;
+
+	/* Animation overlays (0.9.0) */
+	gboolean             show_bones;
+	gboolean             show_ik;
+	GHashTable          *rest_skeletons; /* abs model path -> LrgSkeleton (bind pose) */
+	guint                anim_bones;     /* painted by the last overlay pass */
+	guint                anim_targets;
+
+	/* Physics (0.9.0 M5): the selected node's collider / joint gizmo and
+	 * the Physics overlay */
+	LrgEditorPhysicsHandle phys_hot;      /* hovered handle */
+	guint                phys_hot_index;
+	LrgEditorPhysicsHandle phys_handle;   /* dragged handle, NONE when idle */
+	guint                phys_index;
+	LrgNode             *phys_node;       /* weak: the node being resized */
+	LrgNode             *phys_before;     /* owned: its state before the drag */
+	LrgDynamicsDebugFlags physics_flags;  /* the Physics overlay */
+	LrgDebugDraw        *phys_debug;      /* owned: the play world, recorded per frame */
+	gboolean             phys_draw_now;   /* set around this panel's render */
+	GObject             *phys_runtime;    /* the runtime renderer we hook */
+	gulong               phys_overlay_id;
+	guint                phys_painted;
+
+	/* Terrain / water tools (0.9.0 M6/M7): this panel took the press */
+	gboolean             terrain_drag;
+	guint                terrain_painted;
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorViewportPanel, lrg_editor_viewport_panel, LRG_TYPE_CONTAINER)
 
 static void sync_header (LrgEditorViewportPanel *self);
+static LrgNode *volume_node (LrgEditorViewportPanel *self);
+static void register_methods (LrgEditorApp *app);
+static void sync_anim_action (LrgEditorViewportPanel *self, const gchar *name, gboolean value);
+static LrgNode *physics_node (LrgEditorViewportPanel *self);
+static void physics_hook_runtime (LrgEditorViewportPanel *self);
+static guint paint_physics_tree (LrgPaintList *list, const LrgEditorView *view, LrgLevel *level, LrgNode *node,
+                                 LrgNode *skip, LrgDynamicsDebugFlags flags, gfloat ox, gfloat oy, gfloat scale);
+
+/* The app's Terrain panel (it owns the terrain / water viewport tools). */
+static LrgEditorTerrainPanel *
+terrain_tools (LrgEditorViewportPanel *self)
+{
+	return (self->app != NULL) ? lrg_editor_terrain_panel_find (self->app) : NULL;
+}
+
+/* Whether a terrain stroke or water point drag is running. */
+static gboolean
+terrain_busy (LrgEditorViewportPanel *self)
+{
+	LrgEditorTerrainPanel *tp = terrain_tools (self);
+
+	return tp != NULL && (lrg_editor_terrain_panel_is_stroking (tp) || self->terrain_drag);
+}
 
 /* This panel's camera as an LrgEditorView (picking and gizmo math). */
 static void
@@ -263,8 +366,15 @@ render_scene (LrgViewport      *viewport,
 	active = is_active (self);
 	lrg_editor_view_state_set_viewport_size (self->app->view, (gint) self->index, width, height);
 	lrg_editor_scene_renderer_set_playing (self->app->renderer, lrg_editor_play_session_is_playing (self->app->play));
+
+	/* The play world's physics, drawn from the runtime renderer's
+	 * overlay hook inside this render's 3D pass */
+	physics_hook_runtime (self);
+	self->phys_draw_now = lrg_editor_viewport_panel_record_physics (self) > 0;
 	lrg_editor_scene_renderer_render (self->app->renderer, self->app->view, (gint) self->index,
 	                                  active ? self->app->nav : NULL, active, width, height);
+	self->phys_draw_now = FALSE;
+	lrg_debug_draw_end_frame (self->phys_debug);
 }
 
 /* The picture in picture: the scene through the selected camera node,
@@ -383,6 +493,233 @@ content_mapping (LrgEditorViewportPanel *self,
 	return TRUE;
 }
 
+/* ==========================================================================
+ * Animation overlays: bones and IK targets
+ * ========================================================================== */
+
+/* m (column-major) * p */
+static void
+xform_point (const gfloat *m,
+             const gfloat *p,
+             gfloat       *out)
+{
+	guint r;
+
+	for (r = 0; r < 3; r++)
+		out[r] = m[r] * p[0] + m[4 + r] * p[1] + m[8 + r] * p[2] + m[12 + r];
+}
+
+/* Projects a world point to canvas coordinates. */
+static gboolean
+to_canvas (const LrgEditorView *view,
+           const gfloat        *world,
+           gfloat               ox,
+           gfloat               oy,
+           gfloat               scale,
+           gfloat              *cx,
+           gfloat              *cy)
+{
+	gfloat u, v;
+
+	if (!lrg_editor_view_project (view, world, &u, &v, NULL))
+		return FALSE;
+	*cx = ox + u * scale;
+	*cy = oy + v * scale;
+	return TRUE;
+}
+
+static void
+unref_nullable (gpointer object)
+{
+	if (object != NULL)
+		g_object_unref (object);
+}
+
+/* The bind-pose skeleton of a glTF model, loaded once per path. */
+static LrgSkeleton *
+rest_skeleton (LrgEditorViewportPanel *self,
+               const gchar            *asset)
+{
+	g_autofree gchar *abs = NULL;
+	LrgSkeleton      *skeleton;
+
+	if (asset == NULL || self->app == NULL ||
+	    (!g_str_has_suffix (asset, ".glb") && !g_str_has_suffix (asset, ".gltf")))
+		return NULL;
+	abs = editor_app_project_path (self->app, asset);
+	if (self->rest_skeletons == NULL)
+		self->rest_skeletons = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, unref_nullable);
+	if (g_hash_table_contains (self->rest_skeletons, abs))
+		return g_hash_table_lookup (self->rest_skeletons, abs);
+	skeleton = g_file_test (abs, G_FILE_TEST_IS_REGULAR) ? lrg_gltf_load_skeleton (abs, 0, NULL) : NULL;
+	if (skeleton != NULL)
+		lrg_skeleton_calculate_world_poses (skeleton);
+	/* a failed load is remembered too (NULL value): no retry per frame */
+	g_hash_table_insert (self->rest_skeletons, g_strdup (abs), skeleton);
+	return skeleton;
+}
+
+/* Joint dots and bone lines of @skeleton placed by @matrix. */
+static void
+paint_skeleton (LrgEditorViewportPanel *self,
+                LrgPaintList           *list,
+                LrgTheme               *theme,
+                const LrgEditorView    *view,
+                LrgSkeleton            *skeleton,
+                const gfloat           *matrix,
+                gfloat                  ox,
+                gfloat                  oy,
+                gfloat                  scale)
+{
+	const GrlColor *line = lrg_theme_get_color (theme, LRG_THEME_COLOR_WARNING);
+	const GrlColor *dot = lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT);
+	guint           n = lrg_skeleton_get_bone_count (skeleton);
+	guint           i;
+
+	for (i = 0; i < n; i++)
+	{
+		LrgBone           *bone = lrg_skeleton_get_bone (skeleton, (gint) i);
+		const LrgBonePose *w = lrg_bone_get_world_pose (bone);
+		gint               parent = lrg_bone_get_parent_index (bone);
+		gfloat             local[3] = { w->position_x, w->position_y, w->position_z };
+		gfloat             world[3];
+		gfloat             x, y;
+
+		xform_point (matrix, local, world);
+		if (!to_canvas (view, world, ox, oy, scale, &x, &y))
+			continue;
+		if (parent >= 0 && (guint) parent < n)
+		{
+			const LrgBonePose *pw = lrg_bone_get_world_pose (lrg_skeleton_get_bone (skeleton, parent));
+			gfloat             pl[3] = { pw->position_x, pw->position_y, pw->position_z };
+			gfloat             pwld[3];
+			gfloat             px, py;
+
+			xform_point (matrix, pl, pwld);
+			if (to_canvas (view, pwld, ox, oy, scale, &px, &py))
+				lrg_paint_list_line (list, px, py, x, y, 2.0f, line);
+		}
+		lrg_paint_list_circle (list, x, y, 3.0f, dot);
+		self->anim_bones++;
+	}
+}
+
+/* The IK goals of a running animator: target rings, effector lines. */
+static void
+paint_ik_targets (LrgEditorViewportPanel *self,
+                  LrgPaintList           *list,
+                  LrgTheme               *theme,
+                  const LrgEditorView    *view,
+                  LrgAnimatorComponent3D *animator,
+                  const gfloat           *matrix,
+                  gfloat                  ox,
+                  gfloat                  oy,
+                  gfloat                  scale)
+{
+	LrgAnimGraph   *graph = lrg_animator_component3d_get_graph (animator);
+	LrgSkeleton    *skeleton = lrg_animator_component3d_get_skeleton (animator);
+	const GrlColor *ring = lrg_theme_get_color (theme, LRG_THEME_COLOR_LINK);
+	guint           i, n = graph != NULL ? lrg_anim_graph_get_ik_goal_count (graph) : 0;
+
+	for (i = 0; i < n; i++)
+	{
+		LrgIKGoal *goal = lrg_anim_graph_get_ik_goal (graph, i);
+		gfloat     target[3];
+		gfloat     x, y;
+
+		if (!lrg_ik_goal_get_enabled (goal) ||
+		    (!lrg_ik_goal_get_last_target (goal, target) && !lrg_ik_goal_get_target (goal, target)))
+			continue;
+		if (!to_canvas (view, target, ox, oy, scale, &x, &y))
+			continue;
+		/* the effector (or the chain's last bone) reaching for it */
+		if (skeleton != NULL)
+		{
+			g_auto(GStrv)  bones = lrg_ik_goal_get_bones (goal);
+			const gchar   *eff = lrg_ik_goal_get_effector (goal);
+			LrgBone       *bone = NULL;
+
+			if (eff == NULL && bones != NULL && bones[0] != NULL)
+				eff = bones[g_strv_length (bones) - 1];
+			bone = eff != NULL ? lrg_skeleton_get_bone_by_name (skeleton, eff) : NULL;
+			if (bone != NULL)
+			{
+				const LrgBonePose *w = lrg_bone_get_world_pose (bone);
+				gfloat             local[3] = { w->position_x, w->position_y, w->position_z };
+				gfloat             world[3];
+				gfloat             ex, ey;
+
+				xform_point (matrix, local, world);
+				if (to_canvas (view, world, ox, oy, scale, &ex, &ey))
+					lrg_paint_list_line (list, ex, ey, x, y, 1.5f, ring);
+			}
+		}
+		lrg_paint_list_border (list, x - 8.0f, y - 8.0f, 16.0f, 16.0f, 8.0f, 2.0f, ring);
+		lrg_paint_list_circle (list, x, y, 2.5f, ring);
+		lrg_editor_gizmo_paint_chip (list, theme, lrg_ik_goal_get_name (goal), x + 12.0f, y - 10.0f, FALSE, ring);
+		self->anim_targets++;
+	}
+}
+
+static void
+paint_anim_overlay (LrgEditorViewportPanel *self,
+                    LrgPaintList           *list,
+                    LrgTheme               *theme,
+                    const LrgEditorView    *view,
+                    gfloat                  ox,
+                    gfloat                  oy,
+                    gfloat                  scale)
+{
+	LrgEditorApp       *app = self->app;
+	LrgEditorSelection *sel;
+	GPtrArray          *nodes;
+	gboolean            playing;
+	guint               k;
+
+	self->anim_bones = 0;
+	self->anim_targets = 0;
+	if ((!self->show_bones && !self->show_ik) || app == NULL ||
+	    (sel = lrg_editor_get_selection (app->editor)) == NULL)
+		return;
+	playing = lrg_editor_play_session_is_playing (app->play);
+	nodes = lrg_editor_selection_get_nodes (sel);
+	for (k = 0; nodes != NULL && k < nodes->len; k++)
+	{
+		LrgNode       *node = g_ptr_array_index (nodes, k);
+		GObject       *live = playing ? lrg_editor_play_session_get_live_for_node (app->play, node) : NULL;
+		LrgNodeVisual *visual = lrg_node_get_visual (node);
+
+		if (live != NULL && LRG_IS_ENTITY3D (live))
+		{
+			LrgEntity3D            *entity = LRG_ENTITY3D (live);
+			LrgComponent           *ac = lrg_entity3d_get_component (entity, LRG_TYPE_ANIMATOR_COMPONENT3D);
+			LrgComponent           *sc = lrg_entity3d_get_component (entity, LRG_TYPE_SKINNED_MODEL_COMPONENT);
+			LrgSkeleton            *skeleton = NULL;
+			const gfloat           *m = lrg_entity3d_peek_world_matrix (entity);
+
+			if (ac != NULL)
+				skeleton = lrg_animator_component3d_get_skeleton (LRG_ANIMATOR_COMPONENT3D (ac));
+			if (skeleton == NULL && sc != NULL)
+				skeleton = lrg_skinned_model_component_get_skeleton (LRG_SKINNED_MODEL_COMPONENT (sc));
+			if (self->show_bones && skeleton != NULL)
+				paint_skeleton (self, list, theme, view, skeleton, m, ox, oy, scale);
+			if (self->show_ik && ac != NULL)
+				paint_ik_targets (self, list, theme, view, LRG_ANIMATOR_COMPONENT3D (ac), m, ox, oy, scale);
+		}
+		else if (self->show_bones && visual != NULL &&
+		         lrg_node_visual_get_kind (visual) == LRG_NODE_VISUAL_MESH_ASSET)
+		{
+			LrgSkeleton *skeleton = rest_skeleton (self, lrg_node_visual_get_asset (visual));
+			gfloat       m[16];
+
+			if (skeleton == NULL)
+				continue;
+			lrg_editor_node_get_world_matrix (node, m);
+			paint_skeleton (self, list, theme, view, skeleton, m, ox, oy, scale);
+		}
+	}
+}
+
 static void
 overlay_paint (LrgCustomWidget *widget,
                LrgPaintList    *list,
@@ -430,8 +767,78 @@ overlay_paint (LrgCustomWidget *widget,
 			                                   ox, oy, scale);
 	}
 
-	/* The transform gizmo (every viewport shows it, through its camera) */
-	if ((overlays & LRG_EDITOR_VIEW_OVERLAY_GIZMOS) && !lrg_editor_view_state_get_tile_mode (app->view))
+	/* Volumes of the selected light / decal / probe, and LOD bounds */
+	{
+		LrgNode *vnode = volume_node (self);
+
+		if (vnode != NULL)
+			lrg_editor_gizmo_paint_volume (list, theme, &view, vnode,
+			                               self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE ? self->vol_handle
+			                                                                                 : self->vol_hot,
+			                               self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE, ox, oy, scale);
+		if ((overlays & LRG_EDITOR_VIEW_OVERLAY_BOUNDS) && app->renderer != NULL)
+		{
+			LrgEditorSelection *sel = lrg_editor_get_selection (app->editor);
+			LrgNode            *primary = (sel != NULL) ? lrg_editor_selection_get_primary (sel) : NULL;
+			LrgNodeVisual      *visual = (primary != NULL) ? lrg_node_get_visual (primary) : NULL;
+			LrgLodGroup        *lod = NULL;
+
+			if (visual != NULL && lrg_node_visual_get_kind (visual) == LRG_NODE_VISUAL_MESH_ASSET &&
+			    lrg_node_visual_get_asset (visual) != NULL)
+				lod = lrg_editor_scene_renderer_get_lod_group (app->renderer, lrg_node_visual_get_asset (visual));
+			if (lod != NULL)
+				lrg_editor_gizmo_paint_lod_bounds (list, theme, &view, primary, lod, ox, oy, scale);
+		}
+	}
+
+	/* Physics: every authored body (the Physics overlay, authoring only)
+	 * and the selected node's collider / joint gizmo with its handles */
+	self->phys_painted = 0;
+	{
+		LrgLevel *level = lrg_editor_get_level (app->editor);
+		LrgNode  *pnode = physics_node (self);
+
+		if (self->physics_flags != 0 && level != NULL && lrg_level_get_root (level) != NULL &&
+		    !lrg_editor_play_session_is_playing (app->play))
+			self->phys_painted += paint_physics_tree (list, &view, level, lrg_level_get_root (level), pnode,
+			                                          self->physics_flags, ox, oy, scale);
+		if (pnode != NULL)
+		{
+			LrgEditorPhysicsPanel *pp = lrg_editor_physics_panel_find (app);
+			LrgNodePhysics        *phys = lrg_node_get_physics (pnode);
+			gboolean               dragging = self->phys_handle != LRG_EDITOR_PHYSICS_HANDLE_NONE;
+
+			lrg_editor_gizmo_paint_physics (list, theme, &view, level, pnode,
+			                                dragging ? self->phys_handle : self->phys_hot,
+			                                dragging ? self->phys_index : self->phys_hot_index,
+			                                (pp != NULL && lrg_editor_physics_panel_get_node (pp) == pnode)
+			                                ? lrg_editor_physics_panel_get_selected_shape (pp) : -1,
+			                                dragging, ox, oy, scale);
+			self->phys_painted += (phys != NULL ? lrg_node_physics_get_shapes (phys)->len +
+			                                      lrg_node_physics_get_joints (phys)->len : 0u) +
+			                      (lrg_node_find_component (pnode, "collider") != NULL && lrg_node_get_is_2d (pnode)
+			                       ? 1u : 0u);
+		}
+	}
+
+	/* The terrain brush ring and the water outline handles */
+	self->terrain_painted = 0;
+	if (terrain_tools (self) != NULL && !lrg_editor_play_session_is_playing (app->play))
+		self->terrain_painted = lrg_editor_terrain_panel_paint_overlay (terrain_tools (self), list, theme, &view, ox,
+		                                                                oy, scale);
+
+	/* Navigation: the selected area box and off-mesh link with their
+	 * handles (the Navigation panel paints them) */
+	if (lrg_editor_nav_panel_find (app) != NULL)
+		lrg_editor_nav_panel_paint_handles (lrg_editor_nav_panel_find (app), list, theme, &view, ox, oy, scale);
+
+	/* Skeletons and IK targets of the selected animated nodes */
+	paint_anim_overlay (self, list, theme, &view, ox, oy, scale);
+
+	/* The transform gizmo (every viewport shows it, through its camera);
+	 * hidden while a terrain brush owns the left button */
+	if ((overlays & LRG_EDITOR_VIEW_OVERLAY_GIZMOS) && !lrg_editor_view_state_get_tile_mode (app->view) &&
+	    (terrain_tools (self) == NULL || !lrg_editor_terrain_panel_get_brush_active (terrain_tools (self))))
 		lrg_editor_gizmo_paint_transform (list, app->gizmo, lrg_editor_get_tool (app->editor), &view, ox, oy, scale);
 
 	/* The box-select rectangle of this panel's gesture */
@@ -547,7 +954,7 @@ cell_under (LrgEditorViewportPanel *self,
 	p[0] = o[0] + d[0] * t;
 	p[1] = o[1] + d[1] * t;
 	p[2] = o[2] + d[2] * t;
-	lrg_editor_tile_painter_cell_at (node, p, x, y);
+	lrg_editor_tiles_panel_cell_at (node, p, x, y);   /* iso / hex aware */
 	return TRUE;
 }
 
@@ -596,6 +1003,7 @@ tile_finish (LrgEditorViewportPanel *self,
 
 		editor_app_set_status (app, "Rectangle: %u tile(s)", n);
 	}
+	lrg_editor_tiles_panel_end_gesture (app);   /* rule tiles: autotile, close the undo group */
 	self->tile_rect = FALSE;
 	self->tile_drag = FALSE;
 	mark_dirty (self);
@@ -622,6 +1030,7 @@ tile_press (LrgEditorViewportPanel *self,
 	if (lrg_node_visual_get_tilemap (lrg_node_get_visual (node)) == NULL && tool != LRG_EDITOR_TILE_TOOL_PICK)
 		lrg_editor_tile_painter_ensure_tilemap (app->tile_painter, node);
 	update_tile_hover (self, node);
+	lrg_editor_tiles_panel_begin_gesture (app, node);   /* rule tile brush: one undo group */
 
 	switch (tool)
 	{
@@ -656,6 +1065,8 @@ tile_press (LrgEditorViewportPanel *self,
 		}
 		break;
 	}
+	if (!self->tile_drag)
+		lrg_editor_tiles_panel_end_gesture (app);   /* instant tools (fill, pick) */
 	mark_dirty (self);
 	return TRUE;
 }
@@ -833,6 +1244,420 @@ activate (LrgEditorViewportPanel *self)
 		lrg_editor_view_state_set_active_viewport (self->app->view, self->index);
 }
 
+/* ==========================================================================
+ * Volume gizmo drags
+ * ========================================================================== */
+
+/* The node whose volume gizmo shows: the primary selection, unlocked,
+ * with the gizmos overlay on and outside tile painting. */
+static LrgNode *
+volume_node (LrgEditorViewportPanel *self)
+{
+	LrgEditorApp       *app = self->app;
+	LrgEditorSelection *sel;
+	LrgNode            *node;
+
+	if (app == NULL || lrg_editor_view_state_get_tile_mode (app->view) ||
+	    !(lrg_editor_view_state_get_overlays (app->view, (gint) self->index) & LRG_EDITOR_VIEW_OVERLAY_GIZMOS) ||
+	    lrg_editor_play_session_is_playing (app->play))
+		return NULL;
+	sel = lrg_editor_get_selection (app->editor);
+	node = (sel != NULL) ? lrg_editor_selection_get_primary (sel) : NULL;
+	if (node == NULL || lrg_node_get_locked (node) || !lrg_editor_volume_has_gizmo (node))
+		return NULL;
+	return node;
+}
+
+static gboolean
+volume_press (LrgEditorViewportPanel *self,
+              gfloat                  u,
+              gfloat                  v)
+{
+	LrgNode              *node = volume_node (self);
+	LrgEditorView         view;
+	LrgEditorVolumeHandle h;
+
+	if (node == NULL)
+		return FALSE;
+	current_view (self, &view);
+	h = lrg_editor_volume_hit_test (&view, node, u, v);
+	if (h == LRG_EDITOR_VOLUME_HANDLE_NONE)
+		return FALSE;
+	self->vol_handle = h;
+	self->vol_hot = h;
+	g_set_weak_pointer (&self->vol_node, node);
+	g_clear_object (&self->vol_before);
+	self->vol_before = lrg_editor_snapshot_node (node);
+	mark_dirty (self);
+	return TRUE;
+}
+
+/* Writes the value under the pointer into the node, live. */
+static void
+volume_drag (LrgEditorViewportPanel *self,
+             gfloat                  u,
+             gfloat                  v)
+{
+	LrgEditorView  view;
+	gdouble        value;
+	LrgNodeVisual *visual;
+	const gchar   *param = lrg_editor_volume_handle_get_param (self->vol_handle);
+
+	if (self->vol_node == NULL || param == NULL)
+		return;
+	current_view (self, &view);
+	if (!lrg_editor_volume_drag_value (&view, self->vol_node, self->vol_handle, u, v, &value))
+		return;
+	/* Ctrl snaps to tenths (whole degrees for cones) */
+	if (self->mods & LRG_INPUT_MODIFIER_CTRL)
+		value = (self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_CONE ||
+		         self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_INNER_CONE ||
+		         self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE ||
+		         self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_AUDIO_INNER_CONE) ? round (value)
+		                                                                       : round (value * 10.0) / 10.0;
+	visual = lrg_node_get_visual (self->vol_node);
+	lrg_node_visual_set_param_double (visual, param, value);
+	/* a spot light without an explicit inner cone keeps the 0.8 ratio */
+	if (self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_CONE &&
+	    lrg_node_visual_get_param_double (visual, "spot_inner_angle", 0.0) > value)
+		lrg_node_visual_set_param_double (visual, "spot_inner_angle", value);
+	/* an audio emitter's inner cone stays inside the outer one (EDAUDIO) */
+	if (self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE &&
+	    lrg_node_visual_get_param_double (visual, "cone_inner_angle", 360.0) > value)
+		lrg_node_visual_set_param_double (visual, "cone_inner_angle", value);
+	if (lrg_editor_get_level (self->app->editor) != NULL)
+		lrg_level_notify_node_changed (lrg_editor_get_level (self->app->editor), self->vol_node);
+	mark_dirty (self);
+}
+
+/* Ends the drag: one undo step, or the old state back on cancel. */
+static void
+volume_finish (LrgEditorViewportPanel *self,
+               gboolean                commit)
+{
+	if (self->vol_node != NULL && self->vol_before != NULL)
+	{
+		if (commit)
+		{
+			g_autofree gchar *label = g_strdup_printf ("Resize %s",
+			                                           lrg_editor_volume_handle_get_param (self->vol_handle));
+
+			lrg_editor_commit_node_state (self->app->editor, self->vol_node, self->vol_before, label, FALSE);
+		}
+		else
+		{
+			lrg_node_copy_state (self->vol_node, self->vol_before);
+			if (lrg_editor_get_level (self->app->editor) != NULL)
+				lrg_level_notify_node_changed (lrg_editor_get_level (self->app->editor), self->vol_node);
+			editor_app_set_status (self->app, "Resize cancelled");
+		}
+	}
+	self->vol_handle = LRG_EDITOR_VOLUME_HANDLE_NONE;
+	g_clear_weak_pointer (&self->vol_node);
+	g_clear_object (&self->vol_before);
+	mark_dirty (self);
+}
+
+/* ==========================================================================
+ * Physics gizmo drags (collider dimensions, joint anchors, 2D colliders)
+ * ========================================================================== */
+
+/* The node whose physics gizmo shows: the primary selection, unlocked,
+ * with the gizmos overlay on, outside tile painting and play. */
+static LrgNode *
+physics_node (LrgEditorViewportPanel *self)
+{
+	LrgEditorApp       *app = self->app;
+	LrgEditorSelection *sel;
+	LrgNode            *node;
+
+	if (app == NULL || lrg_editor_view_state_get_tile_mode (app->view) ||
+	    !(lrg_editor_view_state_get_overlays (app->view, (gint) self->index) & LRG_EDITOR_VIEW_OVERLAY_GIZMOS) ||
+	    lrg_editor_play_session_is_playing (app->play))
+		return NULL;
+	sel = lrg_editor_get_selection (app->editor);
+	node = (sel != NULL) ? lrg_editor_selection_get_primary (sel) : NULL;
+	if (node == NULL || lrg_node_get_locked (node) || !lrg_editor_physics_has_gizmo (node))
+		return NULL;
+	return node;
+}
+
+static gboolean
+physics_press (LrgEditorViewportPanel *self,
+               gfloat                  u,
+               gfloat                  v)
+{
+	LrgNode               *node = physics_node (self);
+	LrgEditorView          view;
+	LrgEditorPhysicsHandle h;
+	guint                  index = 0;
+
+	if (node == NULL)
+		return FALSE;
+	current_view (self, &view);
+	h = lrg_editor_physics_hit_test (&view, node, u, v, &index);
+	if (h == LRG_EDITOR_PHYSICS_HANDLE_NONE)
+		return FALSE;
+	self->phys_handle = h;
+	self->phys_index = index;
+	self->phys_hot = h;
+	self->phys_hot_index = index;
+	g_set_weak_pointer (&self->phys_node, node);
+	g_clear_object (&self->phys_before);
+	self->phys_before = lrg_editor_snapshot_node (node);
+	/* the Physics panel follows the grabbed shape */
+	if (h != LRG_EDITOR_PHYSICS_HANDLE_ANCHOR && h < LRG_EDITOR_PHYSICS_HANDLE_WIDTH_2D &&
+	    lrg_editor_physics_panel_find (self->app) != NULL)
+		lrg_editor_physics_panel_set_selected_shape (lrg_editor_physics_panel_find (self->app), (gint) index);
+	mark_dirty (self);
+	return TRUE;
+}
+
+/* Writes the value under the pointer into the node, live. The snapshot
+ * taken at the press holds deep copies, so the live block can change in
+ * place until the release commits one step. */
+static void
+physics_drag (LrgEditorViewportPanel *self,
+              gfloat                  u,
+              gfloat                  v)
+{
+	LrgEditorView        view;
+	gfloat               value[3];
+	LrgNodePhysics      *phys;
+	LrgNodePhysicsShape *shape = NULL;
+	LrgNodePhysicsJoint *joint = NULL;
+	gint                 k;
+
+	if (self->phys_node == NULL || self->phys_handle == LRG_EDITOR_PHYSICS_HANDLE_NONE)
+		return;
+	current_view (self, &view);
+	if (!lrg_editor_physics_drag_value (&view, self->phys_node, self->phys_handle, self->phys_index, u, v, value))
+		return;
+	/* Ctrl snaps to centimetres (anchors to decimetres) */
+	if (self->mods & LRG_INPUT_MODIFIER_CTRL)
+		for (k = 0; k < 3; k++)
+			value[k] = (self->phys_handle == LRG_EDITOR_PHYSICS_HANDLE_ANCHOR) ? roundf (value[k] * 10.0f) / 10.0f
+			                                                                   : MAX (roundf (value[k] * 100.0f) / 100.0f, 0.01f);
+	phys = lrg_node_get_physics (self->phys_node);
+	if (phys != NULL && self->phys_index < lrg_node_physics_get_shapes (phys)->len)
+		shape = g_ptr_array_index (lrg_node_physics_get_shapes (phys), self->phys_index);
+	if (phys != NULL && self->phys_index < lrg_node_physics_get_joints (phys)->len)
+		joint = g_ptr_array_index (lrg_node_physics_get_joints (phys), self->phys_index);
+
+	switch (self->phys_handle)
+	{
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_X:
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_Y:
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_Z:
+		if (shape != NULL)
+		{
+			gfloat he[3];
+
+			lrg_node_physics_shape_get_half_extents (shape, he);
+			he[self->phys_handle - LRG_EDITOR_PHYSICS_HANDLE_HALF_X] = value[0];
+			lrg_node_physics_shape_set_half_extents (shape, he[0], he[1], he[2]);
+		}
+		break;
+	case LRG_EDITOR_PHYSICS_HANDLE_RADIUS:
+		if (shape != NULL)
+			lrg_node_physics_shape_set_radius (shape, value[0]);
+		break;
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_HEIGHT:
+		if (shape != NULL)
+			lrg_node_physics_shape_set_half_height (shape, value[0]);
+		break;
+	case LRG_EDITOR_PHYSICS_HANDLE_ANCHOR:
+		if (joint != NULL)
+			lrg_node_physics_joint_set_anchor (joint, value[0], value[1], value[2]);
+		break;
+	case LRG_EDITOR_PHYSICS_HANDLE_WIDTH_2D:
+	case LRG_EDITOR_PHYSICS_HANDLE_HEIGHT_2D:
+	case LRG_EDITOR_PHYSICS_HANDLE_RADIUS_2D:
+		{
+			LrgComponentDesc *desc = lrg_node_find_component (self->phys_node, "collider");
+
+			if (desc != NULL)
+				lrg_component_desc_set_double (desc, lrg_editor_physics_handle_get_field (self->phys_handle),
+				                               (gdouble) value[0]);
+		}
+		break;
+	case LRG_EDITOR_PHYSICS_HANDLE_NONE:
+	default:
+		break;
+	}
+	if (lrg_editor_get_level (self->app->editor) != NULL)
+		lrg_level_notify_node_changed (lrg_editor_get_level (self->app->editor), self->phys_node);
+	mark_dirty (self);
+}
+
+/* Ends the drag: one undo step, or the old state back on cancel. */
+static void
+physics_finish (LrgEditorViewportPanel *self,
+                gboolean                commit)
+{
+	if (self->phys_node != NULL && self->phys_before != NULL)
+	{
+		if (commit)
+		{
+			g_autofree gchar *label = g_strdup_printf ("Resize %s",
+			                                           lrg_editor_physics_handle_get_field (self->phys_handle));
+
+			lrg_editor_commit_node_state (self->app->editor, self->phys_node, self->phys_before, label, FALSE);
+		}
+		else
+		{
+			lrg_node_copy_state (self->phys_node, self->phys_before);
+			if (lrg_editor_get_level (self->app->editor) != NULL)
+				lrg_level_notify_node_changed (lrg_editor_get_level (self->app->editor), self->phys_node);
+			editor_app_set_status (self->app, "Resize cancelled");
+		}
+	}
+	self->phys_handle = LRG_EDITOR_PHYSICS_HANDLE_NONE;
+	g_clear_weak_pointer (&self->phys_node);
+	g_clear_object (&self->phys_before);
+	mark_dirty (self);
+}
+
+/* Walks the level and paints every node's authored physics. */
+static guint
+paint_physics_tree (LrgPaintList        *list,
+                    const LrgEditorView *view,
+                    LrgLevel            *level,
+                    LrgNode             *node,
+                    LrgNode             *skip,
+                    LrgDynamicsDebugFlags flags,
+                    gfloat               ox,
+                    gfloat               oy,
+                    gfloat               scale)
+{
+	GPtrArray *kids = lrg_node_get_children (node);
+	guint      n = 0, i;
+
+	if (node != skip && lrg_node_get_visible (node) &&
+	    (lrg_node_get_physics (node) != NULL || lrg_node_find_component (node, "collider") != NULL))
+		n += lrg_editor_gizmo_paint_physics_shapes (list, view, level, node, flags, 0.55f, ox, oy, scale);
+	for (i = 0; kids != NULL && i < kids->len; i++)
+		n += paint_physics_tree (list, view, level, g_ptr_array_index (kids, i), skip, flags, ox, oy, scale);
+	return n;
+}
+
+/* The play world's physics -> the debug draw batch. */
+guint
+lrg_editor_viewport_panel_record_physics (LrgEditorViewportPanel *self)
+{
+	LrgWorld3D *world;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), 0);
+
+	lrg_debug_draw_clear (self->phys_debug);
+	if (self->app == NULL || self->physics_flags == 0 || !lrg_editor_play_session_is_playing (self->app->play))
+		return 0;
+	world = lrg_editor_play_session_get_world3d (self->app->play);
+	if (world == NULL || lrg_world3d_get_physics (world) == NULL)
+		return 0;
+	lrg_world3d_debug_draw_physics (world, self->phys_debug, self->physics_flags);
+	return lrg_debug_draw_get_count (self->phys_debug);
+}
+
+/* The runtime renderer's "draw-overlay" hook: inside the 3D pass of this
+ * panel's render, draw the recorded physics. */
+static void
+on_runtime_draw_overlay (GObject  *runtime,
+                         gpointer  view,
+                         gpointer  user_data)
+{
+	LrgEditorViewportPanel *self = LRG_EDITOR_VIEWPORT_PANEL (user_data);
+
+	if (self->phys_draw_now)
+		lrg_debug_draw_draw_3d (self->phys_debug);
+}
+
+/* Hooks the shared runtime renderer once (it lives as long as the app's
+ * scene renderer). */
+static void
+physics_hook_runtime (LrgEditorViewportPanel *self)
+{
+	LrgWorld3DRenderer *runtime;
+
+	if (self->app == NULL || self->app->renderer == NULL)
+		return;
+	runtime = lrg_editor_scene_renderer_get_runtime_renderer (self->app->renderer);
+	if (runtime == NULL || G_OBJECT (runtime) == self->phys_runtime)
+		return;
+	if (self->phys_runtime != NULL)
+		g_clear_signal_handler (&self->phys_overlay_id, self->phys_runtime);
+	g_set_weak_pointer (&self->phys_runtime, G_OBJECT (runtime));
+	self->phys_overlay_id = g_signal_connect (runtime, "draw-overlay", G_CALLBACK (on_runtime_draw_overlay), self);
+}
+
+void
+lrg_editor_viewport_panel_set_physics_overlay (LrgEditorViewportPanel *self,
+                                               LrgDynamicsDebugFlags   flags)
+{
+	static const gchar * const nicks[] = {
+		"shapes", "aabbs", "contacts", "joints", "sleeping", "com", "velocity", "broadphase"
+	};
+	guint i;
+
+	g_return_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self));
+
+	self->physics_flags = flags & LRG_DYNAMICS_DEBUG_ALL;
+	for (i = 0; i < G_N_ELEMENTS (nicks); i++)
+	{
+		g_autofree gchar *name = g_strconcat ("physics-", nicks[i], NULL);
+
+		sync_anim_action (self, name, (self->physics_flags & (1u << i)) != 0);
+	}
+	mark_dirty (self);
+	if (self->overlay != NULL)
+		lrg_widget_queue_layout (LRG_WIDGET (self->overlay));
+}
+
+LrgDynamicsDebugFlags
+lrg_editor_viewport_panel_get_physics_overlay (LrgEditorViewportPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), LRG_DYNAMICS_DEBUG_NONE);
+	return self->physics_flags;
+}
+
+LrgDebugDraw *
+lrg_editor_viewport_panel_get_physics_debug_draw (LrgEditorViewportPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), NULL);
+	return self->phys_debug;
+}
+
+guint
+lrg_editor_viewport_panel_get_physics_painted (LrgEditorViewportPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), 0);
+	return self->phys_painted;
+}
+
+guint
+lrg_editor_viewport_panel_get_terrain_painted (LrgEditorViewportPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), 0);
+	return self->terrain_painted;
+}
+
+LrgEditorPhysicsHandle
+lrg_editor_viewport_panel_get_physics_handle (LrgEditorViewportPanel *self,
+                                              guint                  *index)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), LRG_EDITOR_PHYSICS_HANDLE_NONE);
+
+	if (self->phys_handle != LRG_EDITOR_PHYSICS_HANDLE_NONE)
+	{
+		if (index != NULL)
+			*index = self->phys_index;
+		return self->phys_handle;
+	}
+	if (index != NULL)
+		*index = self->phys_hot_index;
+	return self->phys_hot;
+}
+
 static void
 on_pointer_press (LrgViewport       *viewport,
                   gint               button,
@@ -853,6 +1678,31 @@ on_pointer_press (LrgViewport       *viewport,
 	activate (self);
 	take_focus (self);
 
+	/* Any other button cancels a volume or collider resize */
+	if (self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE)
+	{
+		if (button != (gint) GRL_MOUSE_BUTTON_LEFT)
+			volume_finish (self, FALSE);
+		return;
+	}
+	if (self->phys_handle != LRG_EDITOR_PHYSICS_HANDLE_NONE)
+	{
+		if (button != (gint) GRL_MOUSE_BUTTON_LEFT)
+			physics_finish (self, FALSE);
+		return;
+	}
+	/* ... and a terrain stroke or water point drag */
+	if (self->terrain_drag)
+	{
+		if (button != (gint) GRL_MOUSE_BUTTON_LEFT)
+		{
+			lrg_editor_terrain_panel_viewport_release (terrain_tools (self), FALSE);
+			self->terrain_drag = FALSE;
+			mark_dirty (self);
+		}
+		return;
+	}
+
 	/* A right click (or any other button) cancels a gizmo drag */
 	if (self->gizmo_drag)
 	{
@@ -868,13 +1718,44 @@ on_pointer_press (LrgViewport       *viewport,
 	if (self->tile_drag)
 		return;
 
+	/* Navigation handles (area boxes, link ends): a left press grabs one,
+	 * another button during the drag cancels it */
+	if (lrg_editor_nav_panel_find (app) != NULL && !(mods & LRG_INPUT_MODIFIER_ALT))
+	{
+		current_view (self, &view);
+		if (lrg_editor_nav_panel_handle_press (lrg_editor_nav_panel_find (app), &view, button, u, v))
+		{
+			mark_dirty (self);
+			return;
+		}
+	}
+
 	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && tile_press (self, mods))
 		return;
+
+	/* Terrain brush strokes and water outline handles (Alt navigates) */
+	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && !(mods & LRG_INPUT_MODIFIER_ALT) && terrain_tools (self) != NULL &&
+	    !lrg_editor_view_state_get_tile_mode (app->view))
+	{
+		current_view (self, &view);
+		if (lrg_editor_terrain_panel_viewport_press (terrain_tools (self), &view, u, v, mods))
+		{
+			self->terrain_drag = TRUE;
+			mark_dirty (self);
+			return;
+		}
+	}
 	if (lrg_editor_viewport_nav_pointer_press (app->nav, (GrlMouseButton) button, u, v, mods))
 		return;
 	if (button != (gint) GRL_MOUSE_BUTTON_LEFT || (mods & LRG_INPUT_MODIFIER_ALT))
 		return;
 
+	/* Volume handles sit on the edges of lights, decals and probes and
+	 * win over the transform gizmo at the centre */
+	if (volume_press (self, u, v))
+		return;
+	if (physics_press (self, u, v))
+		return;
 	current_view (self, &view);
 	if (lrg_editor_gizmo_begin_drag (app->gizmo, &view, u, v))
 		self->gizmo_drag = TRUE;
@@ -900,7 +1781,8 @@ on_pointer_move (LrgViewport *viewport,
 	self->pointer_v = v;
 	self->hovered = TRUE;
 	idle = lrg_editor_viewport_nav_get_mode (app->nav) == LRG_EDITOR_NAV_MODE_NONE && !self->gizmo_drag &&
-	       !self->tile_drag;
+	       !self->tile_drag && self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_NONE &&
+	       self->phys_handle == LRG_EDITOR_PHYSICS_HANDLE_NONE && !self->terrain_drag;
 
 	/* Hovering with no gesture running makes this the active viewport,
 	 * so shortcuts and the keyboard act where the pointer is */
@@ -912,6 +1794,20 @@ on_pointer_move (LrgViewport *viewport,
 	if (lrg_editor_viewport_nav_pointer_move (app->nav, u, v, dx, dy, self->mods))
 		return;
 
+	/* The terrain cursor ring follows the pointer; a stroke or a water
+	 * point drag owns the motion */
+	if (terrain_tools (self) != NULL && !lrg_editor_view_state_get_tile_mode (app->view))
+	{
+		current_view (self, &view);
+		if (lrg_editor_terrain_panel_viewport_move (terrain_tools (self), &view, u, v, self->mods) ||
+		    lrg_editor_terrain_panel_get_brush_active (terrain_tools (self)))
+		{
+			mark_dirty (self);
+			if (self->terrain_drag)
+				return;
+		}
+	}
+
 	node = tile_target (self);
 	if (node != NULL)
 	{
@@ -919,17 +1815,67 @@ on_pointer_move (LrgViewport *viewport,
 		if (self->tile_drag && lrg_editor_tile_painter_is_stroking (app->tile_painter))
 		{
 			lrg_editor_tile_painter_stroke_to (app->tile_painter, app->tile_hover_x, app->tile_hover_y);
+			lrg_editor_tiles_panel_update_gesture (app);   /* autotile this sample */
 			mark_dirty (self);
 		}
 	}
 	else
 		app->tile_hover_valid = FALSE;
 
+	/* A navigation handle drag, or its hover */
+	if (lrg_editor_nav_panel_find (app) != NULL)
+	{
+		gboolean repaint = FALSE;
+
+		current_view (self, &view);
+		if (lrg_editor_nav_panel_handle_motion (lrg_editor_nav_panel_find (app), &view, u, v,
+		                                        (self->mods & LRG_INPUT_MODIFIER_CTRL) != 0, &repaint))
+		{
+			mark_dirty (self);
+			return;
+		}
+		if (repaint)
+			mark_dirty (self);
+	}
+	if (self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE)
+	{
+		volume_drag (self, u, v);
+		return;
+	}
+	if (self->phys_handle != LRG_EDITOR_PHYSICS_HANDLE_NONE)
+	{
+		physics_drag (self, u, v);
+		return;
+	}
 	current_view (self, &view);
 	if (self->gizmo_drag)
 		lrg_editor_gizmo_drag (app->gizmo, &view, u, v, (self->mods & LRG_INPUT_MODIFIER_CTRL) != 0);
 	else if (lrg_editor_viewport_nav_get_mode (app->nav) == LRG_EDITOR_NAV_MODE_NONE && !self->tile_drag)
+	{
+		LrgNode              *vnode = volume_node (self);
+		LrgEditorVolumeHandle hot = (vnode != NULL) ? lrg_editor_volume_hit_test (&view, vnode, u, v)
+		                                            : LRG_EDITOR_VOLUME_HANDLE_NONE;
+
+		if (hot != self->vol_hot)
+		{
+			self->vol_hot = hot;
+			mark_dirty (self);
+		}
+		{
+			LrgNode               *pnode = physics_node (self);
+			guint                  pindex = 0;
+			LrgEditorPhysicsHandle phot = (pnode != NULL) ? lrg_editor_physics_hit_test (&view, pnode, u, v, &pindex)
+			                                              : LRG_EDITOR_PHYSICS_HANDLE_NONE;
+
+			if (phot != self->phys_hot || pindex != self->phys_hot_index)
+			{
+				self->phys_hot = phot;
+				self->phys_hot_index = pindex;
+				mark_dirty (self);
+			}
+		}
 		lrg_editor_gizmo_update_hover (app->gizmo, &view, u, v);
+	}
 }
 
 static void
@@ -959,6 +1905,45 @@ on_pointer_release (LrgViewport       *viewport,
 				lrg_editor_tile_painter_stroke_to (app->tile_painter, app->tile_hover_x, app->tile_hover_y);
 		}
 		tile_finish (self, node, TRUE);
+		return;
+	}
+	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && self->terrain_drag)
+	{
+		LrgEditorView view;
+
+		/* the release carries the last motion */
+		current_view (self, &view);
+		if (terrain_tools (self) != NULL)
+		{
+			lrg_editor_terrain_panel_viewport_move (terrain_tools (self), &view, u, v, mods);
+			lrg_editor_terrain_panel_viewport_release (terrain_tools (self), TRUE);
+		}
+		self->terrain_drag = FALSE;
+		mark_dirty (self);
+		return;
+	}
+	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && lrg_editor_nav_panel_find (app) != NULL)
+	{
+		LrgEditorView view;
+
+		current_view (self, &view);
+		if (lrg_editor_nav_panel_handle_release (lrg_editor_nav_panel_find (app), &view, u, v,
+		                                         (mods & LRG_INPUT_MODIFIER_CTRL) != 0))
+		{
+			mark_dirty (self);
+			return;
+		}
+	}
+	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE)
+	{
+		volume_drag (self, u, v);
+		volume_finish (self, TRUE);
+		return;
+	}
+	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && self->phys_handle != LRG_EDITOR_PHYSICS_HANDLE_NONE)
+	{
+		physics_drag (self, u, v);
+		physics_finish (self, TRUE);
 		return;
 	}
 	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && self->gizmo_drag)
@@ -1001,9 +1986,28 @@ on_key (LrgViewport       *viewport,
 	LrgEditorApp           *app = self->app;
 
 	self->mods = mods;
+
+	/* Terrain brush keys ([ ] radius, Escape cancels a stroke) */
+	if (terrain_tools (self) != NULL && lrg_editor_terrain_panel_viewport_key (terrain_tools (self), key, mods))
+	{
+		if (key == GRL_KEY_ESCAPE)
+			self->terrain_drag = FALSE;
+		mark_dirty (self);
+		return TRUE;
+	}
 	if (key == GRL_KEY_ESCAPE)
 	{
-		/* A gizmo drag owns Escape */
+		/* A volume resize, then a gizmo drag own Escape */
+		if (self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE)
+		{
+			volume_finish (self, FALSE);
+			return TRUE;
+		}
+		if (self->phys_handle != LRG_EDITOR_PHYSICS_HANDLE_NONE)
+		{
+			physics_finish (self, FALSE);
+			return TRUE;
+		}
 		if (self->gizmo_drag)
 		{
 			lrg_editor_gizmo_cancel_drag (app->gizmo);
@@ -1052,6 +2056,11 @@ lrg_editor_viewport_panel_handle_event (LrgWidget        *widget,
 		self->hovered = FALSE;
 		if (is_active (self))
 			self->app->tile_hover_valid = FALSE;
+		if (terrain_tools (self) != NULL && !self->terrain_drag)
+		{
+			lrg_editor_terrain_panel_viewport_leave (terrain_tools (self));
+			mark_dirty (self);
+		}
 		return FALSE;
 	default:
 		return FALSE;
@@ -1113,6 +2122,33 @@ lrg_editor_viewport_panel_drop_asset (LrgEditorViewportPanel *self,
 		at[0] = lrg_editor_snap_value (at[0], (gfloat) snap_t);
 		at[1] = lrg_editor_snap_value (at[1], (gfloat) snap_t);
 		at[2] = lrg_editor_snap_value (at[2], (gfloat) snap_t);
+	}
+
+	/* A material lands on the mesh under the pointer (ED1's undoable
+	 * assignment), never as a new node */
+	if (g_str_has_suffix (path, ".rmat"))
+	{
+		LrgEditorView view;
+		gfloat        o[3], d[3];
+		LrgNode      *hit;
+
+		current_view (self, &view);
+		lrg_editor_view_get_ray (&view, u, v, o, d);
+		hit = lrg_editor_pick (lrg_editor_get_level (app->editor), o, d, FALSE, NULL);
+		if (hit == NULL)
+		{
+			editor_app_set_status (app, "Drop %s onto a mesh to assign it", base);
+			return NULL;
+		}
+		if (!lrg_editor_material_editor_assign_to_node (app, lrg_node_get_guid (hit), path, &error))
+		{
+			editor_app_notify (app, EDITOR_NOTIFY_WARNING, "%s: %s", base, error->message);
+			return NULL;
+		}
+		lrg_editor_select (app->editor, hit, FALSE);
+		editor_app_set_status (app, "Assigned %s to %s", base, lrg_node_get_name (hit));
+		mark_dirty (self);
+		return hit;
 	}
 
 	/* One undo step for the whole placement */
@@ -1226,7 +2262,8 @@ drop_update (LrgEditorViewportPanel *self,
 			g_autofree gchar *base = g_path_get_basename (path);
 			LrgAssetType      kind = lrg_asset_database_classify (path);
 
-			self->drop_label = g_strdup_printf ("%s %s", kind == LRG_ASSET_TYPE_SCRIPT ? "Attach" :
+			self->drop_label = g_strdup_printf ("%s %s", g_str_has_suffix (path, ".rmat") ? "Assign" :
+			                                    kind == LRG_ASSET_TYPE_SCRIPT ? "Attach" :
 			                                    kind == LRG_ASSET_TYPE_PREFAB ? "Instance" :
 			                                    kind == LRG_ASSET_TYPE_LEVEL ? "Open" : "Place", base);
 		}
@@ -1377,6 +2414,15 @@ on_preset_changed (LrgComboBox *combo,
 	apply_preset (self, (ViewPreset) i);
 }
 
+/* How many render modes LrgEditorRenderMode has. */
+static guint
+n_render_modes (void)
+{
+	g_autoptr(GEnumClass) klass = g_type_class_ref (LRG_TYPE_EDITOR_RENDER_MODE);
+
+	return klass->n_values;
+}
+
 static void
 on_mode_changed (LrgComboBox *combo,
                  gpointer     user_data)
@@ -1384,7 +2430,7 @@ on_mode_changed (LrgComboBox *combo,
 	LrgEditorViewportPanel *self = LRG_EDITOR_VIEWPORT_PANEL (user_data);
 	gint                    i = lrg_combo_box_get_selected (combo);
 
-	if (self->syncing || i < 0 || i >= (gint) G_N_ELEMENTS (mode_labels))
+	if (self->syncing || i < 0 || i >= (gint) n_render_modes ())
 		return;
 	activate (self);
 	lrg_editor_view_state_set_render_mode (self->app->view, (gint) self->index, (LrgEditorRenderMode) i);
@@ -1401,6 +2447,32 @@ on_overlay_action (GSimpleAction *action,
 		g_object_get_data (G_OBJECT (action), "lrg-overlay-flag"));
 
 	lrg_editor_view_state_toggle_overlay (self->app->view, (gint) self->index, flag);
+}
+
+/* vp.anim-bones / vp.anim-ik */
+static void
+on_anim_overlay_action (GSimpleAction *action,
+                        GVariant      *parameter,
+                        gpointer       user_data)
+{
+	LrgEditorViewportPanel *self = LRG_EDITOR_VIEWPORT_PANEL (user_data);
+
+	if (g_strcmp0 (g_action_get_name (G_ACTION (action)), "anim-bones") == 0)
+		lrg_editor_viewport_panel_set_show_bones (self, !self->show_bones);
+	else
+		lrg_editor_viewport_panel_set_show_ik_targets (self, !self->show_ik);
+}
+
+/* vp.physics-<flag>: toggles one Physics overlay flag. */
+static void
+on_physics_overlay_action (GSimpleAction *action,
+                           GVariant      *parameter,
+                           gpointer       user_data)
+{
+	LrgEditorViewportPanel *self = LRG_EDITOR_VIEWPORT_PANEL (user_data);
+	guint                   flag = GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (action), "lrg-physics-flag"));
+
+	lrg_editor_viewport_panel_set_physics_overlay (self, self->physics_flags ^ flag);
 }
 
 static void
@@ -1422,9 +2494,114 @@ open_overlay_menu (LrgEditorViewportPanel *self)
 		}
 		g_menu_append_section (menu, "Overlays", G_MENU_MODEL (view));
 		g_menu_append_section (menu, "Rendering", G_MENU_MODEL (render));
+		{
+			g_autoptr(GMenu) anim = g_menu_new ();
+
+			g_menu_append (anim, "Bones", "vp.anim-bones");
+			g_menu_append (anim, "IK Targets", "vp.anim-ik");
+			g_menu_append_section (menu, "Animation", G_MENU_MODEL (anim));
+		}
+		{
+			g_autoptr(GMenu) phys = g_menu_new ();
+
+			g_menu_append (phys, "Collision Shapes", "vp.physics-shapes");
+			g_menu_append (phys, "Joints", "vp.physics-joints");
+			g_menu_append (phys, "Bounding Boxes", "vp.physics-aabbs");
+			g_menu_append (phys, "Contacts (playing)", "vp.physics-contacts");
+			g_menu_append (phys, "Sleeping Bodies (playing)", "vp.physics-sleeping");
+			g_menu_append (phys, "Centres of Mass", "vp.physics-com");
+			g_menu_append (phys, "Velocities (playing)", "vp.physics-velocity");
+			g_menu_append (phys, "Broadphase Tree (playing)", "vp.physics-broadphase");
+			g_menu_append_section (menu, "Physics", G_MENU_MODEL (phys));
+		}
+		{
+			/* the Navigation panel's app actions (lrg-editor-nav-panel.c) */
+			g_autoptr(GMenu) nav = g_menu_new ();
+
+			g_menu_append (nav, "Navigation Mesh", "editor.nav.overlay-polygons");
+			g_menu_append (nav, "Colour by Area", "editor.nav.overlay-areas");
+			g_menu_append (nav, "Polygon Edges", "editor.nav.overlay-edges");
+			g_menu_append (nav, "Boundaries", "editor.nav.overlay-boundaries");
+			g_menu_append (nav, "Off-mesh Links", "editor.nav.overlay-links");
+			g_menu_append (nav, "Agents (playing)", "editor.nav.overlay-agents");
+			g_menu_append (nav, "Agent Paths (playing)", "editor.nav.overlay-paths");
+			g_menu_append (nav, "ORCA, Debug Agent (playing)", "editor.nav.overlay-orca");
+			g_menu_append (nav, "Area and Link Handles", "editor.nav.overlay-handles");
+			g_menu_append_section (menu, "Navigation", G_MENU_MODEL (nav));
+		}
 		self->overlay_menu = g_object_ref_sink (lrg_menu_new_from_model (G_MENU_MODEL (menu)));
 	}
 	lrg_menu_popup_at_widget (self->overlay_menu, LRG_WIDGET (self->overlay_button), LRG_POPUP_PLACEMENT_BELOW);
+}
+
+/* ==========================================================================
+ * Render layers
+ * ========================================================================== */
+
+static gchar *
+layer_label (guint layer)
+{
+	return layer < G_N_ELEMENTS (layer_names) ? g_strdup_printf ("%u  %s", layer, layer_names[layer])
+	                                          : g_strdup_printf ("%u  Layer %u", layer, layer);
+}
+
+/* vp.layer-<n>: toggles one layer of this viewport's cull mask. */
+static void
+on_layer_action (GSimpleAction *action,
+                 GVariant      *parameter,
+                 gpointer       user_data)
+{
+	LrgEditorViewportPanel *self = LRG_EDITOR_VIEWPORT_PANEL (user_data);
+	guint                   layer = GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (action), "lrg-layer"));
+
+	lrg_editor_viewport_panel_set_layer_mask (self, self->cull_mask ^ LRG_RENDER_LAYERS_BIT (layer));
+}
+
+static void
+on_layers_all (GSimpleAction *action,
+               GVariant      *parameter,
+               gpointer       user_data)
+{
+	lrg_editor_viewport_panel_set_layer_mask (LRG_EDITOR_VIEWPORT_PANEL (user_data), LRG_RENDER_LAYERS_MASK_ALL);
+}
+
+static void
+on_layers_none (GSimpleAction *action,
+                GVariant      *parameter,
+                gpointer       user_data)
+{
+	lrg_editor_viewport_panel_set_layer_mask (LRG_EDITOR_VIEWPORT_PANEL (user_data), LRG_RENDER_LAYERS_MASK_NONE);
+}
+
+/* The layers popup: All / None, the named layers, the rest in a
+ * submenu. */
+static void
+open_layers_menu (LrgEditorViewportPanel *self)
+{
+	activate (self);
+	if (self->layers_menu == NULL)
+	{
+		g_autoptr(GMenu) menu = g_menu_new ();
+		g_autoptr(GMenu) quick = g_menu_new ();
+		g_autoptr(GMenu) named = g_menu_new ();
+		g_autoptr(GMenu) more = g_menu_new ();
+		guint            i;
+
+		g_menu_append (quick, "Show All Layers", "vp.layers-all");
+		g_menu_append (quick, "Hide All Layers", "vp.layers-none");
+		for (i = 0; i < LRG_RENDER_LAYERS_COUNT; i++)
+		{
+			g_autofree gchar *label = layer_label (i);
+			g_autofree gchar *detailed = g_strdup_printf ("vp.layer-%u", i);
+
+			g_menu_append (i < G_N_ELEMENTS (layer_names) ? named : more, label, detailed);
+		}
+		g_menu_append_section (menu, NULL, G_MENU_MODEL (quick));
+		g_menu_append_section (menu, "Render Layers", G_MENU_MODEL (named));
+		g_menu_append_submenu (named, "More Layers", G_MENU_MODEL (more));
+		self->layers_menu = g_object_ref_sink (lrg_menu_new_from_model (G_MENU_MODEL (menu)));
+	}
+	lrg_menu_popup_at_widget (self->layers_menu, LRG_WIDGET (self->layers_button), LRG_POPUP_PLACEMENT_BELOW);
 }
 
 /* The two icon toggles of the header, as custom widgets: hover/pressed
@@ -1437,6 +2614,9 @@ icon_checked (LrgEditorViewportPanel *self,
 
 	if (kind == ICON_OVERLAYS)
 		return self->overlay_menu != NULL && lrg_menu_get_open (self->overlay_menu);
+	if (kind == ICON_LAYERS)
+		return (self->layers_menu != NULL && lrg_menu_get_open (self->layers_menu)) ||
+		       self->cull_mask != LRG_RENDER_LAYERS_MASK_ALL;
 	if (kind == ICON_PREVIEW)
 		return self->preview_enabled;
 	split = find_split (self);
@@ -1494,6 +2674,29 @@ icon_paint (LrgCustomWidget *widget,
 
 		lrg_paint_list_icon (list, LRG_ICON_EYE, cx - box * 0.5f, cy - box * 0.5f, box, 0.0f, &ink);
 	}
+	else if (kind == ICON_LAYERS)
+	{
+		/* Three stacked diamonds (a layer stack); the top one is
+		 * filled, the lower ones are outlines peeking out below */
+		gint i;
+
+		for (i = 2; i >= 0; i--)
+		{
+			gfloat dy = cy - s * 0.45f + (gfloat) i * s * 0.45f;
+			gfloat w = s * 1.15f, h = s * 0.55f;
+
+			if (i == 0)
+			{
+				lrg_paint_list_triangle (list, cx - w, dy, cx, dy - h, cx + w, dy, &ink);
+				lrg_paint_list_triangle (list, cx - w, dy, cx + w, dy, cx, dy + h, &ink);
+			}
+			else
+			{
+				lrg_paint_list_line (list, cx - w, dy, cx, dy + h, 1.4f, &ink);
+				lrg_paint_list_line (list, cx, dy + h, cx + w, dy, 1.4f, &ink);
+			}
+		}
+	}
 	else if (kind == ICON_PREVIEW)
 	{
 		/* A camera: body plus lens triangle */
@@ -1550,6 +2753,8 @@ icon_event (LrgCustomWidget  *widget,
 		activate (self);
 		if (kind == ICON_OVERLAYS)
 			open_overlay_menu (self);
+		else if (kind == ICON_LAYERS)
+			open_layers_menu (self);
 		else if (kind == ICON_PREVIEW)
 			lrg_editor_viewport_panel_set_preview_enabled (self, !self->preview_enabled);
 		else
@@ -1623,8 +2828,16 @@ build_header (LrgEditorViewportPanel *self)
 
 	self->preset_combo = add_combo (self, preset_labels, N_PRESETS, "view-preset", 138.0f,
 	                                G_CALLBACK (on_preset_changed));
-	self->mode_combo = add_combo (self, mode_labels, G_N_ELEMENTS (mode_labels), "render-mode", 108.0f,
-	                              G_CALLBACK (on_mode_changed));
+	{
+		/* every LrgEditorRenderMode value, the debug views included */
+		g_autoptr(GEnumClass) modes = g_type_class_ref (LRG_TYPE_EDITOR_RENDER_MODE);
+		g_autofree const gchar **labels = g_new0 (const gchar *, modes->n_values + 1);
+
+		for (i = 0; i < modes->n_values; i++)
+			labels[i] = (i < G_N_ELEMENTS (mode_labels)) ? mode_labels[i] : modes->values[i].value_nick;
+		self->mode_combo = add_combo (self, (const gchar * const *) labels, modes->n_values, "render-mode", 150.0f,
+		                              G_CALLBACK (on_mode_changed));
+	}
 
 	/* The icon toggles, right aligned in their own box */
 	self->tools = lrg_hbox_new ();
@@ -1634,6 +2847,7 @@ build_header (LrgEditorViewportPanel *self)
 	lrg_container_add_child (LRG_CONTAINER (self), LRG_WIDGET (self->tools));
 	g_object_unref (self->tools);
 	self->overlay_button = add_icon_button (self, ICON_OVERLAYS, "overlays");
+	self->layers_button = add_icon_button (self, ICON_LAYERS, "layers");
 	self->preview_button = add_icon_button (self, ICON_PREVIEW, "preview-toggle");
 	self->max_button = add_icon_button (self, ICON_MAXIMIZE, "maximize");
 
@@ -1648,6 +2862,53 @@ build_header (LrgEditorViewportPanel *self)
 		g_object_set_data (G_OBJECT (action), "lrg-overlay-flag", GUINT_TO_POINTER (overlay_items[i].flag));
 		g_signal_connect (action, "activate", G_CALLBACK (on_overlay_action), self);
 		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (action));
+	}
+	/* Render layers: one stateful toggle per layer, plus All / None */
+	for (i = 0; i < LRG_RENDER_LAYERS_COUNT; i++)
+	{
+		g_autofree gchar         *aname = g_strdup_printf ("layer-%u", i);
+		g_autoptr(GSimpleAction)  action = g_simple_action_new_stateful (aname, NULL,
+		                                                                  g_variant_new_boolean (TRUE));
+
+		g_object_set_data (G_OBJECT (action), "lrg-layer", GUINT_TO_POINTER (i));
+		g_signal_connect (action, "activate", G_CALLBACK (on_layer_action), self);
+		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (action));
+	}
+	{
+		g_autoptr(GSimpleAction) all = g_simple_action_new ("layers-all", NULL);
+		g_autoptr(GSimpleAction) none = g_simple_action_new ("layers-none", NULL);
+
+		g_signal_connect (all, "activate", G_CALLBACK (on_layers_all), self);
+		g_signal_connect (none, "activate", G_CALLBACK (on_layers_none), self);
+		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (all));
+		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (none));
+	}
+	/* Animation overlays: per panel, not saved */
+	{
+		g_autoptr(GSimpleAction) bones = g_simple_action_new_stateful ("anim-bones", NULL, g_variant_new_boolean (FALSE));
+		g_autoptr(GSimpleAction) ik = g_simple_action_new_stateful ("anim-ik", NULL, g_variant_new_boolean (TRUE));
+
+		g_signal_connect (bones, "activate", G_CALLBACK (on_anim_overlay_action), self);
+		g_signal_connect (ik, "activate", G_CALLBACK (on_anim_overlay_action), self);
+		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (bones));
+		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (ik));
+	}
+	/* Physics overlay flags: one toggle per LrgDynamicsDebugFlags bit */
+	{
+		static const gchar * const nicks[] = {
+			"shapes", "aabbs", "contacts", "joints", "sleeping", "com", "velocity", "broadphase"
+		};
+
+		for (i = 0; i < G_N_ELEMENTS (nicks); i++)
+		{
+			g_autofree gchar         *aname = g_strconcat ("physics-", nicks[i], NULL);
+			g_autoptr(GSimpleAction)  action = g_simple_action_new_stateful (aname, NULL,
+			                                                                  g_variant_new_boolean (FALSE));
+
+			g_object_set_data (G_OBJECT (action), "lrg-physics-flag", GUINT_TO_POINTER (1u << i));
+			g_signal_connect (action, "activate", G_CALLBACK (on_physics_overlay_action), self);
+			g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (action));
+		}
 	}
 	lrg_widget_insert_action_group (LRG_WIDGET (self), "vp", G_ACTION_GROUP (self->actions));
 }
@@ -1679,6 +2940,14 @@ sync_header (LrgEditorViewportPanel *self)
 
 		g_simple_action_set_state (G_SIMPLE_ACTION (action),
 		                           g_variant_new_boolean ((overlays & overlay_items[i].flag) != 0));
+	}
+	for (i = 0; i < LRG_RENDER_LAYERS_COUNT; i++)
+	{
+		g_autofree gchar *aname = g_strdup_printf ("layer-%u", i);
+		GAction          *action = g_action_map_lookup_action (G_ACTION_MAP (self->actions), aname);
+
+		g_simple_action_set_state (G_SIMPLE_ACTION (action),
+		                           g_variant_new_boolean ((self->cull_mask & LRG_RENDER_LAYERS_BIT (i)) != 0));
 	}
 	self->syncing = FALSE;
 }
@@ -1834,6 +3103,19 @@ editor_viewport_panel_tick (LrgEditorViewportPanel *self,
 	if (self->app == NULL)
 		return;
 	lrg_editor_viewport_nav_tick (self->app->nav, dt);
+
+	/* A held terrain brush keeps dabbing while the pointer rests */
+	if (terrain_tools (self) != NULL && lrg_editor_terrain_panel_viewport_tick (terrain_tools (self), dt))
+		mark_dirty (self);
+
+	/* The split registers its 0.8.1 view.render_mode after the panels
+	 * exist; the first frame puts the 0.9.0 one (mode list, debug views)
+	 * back on top. */
+	if (g_object_get_data (G_OBJECT (self->app), "lrg-vp-ed2-methods") == NULL)
+	{
+		g_object_set_data (G_OBJECT (self->app), "lrg-vp-ed2-methods", GINT_TO_POINTER (1));
+		register_methods (self->app);
+	}
 }
 
 /* The rectangle of viewport 0 in canvas coordinates (ui.state "viewport"). */
@@ -2030,6 +3312,7 @@ lrg_editor_viewport_panel_step (LrgWidget *widget,
 	update_preview (self);
 
 	continuous = lrg_editor_play_session_is_playing (app->play) || self->gizmo_drag || self->tile_drag ||
+	             terrain_busy (self) ||
 	             lrg_editor_view_state_get_timeline_playing (app->view) ||
 	             (is_active (self) && lrg_editor_viewport_nav_get_mode (app->nav) != LRG_EDITOR_NAV_MODE_NONE &&
 	              lrg_editor_viewport_nav_get_mode (app->nav) != LRG_EDITOR_NAV_MODE_BOX);
@@ -2078,6 +3361,12 @@ lrg_editor_viewport_panel_dispose (GObject *object)
 	if (self->overlay_menu != NULL)
 		lrg_menu_close (self->overlay_menu);
 	g_clear_object (&self->overlay_menu);
+	g_clear_weak_pointer (&self->vol_node);
+	g_clear_weak_pointer (&self->phys_node);
+	if (self->phys_runtime != NULL)
+		g_clear_signal_handler (&self->phys_overlay_id, self->phys_runtime);
+	g_clear_weak_pointer (&self->phys_runtime);
+	g_clear_object (&self->layers_menu);
 	g_clear_object (&self->actions);
 	self->drop = NULL;   /* owned by the widget */
 	self->preview_node = NULL;
@@ -2091,7 +3380,11 @@ lrg_editor_viewport_panel_finalize (GObject *object)
 	LrgEditorViewportPanel *self = LRG_EDITOR_VIEWPORT_PANEL (object);
 
 	g_clear_pointer (&self->missing, g_ptr_array_unref);
+	g_clear_pointer (&self->rest_skeletons, g_hash_table_unref);
 	g_clear_pointer (&self->drop_label, g_free);
+	g_clear_object (&self->vol_before);
+	g_clear_object (&self->phys_before);
+	g_clear_object (&self->phys_debug);
 
 	G_OBJECT_CLASS (lrg_editor_viewport_panel_parent_class)->finalize (object);
 }
@@ -2121,6 +3414,9 @@ lrg_editor_viewport_panel_init (LrgEditorViewportPanel *self)
 	self->dirty = TRUE;
 	self->missing = g_ptr_array_new ();
 	self->missing_dirty = TRUE;
+	self->cull_mask = LRG_RENDER_LAYERS_MASK_ALL;
+	self->show_ik = TRUE;
+	self->phys_debug = lrg_debug_draw_new ();
 	lrg_spring_init (&self->active_spring, 0.0f, LRG_MOTION_SMOOTH);
 }
 
@@ -2138,6 +3434,304 @@ new_render_viewport (const gchar          *name,
 	lrg_viewport_set_auto_clear (viewport, FALSE);
 	lrg_viewport_set_render_func (viewport, func, data, NULL);
 	return viewport;
+}
+
+
+/* ==========================================================================
+ * IPC: view.layers, view.render_mode (0.9.0 modes), post install
+ * ========================================================================== */
+
+static JsonNode *
+vp_obj_node (JsonObject *o)
+{
+	JsonNode *n = json_node_new (JSON_NODE_OBJECT);
+
+	json_node_take_object (n, o);
+	return n;
+}
+
+/* The panel of params.viewport (default: the active viewport). */
+static LrgEditorViewportPanel *
+ipc_viewport (LrgEditorApp  *app,
+              JsonObject    *params,
+              GError       **error)
+{
+	gint64                  index = lrg_editor_view_state_get_active_viewport (app->view);
+	LrgEditorViewportPanel *panel = NULL;
+
+	if (params != NULL && json_object_has_member (params, "viewport"))
+		index = json_object_get_int_member (params, "viewport");
+	if (index >= 0 && index < LRG_EDITOR_VIEW_MAX_VIEWPORTS && app->viewport_split != NULL)
+		panel = lrg_editor_viewport_split_get_panel (app->viewport_split, (guint) index);
+	if (panel == NULL)
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "No viewport %" G_GINT64_FORMAT, index);
+	return panel;
+}
+
+/* {"viewport": 0, "mask": 1} | {"layer": 2, "enabled": false} -> the mask */
+static JsonNode *
+m_view_layers (LrgEditorServer  *server,
+               JsonObject       *params,
+               gpointer          user_data,
+               GError          **error)
+{
+	LrgEditorApp           *app = LRG_EDITOR_APP (user_data);
+	LrgEditorViewportPanel *self = ipc_viewport (app, params, error);
+	JsonObject             *o;
+	JsonArray              *layers;
+	guint32                 mask;
+	guint                   i;
+
+	if (self == NULL)
+		return NULL;
+	mask = self->cull_mask;
+	if (params != NULL && json_object_has_member (params, "mask"))
+	{
+		JsonNode *mn = json_object_get_member (params, "mask");
+
+		/* a number, or "all" / "none" / "0x..." */
+		if (JSON_NODE_HOLDS_VALUE (mn) && json_node_get_value_type (mn) == G_TYPE_STRING)
+		{
+			const gchar *t = json_node_get_string (mn);
+
+			mask = g_strcmp0 (t, "all") == 0 ? LRG_RENDER_LAYERS_MASK_ALL
+			     : g_strcmp0 (t, "none") == 0 ? LRG_RENDER_LAYERS_MASK_NONE
+			     : (guint32) g_ascii_strtoull (t, NULL, 0);
+		}
+		else
+			mask = (guint32) json_object_get_int_member (params, "mask");
+	}
+	if (params != NULL && json_object_has_member (params, "layer"))
+	{
+		JsonNode *ln = json_object_get_member (params, "layer");
+		gint64    layer = -1;
+
+		/* a layer index, or its name ("water", "editor-only", "Layer 9") */
+		if (JSON_NODE_HOLDS_VALUE (ln) && json_node_get_value_type (ln) == G_TYPE_STRING)
+		{
+			const gchar *name = json_node_get_string (ln);
+
+			for (i = 0; i < LRG_RENDER_LAYERS_COUNT && layer < 0; i++)
+			{
+				g_autofree gchar *label = (i < G_N_ELEMENTS (layer_names)) ? g_strdup (layer_names[i])
+				                                                           : g_strdup_printf ("Layer %u", i);
+				g_autofree gchar *kebab = g_ascii_strdown (label, -1);
+
+				g_strdelimit (kebab, " _", '-');
+				if (g_ascii_strcasecmp (name, label) == 0 || g_ascii_strcasecmp (name, kebab) == 0)
+					layer = i;
+			}
+			if (layer < 0)
+				layer = g_ascii_strtoll (name, NULL, 10) + (g_ascii_isdigit (*name) ? 0 : LRG_RENDER_LAYERS_COUNT);
+		}
+		else
+			layer = json_object_get_int_member (params, "layer");
+
+		if (layer < 0 || layer >= LRG_RENDER_LAYERS_COUNT)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+			             "Layers are 0 .. %d", LRG_RENDER_LAYERS_COUNT - 1);
+			return NULL;
+		}
+		if (json_object_has_member (params, "enabled"))
+		{
+			if (json_object_get_boolean_member (params, "enabled"))
+				mask |= LRG_RENDER_LAYERS_BIT (layer);
+			else
+				mask &= ~LRG_RENDER_LAYERS_BIT (layer);
+		}
+		else
+			mask ^= LRG_RENDER_LAYERS_BIT (layer);
+	}
+	if (mask != self->cull_mask)
+		lrg_editor_viewport_panel_set_layer_mask (self, mask);
+
+	o = json_object_new ();
+	layers = json_array_new ();
+	json_object_set_int_member (o, "viewport", self->index);
+	json_object_set_int_member (o, "mask", self->cull_mask);
+	for (i = 0; i < LRG_RENDER_LAYERS_COUNT; i++)
+	{
+		JsonObject *l = json_object_new ();
+		g_autofree gchar *name = (i < G_N_ELEMENTS (layer_names)) ? g_strdup (layer_names[i])
+		                                                          : g_strdup_printf ("Layer %u", i);
+
+		json_object_set_int_member (l, "index", i);
+		json_object_set_string_member (l, "name", name);
+		json_object_set_boolean_member (l, "enabled", (self->cull_mask & LRG_RENDER_LAYERS_BIT (i)) != 0);
+		json_array_add_object_element (layers, l);
+	}
+	json_object_set_array_member (o, "layers", layers);
+	return vp_obj_node (o);
+}
+
+/* {"viewport": 1, "mode": "overdraw"} -> {"viewport", "mode", "modes": [...]} */
+static JsonNode *
+m_view_render_mode (LrgEditorServer  *server,
+                    JsonObject       *params,
+                    gpointer          user_data,
+                    GError          **error)
+{
+	LrgEditorApp          *app = LRG_EDITOR_APP (user_data);
+	g_autoptr(GEnumClass)  modes = g_type_class_ref (LRG_TYPE_EDITOR_RENDER_MODE);
+	LrgEditorViewportPanel *panel = ipc_viewport (app, params, error);
+	const gchar           *mode = NULL;
+	GEnumValue            *value;
+	JsonObject            *o;
+	JsonArray             *list;
+	guint                  i;
+
+	if (panel == NULL)
+		return NULL;
+	if (params != NULL && json_object_has_member (params, "mode"))
+		mode = json_object_get_string_member (params, "mode");
+	if (mode != NULL)
+	{
+		value = g_enum_get_value_by_nick (modes, mode);
+		if (value == NULL)
+		{
+			g_autoptr(GString) all = g_string_new ("");
+
+			for (i = 0; i < modes->n_values; i++)
+				g_string_append_printf (all, "%s%s", i > 0 ? ", " : "", modes->values[i].value_nick);
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+			             "Unknown render mode '%s' (%s)", mode, all->str);
+			return NULL;
+		}
+		lrg_editor_view_state_set_render_mode (app->view, (gint) panel->index, (LrgEditorRenderMode) value->value);
+	}
+	value = g_enum_get_value (modes, lrg_editor_view_state_get_render_mode (app->view, (gint) panel->index));
+	o = json_object_new ();
+	list = json_array_new ();
+	json_object_set_int_member (o, "viewport", panel->index);
+	json_object_set_string_member (o, "mode", value != NULL ? value->value_nick : "lit");
+	for (i = 0; i < modes->n_values; i++)
+		json_array_add_string_element (list, modes->values[i].value_nick);
+	json_object_set_array_member (o, "modes", list);
+	return vp_obj_node (o);
+}
+
+/* physics.overlay {viewport?, flags?, enable?, disable?} -> {flags} */
+static const gchar * const physics_flag_nicks[] = {
+	"shapes", "aabbs", "contacts", "joints", "sleeping", "com", "velocity", "broadphase"
+};
+
+static gboolean
+physics_flags_from_json (JsonArray              *array,
+                         LrgDynamicsDebugFlags  *out,
+                         GError                **error)
+{
+	guint i, k;
+
+	*out = 0;
+	for (i = 0; array != NULL && i < json_array_get_length (array); i++)
+	{
+		const gchar *nick = json_array_get_string_element (array, i);
+		gboolean     found = FALSE;
+
+		if (g_strcmp0 (nick, "all") == 0)
+		{
+			*out = LRG_DYNAMICS_DEBUG_ALL;
+			continue;
+		}
+		if (g_strcmp0 (nick, "none") == 0)
+			continue;
+		for (k = 0; k < G_N_ELEMENTS (physics_flag_nicks); k++)
+			if (g_strcmp0 (nick, physics_flag_nicks[k]) == 0 ||
+			    (k == 3 && g_strcmp0 (nick, "constraints") == 0) ||
+			    (k == 5 && g_strcmp0 (nick, "center-of-mass") == 0))
+			{
+				*out |= (1u << k);
+				found = TRUE;
+			}
+		if (!found)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+			             "Unknown physics overlay flag '%s' (shapes, aabbs, contacts, joints, sleeping, com, "
+			             "velocity, broadphase, all, none)", nick != NULL ? nick : "(not a string)");
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+static JsonNode *
+m_physics_overlay (LrgEditorServer  *server,
+                   JsonObject       *params,
+                   gpointer          user_data,
+                   GError          **error)
+{
+	LrgEditorApp           *app = LRG_EDITOR_APP (user_data);
+	LrgEditorViewportPanel *panels[LRG_EDITOR_VIEW_MAX_VIEWPORTS];
+	LrgEditorViewportPanel *first = NULL;
+	guint                   n = 0, i;
+	JsonObject             *o;
+	JsonArray              *a;
+	JsonNode               *result;
+
+	/* The panels addressed: one viewport, or all of them */
+	for (i = 0; i < LRG_EDITOR_VIEW_MAX_VIEWPORTS; i++)
+	{
+		LrgEditorViewportPanel *p = (app->viewport_split != NULL)
+		                            ? lrg_editor_viewport_split_get_panel (app->viewport_split, i)
+		                            : (i == 0 ? app->viewport_panel : NULL);
+
+		if (p == NULL)
+			continue;
+		if (params != NULL && json_object_has_member (params, "viewport") &&
+		    json_object_get_int_member (params, "viewport") != (gint64) i)
+			continue;
+		panels[n++] = p;
+	}
+	if (n == 0)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND, "No such viewport");
+		return NULL;
+	}
+	first = panels[0];
+
+	/* flags replaces; enable / disable change bits */
+	if (params != NULL && (json_object_has_member (params, "flags") || json_object_has_member (params, "enable") ||
+	                       json_object_has_member (params, "disable")))
+	{
+		LrgDynamicsDebugFlags set = 0, on = 0, off = 0;
+		gboolean              replace = json_object_has_member (params, "flags");
+
+		if ((replace && !physics_flags_from_json (json_object_get_array_member (params, "flags"), &set, error)) ||
+		    (json_object_has_member (params, "enable") &&
+		     !physics_flags_from_json (json_object_get_array_member (params, "enable"), &on, error)) ||
+		    (json_object_has_member (params, "disable") &&
+		     !physics_flags_from_json (json_object_get_array_member (params, "disable"), &off, error)))
+			return NULL;
+		for (i = 0; i < n; i++)
+		{
+			LrgDynamicsDebugFlags f = replace ? set : lrg_editor_viewport_panel_get_physics_overlay (panels[i]);
+
+			lrg_editor_viewport_panel_set_physics_overlay (panels[i], (f | on) & ~off);
+		}
+	}
+
+	o = json_object_new ();
+	a = json_array_new ();
+	for (i = 0; i < G_N_ELEMENTS (physics_flag_nicks); i++)
+		if (lrg_editor_viewport_panel_get_physics_overlay (first) & (1u << i))
+			json_array_add_string_element (a, physics_flag_nicks[i]);
+	json_object_set_array_member (o, "flags", a);
+	json_object_set_int_member (o, "recorded", lrg_editor_viewport_panel_record_physics (first));
+	result = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (result, o);
+	return result;
+}
+
+static void
+register_methods (LrgEditorApp *app)
+{
+	if (app->server == NULL)
+		return;
+	lrg_editor_server_register_method (app->server, "view.layers", m_view_layers, app, NULL);
+	lrg_editor_server_register_method (app->server, "view.render_mode", m_view_render_mode, app, NULL);
+	lrg_editor_server_register_method (app->server, "physics.overlay", m_physics_overlay, app, NULL);
 }
 
 LrgEditorViewportPanel *
@@ -2230,6 +3824,10 @@ lrg_editor_viewport_panel_new_for_index (LrgEditorApp *app,
 	if (app->renderer != NULL)
 		lrg_editor_scene_renderer_set_draw_overlays (app->renderer, FALSE);
 	lrg_editor_viewport_split_register_methods (app);
+	register_methods (app);
+	lrg_editor_post_stack_editor_install (app);
+	if (app->renderer != NULL)
+		lrg_editor_scene_renderer_set_cull_mask (app->renderer, index, self->cull_mask);
 	sync_header (self);
 	return self;
 }
@@ -2313,4 +3911,95 @@ lrg_editor_viewport_panel_set_gpu_enabled (LrgEditorViewportPanel *self,
 	lrg_viewport_set_mode (self->preview, mode);
 	if (enabled)
 		mark_dirty (self);
+}
+
+/* ==========================================================================
+ * Render layers, render queue (0.9.0)
+ * ========================================================================== */
+
+void
+lrg_editor_viewport_panel_set_layer_mask (LrgEditorViewportPanel *self,
+                                          guint32                 mask)
+{
+	g_return_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self));
+
+	self->cull_mask = mask;
+	if (self->app != NULL && self->app->renderer != NULL)
+		lrg_editor_scene_renderer_set_cull_mask (self->app->renderer, self->index, mask);
+	sync_header (self);
+	mark_dirty (self);
+}
+
+guint32
+lrg_editor_viewport_panel_get_layer_mask (LrgEditorViewportPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), LRG_RENDER_LAYERS_MASK_ALL);
+	return self->cull_mask;
+}
+
+void
+lrg_editor_viewport_panel_queue_render (LrgEditorViewportPanel *self)
+{
+	g_return_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self));
+	mark_dirty (self);
+}
+
+/* Mirrors a flag into its stateful vp.* action (the menu's check mark). */
+static void
+sync_anim_action (LrgEditorViewportPanel *self,
+                  const gchar            *name,
+                  gboolean                value)
+{
+	GAction *action = self->actions != NULL ? g_action_map_lookup_action (G_ACTION_MAP (self->actions), name) : NULL;
+
+	if (action != NULL)
+		g_simple_action_set_state (G_SIMPLE_ACTION (action), g_variant_new_boolean (value));
+}
+
+void
+lrg_editor_viewport_panel_set_show_bones (LrgEditorViewportPanel *self,
+                                          gboolean                show)
+{
+	g_return_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self));
+	self->show_bones = show;
+	sync_anim_action (self, "anim-bones", show);
+	if (self->overlay != NULL)
+		lrg_widget_queue_layout (LRG_WIDGET (self->overlay));
+}
+
+gboolean
+lrg_editor_viewport_panel_get_show_bones (LrgEditorViewportPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), FALSE);
+	return self->show_bones;
+}
+
+void
+lrg_editor_viewport_panel_set_show_ik_targets (LrgEditorViewportPanel *self,
+                                               gboolean                show)
+{
+	g_return_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self));
+	self->show_ik = show;
+	sync_anim_action (self, "anim-ik", show);
+	if (self->overlay != NULL)
+		lrg_widget_queue_layout (LRG_WIDGET (self->overlay));
+}
+
+gboolean
+lrg_editor_viewport_panel_get_show_ik_targets (LrgEditorViewportPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), FALSE);
+	return self->show_ik;
+}
+
+void
+lrg_editor_viewport_panel_get_anim_overlay_counts (LrgEditorViewportPanel *self,
+                                                   guint                  *n_bones,
+                                                   guint                  *n_targets)
+{
+	g_return_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self));
+	if (n_bones != NULL)
+		*n_bones = self->anim_bones;
+	if (n_targets != NULL)
+		*n_targets = self->anim_targets;
 }

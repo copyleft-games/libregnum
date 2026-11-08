@@ -24,6 +24,7 @@
 #endif
 #include "graphics/lrg-static-batch.h"
 #include "graphics/lrg-draw-cull-private.h"
+#include "graphics/lrg-camera.h"
 
 /* Transforms with a smaller |determinant| are treated as singular. */
 #define BATCH_SINGULAR_EPSILON (1e-12)
@@ -67,6 +68,7 @@ struct _LrgStaticBatch
     GHashTable *metallics;       /* material -> MaterialTexture*, metallic (r) gloss (a) maps */
     GHashTable *heights;         /* material -> MaterialTexture*, height (r) maps */
     GHashTable *emission_colors; /* material -> gfloat[4] (rgb x strength, w = 1), own emission */
+    GHashTable *assets;          /* material -> LrgMaterial* (0.9.0), wins over the per-id maps */
     Color       tints[LRG_STATIC_BATCH_MAX_LAYERS];
     GrlShader  *shader;
 
@@ -506,6 +508,7 @@ lrg_static_batch_finalize (GObject *object)
     g_clear_pointer (&self->metallics, g_hash_table_unref);
     g_clear_pointer (&self->heights, g_hash_table_unref);
     g_clear_pointer (&self->emission_colors, g_hash_table_unref);
+    g_clear_pointer (&self->assets, g_hash_table_unref);
     g_clear_object (&self->shader);
     if (self->no_emission != 0 && IsWindowReady ())
         rlUnloadTexture (self->no_emission);
@@ -539,6 +542,7 @@ lrg_static_batch_init (LrgStaticBatch *self)
     self->heights = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL,
                                            material_texture_free);
     self->emission_colors = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, g_free);
+    self->assets = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, g_object_unref);
     self->max_vertices = LRG_STATIC_BATCH_MAX_VERTICES;
     for (i = 0; i < LRG_STATIC_BATCH_MAX_LAYERS; i++)
         self->tints[i] = (Color) { 255, 255, 255, 255 };
@@ -1014,6 +1018,28 @@ lrg_static_batch_set_material_texture (LrgStaticBatch *self,
 }
 
 void
+lrg_static_batch_set_material (LrgStaticBatch *self,
+                               guint           material,
+                               LrgMaterial    *asset)
+{
+    g_return_if_fail (LRG_IS_STATIC_BATCH (self));
+    g_return_if_fail (asset == NULL || LRG_IS_MATERIAL (asset));
+
+    if (asset == NULL)
+        g_hash_table_remove (self->assets, GUINT_TO_POINTER (material));
+    else
+        g_hash_table_replace (self->assets, GUINT_TO_POINTER (material), g_object_ref (asset));
+}
+
+LrgMaterial *
+lrg_static_batch_get_material (LrgStaticBatch *self,
+                               guint           material)
+{
+    g_return_val_if_fail (LRG_IS_STATIC_BATCH (self), NULL);
+    return g_hash_table_lookup (self->assets, GUINT_TO_POINTER (material));
+}
+
+void
 lrg_static_batch_set_material_emission (LrgStaticBatch *self,
                                         guint           material,
                                         GrlTexture     *texture)
@@ -1423,6 +1449,7 @@ draw_one (LrgStaticBatch *self,
     Mesh             mesh;
     gint             flags;
     const gfloat    *own;
+    LrgMaterial     *asset;
 
     if (!chunk->uploaded || chunk->indices->len == 0)
         return;
@@ -1445,6 +1472,30 @@ draw_one (LrgStaticBatch *self,
     {
         material.shader.id = rlGetShaderIdDefault ();
         material.shader.locs = rlGetShaderLocsDefault ();
+    }
+
+    /* A bound LrgMaterial (0.9.0) decides everything for its id: the
+     * contract uniforms, the maps DrawMesh() binds (the same units) and
+     * the render state; the layer tint multiplies its base colour. */
+    asset = g_hash_table_lookup (self->assets, GUINT_TO_POINTER (chunk->material));
+    if (asset != NULL)
+    {
+        Color tint = self->tints[chunk->layer];
+
+        if (self->shader != NULL)
+            lrg_material_apply (asset, material.shader.id);
+        lrg_material_fill_raylib_maps (asset, maps);
+        maps[MATERIAL_MAP_ALBEDO].color.r = (unsigned char)((maps[MATERIAL_MAP_ALBEDO].color.r * tint.r) / 255);
+        maps[MATERIAL_MAP_ALBEDO].color.g = (unsigned char)((maps[MATERIAL_MAP_ALBEDO].color.g * tint.g) / 255);
+        maps[MATERIAL_MAP_ALBEDO].color.b = (unsigned char)((maps[MATERIAL_MAP_ALBEDO].color.b * tint.b) / 255);
+        maps[MATERIAL_MAP_ALBEDO].color.a = (unsigned char)((maps[MATERIAL_MAP_ALBEDO].color.a * tint.a) / 255);
+        material.maps = maps;
+        lrg_material_apply_state (asset);
+        DrawMesh (mesh, material, matrix_identity ());
+        lrg_material_restore_state (asset);
+        if (self->shader != NULL)
+            lrg_material_reset_uniforms (material.shader.id);
+        return;
     }
     entry = g_hash_table_lookup (self->textures, GUINT_TO_POINTER (chunk->material));
     if (entry != NULL)
@@ -1545,6 +1596,13 @@ lrg_static_batch_draw (LrgStaticBatch *self,
      * as they are: the camera's in the main pass, the light's in a
      * shadow pass. A chunk wholly outside draws no pixel. */
     cull = lrg_draw_cull_frustum_current (&frustum);
+
+    /* Chunk layers are render layers: the caller's mask is narrowed by
+     * the active cull mask (the begun camera's, or a shadow pass's
+     * caster mask), so a layer hidden there draws nothing. */
+    layer_mask &= lrg_render_layers_get_active_mask ();
+    if (layer_mask == 0)
+        return;
     for (i = 0; i < self->chunks->len; i++)
     {
         Chunk *chunk = g_ptr_array_index (self->chunks, i);
@@ -1567,6 +1625,7 @@ lrg_static_batch_draw_chunk (LrgStaticBatch *self,
     g_return_if_fail (LRG_IS_STATIC_BATCH (self));
 
     entry = chunk_at (self, chunk);
-    if (entry != NULL)
+    /* A chunk on a layer outside the active cull mask is skipped. */
+    if (entry != NULL && lrg_render_layers_is_visible (entry->layer))
         draw_one (self, entry);
 }

@@ -169,3 +169,80 @@ for (guint i = 0; i < poses->len; i++)
         lrg_bone_set_local_pose (bone, poses->pdata[i]);
 }
 #+end_src
+
+** Channels
+:PROPERTIES:
+:CUSTOM_ID: channels
+:END:
+Besides keyframes holding a whole pose, a track can hold *channels*: keys for one pose component with their own times and interpolation, the way glTF stores animation. The [[file:gltf-animation.org][glTF importer]] produces channel tracks; the [[file:retargeter.org][retargeter]] writes them; hand-written code can use them too.
+
+#+begin_src C
+typedef enum {
+    LRG_ANIMATION_INTERPOLATION_STEP,          /* hold key k until key k+1 */
+    LRG_ANIMATION_INTERPOLATION_LINEAR,        /* lerp; rotations slerp the short way */
+    LRG_ANIMATION_INTERPOLATION_CUBIC_SPLINE   /* Hermite with per-key in/out tangents */
+} LrgAnimationInterpolation;                   /* LRG_TYPE_ANIMATION_INTERPOLATION, lrg_animation_interpolation_get_type () */
+
+typedef enum {
+    LRG_ANIMATION_CHANNEL_TRANSLATION,         /* 3 floats per value */
+    LRG_ANIMATION_CHANNEL_ROTATION,            /* quaternion x, y, z, w */
+    LRG_ANIMATION_CHANNEL_SCALE                /* 3 floats per value */
+} LrgAnimationChannelPath;                     /* LRG_TYPE_ANIMATION_CHANNEL_PATH, lrg_animation_channel_path_get_type () */
+
+gint     lrg_animation_clip_find_track (LrgAnimationClip *self, const gchar *bone_name);
+gboolean lrg_animation_clip_set_track_channel (LrgAnimationClip *self, guint track_index,
+                                               LrgAnimationChannelPath path,
+                                               LrgAnimationInterpolation interpolation,
+                                               guint n_keys, const gfloat *times, const gfloat *values,
+                                               GError **error);
+gboolean lrg_animation_clip_get_track_channel (LrgAnimationClip *self, guint track_index,
+                                               LrgAnimationChannelPath path,
+                                               LrgAnimationInterpolation *out_interpolation,
+                                               guint *out_n_keys, const gfloat **out_times,
+                                               const gfloat **out_values);
+gboolean lrg_animation_clip_track_has_channels (LrgAnimationClip *self, guint track_index);
+void     lrg_animation_clip_set_track_base_pose (LrgAnimationClip *self, guint track_index,
+                                                 const LrgBonePose *pose);
+gboolean lrg_animation_clip_get_track_base_pose (LrgAnimationClip *self, guint track_index,
+                                                 LrgBonePose *out_pose);
+#+end_src
+
+- *Layout of =values=* - one value per key (3 or 4 floats); with cubic spline three per key in the order in-tangent, value, out-tangent (the glTF layout).
+- *Validation* - at least one key, finite non-decreasing times, a valid track and path; otherwise =G_IO_ERROR_INVALID_ARGUMENT= and the track is unchanged. A channel replaces an older one of the same path. The clip's duration grows to the last key.
+- *Sampling* - =lrg_animation_clip_sample_track()= (and so the animator, states and blend trees) samples a track with any channel from its channels and ignores its keyframes. Components without a channel come from the track's *base pose* (identity by default; the importer stores the node's rest transform). The clip's loop mode maps the time first. Before the first key the first value holds, after the last the last value.
+- *Interpolation* - between keys /k/ and /k+1/ with interval /d/ and /s/ in [0, 1]: step returns key /k/; linear lerps (and slerps a rotation along the shorter arc); cubic spline evaluates =(2s^3 - 3s^2 + 1) v_k + d (s^3 - 2s^2 + s) b_k + (-2s^3 + 3s^2) v_k1 + d (s^3 - s^2) a_k1= with =b_k= the out-tangent of /k/ and =a_k1= the in-tangent of /k+1/, renormalising a rotation.
+- *Cost* - a binary search over the key times plus one interpolation per component; no allocation.
+
+#+begin_src C
+/* a rotation-only track: rest position from the base pose */
+guint  tr = lrg_animation_clip_add_track (clip, "Elbow");
+gfloat times[2] = { 0.0f, 0.5f };
+gfloat quats[8] = { 0, 0, 0, 1,   0, 0, 0.3826834f, 0.9238795f };   /* 0 and 45 degrees about Z */
+LrgBonePose rest;
+
+lrg_bone_pose_set_identity (&rest);
+lrg_bone_pose_set_position (&rest, 0.0f, 0.3f, 0.0f);
+lrg_animation_clip_set_track_base_pose (clip, tr, &rest);
+lrg_animation_clip_set_track_channel (clip, tr, LRG_ANIMATION_CHANNEL_ROTATION,
+                                      LRG_ANIMATION_INTERPOLATION_LINEAR, 2, times, quats, &error);
+#+end_src
+
+** Morph weight channels
+:PROPERTIES:
+:CUSTOM_ID: morph-weight-channels
+:END:
+A clip can also carry morph target (blend shape) weights: each weight channel drives the weights of one morph target group (see [[file:../graphics/skinned-mesh.org::#morph-targets][LrgSkinnedMesh: Morph targets]]); its target name is the group name.
+
+#+begin_src C
+gint         lrg_animation_clip_add_weights_channel (LrgAnimationClip *self, const gchar *target_name,
+                                                     guint n_weights, LrgAnimationInterpolation interpolation,
+                                                     guint n_keys, const gfloat *times, const gfloat *values,
+                                                     GError **error);   /* index, or -1 */
+guint        lrg_animation_clip_get_weights_channel_count  (LrgAnimationClip *self);
+const gchar *lrg_animation_clip_get_weights_channel_target (LrgAnimationClip *self, guint channel);
+guint        lrg_animation_clip_get_weights_channel_width  (LrgAnimationClip *self, guint channel);
+gboolean     lrg_animation_clip_sample_weights (LrgAnimationClip *self, guint channel, gfloat time,
+                                                gfloat *out_weights);
+#+end_src
+
+Values hold =n_weights= floats per key (three groups of =n_weights= per key for cubic spline). Sampling applies the loop mode and the same interpolation as pose channels (component-wise, no renormalisation). Apply the result with =lrg_skinned_mesh_set_morph_group_weights (mesh, target, weights, n)=.

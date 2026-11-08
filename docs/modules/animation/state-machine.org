@@ -220,3 +220,73 @@ update_character (gfloat delta_time)
 | =LRG_CONDITION_EQUAL=     | param == value |
 | =LRG_CONDITION_NOT_EQUAL= | param != value |
 | =LRG_CONDITION_TRIGGER=   | trigger is set |
+
+** 0.9.0: typed parameters, any-state, interruption, sub-machines
+:PROPERTIES:
+:CUSTOM_ID: v090
+:END:
+The machine is the runtime of an [[file:anim-graph.org][LrgAnimGraph]] layer; everything a =.ranim= file says about a machine has an API here. The update order, exit time semantics, trigger consumption and interruption rules are described in [[file:anim-graph.org::#transitions][the graph page]].
+
+*** Parameters
+:PROPERTIES:
+:CUSTOM_ID: v090-parameters
+:END:
+| function | |
+|-+-|
+| =lrg_animation_state_machine_add_parameter (self, name, type, default)= | declare a typed parameter (=LrgAnimParameterType=: =FLOAT=, =INT=, =BOOL=, =TRIGGER=; =lrg_anim_parameter_type_get_type()=) and set it to its default |
+| =lrg_animation_state_machine_remove_parameter()= / =lrg_animation_state_machine_has_parameter()= | |
+| =lrg_animation_state_machine_get_parameter_type()= / =lrg_animation_state_machine_get_parameter_names()= | declaration order |
+| =lrg_animation_state_machine_reset_parameters()= | back to the defaults |
+| =lrg_animation_state_machine_share_parameters (self, owner)= | use another machine's table (graph layers and sub-machines share one) |
+| =lrg_animation_state_machine_set_int()= / =lrg_animation_state_machine_get_int()= | ints; =get_float= also reads ints |
+
+Only declared triggers are consumed by the transitions they fire; undeclared parameters still work as before.
+
+*** States, transitions, evaluation
+:PROPERTIES:
+:CUSTOM_ID: v090-runtime
+:END:
+| function | |
+|-+-|
+| =lrg_animation_state_machine_get_states_ordered()= | states in the order they were added |
+| =lrg_animation_state_machine_remove_transition()= | |
+| =lrg_animation_state_machine_get_next_state()= / =lrg_animation_state_machine_get_transition_progress()= / =lrg_animation_state_machine_get_active_transition()= | the cross-fade in progress |
+| =lrg_animation_state_machine_sample_pose (self, skeleton, poses, n)= | the whole skeleton, without touching it |
+| =lrg_animation_state_machine_get_root_motion (self, bone, translation, yaw)= | the last update's root motion, blended by the transition weight |
+
+A transition whose source is =LRG_ANIMATION_TRANSITION_ANY_STATE= (="*"=) is an any-state transition. New transition API: =lrg_animation_transition_set_source()=, =lrg_animation_transition_set_target()=, =lrg_animation_transition_is_any_state()=, =lrg_animation_transition_get_offset()= / =lrg_animation_transition_set_offset()=, =lrg_animation_transition_get_interruption()= / =lrg_animation_transition_set_interruption()= (=LrgTransitionInterruption=, =lrg_transition_interruption_get_type()=: =NONE=, =SOURCE=, =DESTINATION=, =SOURCE_THEN_DESTINATION=, =DESTINATION_THEN_SOURCE=), =lrg_animation_transition_get_can_transition_to_self()= / =lrg_animation_transition_set_can_transition_to_self()= and =lrg_animation_transition_evaluate_range (self, parameters, previous_normalized_time, normalized_time)= (crossing semantics for the exit time; =lrg_animation_transition_evaluate()= keeps the old "at or past" test). The exit time may now be above 1 (whole loops), priorities are honoured (higher first) and source/target are writable properties.
+
+New state API: =lrg_animation_state_get_blend_tree()= / =lrg_animation_state_set_blend_tree()=, =lrg_animation_state_get_sub_machine()= / =lrg_animation_state_set_sub_machine()=, =lrg_animation_state_get_clip_name()= / =lrg_animation_state_set_clip_name()= (the graph's clip key), =lrg_animation_state_get_speed_parameter()= / =lrg_animation_state_set_speed_parameter()=, =lrg_animation_state_get_previous_time()=, =lrg_animation_state_get_duration()=, =lrg_animation_state_sample_pose (self, skeleton, poses, n)= and =lrg_animation_state_get_root_motion (self, bone, translation, yaw)=. The per-bone =lrg_animation_state_sample()= now returns the identity for a bone without a track (it used to sample track 0).
+
+*** New signals
+:PROPERTIES:
+:CUSTOM_ID: v090-signals
+:END:
+- =event (state_name, LrgAnimationEvent *event)=, detailed by the event name: every clip event an update plays past, of the current state, of the state blending in and (forwarded) of nested machines; blend trees fire their dominant clip's.
+- =transition-started (source, target)=.
+
+=state-entered= is still emitted when a state becomes current (the end of the cross-fade).
+
+*** Standalone use
+:PROPERTIES:
+:CUSTOM_ID: v090-standalone
+:END:
+With a =skeleton= set, every update samples the machine and writes the pose into the skeleton as before (through =lrg_anim_pose_apply()=, bind pose for untracked bones). Machines inside a graph have no skeleton; the graph samples them.
+
+*** Complete state and transition reference
+:PROPERTIES:
+:CUSTOM_ID: v090-reference
+:END:
+| function | |
+|-+-|
+| =lrg_animation_state_get_name()= | the state's name (construct-only) |
+| =lrg_animation_state_get_mirror()= / =lrg_animation_state_set_mirror()= | reflect the clip across the YZ plane |
+| =lrg_animation_state_get_time()= / =lrg_animation_state_set_time()= | playback time; setting it is a jump (no events, no root motion for that interval) |
+| =lrg_animation_state_get_normalized_time()= | cycles played, not wrapped (clip time / duration, the tree's phase, the sub-machine's current state's) |
+| =lrg_animation_state_enter()= / =lrg_animation_state_exit()= / =lrg_animation_state_update()= | the vfuncs (enter rewinds and starts a nested machine) |
+| =lrg_transition_condition_new()= / =lrg_transition_condition_copy()= / =lrg_transition_condition_free()= / =lrg_transition_condition_get_type()= | the boxed condition (parameter, =LrgConditionComparison=, value) |
+| =lrg_animation_transition_get_source()= / =lrg_animation_transition_get_target()= | endpoints |
+| =lrg_animation_transition_get_duration()= | cross-fade seconds |
+| =lrg_animation_transition_get_exit_time()= / =lrg_animation_transition_set_exit_time()= / =lrg_animation_transition_get_has_exit_time()= | exit time |
+| =lrg_animation_transition_get_conditions()= / =lrg_animation_transition_get_condition_count()= / =lrg_animation_transition_clear_conditions()= | conditions (all must hold) |
+| =lrg_animation_transition_get_priority()= / =lrg_animation_transition_set_priority()= | higher first |

@@ -7,6 +7,54 @@
 
 #include "config.h"
 #include "lrg-film-grain.h"
+#include <math.h>
+#include <raylib.h>
+#include <rlgl.h>
+#include "core/lrg-prewarm.h"
+
+/*
+ * Film grain in one pass. The screen is split into cells of @size pixels;
+ * each cell gets white noise from an integer hash of (cell, frame), where
+ * the frame advances 24 times per second of grain time (time * speed), so
+ * grain flickers like film rather than crawling. Monochrome grain adds
+ * the same value to r, g and b; coloured grain hashes each channel. The
+ * amount is intensity * response, response = mix(1, 1 - luma,
+ * luminance-response): bright areas get less grain, as on real stock.
+ */
+static const gchar grain_fs[] =
+    "#version 330\n"
+    "in vec2 fragTexCoord;\n"
+    "in vec4 fragColor;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform vec4 params;\n"   /* amount, size, frame, luminance response */
+    "uniform int colored;\n"
+    "out vec4 finalColor;\n"
+    "uint hash(uint x)\n"
+    "{\n"
+    "    x ^= x >> 16u; x *= 0x7feb352du;\n"
+    "    x ^= x >> 15u; x *= 0x846ca68bu;\n"
+    "    x ^= x >> 16u;\n"
+    "    return x;\n"
+    "}\n"
+    "float noise(uvec2 cell, uint frame, uint channel)\n"
+    "{\n"
+    "    uint h = hash(cell.x + hash(cell.y + hash(frame * 3u + channel)));\n"
+    "    return float(h & 0xffffu) / 65535.0 - 0.5;\n"
+    "}\n"
+    "void main()\n"
+    "{\n"
+    "    vec4 c = texture(texture0, fragTexCoord);\n"
+    "    uvec2 cell = uvec2(gl_FragCoord.xy / max(params.y, 1.0));\n"
+    "    uint frame = uint(params.z);\n"
+    "    float lum = clamp(dot(c.rgb, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);\n"
+    "    float amount = params.x * mix(1.0, 1.0 - lum, params.w);\n"
+    "    vec3 n;\n"
+    "    if (colored != 0)\n"
+    "        n = vec3(noise(cell, frame, 0u), noise(cell, frame, 1u), noise(cell, frame, 2u));\n"
+    "    else\n"
+    "        n = vec3(noise(cell, frame, 0u));\n"
+    "    finalColor = vec4(max(c.rgb + n * amount, 0.0), c.a);\n"
+    "}\n";
 
 /**
  * SECTION:lrg-film-grain
@@ -31,9 +79,18 @@ struct _LrgFilmGrain
     gboolean       colored;
     gfloat         luminance_response;
     gfloat         time;
+
+    GrlShader     *shader;
+    gboolean       shader_tried;
+    gint           loc_params;
+    gint           loc_colored;
 };
 
-G_DEFINE_TYPE (LrgFilmGrain, lrg_film_grain, LRG_TYPE_POST_EFFECT)
+static void lrg_film_grain_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgFilmGrain, lrg_film_grain, LRG_TYPE_POST_EFFECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                lrg_film_grain_prewarmable_init))
 
 enum
 {
@@ -60,7 +117,30 @@ lrg_film_grain_real_initialize (LrgPostEffect *effect,
 static void
 lrg_film_grain_real_shutdown (LrgPostEffect *effect)
 {
-    (void)effect;
+    LrgFilmGrain *self = LRG_FILM_GRAIN (effect);
+
+    g_clear_object (&self->shader);
+    self->shader_tried = FALSE;
+}
+
+/* Compiles the pass shader once (needs a window) */
+static GrlShader *
+grain_get_shader (LrgFilmGrain *self)
+{
+    g_autoptr(GError) error = NULL;
+
+    if (self->shader != NULL || self->shader_tried || !IsWindowReady ())
+        return self->shader;
+    self->shader_tried = TRUE;
+    self->shader = lrg_post_effect_compile_shader (grain_fs, &error);
+    if (self->shader == NULL)
+    {
+        g_warning ("film grain: %s", error->message);
+        return NULL;
+    }
+    self->loc_params = grl_shader_get_location (self->shader, "params");
+    self->loc_colored = grl_shader_get_location (self->shader, "colored");
+    return self->shader;
 }
 
 static void
@@ -71,43 +151,43 @@ lrg_film_grain_real_apply (LrgPostEffect *effect,
                            guint          height,
                            gfloat         delta_time)
 {
-    /*
-     * Shader example:
-     *
-     * float rand(vec2 co) {
-     *     return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
-     * }
-     *
-     * void main() {
-     *     vec2 uv = gl_FragCoord.xy / resolution;
-     *     vec4 color = texture(texture0, uv);
-     *
-     *     float lum = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-     *     float response = mix(1.0, 1.0 - lum, luminanceResponse);
-     *
-     *     vec2 grainUv = gl_FragCoord.xy / size;
-     *     float noise;
-     *     if (colored) {
-     *         vec3 noiseRgb = vec3(
-     *             rand(grainUv + time),
-     *             rand(grainUv + time + 1.0),
-     *             rand(grainUv + time + 2.0)
-     *         );
-     *         color.rgb += (noiseRgb - 0.5) * intensity * response;
-     *     } else {
-     *         noise = rand(grainUv + time);
-     *         color.rgb += (noise - 0.5) * intensity * response;
-     *     }
-     *
-     *     gl_FragColor = color;
-     * }
-     */
-    (void)effect;
-    (void)source_texture_id;
+    LrgFilmGrain *self = LRG_FILM_GRAIN (effect);
+    GrlShader *shader;
+    gfloat amount;
+
     (void)target_texture_id;
-    (void)width;
-    (void)height;
-    (void)delta_time;
+
+    if (isfinite (delta_time) && delta_time > 0.0f)
+        lrg_film_grain_update (self, delta_time);
+
+    amount = self->intensity * lrg_post_effect_get_intensity (effect);
+    shader = amount > 0.0f ? grain_get_shader (self) : NULL;
+    if (shader != NULL)
+    {
+        /* 24 grain frames per second; wrap well inside float precision */
+        grl_shader_set_value_vec4 (shader, self->loc_params, amount, self->size,
+                                   fmodf (floorf (self->time * 24.0f), 65536.0f),
+                                   self->luminance_response);
+        grl_shader_set_value_int (shader, self->loc_colored, self->colored ? 1 : 0);
+        grl_shader_begin (shader);
+    }
+    lrg_post_effect_draw_fullscreen (source_texture_id, width, height);
+    if (shader != NULL)
+        grl_shader_end (shader);
+}
+
+/* lrg_film_grain_prewarm: compiles the pass shader ahead of the first frame */
+static gboolean
+lrg_film_grain_prewarm (LrgPrewarmable *prewarmable)
+{
+    grain_get_shader (LRG_FILM_GRAIN (prewarmable));
+    return TRUE;
+}
+
+static void
+lrg_film_grain_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_film_grain_prewarm;
 }
 
 static const gchar *
@@ -259,6 +339,9 @@ lrg_film_grain_init (LrgFilmGrain *self)
     self->colored = FALSE;
     self->luminance_response = 0.5f;
     self->time = 0.0f;
+
+    /* compile ahead of the first frame when a loading screen prewarms */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgFilmGrain *

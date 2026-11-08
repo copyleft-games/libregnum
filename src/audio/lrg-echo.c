@@ -136,6 +136,90 @@ lrg_echo_finalize (GObject *object)
     G_OBJECT_CLASS (lrg_echo_parent_class)->finalize (object);
 }
 
+/* ==========================================================================
+ * Properties (the .rmixer format, snapshots and inspectors set parameters
+ * by name; each one goes through its setter, so the clamps are the same)
+ * ========================================================================== */
+
+enum
+{
+    PROP_0,
+    PROP_DELAY,
+    PROP_FEEDBACK,
+    PROP_DRY,
+    PROP_WET,
+    N_PROPS
+};
+
+static GParamSpec *properties[N_PROPS];
+
+static void
+lrg_echo_get_property (GObject    *object,
+                       guint       prop_id,
+                       GValue     *value,
+                       GParamSpec *pspec)
+{
+    LrgEcho *self = (LrgEcho *)object;
+
+    switch (prop_id)
+    {
+    case PROP_DELAY:
+        g_value_set_float (value, self->delay);
+        break;
+    case PROP_FEEDBACK:
+        g_value_set_float (value, self->feedback);
+        break;
+    case PROP_DRY:
+        g_value_set_float (value, self->dry);
+        break;
+    case PROP_WET:
+        g_value_set_float (value, self->wet);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
+static void
+lrg_echo_set_property (GObject      *object,
+                       guint         prop_id,
+                       const GValue *value,
+                       GParamSpec   *pspec)
+{
+    LrgEcho *self = (LrgEcho *)object;
+    gfloat before;
+
+    switch (prop_id)
+    {
+    case PROP_DELAY:
+        before = self->delay;
+        lrg_echo_set_delay (self, g_value_get_float (value));
+        if (before != self->delay)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_FEEDBACK:
+        before = self->feedback;
+        lrg_echo_set_feedback (self, g_value_get_float (value));
+        if (before != self->feedback)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_DRY:
+        before = self->dry;
+        lrg_echo_set_dry (self, g_value_get_float (value));
+        if (before != self->dry)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_WET:
+        before = self->wet;
+        lrg_echo_set_wet (self, g_value_get_float (value));
+        if (before != self->wet)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
 static void
 lrg_echo_class_init (LrgEchoClass *klass)
 {
@@ -145,6 +229,46 @@ lrg_echo_class_init (LrgEchoClass *klass)
     object_class->finalize = lrg_echo_finalize;
     effect_class->process = lrg_echo_process;
     effect_class->reset = lrg_echo_reset;
+    object_class->get_property = lrg_echo_get_property;
+    object_class->set_property = lrg_echo_set_property;
+
+    /**
+     * LrgEcho:delay:
+     *
+     * Seconds between repeats (lrg_echo_set_delay()).
+     */
+    properties[PROP_DELAY] =
+        g_param_spec_float ("delay", NULL, NULL, LRG_ECHO_MIN_DELAY, LRG_ECHO_MAX_DELAY, 0.5f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgEcho:feedback:
+     *
+     * How much of each repeat comes back (lrg_echo_set_feedback()).
+     */
+    properties[PROP_FEEDBACK] =
+        g_param_spec_float ("feedback", NULL, NULL, 0.0f, 1.0f, 0.5f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgEcho:dry:
+     *
+     * Level of the input (lrg_echo_set_dry()).
+     */
+    properties[PROP_DRY] =
+        g_param_spec_float ("dry", NULL, NULL, 0.0f, 1.0f, 1.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgEcho:wet:
+     *
+     * Level of the repeats (lrg_echo_set_wet()).
+     */
+    properties[PROP_WET] =
+        g_param_spec_float ("wet", NULL, NULL, 0.0f, 1.0f, 1.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
 static void

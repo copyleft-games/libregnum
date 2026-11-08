@@ -43,8 +43,54 @@ G_BEGIN_DECLS
  * @LRG_EDITOR_DOCUMENT_FORMAT_DIALOG_TREE: an #LrgDialogTree definition (`id:`, `nodes:`)
  * @LRG_EDITOR_DOCUMENT_FORMAT_DUNGEON: an #LrgProcgenDungeon recipe (`generator:`)
  * @LRG_EDITOR_DOCUMENT_FORMAT_THEME: an #LrgTheme file (`preset:`, `colors:`, ...)
+ * @LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL: an #LrgMaterial asset (a `.rmat`
+ *   file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK: an #LrgPostStack (a `.rpost`
+ *   file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH: an #LrgShaderGraph (a
+ *   `.rshadergraph` file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH: an #LrgAnimGraph (a `.ranim`
+ *   file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP: an #LrgBoneMap (a `.rbonemap`
+ *   file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE: an #LrgSequence (a `.rseq` file,
+ *   or a mapping with `type: sequence`). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D: an #LrgSkeleton2D (a `.rskel2d`
+ *   file, or a mapping with an `rskel2d:` version key). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET: an #LrgPhysicsAsset (a
+ *   `.rphysasset` ragdoll description, or a mapping whose `parts:` is a
+ *   sequence of mappings with a `bone:` key). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_BT: an #LrgBtAsset behaviour tree (a `.rbt`
+ *   file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_FSM: an #LrgLogicMachine state machine (a
+ *   `.rfsm` file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES: an #LrgParticleAsset effect (a
+ *   `.rparticles` file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_WEATHER: an #LrgWeatherAsset (a `.rweather`
+ *   file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_MIXER: an #LrgMixerAsset bus graph (a
+ *   `.rmixer` file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_TILESET: an #LrgTileset asset (a `.rtileset`
+ *   file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_SPRITE: an #LrgSpriteSheet slicing and
+ *   animation file (a `.rsprite` file; recognised by its extension only).
+ *   Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_WATER: an #LrgWaterBody (a `.rwater` file;
+ *   recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS: an #LrgNavBake navigation bake
+ *   settings file (a `.rnav` file; recognised by its extension only).
+ *   Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT: an #LrgVscriptProgram (a `.rvscript`
+ *   file; recognised by its extension only). Since 0.9.0.
  *
- * The engine format a document holds. It picks the validator, the
+ * The engine format a document holds. The formats from
+ * %LRG_EDITOR_DOCUMENT_FORMAT_BT on are engine-backed: the document can
+ * hand out the engine object (lrg_editor_document_dup_object()), take
+ * one back as a single undo step (lrg_editor_document_commit_object()),
+ * validates through the engine and saves the engine writer's text, so a
+ * file the engine wrote is saved back byte for byte.
+ *
+ * It picks the validator, the
  * skeleton of a new document and the editor panel that opens the file.
  */
 typedef enum
@@ -57,7 +103,25 @@ typedef enum
 	LRG_EDITOR_DOCUMENT_FORMAT_UI_LAYOUT,
 	LRG_EDITOR_DOCUMENT_FORMAT_DIALOG_TREE,
 	LRG_EDITOR_DOCUMENT_FORMAT_DUNGEON,
-	LRG_EDITOR_DOCUMENT_FORMAT_THEME
+	LRG_EDITOR_DOCUMENT_FORMAT_THEME,
+	LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL,
+	LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK,
+	LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH,
+	LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH,
+	LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP,
+	LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE,
+	LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D,
+	LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET,
+	LRG_EDITOR_DOCUMENT_FORMAT_BT,
+	LRG_EDITOR_DOCUMENT_FORMAT_FSM,
+	LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES,
+	LRG_EDITOR_DOCUMENT_FORMAT_WEATHER,
+	LRG_EDITOR_DOCUMENT_FORMAT_MIXER,
+	LRG_EDITOR_DOCUMENT_FORMAT_TILESET,
+	LRG_EDITOR_DOCUMENT_FORMAT_SPRITE,
+	LRG_EDITOR_DOCUMENT_FORMAT_WATER,
+	LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS,
+	LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT
 } LrgEditorDocumentFormat;
 
 #define LRG_TYPE_EDITOR_DOCUMENT_FORMAT (lrg_editor_document_format_get_type ())
@@ -75,8 +139,11 @@ GType lrg_editor_document_format_get_type (void) G_GNUC_CONST;
  * @format: a format
  *
  * The format's nick, as used by IPC: "unknown", "input-map", "locale",
- * "sound-bank", "hud-layout", "ui-layout", "dialog-tree", "dungeon" or
- * "theme".
+ * "sound-bank", "hud-layout", "ui-layout", "dialog-tree", "dungeon",
+ * "theme", "material", "post-stack", "shader-graph", "anim-graph",
+ * "bone-map", "sequence", "skeleton2d", "physics-asset", "bt", "fsm",
+ * "particles", "weather", "mixer", "tileset", "sprite", "water" or
+ * "nav-settings".
  *
  * Returns: (transfer none): the nick
  */
@@ -92,6 +159,39 @@ const gchar * lrg_editor_document_format_to_string (LrgEditorDocumentFormat form
  */
 LRG_AVAILABLE_IN_ALL
 LrgEditorDocumentFormat lrg_editor_document_format_from_string (const gchar *name);
+
+/**
+ * lrg_editor_document_format_get_extension:
+ * @format: a format
+ *
+ * The file extension the engine uses for @format, with its dot: ".rmat",
+ * ".rpost", ".rshadergraph", ".ranim", ".rbonemap", ".rseq", ".rskel2d",
+ * ".rphysasset", ".rbt", ".rfsm", ".rparticles", ".rweather", ".rmixer",
+ * ".rtileset", ".rsprite", ".rwater" or ".rnav". The plain YAML formats
+ * (input map, locale, ...) have none.
+ *
+ * Returns: (transfer none) (nullable): the extension, or %NULL
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_document_format_get_extension (LrgEditorDocumentFormat format);
+
+/**
+ * lrg_editor_document_format_get_object_type:
+ * @format: a format
+ *
+ * The engine type an engine-backed format loads into: #LrgBtAsset,
+ * #LrgLogicMachine, #LrgParticleAsset, #LrgWeatherAsset, #LrgMixerAsset,
+ * #LrgTileset, #LrgSpriteSheet, #LrgWaterBody or #LrgNavBake.
+ *
+ * Returns: the #GType, or %G_TYPE_INVALID when @format is a plain YAML
+ *   format without an engine object
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+GType lrg_editor_document_format_get_object_type (LrgEditorDocumentFormat format);
 
 /**
  * LrgEditorDocumentNodeKind:
@@ -362,7 +462,9 @@ LrgEditorDocument * lrg_editor_document_new_from_data (const gchar              
  * @data: (nullable): the file's YAML text, or %NULL
  * @length: length of @data, or -1 if nul-terminated
  *
- * Guesses the format. A double extension wins (`*.input.yaml`,
+ * Guesses the format. The engine asset extensions `.rmat` (material) and
+ * `.rpost` (post stack) and `.rshadergraph` (shader graph) decide on
+ * their own. Then a double extension wins (`*.input.yaml`,
  * `*.locale.yaml`, `*.bank.yaml`, `*.hud.yaml`, `*.ui.yaml`,
  * `*.dialog.yaml`, `*.dungeon.yaml`, `*.theme.yaml`), then the content
  * (the keys each loader requires), then the parent directory name
@@ -825,6 +927,29 @@ gboolean lrg_editor_document_replace (LrgEditorDocument  *self,
                                       GError            **error);
 
 /**
+ * lrg_editor_document_replace_gesture:
+ * @self: an #LrgEditorDocument
+ * @path: a YAML path (as for lrg_editor_document_replace())
+ * @yaml: YAML text of the new subtree
+ * @gesture_id: 0, or the id shared by the steps of one gesture:
+ *   consecutive replacements of the same path with the same non-zero id
+ *   merge into one undo step (see lrg_editor_document_set_string())
+ * @error: return location for a #GError
+ *
+ * lrg_editor_document_replace() for editors that rewrite a whole subtree
+ * on every step of a drag (a physics asset part written in its canonical
+ * form while a size is scrubbed). Since 0.9.0.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_document_replace_gesture (LrgEditorDocument  *self,
+                                              const gchar        *path,
+                                              const gchar        *yaml,
+                                              guint               gesture_id,
+                                              GError            **error);
+
+/**
  * lrg_editor_document_insert_item:
  * @self: an #LrgEditorDocument
  * @path: a YAML path to a sequence
@@ -1101,6 +1226,77 @@ gboolean lrg_editor_document_check_external_change (LrgEditorDocument *self);
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_editor_document_validate (LrgEditorDocument  *self,
                                        GPtrArray         **issues);
+
+/* --- engine-backed formats --- */
+
+/**
+ * lrg_editor_document_dup_object:
+ * @self: a document of an engine-backed format
+ *   (lrg_editor_document_format_get_object_type() is not %G_TYPE_INVALID)
+ * @error: return location for a #GError
+ *
+ * Parses the current text with the engine's own loader (the base
+ * directory, or the file's directory, resolves relative paths; textures
+ * are not loaded) and returns a fresh object the caller may change and
+ * hand back with lrg_editor_document_commit_object().
+ *
+ * Returns: (transfer full) (nullable): a new engine object of the
+ *   format's object type, or %NULL with @error set (the loader's error,
+ *   or %LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND for a plain YAML format)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+GObject * lrg_editor_document_dup_object (LrgEditorDocument  *self,
+                                          GError            **error);
+
+/**
+ * lrg_editor_document_commit_object:
+ * @self: a document of an engine-backed format
+ * @object: an object of the format's object type
+ * @label: (nullable): the undo label, or %NULL for "Edit"
+ * @gesture: 0 for one undo step of its own, or a gesture id: consecutive
+ *   commits with the same non-zero id (a drag, a slider) merge into one
+ *   undo step
+ * @error: return location for a #GError
+ *
+ * Writes @object with the engine's own writer and makes that text the
+ * whole document, as one undoable command (the undo step restores the
+ * previous text, so undo is a snapshot of the engine's output). Nothing
+ * is recorded when the text would not change.
+ *
+ * Returns: %TRUE on success (also when nothing changed); %FALSE with
+ *   @error set when the writer fails, the document is read-only or
+ *   @object has the wrong type (%LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_document_commit_object (LrgEditorDocument  *self,
+                                            GObject            *object,
+                                            const gchar        *label,
+                                            guint               gesture,
+                                            GError            **error);
+
+/**
+ * lrg_editor_document_to_file_data:
+ * @self: a document
+ * @length: (out) (optional): length of the text in bytes
+ *
+ * The text lrg_editor_document_save() writes. For a plain YAML format
+ * this is lrg_editor_document_to_data(); for an engine-backed format it
+ * is the engine writer's output for the parsed document (so a file the
+ * engine wrote round-trips byte for byte), or the YAML text when the
+ * engine cannot parse the document (the save still succeeds, validation
+ * reports the error).
+ *
+ * Returns: (transfer full): the text
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_editor_document_to_file_data (LrgEditorDocument *self,
+                                          gsize             *length);
 
 /* --- format helpers --- */
 

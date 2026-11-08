@@ -987,3 +987,124 @@ lrg_editor_vcs_directory_has_changes (LrgEditorVcs *self,
 
 	return s != LRG_EDITOR_VCS_STATUS_UNMODIFIED && s != LRG_EDITOR_VCS_STATUS_IGNORED;
 }
+
+/* stdout of a finished git command, or an empty string when git was
+ * missing or exited non-zero and no I/O error was set. */
+static gchar *
+vcs_text (LrgEditorVcs        *self,
+          const gchar * const *argv,
+          gboolean             empty_on_failure,
+          GError             **error)
+{
+	g_autoptr(GBytes) out = NULL;
+	gsize             n = 0;
+	const gchar      *data;
+
+	out = run_sync (self, argv, NULL, error);
+	if (out == NULL)
+	{
+		if (!empty_on_failure || (error != NULL && *error != NULL))
+			return NULL;
+		return g_strdup ("");
+	}
+	data = g_bytes_get_data (out, &n);
+	if (data == NULL)
+		return g_strdup ("");
+	return g_strndup (data, n);
+}
+
+gchar *
+lrg_editor_vcs_diff (LrgEditorVcs  *self,
+                     GError       **error)
+{
+	const gchar *argv[] = { "git", "diff", "HEAD", NULL };
+
+	g_return_val_if_fail (LRG_IS_EDITOR_VCS (self), NULL);
+
+	return vcs_text (self, argv, TRUE, error);
+}
+
+gchar *
+lrg_editor_vcs_log (LrgEditorVcs  *self,
+                    GError       **error)
+{
+	const gchar *argv[] = { "git", "log", "-n", "20", "--name-only",
+	                        "--pretty=format:%s", NULL };
+
+	g_return_val_if_fail (LRG_IS_EDITOR_VCS (self), NULL);
+
+	return vcs_text (self, argv, TRUE, error);
+}
+
+gchar *
+lrg_editor_vcs_commit (LrgEditorVcs  *self,
+                       const gchar   *message,
+                       GError       **error)
+{
+	const gchar *add_argv[] = { "git", "add", "-A", NULL };
+	const gchar *commit_argv[9];
+	g_autoptr(GBytes) added = NULL;
+	gchar *text;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_VCS (self), NULL);
+
+	added = run_sync (self, add_argv, NULL, error);
+	if (added == NULL && error != NULL && *error != NULL)
+		return NULL;
+
+	commit_argv[0] = "git";
+	commit_argv[1] = "-c";
+	commit_argv[2] = "user.email=lrg@localhost";
+	commit_argv[3] = "-c";
+	commit_argv[4] = "user.name=libregnum";
+	commit_argv[5] = "commit";
+	commit_argv[6] = "-m";
+	commit_argv[7] = (message != NULL) ? message : "commit";
+	commit_argv[8] = NULL;
+
+	text = vcs_text (self, commit_argv, FALSE, error);
+	if (text == NULL && (error == NULL || *error == NULL))
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "nothing to commit");
+	return text;
+}
+
+gchar *
+lrg_editor_vcs_lfs_locks (LrgEditorVcs  *self,
+                          gboolean      *available,
+                          GError       **error)
+{
+	const gchar *argv[] = { "git", "lfs", "locks", NULL };
+	g_autoptr(GBytes) out = NULL;
+	gsize        n = 0;
+	const gchar *data;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_VCS (self), NULL);
+
+	if (available != NULL)
+		*available = FALSE;
+	out = run_sync (self, argv, NULL, error);
+	if (out == NULL)
+	{
+		/* Missing git-lfs, or a repo that does not use it, is optional. */
+		if (error != NULL && *error != NULL &&
+		    !g_error_matches (*error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+			g_clear_error (error);
+		if (error != NULL && *error != NULL)
+			return NULL;
+		return g_strdup ("");
+	}
+	if (available != NULL)
+		*available = TRUE;
+	data = g_bytes_get_data (out, &n);
+	if (data == NULL)
+		return g_strdup ("");
+	return g_strndup (data, n);
+}
+
+const gchar *
+lrg_editor_vcs_magit_handoff (LrgEditorVcs *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VCS (self), NULL);
+
+	return "(magit-status)";
+}

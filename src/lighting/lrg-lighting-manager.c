@@ -11,6 +11,7 @@
 
 #include <math.h>
 #include <raylib.h>
+#include <rlgl.h>
 #include <graylib.h>
 
 #include "lrg-lighting-manager.h"
@@ -46,6 +47,8 @@ struct _LrgLightingManager
 
     /* Light pass */
     GrlRenderTexture *light_target;
+    GrlRenderTexture *shadow_target;   /* scratch for one shadowed light sample */
+    guint             shadowed_light_count;
     GrlCamera2D      *light_camera;
     guint             rendered_light_count;
 
@@ -94,6 +97,7 @@ lrg_lighting_manager_dispose (GObject *object)
 
     g_clear_object (&self->lightmap);
     g_clear_object (&self->light_target);
+    g_clear_object (&self->shadow_target);
     g_clear_object (&self->light_camera);
 
     G_OBJECT_CLASS (lrg_lighting_manager_parent_class)->dispose (object);
@@ -1057,6 +1061,140 @@ draw_lightmap (LrgLightingManager *self)
     grl_draw_texture_pro (texture, source, dest, origin, 0.0f, tint);
 }
 
+/*
+ * ensure_shadow_target:
+ * The scratch target a shadowed light is drawn into, the size of the
+ * light target.
+ */
+static gboolean
+ensure_shadow_target (LrgLightingManager *self)
+{
+    gint width = grl_render_texture_get_width (self->light_target);
+    gint height = grl_render_texture_get_height (self->light_target);
+
+    if (self->shadow_target != NULL &&
+        grl_render_texture_get_width (self->shadow_target) == width &&
+        grl_render_texture_get_height (self->shadow_target) == height)
+        return TRUE;
+
+    g_clear_object (&self->shadow_target);
+    self->shadow_target = grl_render_texture_new (width, height);
+    if (self->shadow_target == NULL || !grl_render_texture_is_valid (self->shadow_target))
+    {
+        g_clear_object (&self->shadow_target);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/* draws one sample's shadow triangles in black over what is in the target */
+static void
+draw_shadow_triangles (LrgLight2D *light,
+                       guint       sample)
+{
+    const gfloat *tris;
+    const gfloat *alpha;
+    guint n_coords = 0;
+    guint n_tris = 0;
+    guint t;
+
+    tris = lrg_light2d_get_shadow_triangles (light, sample, &n_coords);
+    alpha = lrg_light2d_get_shadow_opacities (light, sample, &n_tris);
+    if (tris == NULL || alpha == NULL || n_tris == 0)
+        return;
+
+    /* shadow quads come in either winding: no culling */
+    rlDisableBackfaceCulling ();
+    rlBegin (RL_TRIANGLES);
+    for (t = 0; t < n_tris && (t + 1) * 6 <= n_coords; t++)
+    {
+        const gfloat *v = tris + t * 6;
+
+        rlColor4ub (0, 0, 0, (guint8) (CLAMP (alpha[t], 0.0f, 1.0f) * 255.0f + 0.5f));
+        rlVertex2f (v[0], v[1]);
+        rlVertex2f (v[2], v[3]);
+        rlVertex2f (v[4], v[5]);
+    }
+    rlEnd ();
+    rlDrawRenderBatchActive ();
+    rlEnableBackfaceCulling ();
+}
+
+/*
+ * render_shadowed_light:
+ * A light with shadow geometry is drawn sample by sample: the light into
+ * the cleared scratch target, its shadow triangles in black on top (alpha
+ * blended, so a shadow with opacity a keeps 1 - a of the light), then the
+ * scratch added to the light target at 1 / samples.  One sample gives a
+ * hard shadow; several, from points spread over the light, average into a
+ * soft penumbra.
+ */
+static void
+render_shadowed_light (LrgLightingManager *self,
+                       LrgLight2D         *light)
+{
+    g_autoptr(GrlColor) black = grl_color_new (0, 0, 0, 255);
+    g_autoptr(GrlTexture) scratch = NULL;
+    g_autoptr(GrlRectangle) source = NULL;
+    g_autoptr(GrlRectangle) dest = NULL;
+    g_autoptr(GrlVector2) origin = NULL;
+    g_autoptr(GrlColor) tint = NULL;
+    guint width = (guint) grl_render_texture_get_width (self->light_target);
+    guint height = (guint) grl_render_texture_get_height (self->light_target);
+    guint samples = lrg_light2d_get_shadow_sample_count (light);
+    guint scratch_id;
+    guint s;
+
+    scratch = grl_render_texture_get_texture (self->shadow_target);
+    scratch_id = scratch != NULL ? ((Texture2D *) grl_texture_get_handle (scratch))->id : 0;
+
+    source = grl_rectangle_new (0.0f, 0.0f, (gfloat) width, -(gfloat) height);
+    dest = grl_rectangle_new (self->viewport_x, self->viewport_y,
+                              self->viewport_width, self->viewport_height);
+    origin = grl_vector2_new (0.0f, 0.0f);
+    tint = grl_color_new (255, 255, 255, (guint8) ((255u + samples / 2u) / samples));
+
+    for (s = 0; s < samples; s++)
+    {
+        grl_render_texture_begin (self->shadow_target);
+        grl_draw_clear_background (black);
+        grl_camera2d_begin (self->light_camera);
+
+        grl_draw_begin_blend_mode (GRL_BLEND_ADDITIVE);
+        lrg_light2d_render (light, scratch_id, width, height);
+        grl_draw_end_blend_mode ();
+
+        draw_shadow_triangles (light, s);
+
+        grl_camera2d_end (self->light_camera);
+        grl_render_texture_end (self->shadow_target);
+
+        grl_render_texture_begin (self->light_target);
+        grl_camera2d_begin (self->light_camera);
+        grl_draw_begin_blend_mode (GRL_BLEND_ADDITIVE);
+        grl_draw_texture_pro (scratch, source, dest, origin, 0.0f, tint);
+        grl_draw_end_blend_mode ();
+        grl_camera2d_end (self->light_camera);
+        grl_render_texture_end (self->light_target);
+    }
+}
+
+/* the light's shadow geometry has at least one triangle */
+static gboolean
+light_has_shadow_geometry (LrgLight2D *light)
+{
+    guint s;
+
+    for (s = 0; s < lrg_light2d_get_shadow_sample_count (light); s++)
+    {
+        guint n = 0;
+
+        if (lrg_light2d_get_shadow_triangles (light, s, &n) != NULL && n > 0)
+            return TRUE;
+    }
+    return FALSE;
+}
+
 /**
  * lrg_lighting_manager_render:
  * @self: an #LrgLightingManager
@@ -1066,28 +1204,32 @@ draw_lightmap (LrgLightingManager *self)
  *
  * 1. Cull the lights against the viewport
  *    (lrg_lighting_manager_get_visible_lights()).
- * 2. Clear the target to the ambient colour scaled by the ambient
- *    intensity.
- * 3. With additive blending and a camera mapping world units onto the
- *    target, add the baked lightmap (if any) and then each visible
- *    light: lights that cast shadows first get
+ * 2. Build shadow geometry: lights that cast shadows get
  *    lrg_light2d_calculate_shadows() with the registered shadow casters
- *    (when shadows are enabled), then lrg_light2d_render().
+ *    (when shadows are enabled); other lights drop theirs.
+ * 3. Clear the target to the ambient colour scaled by the ambient
+ *    intensity, then, with additive blending and a camera mapping world
+ *    units onto the target, add the baked lightmap (if any) and every
+ *    light without shadow geometry.
+ * 4. Draw each light with shadow geometry through a scratch target, once
+ *    per shadow sample: light, then its shadow triangles in black, then
+ *    the scratch added to the light target (see the 2D shadows guide).
  *
  * Call it once per frame after lrg_lighting_manager_update() and before
  * drawing the scene, outside any other render-texture or camera mode;
  * then draw the scene and call lrg_lighting_manager_composite() inside
  * the scene's camera mode.
  *
- * Without a window (no GL context) only step 1 runs, so
- * lrg_lighting_manager_get_rendered_light_count() still reports what
- * would be drawn.
+ * Without a window (no GL context) steps 1 and 2 run, so
+ * lrg_lighting_manager_get_rendered_light_count() and the lights' shadow
+ * queries (lrg_light2d_get_shadow_factor()) still work.
  */
 void
 lrg_lighting_manager_render (LrgLightingManager *self)
 {
     g_autoptr(GPtrArray) visible = NULL;
     g_autoptr(GPtrArray) casters = NULL;
+    g_autoptr(GPtrArray) shadowed = NULL;
     g_autoptr(GrlColor) ambient = NULL;
     g_autoptr(GrlTexture) texture = NULL;
     GList *l;
@@ -1098,16 +1240,32 @@ lrg_lighting_manager_render (LrgLightingManager *self)
     visible = lrg_lighting_manager_get_visible_lights (self);
     self->rendered_light_count = visible->len;
 
+    /* Shadow casters, shared by every shadow-casting light this frame. */
+    casters = g_ptr_array_new ();
+    for (l = self->shadow_casters; l != NULL; l = l->next)
+        g_ptr_array_add (casters, l->data);
+
+    shadowed = g_ptr_array_new ();
+    for (i = 0; i < visible->len; i++)
+    {
+        LrgLight2D *light = g_ptr_array_index (visible, i);
+
+        if (self->shadows_enabled && casters->len > 0 &&
+            lrg_light2d_get_casts_shadows (light))
+            lrg_light2d_calculate_shadows (light, casters);
+        else
+            lrg_light2d_clear_shadows (light);
+
+        if (light_has_shadow_geometry (light))
+            g_ptr_array_add (shadowed, light);
+    }
+    self->shadowed_light_count = shadowed->len;
+
     if (!IsWindowReady ())
         return;
 
     if (!ensure_light_target (self))
         return;
-
-    /* Shadow casters, shared by every shadow-casting light this frame. */
-    casters = g_ptr_array_new ();
-    for (l = self->shadow_casters; l != NULL; l = l->next)
-        g_ptr_array_add (casters, l->data);
 
     ambient = grl_color_new ((guint8) (self->ambient_r * self->ambient_intensity),
                              (guint8) (self->ambient_g * self->ambient_intensity),
@@ -1131,10 +1289,8 @@ lrg_lighting_manager_render (LrgLightingManager *self)
     {
         LrgLight2D *light = g_ptr_array_index (visible, i);
 
-        if (self->shadows_enabled && casters->len > 0 &&
-            lrg_light2d_get_casts_shadows (light))
-            lrg_light2d_calculate_shadows (light, casters);
-
+        if (g_ptr_array_find (shadowed, light, NULL))
+            continue;
         lrg_light2d_render (light, self->light_texture_id,
                             (guint) grl_render_texture_get_width (self->light_target),
                             (guint) grl_render_texture_get_height (self->light_target));
@@ -1143,6 +1299,27 @@ lrg_lighting_manager_render (LrgLightingManager *self)
     grl_draw_end_blend_mode ();
     grl_camera2d_end (self->light_camera);
     grl_render_texture_end (self->light_target);
+
+    /* shadowed lights, each through the scratch target */
+    if (shadowed->len > 0 && ensure_shadow_target (self))
+        for (i = 0; i < shadowed->len; i++)
+            render_shadowed_light (self, g_ptr_array_index (shadowed, i));
+}
+
+/*
+ * lrg_lighting_manager_get_shadowed_light_count:
+ * @self: an #LrgLightingManager
+ *
+ * Gets how many lights of the last lrg_lighting_manager_render() had
+ * shadow geometry (and were drawn through the shadow path).
+ *
+ * Returns: the number of shadowed lights
+ */
+guint
+lrg_lighting_manager_get_shadowed_light_count (LrgLightingManager *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHTING_MANAGER (self), 0);
+    return self->shadowed_light_count;
 }
 
 /**

@@ -1,0 +1,88 @@
+#+title: Editor Workflows
+#+description: Transform math, level merge, collaboration, scenes, game-view presets, UI place and animation, and git helpers
+#+authors: Zach Podbielniak
+#+categories: libregnum editor
+#+created: 2026-11-07T20:00:00-05:00
+#+updated: 2026-11-07T20:00:00-05:00
+#+version: 1.0
+
+* Editor workflows
+:PROPERTIES:
+:CUSTOM_ID: editor-workflows
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor]]* > Workflows
+#+end_quote
+
+These types are libraries, and each one is also an IPC method and an =lrgeditorctl= verb. =lrgeditorctl call= and the MCP tool of the same name (underscores for dots) reach them. =lrg_editor_vcs_magit_handoff()= returns the form =(magit-status)= and does not start Emacs.
+
+** Transform math
+:PROPERTIES:
+:CUSTOM_ID: transform-tools
+:END:
+
+=src/editor/lrg-transform-tools.h=. Axis 0 is X, 1 is Y, 2 is Z.
+
+=lrg_transform_pivot()= writes the pivot for =LRG_PIVOT_ACTIVE= (the active origin), =LRG_PIVOT_MEDIAN= (the average of the points), =LRG_PIVOT_BOUNDS= (the centre of the axis-aligned bounds) or =LRG_PIVOT_CURSOR=. Zero points leave the active origin, or the cursor in cursor mode. =lrg_editor_gizmo_set_pivot_mode()= points the gizmo at that mode while no drag is in progress. A drag keeps the pivot it started with, so changing the mode mid-drag does not move the origin. =lrg_editor_gizmo_set_cursor()= is the point cursor mode uses. IPC: =gizmo.pivot=, =gizmo.cursor=.
+
+=lrg_transform_align()= sets every point's coordinate on one axis to the minimum, the centre or the maximum. Fewer than two points does nothing. =lrg_transform_distribute()= spaces the interior points evenly between the current minimum and maximum. The two extremes stay put and the array is not reordered. Fewer than three points does nothing. =lrg_editor_gizmo_apply()= runs one of =snap=, =drop=, =align-min=, =align-center=, =align-max=, =distribute= or =surface= on the current selection and writes the locations back. Snap with a zero grid changes nothing. Surface casts a ray straight down from 8 units above the primary onto the other selected nodes' unit boxes and moves only the primary. A miss returns false. IPC: =gizmo.apply=.
+
+=lrg_transform_snap_position()= snaps a point to a grid. A non-negative value uses =floor(v/grid+0.5)*grid=. A negative value uses =ceil(v/grid-0.5)*grid=. A grid of 0 leaves the point. =lrg_transform_snap_angle()= snaps degrees the same way. =lrg_transform_drop()= sets the up-axis coordinate to the floor and leaves the other two axes.
+
+=lrg_transform_ray_aabb()= is a slab test. A hit with =t < 0= is a miss. A zero direction component misses unless the origin is inside that slab. =lrg_transform_snap_surface()= moves a point onto the nearest box the ray enters. The boxes are bounds. This is not a triangle query.
+
+** Level merge
+:PROPERTIES:
+:CUSTOM_ID: level-merge
+:END:
+
+=lrg_level_merge()= (=src/editor/lrg-level-merge.h=) three-way-merges levels by node GUID. The result is a save and load of ours, so the inputs are not modified. A node changed on only one side is taken from that side. A node changed on both sides to different states stays as ours and its GUID is listed in =conflicts=. Theirs deleting a node ours also changed is a conflict and the node stays. Theirs deleting a node ours left untouched removes it. A node theirs added under the synthetic root is attached to the result root. The synthetic root's GUID changes on every load and is not content. =lrg_level_merge_files()= loads the three paths, merges, and writes the output. A conflict still writes the file and lists the GUIDs. =lrg_level_merge_install_driver()= sets =merge.rlevel.driver= and appends =*.rlevel merge=rlevel= to the work tree's =.gitattributes= when that line is absent. The default command is =lrgeditor --merge %O %A %B=. =lrgeditorctl merge= is the same three-way merge and can install that driver.
+
+** Collaboration
+:PROPERTIES:
+:CUSTOM_ID: collab
+:END:
+
+=LrgCollabSession= (=src/editor/lrg-collab.h=) is an operation log. =lrg_collab_error_quark()= is the domain for =LRG_COLLAB_ERROR_STALE=, =LRG_COLLAB_ERROR_LOCKED= and =LRG_COLLAB_ERROR_FAILED=. =lrg_collab_session_new()= returns an empty session.
+
+=lrg_collab_apply()= stores a property string for a GUID. The caller supplies the revision. An older revision is rejected with =STALE=. An equal revision replaces the value. A node locked by someone else is rejected with =LOCKED=. =lrg_collab_get()= returns the stored text.
+
+=lrg_collab_lock()= / =lrg_collab_unlock()= / =lrg_collab_lock_holder()= are a per-GUID lock. Locking a node you already hold succeeds. Unlocking a lock you do not hold fails. =lrg_collab_set_cursor()= records a presence point and replaces an earlier point for the same user. =lrg_collab_presence_count()= and =lrg_collab_presence_get()= read that list. There is no hidden clock: the caller supplies the revision, and an equal revision replaces the value (last writer wins). IPC: =collab.apply=, =collab.get=, =collab.lock=, =collab.unlock=, =collab.cursor=, =collab.presence=.
+
+** Open scenes and the game view
+:PROPERTIES:
+:CUSTOM_ID: scenes-and-game-view
+:END:
+
+=LrgEditorScenes= (=src/editor/lrg-editor-scenes.h=) is the list of level paths open in one window. =lrg_editor_scenes_new()= starts empty, with the active index at -1. =lrg_editor_scenes_add()= appends a path and makes it active. =lrg_editor_scenes_remove()= drops one index and shifts the active index when the removed index was before it. =lrg_editor_scenes_set_active()=, =lrg_editor_scenes_get_active()=, =lrg_editor_scenes_get_count()= and =lrg_editor_scenes_get_path()= are the selector. =lrg_editor_scenes_ensure()= returns the list stored on the editor, creating it on the first call, so the panel and the IPC methods share one object. =lrg_editor_scene_bar_new()= builds the bar. =lrg_editor_scene_bar_open()= opens a path, makes it active and loads it. =lrg_editor_scene_bar_set_active()= loads the scene at an index. One scene is active. IPC: =scenes.list=, =scenes.open=, =scenes.active= (the index).
+
+=lrg_game_view_preset_count()=, =lrg_game_view_preset_get()= and =lrg_game_view_preset_find()= (=src/editor/lrg-game-view.h=) are the resolution presets: =1920x1080= and the alias =16:9= (1920×1080), =1280x720= (1280×720), =4:3= (1024×768), =21:9= (2560×1080), =1:1= (1080×1080), =steam-deck= (1280×800). Seven presets. =lrg_game_view_letterbox()= fits a preset inside a view, keeps the aspect and centres the result. An unknown preset fills the view. =lrg_editor_game_view_panel_new()= is the panel, =lrg_editor_game_view_panel_set_preset()= names the preset, and =lrg_editor_game_view_panel_get_rect()= is that fitted rect.
+
+** UI place and animation
+:PROPERTIES:
+:CUSTOM_ID: ui-author
+:END:
+
+=lrg_ui_layout_place()= (=src/ui/lrg-ui-author.h=) sets =x= and =y= on the YAML mapping whose =name= is the widget and returns the rewritten document. A missing name is =G_IO_ERROR_NOT_FOUND=. =lrg_editor_ui_layout_editor_place()= calls that and replaces the open document. The preview's mouse-up calls it after a drag, so a placed widget is the document's =x= and =y=.
+
+=lrg_ui_animation_new()= returns an empty =LrgUiAnimation=. =lrg_ui_animation_add_key()= appends a widget, property, time and value. =lrg_ui_animation_sample()= interpolates linearly between the surrounding keys of that widget and property. Before the first key the value is the first key. After the last key it is the last key. It returns false when the track has no keys. =lrg_ui_animation_save()= writes a =keys:= list of =widget=, =prop=, =t= and =v=. =lrg_ui_animation_load()= reads that document.
+
+The inspector edits a nested dictionary or array by a slash path such as =items/0/name=. =lrg_inspector_nested_get()= walks the path (a variant wrapper is unwrapped without consuming a token) and returns the leaf. =lrg_inspector_nested_set()= returns a new tree with the leaf replaced. A missing dictionary key at the leaf is created. A missing intermediate is an error. The input tree is not modified. =lrg_editor_inspector_panel_set_nested_root()= stores the document on a panel. =lrg_editor_inspector_panel_get_nested()= and =lrg_editor_inspector_panel_edit_nested()= read and replace a leaf on that panel. A second inspector is the panel id =inspector-2=. The outliner filter =tag:= matches node tags (an empty tag matches every tagged node). A name that merely contains the text =tag:= does not.
+
+** Git diff, commit and LFS
+:PROPERTIES:
+:CUSTOM_ID: vcs-diff
+:END:
+
+These sit on the status tracker =LrgEditorVcs= (=lrg_editor_vcs_new()=). They run git in the project directory. A missing git, or a non-zero exit that is not cancellation, is an empty string for the calls that say so below.
+
+=lrg_editor_vcs_diff()= runs =git diff HEAD=. A clean tree is an empty string. =lrg_editor_vcs_log()= runs =git log -n 20 --name-only --pretty=format:%s=. =lrg_editor_vcs_commit()= runs =git add -A= and then commits with author =libregnum= and email =lrg@localhost=, so a repository without =user.name= still commits. Nothing to commit is =G_IO_ERROR_FAILED=. =lrg_editor_vcs_lfs_locks()= runs =git lfs locks=. When git-lfs is missing, or the repository does not use LFS, =available= is false and the return is an empty string. That is not an error. =lrg_editor_vcs_magit_handoff()= returns the constant =(magit-status)=. Libregnum does not start Emacs. =lrg_editor_vcs_panel_new()= is the docked panel (diff, log, locks, the Magit label, a commit message and a commit button). =lrg_editor_vcs_panel_set_project()= points it at a working tree and refreshes those labels. A shader or validation problem that knows its source location stores the line and column. =lrg_editor_problems_panel_get_row_location()= reads them (1-based, 0 when unknown). Opening the row uses that line. A missing stage file, which fails before the driver reports a line, is pointed at the =fragment:= or =vertex:= key.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: workflows-see-also
+:END:
+
+- [[file:../modules/level/streaming.org][Level streaming and instances]]
+- [[file:../modules/i18n/po.org][Gettext PO]]
+- [[file:projects-and-assets.org][Projects and assets]] (git status badges)

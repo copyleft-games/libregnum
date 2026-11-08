@@ -59,7 +59,7 @@ Libregnum is a GObject-based game engine library built on top of [[https://githu
 - [[file:modules/mmo/index.org][MMO foundations]] - Sessions, zones, interest replication, groups and persistence
 - *Debug Tools* - Profiling, console, overlay, and inspector
 - *Modding* - Complete mod system with dependencies
-- *Localization* - Multi-language support with CLDR plural rules
+- *Localization* - Multi-language support with CLDR plural rules ([[file:modules/i18n/po.org][gettext PO]])
 
 *** Editor and Level Authoring
 :PROPERTIES:
@@ -71,15 +71,32 @@ Libregnum is a GObject-based game engine library built on top of [[https://githu
 - *[[file:editor/view-model.org][View Model]]* - headless =LrgEditorViewState=, =LrgEditorViewportNav= and =LrgEditorPlaySession=
 - *[[file:editor/asset-sources.org][Asset Sources]]* - =LrgAssetSource=: game modules expose assets that are not project files (game archives) to lrgeditor's Sources panel; cached exports, imports, =source.*= IPC
 - *[[file:editor/data-editors.org][Data Editors]]* - =LrgEditorDocument= and the input map, locale, sound bank, theme, HUD, UI layout, dialog tree and dungeon editors
+- *[[file:editor/material-editor.org][Material Editor]]* - .rmat preview, instances, uniform inspector
+- *[[file:editor/shader-graph-editor.org][Shader Graph Editor]]* - .rshadergraph node shaders
+- *[[file:editor/bake.org][Lighting Bake]]* - the Lighting panel: bake lightmaps and probe grids from the editor, probe volumes, baked lighting while authoring (0.9.0)
+- *[[file:editor/environment.org][Level Look]]* - the Environment panel, =.rpost= post-stack editor, debug view modes, render layers, volume gizmos and LOD preview (0.9.0)
+- *[[file:editor/physics.org][Physics in Levels]]* - the Physics panel (body, shapes, joints, fit to mesh, live state), collider / joint / 2D collider gizmos, the Physics overlay, =physics.*= IPC (0.9.0)
+- *[[file:editor/navigation.org][Navigation in Levels]]* - the Navigation panel (.rnav settings, areas, links, bake, save), the navmesh overlay and handles, the agent debug view while playing, =nav.*= IPC (0.9.0)
+- *[[file:editor/ai.org][AI in the Editor]]* - the .rbt behaviour tree and .rfsm state-machine editors with live state, the AI panel (agents, blackboards, events, LLM decisions inspector), =bt.*= / =fsm.*= / =ai.*= IPC (0.9.0)
+- *[[file:editor/vfx.org][Effects in the Editor]]* - the .rparticles editor (emitters, module stacks, live preview, GPU toggle) and the .rweather editor, =particles.*= / =weather.*= IPC (0.9.0)
+- *[[file:editor/audio.org][Audio in the Editor]]* - the .rmixer mixer editor (strips, effects, sends, snapshots, ducking, offline preview with meters), the Mixer panel, the attenuation gizmo, the inspector's Audio Source section, =mixer.*= / =audio.*= IPC (0.9.0)
+- *[[file:editor/terrain.org][Terrain and Water in the Editor]]* - Create > Terrain / Water, the Terrain panel (sculpt, paint, hole and foliage brushes, layers, Rebake, Save), the viewport brush, water outline handles, the =.rwater= editor, =terrain.*= / =water.*= IPC (0.9.0)
+- *[[file:editor/physics-asset-editor.org][Physics Asset Editor and Layers]]* - =.rphysasset= ragdolls on a skeleton (joint limit gizmos, Generate, Stabilize, Simulate) and Project Settings > Physics (collision layers, collide matrix, world settings), =physasset.*= / =physics.layers.*= IPC (0.9.0)
+- *[[file:editor/sequencer.org][Sequencer]]* - =.rseq= cinematics: tracks by binding, Bézier curve editor, camera cuts, audio, events, preview with camera piloting (0.9.0)
+- *[[file:editor/2d-tools.org][2D Tools]]* - rule tile painting (autotiling), tile flip / rotation, isometric / staggered / hexagonal grids and tile properties in the Tiles panel; the .rtileset editor (collision polygons, data, animation, rule tiles with 3x3 masks and presets) and the .rsprite slicer and frame animation editor, =tiles.*= / =tileset.*= / =sprite.*= IPC (0.9.0)
+- *[[file:editor/skeleton2d-editor.org][2D Rig Editor]]* - =.rskel2d= 2D rigging and animation: bone tool, slots and image drops, mesh tool with triangulation, weight painting, skins, dope sheet, curves, play/loop (0.9.0)
 - *[[file:editor/gap-analysis.org][Gap Analysis]]* - the editor and engine against Godot 4, Unity 6 and Unreal 5, with the engine roadmap
 - *[[file:editor/editor-tools.org][Editor Tools]]* - tilemap painting, keyframe timelines, asset thumbnails
 - *[[file:editor/emacs.org][Emacs Integration]]* - =libregnum.el=; [[file:editor/external-editor.org][External code editor]]; [[file:editor/ipc-protocol.org][IPC protocol]]
 - *[[file:editor/lrgeditorctl.org][lrgeditorctl and MCP]]* - =lrgeditorctl= (kubectl-style CLI for running editors) and the editor MCP server
 - *[[file:editor/level-model.org][Level Model]]* - =LrgLevel=, =LrgNode=, =LrgNodeVisual= authoring types
 - *[[file:editor/yaml-format.org][=.rlevel= Format]]* - YAML serialization schema for levels and prefabs
+- *[[file:modules/postprocess/post-stack.org][=.rpost= Format]]* - Post stacks: ordered effects with parameters, quality, HDR, blending
 - *[[file:editor/prefabs.org][Prefabs]]* - Reusable saved node subtrees (=.rprefab=) and linked instances with overrides
 - *[[file:editor/editor-runtime.org][Editor Runtime]]* - =LrgEditor=, undo/redo commands, =LrgEditorHost= embedding
 - *[[file:editor/projects-and-assets.org][Projects and Assets]]* - =LrgProject= manifest, =LrgAssetDatabase= scanner, =.meta= sidecars, git status
+- *[[file:editor/assets-and-export.org][Assets and Export]]* - reference scan, importers, project templates, plugins, =lrgpack= and =export.*= IPC (0.9.0)
+- *[[file:editor/workflows.org][Editor Workflows]]* - transform math, GUID merge, collaboration, open scenes, game-view presets, UI place and animation, git diff and commit (0.9.0)
 - *Scripting Manager* - =LrgScriptingManager=, =LrgScriptComponent=, Crispy C backend
 - *Build flags* - =BUILD_EDITOR=1= for the editor subsystem; =CRISPY=1= for compiled-C scripts
 
@@ -147,6 +164,11 @@ See the [[file:quickstart.org][Quickstart Guide]] for more detailed examples.
 - *[[file:examples/ui-basics.org][UI Basics]]* - A minimal retained-UI program: canvas, theme preset, button, switch and slider
 - *[[file:examples/ui-showcase.org][UI Showcase]]* - App-style tour of every widget, theme presets and accents, motion, gradient cards, toasts, a modal dialog and a 10,000-row list, a menu bar with actions and shortcuts, context menus, right-to-left layout, an anchor-layout HUD, a live 3D viewport, a code editor and console, a node graph, a timeline and a dock area
 - *[[file:examples/editor-custom-panel.org][Editor Custom Panel]]* - Embedding lrgeditor: a custom dock panel (level stats), a custom action with a shortcut and a Tools menu entry, through the 0.8.1 embedding API
+- *[[file:examples/level-3d-runtime.org][Level 3D Runtime]]* - A standalone game playing an lrgeditor level with LrgWorld3D and LrgWorld3DRenderer
+- *[[file:examples/pbr-showcase.org][PBR Showcase]]* - Every 0.9.0 rendering feature in one level: environment/IBL, .rmat materials, spot/point shadows, decal, reflection probe, LOD, .rpost, with toggles
+- *[[file:examples/physics-sandbox.org][Physics Sandbox]]* - 3D physics from components: stacks, ramps, a ragdoll, a joint chain, a breakable wall, a cloth flag, CCD shots, debug draw toggles
+- *[[file:examples/game-showcase-3d.org][3D Showcase]]* - One program for a 0.9.0 level plus physics, nav, a clip, streaming cells and a UI animation (=--self-test= is headless)
+- *[[file:CHANGELOG.org][Changelog]]* - Release notes, including what 0.9.0 ships and what it leaves partial
 - *[[file:examples/ui-studio.org][UI Studio]]* - A docked tool application loaded from YAML: menu bar, 3D viewport, node graph, a timeline whose curves animate the scene, script editor, console, global shortcuts, theme switching and a dock layout saved as YAML
 - *[[file:examples/ui-theme-editor.org][UI Theme Editor]]* - Live theme designer: palette generation from an accent with tint and depth, all 27 colour roles and metrics, a live widget preview, WCAG contrast badges with auto-fix, YAML export
 - *[[file:examples/ui-game-menu.org][Game UI Menu]]* - Game menus over a live scene: YAML theme, virtual resolution with a pointer transform, gamepad navigation, pause modal and achievement toasts
@@ -201,6 +223,9 @@ lrg_asset_manager_add_search_path (manager, "mods/my-mod/assets/");
 GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.png", &error);
 #+end_src
 
+Materials are assets too: =lrg_asset_manager_load_material (manager, "materials/crate.rmat", &error)= returns a cached [[file:modules/graphics/material.org][LrgMaterial]] (=.rmat=: shading model, PBR parameters, texture slots, render state, instances).
+User shaders are =.rshader= assets ([[file:modules/graphics/shader-asset.org][LrgShaderAsset]]) and node graphs compile to them ([[file:modules/graphics/shader-graph.org][LrgShaderGraph]], =.rshadergraph=).
+
 ** Documentation Structure
 :PROPERTIES:
 :CUSTOM_ID: documentation-structure
@@ -222,9 +247,22 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 - [[file:guides/extending-ui.org][Extending UI]] - Custom paint-based UI widgets (complete rotary knob walkthrough)
 - [[file:guides/theming.org][Theming]] - Theme YAML files, presets, accents, scoped and runtime themes, contrast
 - [[file:guides/ui-migration.org][UI Migration]] - Porting pre-paint-rework UI code and custom widgets
+- [[file:guides/materials-and-pbr.org][Materials and PBR]] - The lit shader, GGX metallic-roughness, materials, point/spot lights, shadows, IBL, user shaders
+- [[file:guides/rendering-pipeline.org][The rendering pipeline]] - One LrgWorld3DRenderer frame pass by pass (shadows, prepass/SSAO, environment, decals, probes, volumetric, post), debug views and measured costs
+- [[file:guides/lighting-bake.org][Lighting bake]] - Baked lightmaps and SH probe grids: light modes, the level =lighting:= block, the runtime path and the baker
+- [[file:guides/animation-pipeline.org][Animation pipeline]] - glTF skins/clips/morphs, retargeting, .ranim graphs with IK and root motion, the 3D animator, .rseq sequences and 2D skeletons
+- [[file:guides/audio.org][Audio]] - The audio stack: manager, mixer graph and .rmixer, snapshots/ducking, spatial sources (rolloff curves, cones, doppler, occlusion)
+- [[file:guides/vfx.org][Visual effects]] - .rparticles effects: module stacks, seeds, billboards, trails, ribbons, mesh debris, sub-emitters, collisions, live editing (0.9.0)
+- [[file:guides/ai.org][AI]] - .rbt behaviour trees, .rfsm logic state machines, LrgAiComponent and LLM decisions (0.9.0)
+- [[file:guides/visual-scripting.org][Visual scripting]] - .rvscript programs: events, flow, variables, GI calls, the graph and blocks editors (0.9.0)
+- [[file:guides/terrain.org][Terrain]] - .rterrain sculpt/paint/holes, foliage scattering, .rwater lakes and rivers (0.9.0)
+- [[file:guides/migration-0-8-to-0-9.org][Migrating from 0.8 to 0.9]] - The runtime level module (=src/level/=), include paths, shared 3D math, and the 0.9.0 additions
+- [[file:CHANGELOG.org][Changelog]] - Release notes
 - [[file:guides/editor-migration-0-8-1.org][Editor 0.8.1 Migration]] - Embeddings, settings, prefab instances and assets from the 0.8.0 editor
 - [[file:guides/implementing-saveable.org][Implementing Saveable]] - Save/load support
 - [[file:guides/template-best-practices.org][Template Best Practices]] - Coordinate spaces, async resize, common pitfalls
+- [[file:guides/2d.org][2D games]] - Tileset assets, rule tiles, isometric/hexagonal maps, .rsprite frame animations, 2D lights with shadows
+- [[file:guides/writing-a-data-format.org][Writing a Data Format]] - Composite YAML formats on LrgDataLoader: types, references, strict validation, writers, tests
 
 *** UI Framework
 :PROPERTIES:

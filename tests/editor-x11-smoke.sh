@@ -111,7 +111,7 @@ centre () {
 	yq -p json -o tsv '.' <<<"${rect}" | awk '{ printf "%d %d\n", $1 + $3 / 2, $2 + $4 / 2 }'
 }
 
-Xvfb "${display_num}" -screen 0 1920x1080x24 >"${work}/xvfb.log" 2>&1 &
+Xvfb "${display_num}" -screen 0 1920x1080x24 -noreset >"${work}/xvfb.log" 2>&1 &
 xvfb_pid=$!
 sleep 1
 
@@ -135,7 +135,31 @@ sleep 1.5
 
 export DISPLAY="${display_num}"
 window="$(xdotool search --name 'libregnum editor' | head -n 1)"
+
+# Wait until the editor renders steadily.  The first frames compile the
+# world renderer's shaders and take seconds each on software GL; a click
+# sent then has its press and release land in one input poll and is lost.
+for _ in $(seq 1 120)
+do
+	fps="$(ipc ui.state | yq -p json '.fps' | awk '{ printf "%d", $1 }')"
+	[[ "${fps:-0}" -ge 4 ]] && break
+	sleep 0.5
+done
 state="$(ipc ui.state)"
+
+# chord MOD KEY: hold MOD across at least one editor frame while KEY is
+# typed.  "xdotool key ctrl+a" presses and releases the modifier within a
+# few milliseconds; at low frame rates (software GL under load) the press
+# and release land in one input poll and the editor never sees the
+# modifier held.  Two IPC round trips are served on the editor's main
+# loop, so at least one full iteration runs while MOD is down.
+chord () {
+	xdotool keydown "${1}"
+	xdotool key "${2}"
+	ipc editor.info >/dev/null
+	ipc editor.info >/dev/null
+	xdotool keyup "${1}"
+}
 
 # 1. A fast click (press and release between two frames) opens a menu.
 read -r fx fy < <(centre "$(yq -p json -o json -I0 '.menubar.File' <<<"${state}")")
@@ -160,7 +184,7 @@ ipc play.stop >/dev/null
 
 # 4. Keyboard shortcut with a modifier (Ctrl+A selects all).
 xdotool mousemove --window "${window}" "${fx}" "$((fy + 300))"
-xdotool key ctrl+a
+chord ctrl a
 sleep 0.3
 check 'Ctrl+A selects every node' "$(ipc selection.get | yq -p json '.nodes | length')" '3'
 ipc selection.clear >/dev/null
@@ -211,7 +235,7 @@ after="$(ipc view.get | yq -p json -o json -I0 '.')"
 check 'wheel zooms' "$([[ "${before}" != "${after}" ]] && echo changed || echo same)" 'changed'
 
 # 9. Alt + F opens the File menu from the keyboard.
-xdotool key alt+f
+chord alt f
 sleep 0.4
 check 'Alt+F opens the File menu' "$(ipc ui.state | yq -p json '.menu')" 'File'
 xdotool key Escape
@@ -233,7 +257,14 @@ sleep 0.3
 check 'B turns tile painting on' "$(ipc tilemap.tool | yq -p json '.mode')" 'true'
 undo_before="$(ipc editor.info | yq -p json '.undo')"
 xdotool mousedown 1
+# Let the editor take a frame with the button down before moving: at low
+# frame rates (software GL under load) the press and the first motion can
+# land in one input poll, and the stroke then starts one cell late.  Two
+# IPC round trips are served on the editor's main loop, so at least one
+# full iteration (input poll + frame) runs between them.
 sleep 0.1
+ipc editor.info >/dev/null
+ipc editor.info >/dev/null
 for _ in $(seq 1 6)
 do
 	xdotool mousemove_relative -- "${step}" 0

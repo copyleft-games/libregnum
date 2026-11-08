@@ -1,0 +1,176 @@
+#+title: LrgSpriteSheet - frames, slicing and animation sequences
+#+description: LrgSpriteSheet API reference: frames with pivots, grid and alpha slicing, legacy animation sequences, clips, the legacy YAML format and the .rsprite format
+#+created: 2026-11-07
+
+* LrgSpriteSheet
+:PROPERTIES:
+:CUSTOM_ID: sprite-sheet
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Atlas]] > LrgSpriteSheet
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+An =LrgSpriteSheet= describes the frames of one image: rectangles (=LrgAtlasRegion=) with names and pivots, in order. It does not own a texture; it records the image path and size so it works without a GL context (tools, servers, tests), and the code drawing it holds the texture.
+
+Frames come from:
+
+- *a grid* (=lrg_sprite_sheet_slice_grid()=, 0.9.0: margins, spacing, a pivot, remembered for saving; or the older =lrg_sprite_sheet_generate_grid()= / =lrg_sprite_sheet_new_from_grid()=);
+- *alpha islands* (=lrg_sprite_sheet_slice_alpha()=, 0.9.0: one frame per opaque blob, the sprite slicer's "auto" mode);
+- *explicit rectangles* (=lrg_sprite_sheet_add_frame_rect()=, =lrg_sprite_sheet_add_frame()=).
+
+Animations come in two forms: the 0.9.0 *clips* (=LrgSpriteAnimation=: per-frame durations, loop modes, events, played by =LrgSpriteAnimationPlayer=; see [[file:sprite-animation.org][Sprite animations]]) and the older *sequences* (=lrg_sprite_sheet_define_animation()=: a frame list at one duration). New code should use clips and the =.rsprite= format.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+- *Frame index*: frames are numbered in insertion order from 0; clips and sequences refer to frames by index.
+- *Frame name*: optional and unique; grid and alpha slicing name frames =frame_<index>=. =lrg_sprite_sheet_get_frame_by_name()= looks names up.
+- *Pivot*: per frame, in pixels from the frame's top-left corner (=lrg_atlas_region_set_pivot()=): where the sprite's position is; feet for characters.
+- *UVs*: when the image size is known (=lrg_sprite_sheet_set_texture_size()=) frames get normalised UVs; =lrg_sprite_sheet_recalculate_uvs()= refreshes them after a size change.
+- *Format* (=LrgSpriteSheetFormat=): which tool layout the sheet came from (=GRID=, =ASEPRITE=, =TEXTUREPACKER=, =LIBREGNUM=); informational.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+
+*** Construction and properties
+:PROPERTIES:
+:CUSTOM_ID: api-construction
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_sprite_sheet_new (name)= | empty sheet |
+| =lrg_sprite_sheet_new_from_grid (name, texture_path, frame_width, frame_height, frame_count, columns)= | sheet with a uniform grid of frames |
+| =lrg_sprite_sheet_new_from_file (path, error)= | load the legacy YAML description (see [[#legacy-format][below]]) |
+| =lrg_sprite_sheet_new_from_rsprite_file (path, error)= / =lrg_sprite_sheet_new_from_rsprite_data (data, length, source, error)= | load an =.rsprite= ([[file:sprite-animation.org::#format][format]]) |
+| =lrg_sprite_sheet_save_rsprite_to_file (self, path, error)= / =lrg_sprite_sheet_save_rsprite_to_data (self, &length, error)= | write an =.rsprite= |
+| =lrg_sprite_sheet_save_to_file (self, path, error)= | write the legacy YAML |
+| =lrg_sprite_sheet_get_name (self)= | the name (property =name=) |
+| =lrg_sprite_sheet_get_texture_path= / =lrg_sprite_sheet_set_texture_path= | image path (property =texture-path=) |
+| =lrg_sprite_sheet_get_texture_width= / =lrg_sprite_sheet_set_texture_width=, =lrg_sprite_sheet_get_texture_height= / =lrg_sprite_sheet_set_texture_height=, =lrg_sprite_sheet_set_texture_size (self, w, h)= | image size for UVs |
+| =lrg_sprite_sheet_get_format= / =lrg_sprite_sheet_set_format= | the =LrgSpriteSheetFormat= |
+
+*** Frames
+:PROPERTIES:
+:CUSTOM_ID: api-frames
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_sprite_sheet_get_frame_count (self)= | number of frames (property =frame-count=) |
+| =lrg_sprite_sheet_get_frame (self, index)= / =lrg_sprite_sheet_get_frame_by_name (self, name)= | a frame (transfer none) |
+| =lrg_sprite_sheet_add_frame (self, frame)= | append a region (transfer full); returns its index |
+| =lrg_sprite_sheet_add_frame_rect (self, name, x, y, width, height)= | append a rectangle (=name= NULL: =frame_<index>=) |
+| =lrg_sprite_sheet_replace_frame (self, index, frame)= | replace a frame in place (transfer full), keeping indices; the slicer edits frames with it |
+| =lrg_sprite_sheet_remove_frame (self, index)= | remove (later indices shift down) |
+| =lrg_sprite_sheet_clear_frames (self)= | remove every frame |
+| =lrg_sprite_sheet_recalculate_uvs (self)= | refresh UVs from the image size |
+
+*** Slicing
+:PROPERTIES:
+:CUSTOM_ID: api-slicing
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_sprite_sheet_slice_grid (self, frame_width, frame_height, columns, rows, count, margin_x, margin_y, spacing_x, spacing_y, pivot_x, pivot_y)= | replace the frames with a grid, row by row (=count= 0: all cells); remembered for =.rsprite= saving |
+| =lrg_sprite_sheet_get_grid (self, &frame_width, &frame_height, &columns, &count)= | TRUE when the first =count= frames come from a grid |
+| =lrg_sprite_sheet_slice_alpha (self, rgba, n_bytes, width, height, alpha_threshold, min_size, pivot_x, pivot_y)= | replace the frames with the bounding boxes of 8-connected opaque islands, in rows top to bottom then left to right; pivots as fractions of each frame |
+| =lrg_sprite_sheet_generate_grid (self, frame_width, frame_height, columns, rows, padding, offset_x, offset_y)= | older grid helper (=columns= / =rows= 0: fit the image); not remembered |
+
+*** Clips (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: api-clips
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_sprite_sheet_add_clip (self, clip)= | add an =LrgSpriteAnimation= (replaces a clip of the same name in place) |
+| =lrg_sprite_sheet_remove_clip (self, name)= | remove |
+| =lrg_sprite_sheet_get_clip (self, name)=, =lrg_sprite_sheet_get_clip_at (self, index)=, =lrg_sprite_sheet_get_n_clips (self)= | lookups (transfer none), insertion order |
+| =lrg_sprite_sheet_apply_to_animator (self, animator, texture)= | register grid clips with an =LrgAnimatorComponent= (see [[file:sprite-animation.org::#animator][sprite animations]]) |
+
+*** Animation sequences (legacy)
+:PROPERTIES:
+:CUSTOM_ID: api-sequences
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_sprite_sheet_define_animation (self, name, start_frame, end_frame, frame_duration, loop)= | a range of frames at one duration |
+| =lrg_sprite_sheet_define_animation_frames (self, name, frames, n_frames, frame_duration, loop)= | an explicit frame list |
+| =lrg_sprite_sheet_has_animation=, =lrg_sprite_sheet_remove_animation= | membership, removal |
+| =lrg_sprite_sheet_get_animation_frame_count (self, name)=, =lrg_sprite_sheet_get_animation_duration (self, name)= | length |
+| =lrg_sprite_sheet_get_animation_frame (self, name, time)= | the frame at a time (loops when the sequence loops) |
+| =lrg_sprite_sheet_get_animation_names (self)= | names (transfer container) |
+
+** Legacy YAML format
+:PROPERTIES:
+:CUSTOM_ID: legacy-format
+:END:
+=lrg_sprite_sheet_new_from_file()= / =lrg_sprite_sheet_save_to_file()= read and write the pre-0.9.0 description: =name= (required), =texture_path=, =texture_width=, =texture_height=, =format= (=grid=, =aseprite=, =texturepacker=, =libregnum=), =frames= (list of ={name, x, y, width, height}=) and =animations= (list of ={name, frame_duration, loop, frame_indices}= or ={..., start_frame, end_frame}=). It is lenient (unknown keys and bad entries are skipped) and its animation order is not stable across saves; use =.rsprite= for assets you edit.
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+#+begin_src C
+/* an 8-column character sheet with feet pivots */
+g_autoptr(LrgSpriteSheet) sheet = lrg_sprite_sheet_new ("knight");
+LrgAtlasRegion *frame;
+
+lrg_sprite_sheet_set_texture_path (sheet, "knight.png");
+lrg_sprite_sheet_set_texture_size (sheet, 512, 256);
+lrg_sprite_sheet_slice_grid (sheet, 64, 64, 8, 4, 30, 0, 0, 0, 0, 32.0f, 60.0f);
+
+/* draw frame 9 at the knight's feet */
+frame = lrg_sprite_sheet_get_frame (sheet, 9);
+DrawTexturePro (knight_tex,
+                (Rectangle) { lrg_atlas_region_get_x (frame), lrg_atlas_region_get_y (frame),
+                              lrg_atlas_region_get_width (frame), lrg_atlas_region_get_height (frame) },
+                (Rectangle) { feet_x, feet_y, 64, 64 },
+                (Vector2) { lrg_atlas_region_get_pivot_x (frame), lrg_atlas_region_get_pivot_y (frame) },
+                0.0f, WHITE);
+#+end_src
+
+#+begin_src C
+/* auto-slice a packed props image on the CPU */
+g_autoptr(GrlImage) image = grl_image_new_from_file ("props.png");
+gsize size = 0;
+guint8 *rgba = grl_image_get_pixels (image, &size);
+
+lrg_sprite_sheet_slice_alpha (sheet, rgba, size, grl_image_get_width (image),
+                              grl_image_get_height (image), 8, 4, 0.5f, 1.0f);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Frames are an array and a name hash table: index and name lookups are O(1). Alpha slicing is one flood fill over the image (linear in pixels; a 1024x1024 sheet takes a few milliseconds) and is meant for authoring time.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Slicing replaces all frames*; clips keep their frame indices, which may now point elsewhere.
+- *Duplicate names*: =frames_by_name= keeps the last; the =.rsprite= reader rejects duplicates.
+- *Pivots are pixels* on regions but fractions in =lrg_sprite_sheet_slice_alpha()= (convenient for mixed sizes).
+- *No texture inside*: load it yourself (=grl_texture_new_from_file()=) or hand it to the player.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The =.rsprite= editor ([[file:../../editor/2d-tools.org::#editor-2d-sprite-editor][2D Tools > The sprite editor]]) slices sheets with these functions: Grid mode calls =lrg_sprite_sheet_slice_grid()=, Auto mode =lrg_sprite_sheet_slice_alpha()= on the decoded image, Manual mode drags rectangles in with =lrg_sprite_sheet_add_frame_rect()=; frame names, rectangles and pivots (dragged on the canvas) go through =lrg_sprite_sheet_replace_frame()=, removals through =lrg_sprite_sheet_remove_frame()=. Every edit is written with =lrg_sprite_sheet_save_rsprite_to_data()= as one undo step and validated with =lrg_sprite_sheet_new_from_rsprite_data()=. "Slice Sprite Sheet" on a =.png= in the Assets panel and =sprite.create= write new sheets; =sprite.slice= and =sprite.frame= script the slicer.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:sprite-animation.org][Sprite animations and .rsprite]]
+- [[file:index.org][Texture atlas module]]
+- [[file:../lighting/2d-shadows.org][2D shadows]] (sprite outlines as occluders)
+- [[file:../../guides/2d.org][2D guide]]

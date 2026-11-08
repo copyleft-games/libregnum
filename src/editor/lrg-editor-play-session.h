@@ -32,6 +32,7 @@
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "lrg-editor-view-state.h"
+#include "../world3d/lrg-world3d.h"
 
 G_BEGIN_DECLS
 
@@ -98,6 +99,32 @@ LrgEngine * lrg_editor_play_session_get_engine (LrgEditorPlaySession *self);
 LRG_AVAILABLE_IN_ALL
 void lrg_editor_play_session_set_engine (LrgEditorPlaySession *self,
                                          LrgEngine            *engine);
+
+/**
+ * lrg_editor_play_session_get_project:
+ * @self: an #LrgEditorPlaySession
+ *
+ * Returns: (transfer none) (nullable): the project whose physics settings
+ *   a 3D level plays with, see #LrgEditorPlaySession:project
+ */
+LRG_AVAILABLE_IN_ALL
+LrgProject * lrg_editor_play_session_get_project (LrgEditorPlaySession *self);
+
+/**
+ * lrg_editor_play_session_set_project:
+ * @self: an #LrgEditorPlaySession
+ * @project: (nullable): the open project, or %NULL
+ *
+ * Sets the project whose `physics:` block (world settings and layer
+ * table) the play world of a 3D level uses from the next start
+ * (lrg_world3d_set_physics_settings()). The layer table is shared, so
+ * matrix edits apply while playing; the world settings are copied at
+ * start. Without a project, lrg_level_instantiate_3d_with_base_dir()
+ * looks for the project.ryaml above the level file.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_play_session_set_project (LrgEditorPlaySession *self,
+                                          LrgProject           *project);
 
 /**
  * lrg_editor_play_session_get_profiler:
@@ -244,15 +271,57 @@ gdouble lrg_editor_play_session_get_time (LrgEditorPlaySession *self);
 LRG_AVAILABLE_IN_ALL
 LrgWorld * lrg_editor_play_session_get_world (LrgEditorPlaySession *self);
 
+/**
+ * lrg_editor_play_session_get_world3d:
+ * @self: an #LrgEditorPlaySession
+ *
+ * The 3D play world. A level whose lrg_level_get_default_2d() is %FALSE
+ * plays in an #LrgWorld3D built with lrg_level_instantiate_3d(); the
+ * editor viewport draws this world while playing.
+ *
+ * Returns: (transfer none) (nullable): the 3D play world, %NULL when
+ *   stopped or when the level plays in 2D
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWorld3D * lrg_editor_play_session_get_world3d (LrgEditorPlaySession *self);
+
+/**
+ * lrg_editor_play_session_get_is_3d:
+ * @self: an #LrgEditorPlaySession
+ *
+ * Returns: %TRUE while a 3D play world runs (see
+ *   lrg_editor_play_session_get_world3d())
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_play_session_get_is_3d (LrgEditorPlaySession *self);
+
+/**
+ * lrg_editor_play_session_get_n_objects:
+ * @self: an #LrgEditorPlaySession
+ *
+ * Returns: the number of live objects: game objects in 2D, entities
+ *   (without the world root) in 3D, 0 when stopped
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_play_session_get_n_objects (LrgEditorPlaySession *self);
+
 /* --- Live objects ------------------------------------------------------------------ */
 
 /**
  * lrg_editor_play_session_get_objects:
  * @self: an #LrgEditorPlaySession
  *
- * The live game objects in world order (empty while stopped). The model
- * is the same object for the session's lifetime and emits items-changed
- * when play starts, stops, or a tick adds or removes objects.
+ * The live 2D game objects in world order (empty while stopped and while
+ * a 3D world plays; use lrg_editor_play_session_get_live_model() for
+ * both). The model is the same object for the session's lifetime and
+ * emits items-changed when play starts, stops, or a tick adds or removes
+ * objects.
  *
  * Returns: (transfer none): a #GListModel of #LrgGameObject
  */
@@ -263,11 +332,106 @@ GListModel * lrg_editor_play_session_get_objects (LrgEditorPlaySession *self);
  * lrg_editor_play_session_sync_objects:
  * @self: an #LrgEditorPlaySession
  *
- * Rescans the world into the object model and the GUID map (ticks do
+ * Rescans the world into the object models and the GUID map (ticks do
  * this already; call it after changing the world from outside a tick).
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_editor_play_session_sync_objects (LrgEditorPlaySession *self);
+
+/**
+ * lrg_editor_play_session_get_live_model:
+ * @self: an #LrgEditorPlaySession
+ *
+ * The live tree's top level: the game objects in world order when the
+ * level plays in 2D, the top-level #LrgEntity3D entities (the children of
+ * the world root) in 3D, empty while stopped. Pair it with
+ * lrg_editor_play_session_get_live_children() as a tree view's children
+ * function. The model is the same object for the session's lifetime and
+ * emits items-changed when play starts, stops, or the world changes.
+ *
+ * Returns: (transfer none): a #GListModel of #GObject
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+GListModel * lrg_editor_play_session_get_live_model (LrgEditorPlaySession *self);
+
+/**
+ * lrg_editor_play_session_get_live_children:
+ * @self: an #LrgEditorPlaySession
+ * @item: an item of the live tree
+ *
+ * The children of an #LrgEntity3D of the 3D play world, in child order.
+ * The model is created on first use, kept up to date by every tick and
+ * lrg_editor_play_session_sync_objects(), and emptied when @item leaves
+ * the world or play stops.
+ *
+ * Returns: (transfer full) (nullable): a #GListModel of #LrgEntity3D, or
+ *   %NULL for 2D game objects and for items not in the play world
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+GListModel * lrg_editor_play_session_get_live_children (LrgEditorPlaySession *self,
+                                                        GObject              *item);
+
+/**
+ * lrg_editor_play_session_get_live_for_guid:
+ * @self: an #LrgEditorPlaySession
+ * @guid: a node GUID
+ *
+ * Looks up the live object made from the node with @guid: an
+ * #LrgGameObject in 2D, an #LrgEntity3D in 3D (the world's GUID map).
+ *
+ * Returns: (transfer none) (nullable): the live object
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+GObject * lrg_editor_play_session_get_live_for_guid (LrgEditorPlaySession *self,
+                                                     const gchar          *guid);
+
+/**
+ * lrg_editor_play_session_get_live_for_node:
+ * @self: an #LrgEditorPlaySession
+ * @node: an authoring node
+ *
+ * Returns: (transfer none) (nullable): the live object (#LrgGameObject or
+ *   #LrgEntity3D) made from @node
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+GObject * lrg_editor_play_session_get_live_for_node (LrgEditorPlaySession *self,
+                                                     LrgNode              *node);
+
+/**
+ * lrg_editor_play_session_get_guid_for_live:
+ * @self: an #LrgEditorPlaySession
+ * @object: a live #LrgGameObject or #LrgEntity3D
+ *
+ * Returns: (transfer none) (nullable): the GUID of the node @object was
+ *   made from, %NULL for objects the simulation spawned
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_play_session_get_guid_for_live (LrgEditorPlaySession *self,
+                                                         GObject              *object);
+
+/**
+ * lrg_editor_play_session_get_node_for_live:
+ * @self: an #LrgEditorPlaySession
+ * @object: a live #LrgGameObject or #LrgEntity3D
+ *
+ * Returns: (transfer none) (nullable): the authoring node @object was
+ *   made from
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNode * lrg_editor_play_session_get_node_for_live (LrgEditorPlaySession *self,
+                                                     GObject              *object);
 
 /**
  * lrg_editor_play_session_get_object_for_guid:
@@ -276,6 +440,10 @@ void lrg_editor_play_session_sync_objects (LrgEditorPlaySession *self);
  *
  * Returns: (transfer none) (nullable): the live object made from that
  *   node
+ *
+ * 2D only: returns %NULL while a 3D world plays.
+ *
+ * Deprecated: 0.9.0: Use lrg_editor_play_session_get_live_for_guid(), which works for both 2D and 3D.
  */
 LRG_AVAILABLE_IN_ALL
 LrgGameObject * lrg_editor_play_session_get_object_for_guid (LrgEditorPlaySession *self,
@@ -287,6 +455,10 @@ LrgGameObject * lrg_editor_play_session_get_object_for_guid (LrgEditorPlaySessio
  * @node: an authoring node
  *
  * Returns: (transfer none) (nullable): the live object made from @node
+ *
+ * 2D only: returns %NULL while a 3D world plays.
+ *
+ * Deprecated: 0.9.0: Use lrg_editor_play_session_get_live_for_node(), which works for both 2D and 3D.
  */
 LRG_AVAILABLE_IN_ALL
 LrgGameObject * lrg_editor_play_session_get_object_for_node (LrgEditorPlaySession *self,
@@ -299,6 +471,10 @@ LrgGameObject * lrg_editor_play_session_get_object_for_node (LrgEditorPlaySessio
  *
  * Returns: (transfer none) (nullable): the GUID of the node @object was
  *   made from
+ *
+ * 2D only: returns %NULL while a 3D world plays.
+ *
+ * Deprecated: 0.9.0: Use lrg_editor_play_session_get_guid_for_live(), which works for both 2D and 3D.
  */
 LRG_AVAILABLE_IN_ALL
 const gchar * lrg_editor_play_session_get_guid_for_object (LrgEditorPlaySession *self,
@@ -311,6 +487,10 @@ const gchar * lrg_editor_play_session_get_guid_for_object (LrgEditorPlaySession 
  *
  * Returns: (transfer none) (nullable): the authoring node @object was
  *   made from
+ *
+ * 2D only: returns %NULL while a 3D world plays.
+ *
+ * Deprecated: 0.9.0: Use lrg_editor_play_session_get_node_for_live(), which works for both 2D and 3D.
  */
 LRG_AVAILABLE_IN_ALL
 LrgNode * lrg_editor_play_session_get_node_for_object (LrgEditorPlaySession *self,
@@ -332,6 +512,9 @@ LrgNode * lrg_editor_play_session_get_node_for_object (LrgEditorPlaySession *sel
  * so it survives the restore.
  *
  * Returns: %TRUE on success
+ *
+ * Deprecated: 0.9.0: Use lrg_editor_play_session_apply_live(), which also
+ *   takes 3D entities.
  */
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_editor_play_session_apply_to_level (LrgEditorPlaySession  *self,
@@ -339,5 +522,38 @@ gboolean lrg_editor_play_session_apply_to_level (LrgEditorPlaySession  *self,
                                                  LrgComponent          *component,
                                                  const gchar           *property,
                                                  GError               **error);
+
+/**
+ * lrg_editor_play_session_apply_live:
+ * @self: an #LrgEditorPlaySession
+ * @object: a live #LrgGameObject or #LrgEntity3D
+ * @component: a component of @object
+ * @property: a property of @component
+ * @error: (nullable): return location for an error
+ *
+ * "Apply to level" for both play modes: copies the live value of
+ * @property into the authoring node as one undoable editor command, and
+ * re-applies it after Stop (all applied values together as one undo
+ * step) so it survives the restore.
+ *
+ * - A registry component (2D or 3D) maps to the #LrgComponentDesc with
+ *   its registry type name, matched by its position among the object's
+ *   components of that type.
+ * - In 3D, the component made from the node's visual (mesh renderer,
+ *   light, camera, audio source, billboard, tilemap) maps to the visual:
+ *   the property is stored into its param bag or material with
+ *   lrg_level_visual_store_property(), the inverse of what
+ *   lrg_level_instantiate_3d() reads.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_play_session_apply_live (LrgEditorPlaySession  *self,
+                                             GObject               *object,
+                                             LrgComponent          *component,
+                                             const gchar           *property,
+                                             GError               **error);
 
 G_END_DECLS

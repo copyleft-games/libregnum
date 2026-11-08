@@ -1,0 +1,366 @@
+#+title: Navigation bake settings (.rnav)
+#+description: LrgNavBake: the .rnav bake settings of a level (agent, voxels, regions, geometry sources, area types with costs, off-mesh links) and baking an LrgNavPolyMesh from an LrgWorld3D or explicit triangles.
+#+authors: Zach Podbielniak
+#+created: 2026-11-07
+#+version: 0.9.0
+
+* Navigation bake settings
+:PROPERTIES:
+:CUSTOM_ID: nav-bake
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:index.org][Pathfinding]]* > Navigation bake settings
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgNavBake= (=src/pathfinding/lrg-nav-bake.h=) is the authoring side of a level's navigation mesh. It holds everything a bake needs, saved as a small YAML file with the =.rnav= extension next to the level:
+
+- the agent the mesh is baked for (radius, height, steepest slope, highest step, highest drop),
+- the voxel resolution (cell size and height) and region filtering (small islands disabled, corner margin),
+- which geometry of an [[file:../world3d/world3d.org][LrgWorld3D]] counts (mesh renderers, static colliders, render layers, entity tags, physics layers, a bounding box),
+- area types: named tags with traversal costs and boxes that mark them on the floor (mud, water, a door),
+- off-mesh links: ladders, jumps, teleporters, optionally carrying an area's tag.
+
+=lrg_nav_bake_bake()= gathers the world's static geometry, stages it on an [[file:nav-poly-mesh.org][LrgNavPolyMesh]] and bakes it, through an =LrgNavPolyMeshCache= when one is given. The result is the mesh that [[file:nav-agent.org][LrgNavAgent and LrgNavCrowd]] walk; a level references the =.rnav= and the baked bytes from its =navigation:= block (see [[file:../../editor/yaml-format.org::#navigation][the .rlevel format]]) and =lrg_level_instantiate_3d()= puts the mesh on the world with =lrg_world3d_set_navigation()=.
+
+Everything runs headless (no window, no GPU, no physics world) and is deterministic: the same settings and geometry give the same bytes from =lrg_nav_poly_mesh_save()=.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** From world to mesh
+:PROPERTIES:
+:CUSTOM_ID: concepts-pipeline
+:END:
+A bake (=lrg_nav_bake_bake_into()=) runs these steps:
+
+1. *Configure* (=lrg_nav_bake_configure()=): the mesh gets the agent and voxel properties (=max-step= becomes =LrgNavPolyMesh:max-climb=), its staged input is cleared, the area boxes are staged in area order then box order, the links are added (once: a mesh that already has links keeps them) and the area costs are set (=lrg_nav_poly_mesh_set_tag_cost()=).
+2. *Collect* (=lrg_nav_bake_collect_world()=, only with a world): the static geometry of the world, in world space, filtered and clipped (next section).
+3. *Explicit triangles*: whatever =lrg_nav_bake_add_triangles()= staged, walkable runs and obstruction-only runs kept apart.
+4. *Bake*: =lrg_nav_poly_mesh_bake_cached()= (a cache hit loads the earlier bake of identical input).
+5. *Region filter*: every connected region whose walkable area is below =min-region-area= square metres has its polygons disabled (=lrg_nav_poly_mesh_set_polygon_enabled()=).
+
+Without any triangle the bake fails with =LRG_NAV_BAKE_ERROR_NO_GEOMETRY=; the voxel bake's own failures (=G_IO_ERROR_NO_SPACE= for a level too large for the cell size, =G_IO_ERROR_NOT_FOUND= when nothing is walkable) are passed on. A failed bake leaves the mesh's previous bake in place.
+
+*** Which geometry counts
+:PROPERTIES:
+:CUSTOM_ID: concepts-sources
+:END:
+Two sources, each switchable (=include-meshes=, =include-colliders=):
+
+| Source | Taken from | Shape |
+|-+-+-|
+| mesh renderers | every enabled =LrgMeshRendererComponent= of an active entity | the loaded =GrlModel= (all meshes under the model's transform), else the glTF mesh asset read headless (=LrgGltfGeometry=), else the built-in primitive at its size |
+| colliders | every enabled, non-trigger =LrgColliderComponent3D= | =lrg_physics_shape_build_debug_mesh()= of =lrg_collider_component3d_build_shape()= under the entity pose and the collider offset |
+
+Filters, applied per entity: the entity must be active in the hierarchy; with =static-only= it must be flagged static (=lrg_entity3d_get_static()=); its render layer bit must be in =layer-mask=; it must carry none of the exclude tags and, when include tags are set, at least one of them; a collider must be on one of =physics-layers= when that list is set (a collider without a layer is on =default=). Entities with a dynamic or kinematic =LrgRigidBodyComponent= never count: their geometry moves. When colliders are a source, the mesh renderer of an entity that also has a solid collider is skipped (the collider is the shape agents collide with).
+
+*** Solids and surfaces
+:PROPERTIES:
+:CUSTOM_ID: concepts-solids
+:END:
+The voxel bake marks the surfaces it is given. A closed shape taller than the agent, given as plain triangles, leaves its inside walkable: its floor and its lid are two thin spans with head room between them, an island no path from outside reaches but one a nearest-point search may land on. Closed convex shapes are therefore staged with =lrg_nav_poly_mesh_add_solid()=, which fills every column the shape covers from its lowest to its highest surface:
+
+- solids: box, sphere, capsule, cylinder and convex colliders; cube, UV sphere, ico sphere, cylinder and cone primitives;
+- surfaces: models, mesh assets, mesh colliders, planes and the open primitives (plane, circle, grid, torus).
+
+For hollow models (a building you can enter) surfaces are right; for solid props made of models, give them a box collider or raise =min-region-area= so the islands inside are disabled.
+
+*** Bounds and infinite planes
+:PROPERTIES:
+:CUSTOM_ID: concepts-bounds
+:END:
+=lrg_nav_bake_set_bounds()= restricts a bake to a box: triangles are clipped to its X/Z extent (Sutherland-Hodgman, then fanned) and dropped when they lie wholly above or below its Y range. A plane collider is a 2 x =LRG_PHYSICS_PLANE_HALF_EXTENT= square; it is always clipped: to the bounds, else to the other geometry's extent grown by 1 m, else to a 100 m square around the origin.
+
+*** Area types and costs
+:PROPERTIES:
+:CUSTOM_ID: concepts-areas
+:END:
+An area is a name, a nonzero tag and a cost multiplier. Its boxes become polygons of their own carrying the tag (later boxes win where they overlap). Two things follow from the tag:
+
+- *cost*: =lrg_nav_poly_mesh_find_path()= weighs the distance walked inside a polygon by its tag's cost, so with mud at 3 a path walks around a mud strip when that is less than three times shorter; costs below 1 (a road at 0.8) make the A* heuristic scale down (still exact, slower);
+- *switching*: =lrg_nav_poly_mesh_set_tag_enabled (mesh, tag, FALSE)= closes the area for every query (a locked door); per-agent decisions go through the agent's filter (=lrg_nav_agent_set_filter()=).
+
+A link that names an area carries its tag: a door's floor area and the link through it switch together.
+
+*** Costs are a query setting
+:PROPERTIES:
+:CUSTOM_ID: concepts-costs
+:END:
+Area costs do not change the bake and are not stored by =lrg_nav_poly_mesh_save()=. =lrg_nav_bake_configure()= sets them before a bake; after =lrg_nav_poly_mesh_load()= call =lrg_nav_bake_apply_costs()= (level instantiation does this when the level references both the =.rnav= and the baked data). Changing a cost never needs a rebake.
+
+** The .rnav format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+YAML, one mapping. Every key is optional; a missing key keeps the default. =lrg_nav_bake_to_data()= writes every section, then the unknown keys it read, so tools may annotate the file. Numbers are written with the shortest text that reads back to the same float: loading and saving saved text is byte-identical.
+
+#+begin_src yaml
+version: 1                       # LRG_NAV_BAKE_FORMAT_VERSION; a newer version fails to load
+name: castle                     # display name (LrgNavBake:name)
+agent:                           # the agent the mesh is baked for
+  radius: 0.3                    # metres; the walkable surface is eroded by it (rounded up to whole cells)
+  height: 1.8                    # head room needed above a floor
+  max_slope: 50                  # degrees, 0 .. 89; steeper triangles are not walkable
+  max_step: 0.45                 # highest step climbed (LrgNavPolyMesh:max-climb)
+  max_drop: 0                    # highest ledge to drop down; > max_step adds one-way drop links
+voxel:
+  cell_size: 0.25                # horizontal voxel size; memory grows with 1 / cell_size^2
+  cell_height: 0.1               # vertical voxel size
+regions:
+  min_area: 0                    # m^2; smaller connected regions are disabled after the bake
+  corner_margin: 0               # paths keep this far from the portal ends they turn round
+sources:
+  meshes: true                   # LrgMeshRendererComponent geometry
+  colliders: true                # static LrgColliderComponent3D geometry
+  static_only: false             # only entities flagged static
+  layer_mask: 4294967295         # render layers (bit per lrg_entity3d_get_layer()), all by default
+  include_tags: [walkable]       # optional: only entities with one of these tags
+  exclude_tags: [no-nav]         # optional: never entities with one of these tags
+  physics_layers: [static]       # optional: only colliders on these layers
+  bounds:                        # optional: clip the bake to this box
+    min: [-60, -5, -60]
+    max: [60, 30, 60]
+areas:                           # area types; listed before the links that name them
+  - name: mud
+    tag: 2                       # nonzero, unique
+    cost: 3                      # > 0; 1 is normal ground
+    boxes:                       # where the floor is mud (x/z extent, floor height within y)
+      - { min: [4, -1, -2], max: [12, 1, 2] }
+  - name: gate
+    tag: 7
+    cost: 1
+    boxes:
+      - { min: [-1, -1, 8], max: [1, 1, 10] }
+links:                           # off-mesh links
+  - start: [-14.5, 0, -5]        # where the agent enters it (snapped to the nearest polygon)
+    end: [-15, 3, -8]            # where it leads
+    bidirectional: true          # usable from end to start as well (default true)
+    cost: 1                      # extra cost on top of its length (>= 0, default 0)
+    area: gate                   # optional: carry this area's tag
+output: nav/castle.rnavmesh      # where tools write the baked mesh, relative to this file
+#+end_src
+
+| Key path | Type | Default | Property / API |
+|-+-+-+-|
+| =version= | integer | 1 | =LRG_NAV_BAKE_FORMAT_VERSION= |
+| =name= | string | none | =LrgNavBake:name=, =lrg_nav_bake_get_name()= / =lrg_nav_bake_set_name()= |
+| =agent.radius= | float 0 .. 100 | 0.3 | =LrgNavBake:agent-radius=, =lrg_nav_bake_get_agent()= / =lrg_nav_bake_set_agent()= |
+| =agent.height= | float 0.01 .. 100 | 1.8 | =LrgNavBake:agent-height= |
+| =agent.max_slope= | float 0 .. 89 | 50 | =LrgNavBake:max-slope= |
+| =agent.max_step= | float 0 .. 100 | 0.45 | =LrgNavBake:max-step= |
+| =agent.max_drop= | float 0 .. 100 | 0 | =LrgNavBake:max-drop= |
+| =voxel.cell_size= | float 0.01 .. 100 | 0.25 | =LrgNavBake:cell-size=, =lrg_nav_bake_get_cell_size()= / =lrg_nav_bake_set_cell_size()= |
+| =voxel.cell_height= | float 0.01 .. 100 | 0.1 | =LrgNavBake:cell-height=, =lrg_nav_bake_get_cell_height()= / =lrg_nav_bake_set_cell_height()= |
+| =regions.min_area= | float >= 0 | 0 | =LrgNavBake:min-region-area= |
+| =regions.corner_margin= | float 0 .. 100 | 0 | =LrgNavBake:corner-margin= |
+| =sources.meshes= | boolean | true | =LrgNavBake:include-meshes= |
+| =sources.colliders= | boolean | true | =LrgNavBake:include-colliders= |
+| =sources.static_only= | boolean | false | =LrgNavBake:static-only= |
+| =sources.layer_mask= | unsigned 32-bit integer (decimal or 0x hex) | all | =LrgNavBake:layer-mask= |
+| =sources.include_tags= | list of strings | empty | =lrg_nav_bake_get_include_tags()= / =lrg_nav_bake_set_include_tags()= |
+| =sources.exclude_tags= | list of strings | empty | =lrg_nav_bake_get_exclude_tags()= / =lrg_nav_bake_set_exclude_tags()= |
+| =sources.physics_layers= | list of strings | empty | =lrg_nav_bake_get_physics_layers()= / =lrg_nav_bake_set_physics_layers()= |
+| =sources.bounds= | ={min: [x, y, z], max: [x, y, z]}= | none | =lrg_nav_bake_get_bounds()= / =lrg_nav_bake_set_bounds()= |
+| =areas[]= | ={name, tag, cost, boxes}= | none | =lrg_nav_bake_add_area()=, =lrg_nav_bake_get_area()=, =lrg_nav_bake_find_area()=, =lrg_nav_bake_get_n_areas()=, =lrg_nav_bake_set_area_cost()=, =lrg_nav_bake_remove_area()= |
+| =areas[].boxes[]= | ={min, max}= | none | =lrg_nav_bake_add_area_box()=, =lrg_nav_bake_get_area_box()=, =lrg_nav_bake_get_n_area_boxes()=, =lrg_nav_bake_remove_area_box()= |
+| =links[]= | ={start, end, bidirectional, cost, area}= | none | =lrg_nav_bake_add_link()=, =lrg_nav_bake_get_link()=, =lrg_nav_bake_get_n_links()=, =lrg_nav_bake_remove_link()= |
+| =output= | string | none | =LrgNavBake:output= |
+
+*Unknown keys* are kept at the top level, in =agent=, =voxel=, =regions= and =sources=, and in each area and link entry. Keys inside =bounds= and area boxes are not.
+
+*Errors* (=LRG_NAV_BAKE_ERROR=) name the key path:
+
+| Code | When |
+|-+-|
+| =LRG_NAV_BAKE_ERROR_PARSE= | not YAML, not a mapping, a newer =version=, a value of the wrong kind (=agent.radius: expected a number=, =sources.include_tags[1]: expected a non-empty string=, =areas[0].boxes[0].max[2]: expected a number=, =links[0]: a link needs start and end=) |
+| =LRG_NAV_BAKE_ERROR_INVALID= | a number out of range (=agent.max_slope: 120 is out of range=), an area without a name, a zero tag or a non-positive cost, a name or tag used twice, an empty box, a link with a negative cost or an unknown area |
+| =LRG_NAV_BAKE_ERROR_IO= | the file cannot be read or written (the message starts with the path) |
+| =LRG_NAV_BAKE_ERROR_NO_GEOMETRY= | a bake found no triangles |
+
+=LrgNavBakeError= is registered as =LRG_TYPE_NAV_BAKE_ERROR= (=lrg_nav_bake_error_get_type()=); the domain is =lrg_nav_bake_error_quark()=.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Construction and files
+:PROPERTIES:
+:CUSTOM_ID: api-files
+:END:
+| Function | Purpose |
+|-+-|
+| =lrg_nav_bake_new()= | settings with the =LrgNavPolyMesh= defaults, every source, no filters, areas or links |
+| =lrg_nav_bake_new_from_data (data, length, error)= | parse =.rnav= text |
+| =lrg_nav_bake_new_from_file (path, error)= | load a =.rnav= file |
+| =lrg_nav_bake_to_data (self)= | the YAML text |
+| =lrg_nav_bake_save_to_file (self, path, error)= | write it |
+| =lrg_nav_bake_copy (self)= | a deep copy (areas, links, filters, unknown keys; not the explicit triangles) |
+
+*** Agent, voxels, sources
+:PROPERTIES:
+:CUSTOM_ID: api-settings
+:END:
+| Function | Purpose |
+|-+-|
+| =lrg_nav_bake_get_name()= / =lrg_nav_bake_set_name()= | display name |
+| =lrg_nav_bake_get_agent (self, &radius, &height, &max_slope, &max_step)= / =lrg_nav_bake_set_agent()= | the four agent values at once (clamped) |
+| =lrg_nav_bake_get_cell_size()= / =lrg_nav_bake_set_cell_size()= | horizontal voxel size |
+| =lrg_nav_bake_get_cell_height()= / =lrg_nav_bake_set_cell_height()= | vertical voxel size |
+| =lrg_nav_bake_set_bounds (self, min, max)= / =lrg_nav_bake_get_bounds()= | clip box, =NULL= clears |
+| =lrg_nav_bake_set_include_tags()= / =lrg_nav_bake_get_include_tags()= | entity tags required |
+| =lrg_nav_bake_set_exclude_tags()= / =lrg_nav_bake_get_exclude_tags()= | entity tags refused |
+| =lrg_nav_bake_set_physics_layers()= / =lrg_nav_bake_get_physics_layers()= | collider layers accepted |
+| =lrg_nav_bake_add_triangles (self, vertices, n_floats, walkable)= | stage explicit world-space triangles for every bake |
+| =lrg_nav_bake_clear_triangles()= | drop them |
+
+Properties (all =G_PARAM_EXPLICIT_NOTIFY=): =name=, =agent-radius=, =agent-height=, =max-slope=, =max-step=, =max-drop=, =cell-size=, =cell-height=, =min-region-area=, =corner-margin=, =include-meshes=, =include-colliders=, =static-only=, =layer-mask=, =output=.
+
+*** Areas and links
+:PROPERTIES:
+:CUSTOM_ID: api-areas
+:END:
+| Function | Purpose |
+|-+-|
+| =lrg_nav_bake_add_area (self, name, tag, cost)= | declare an area; -1 when the name or tag is taken or a value is invalid |
+| =lrg_nav_bake_get_n_areas()=, =lrg_nav_bake_get_area (self, i, &name, &tag, &cost)=, =lrg_nav_bake_find_area (self, name)= | read them |
+| =lrg_nav_bake_set_area_cost (self, i, cost)= | change a cost |
+| =lrg_nav_bake_remove_area (self, i)= | remove (links naming it lose their area) |
+| =lrg_nav_bake_add_area_box (self, area, min, max)=, =lrg_nav_bake_get_n_area_boxes()=, =lrg_nav_bake_get_area_box()=, =lrg_nav_bake_remove_area_box()= | the boxes that mark an area |
+| =lrg_nav_bake_add_link (self, start, end, bidirectional, cost, area)= | add a link; its index is its id in the baked mesh |
+| =lrg_nav_bake_get_n_links()=, =lrg_nav_bake_get_link()=, =lrg_nav_bake_remove_link()= | read and remove |
+
+*** Baking
+:PROPERTIES:
+:CUSTOM_ID: api-bake
+:END:
+| Function | Purpose |
+|-+-|
+| =lrg_nav_bake_configure (self, mesh)= | properties, area boxes, links (once), costs; no bake |
+| =lrg_nav_bake_apply_costs (self, mesh)= | only the costs (after =lrg_nav_poly_mesh_load()=) |
+| =lrg_nav_bake_collect_world (self, world, mesh)= | stage the world's filtered static geometry; returns the triangle count |
+| =lrg_nav_bake_bake_into (self, mesh, world, cache, error)= | the whole bake into an existing mesh (the world's mesh, rebaked in place: its agents notice the new serial and plan again) |
+| =lrg_nav_bake_bake (self, world, cache, error)= | the whole bake into a new mesh |
+| =lrg_nav_bake_get_last_triangle_count()= | triangles the last bake staged |
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** Bake a level's world and save the result
+:PROPERTIES:
+:CUSTOM_ID: example-world
+:END:
+#+begin_src c
+g_autoptr(GError)              error = NULL;
+g_autoptr(LrgNavBake)          settings = lrg_nav_bake_new_from_file ("levels/castle.rnav", &error);
+g_autoptr(LrgNavPolyMeshCache) cache = lrg_nav_poly_mesh_cache_new (4);
+g_autoptr(LrgNavPolyMesh)      mesh = NULL;
+g_autoptr(GBytes)              bytes = NULL;
+
+if (settings == NULL)
+	g_error ("%s", error->message);
+
+/* the world was filled by lrg_level_load_world3d() */
+mesh = lrg_nav_bake_bake (settings, world, cache, &error);
+if (mesh == NULL)
+	g_error ("bake: %s", error->message);
+g_message ("%u polygons, %u regions, %.1f ms", lrg_nav_poly_mesh_get_polygon_count (mesh),
+           lrg_nav_poly_mesh_get_region_count (mesh), lrg_nav_poly_mesh_get_bake_seconds (mesh) * 1000.0);
+
+/* the bytes the level's navigation: data: refers to */
+bytes = lrg_nav_poly_mesh_save (mesh);
+g_file_set_contents ("levels/nav/castle.rnavmesh", g_bytes_get_data (bytes, NULL),
+                     (gssize) g_bytes_get_size (bytes), &error);
+lrg_world3d_set_navigation (world, mesh);
+#+end_src
+
+*** Settings in code, procedural geometry
+:PROPERTIES:
+:CUSTOM_ID: example-code
+:END:
+#+begin_src c
+g_autoptr(LrgNavBake)     bake = lrg_nav_bake_new ();
+g_autoptr(LrgNavPolyMesh) mesh = NULL;
+const gfloat              mud_min[3] = { 4.0f, -1.0f, -2.0f };
+const gfloat              mud_max[3] = { 12.0f, 1.0f, 2.0f };
+const gfloat              foot[3] = { 4.5f, 0.0f, 2.0f };
+const gfloat              top[3] = { 7.5f, 3.0f, 2.0f };
+gint                      mud;
+
+lrg_nav_bake_set_agent (bake, 0.4f, 1.9f, 45.0f, 0.35f);
+lrg_nav_bake_set_cell_size (bake, 0.2f);
+g_object_set (bake, "min-region-area", 2.0f, NULL);
+mud = lrg_nav_bake_add_area (bake, "mud", 2, 3.0f);
+lrg_nav_bake_add_area_box (bake, (guint) mud, mud_min, mud_max);
+lrg_nav_bake_add_area (bake, "ladder", 9, 1.0f);
+lrg_nav_bake_add_link (bake, foot, top, TRUE, 2.0f, "ladder");
+lrg_nav_bake_add_triangles (bake, floor_triangles, n_floor_floats, TRUE);
+mesh = lrg_nav_bake_bake (bake, NULL, NULL, NULL);
+
+/* the ladder breaks: every path stops using it */
+lrg_nav_poly_mesh_set_tag_enabled (mesh, 9, FALSE);
+#+end_src
+
+*** Only the floor, not the props
+:PROPERTIES:
+:CUSTOM_ID: example-filters
+:END:
+#+begin_src c
+const gchar *const walkable[] = { "floor", "stairs", NULL };
+const gchar *const solid[] = { "static", NULL };
+const gfloat       lo[3] = { -100.0f, -10.0f, -100.0f };
+const gfloat       hi[3] = { 100.0f, 40.0f, 100.0f };
+
+lrg_nav_bake_set_include_tags (bake, walkable);   /* render geometry tagged as floor */
+lrg_nav_bake_set_physics_layers (bake, solid);    /* colliders on the static layer */
+lrg_nav_bake_set_bounds (bake, lo, hi);           /* and nothing outside the playable area */
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+The bake is the voxel bake of [[file:nav-poly-mesh.org][LrgNavPolyMesh]] plus a linear pass over the components (model meshes are read from memory; glTF assets are parsed once per bake). Measured on an i7-1280P pinned with =taskset -c 0= while parallel builds kept the load average around 22 (ranges over several runs; the low ends are closer to an idle machine), a flat floor with 40 solid 1 x 1 x 2 m blocks, cell size 0.25:
+
+| Level | Bake | Polygons | Boundary segments |
+|-+-+-+-|
+| 40 x 40 m | 18 .. 32 ms | 189 | 504 |
+| 80 x 80 m | 69 .. 123 ms | 424 | 504 |
+| 120 x 120 m | 161 .. 267 ms | 913 | 564 |
+
+Bake time grows with the area in cells (halving the cell size quadruples it). An =LrgNavPolyMeshCache= hit costs one SHA-256 over the input plus a load. Bake large levels in the editor and ship the bytes (=navigation: data:=); =bake_on_load= is for prototypes and procedural levels.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Bake for the largest agent.* The mesh is eroded by =agent.radius=; agents with a larger radius walk into walls on narrow paths. Bake one mesh per agent size class if they differ a lot.
+- *Hollow insides.* Plain triangles (models, mesh colliders) mark surfaces only; a closed model taller than the agent has a walkable island inside. Give solid props a box collider, or set =regions.min_area=.
+- *Links stay on a mesh.* =lrg_nav_bake_configure()= adds the links only to a mesh without links; to change links, bake into a new mesh (=lrg_nav_bake_bake()=).
+- *Costs after a load.* A mesh from =lrg_nav_poly_mesh_load()= has no costs until =lrg_nav_bake_apply_costs()=.
+- *Areas before links* in hand-written files is not required (the loader reads areas first), but a link may only name an area that exists.
+- *Planes are clipped.* An infinite ground plane bakes only over the other geometry's extent (plus 1 m) or the bounds.
+- *Moving geometry.* Dynamic and kinematic bodies are never baked; close a door with a tagged area and =lrg_nav_poly_mesh_set_tag_enabled()= instead of rebaking.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The Navigation panel (see [[file:../../editor/navigation.org][Navigation in Levels]] and [[file:../../editor/overview.org][the editor overview]]) edits these settings and the level's =navigation:= block (the form maps one to one onto the properties and the area / link lists above), bakes with =lrg_nav_bake_bake()= on a worker thread, saves the =.rnav= and =.rnavmesh= next to the level, and draws the navmesh overlay; IPC =nav.*=. The skill page "Bake navigation in the editor" is the same loop from the shell.
+
+=lrg_nav_bake_set_tile_extent()= splits a bounded bake into XZ squares of that size in metres (Y stays the full range). 0, the default, is one bake. =lrg_nav_bake_get_tile_extent()= reads it. =lrg_nav_bake_get_last_tile_count()= is how many tiles the last bake covered, including empty ones (1 when the extent is 0). The extent is not written to =.rnav=. Empty tiles are skipped as geometry and still count. A non-positive extent becomes 0.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:nav-poly-mesh.org][LrgNavPolyMesh]]: the voxel bake, queries, area tags, links, the binary form and the cache
+- [[file:nav-agent.org][LrgNavAgent, LrgNavCrowd, LrgNavAgentComponent]]: walking the mesh
+- [[file:../../guides/navigation.org][Navigation guide]]: from level to walking agents
+- [[file:../../editor/yaml-format.org::#navigation][The .rlevel navigation: block]]
+- [[file:../../guides/physics.org][Physics guide]]: the colliders and bodies the bake reads

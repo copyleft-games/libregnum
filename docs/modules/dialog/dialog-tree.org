@@ -184,13 +184,13 @@ Gets the number of nodes in the tree.
 GList * lrg_dialog_tree_get_node_ids (LrgDialogTree *self);
 #+end_src
 
-Gets all node IDs in the tree.
+Gets all node IDs in the tree, in the order the nodes were added: file order for a loaded tree. Replacing a node (=lrg_dialog_tree_add_node()= with an id already present) keeps its place; removing it drops it. The writer uses this order.
 
 *Parameters:*
 
 - =self= - An =LrgDialogTree=
 
-*Returns:* List of node IDs (element-type utf8, transfer container)
+*Returns:* List of node IDs (element-type utf8, transfer container: free the list, not the strings)
 
 ** Metadata
 :PROPERTIES:
@@ -342,3 +342,91 @@ if (shopping_node) {
     g_print("Found shopping node\n");
 }
 #+end_src
+
+** Loading and saving YAML
+:PROPERTIES:
+:CUSTOM_ID: loading-and-saving-yaml
+:END:
+*** Format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+=lrg_dialog_tree_new_from_file()= and =lrg_dialog_tree_new_from_data()= read this format; =lrg_dialog_tree_save_to_data()= and =lrg_dialog_tree_save_to_file()= write it:
+
+#+begin_src yaml
+id: briefing-01                 # required: the tree id
+title: Mission 1 Briefing       # optional
+description: The first briefing # optional (read since 0.9.0)
+start: middle                   # optional: the start node; the first node when absent
+nodes:                          # required, non-empty, in order
+- id: intro                     # required, unique
+  speaker: hashbro              # optional
+  text: Crispy on the outside...  # required
+  next: choice                  # optional: the node that follows
+  metadata:                     # optional string -> string map
+    portrait: hashbro-determined
+  conditions:                   # optional: all must pass to show the node
+  - flag:met-maple
+  effects:                      # optional: applied when the node is shown
+  - set-flag:briefed
+- id: middle
+  text: An auto-chained line.   # no next, no responses: continues with the following node
+- id: choice
+  text: Ready to go?
+  responses:                    # optional: the player's choices
+  - text: Let's go              # required
+    next: outro                 # required
+    conditions: [flag:ready]    # optional
+    effects: [set-flag:go]      # optional
+  - text: Not yet
+    next: dead-end
+- id: dead-end
+  text: Then wait.
+  next: null                    # explicit null: a terminal node that is not last
+- id: outro
+  text: Good luck out there.    # the last node is terminal
+#+end_src
+
+The loader validates the result with =lrg_dialog_tree_validate()= (every =next= and =start= names an existing node). Response ids are generated as =<node id>-r<index>=.
+
+*** Auto-chaining and explicit terminals
+:PROPERTIES:
+:CUSTOM_ID: auto-chaining
+:END:
+A node with neither =next= nor =responses= continues with the node after it (a linear scene needs no =next= keys); the last node is terminal. Since 0.9.0 a node with an explicit =next: null= is terminal wherever it is; before, =null= was read like an absent key and chained.
+
+*** Saving
+:PROPERTIES:
+:CUSTOM_ID: saving
+:END:
+#+begin_src C
+gchar         *lrg_dialog_tree_save_to_data (LrgDialogTree  *self,
+                                             gsize          *length,
+                                             GError        **error);
+gboolean       lrg_dialog_tree_save_to_file (LrgDialogTree  *self,
+                                             const gchar    *path,
+                                             GError        **error);
+#+end_src
+
+=lrg_dialog_tree_save_to_data()= returns the YAML (transfer full; =length= optional) and =lrg_dialog_tree_save_to_file()= writes it atomically. The writer:
+
+- writes =title= and =description= when set, and =start= only when it is not the first node (the loader's default);
+- writes the nodes in =lrg_dialog_tree_get_node_ids()= order, with =speaker=, =next=, =metadata= (keys sorted: the node keeps them unordered), =conditions=, =effects= and =responses= when present;
+- leaves out a =next= that auto-chaining restores (no responses, =next= is the following node) and writes =next: null= for a terminal node that is not last, so the loaded tree links exactly as the saved one;
+- fails with =G_IO_ERROR_INVALID_DATA= for a tree without nodes or a response without a next node, which the format cannot express.
+
+Saving a tree loaded from saved text gives the same bytes; =tests/test-format-writers.c= checks this on a real-format fixture and on trees built in code.
+
+#+begin_src C
+g_autoptr(LrgDialogTree) tree = lrg_dialog_tree_new_from_file ("data/dialog/merchant.yaml", &error);
+
+lrg_dialog_node_set_text (lrg_dialog_tree_get_node (tree, "greeting"), "Back again?");
+if (!lrg_dialog_tree_save_to_file (tree, "data/dialog/merchant.yaml", &error))
+    g_warning ("%s", error->message);
+#+end_src
+
+*** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: using-it-from-the-editor
+:END:
+The editor's dialog data editor ([[file:../../editor/data-editors.org][Data editors]]) edits dialog files as documents (comments and unknown keys such as =mood:= kept), draws them as a node graph and validates them with =lrg_dialog_tree_new_from_data()= on the document text; its play pane walks a fresh tree from the same call. The engine writer is for games and tools that generate or rewrite dialog files.

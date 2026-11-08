@@ -1,0 +1,45 @@
+#+title: Gettext PO
+#+description: Import, export, extract and pseudolocalize LrgLocale strings
+#+authors: Zach Podbielniak
+#+categories: libregnum i18n
+#+created: 2026-11-07T20:00:00-05:00
+#+updated: 2026-11-07T20:00:00-05:00
+#+version: 1.0
+
+* Gettext PO
+:PROPERTIES:
+:CUSTOM_ID: po
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][I18N]]* > Gettext PO
+#+end_quote
+
+=src/i18n/lrg-po.h= moves strings between an =LrgLocale= and a gettext =.po= file. The locale editor does not call these functions. A game or a tool does.
+
+=lrg_po_error_quark()= is the =GQuark= for =LRG_PO_ERROR_FAILED=.
+
+** Import and export
+:PROPERTIES:
+:CUSTOM_ID: po-import-export
+:END:
+
+=lrg_po_import_file()= reads =msgid= / =msgstr= pairs into the locale. The empty header =msgid= is skipped. A singular =msgstr= is stored with =lrg_locale_set_string()=. Plural indexes are =msgstr[0]= =LRG_PLURAL_ONE=, =msgstr[1]= =LRG_PLURAL_OTHER=, =msgstr[2]= =LRG_PLURAL_FEW=, =msgstr[3]= =LRG_PLURAL_MANY=, =msgstr[4]= =LRG_PLURAL_TWO=, =msgstr[5]= =LRG_PLURAL_ZERO=. Only a single digit after =msgstr[= is read. The return value is the number of entries imported, or -1 on error.
+
+=lrg_po_export()= writes the locale's singular strings as a UTF-8 PO document. The header is =msgid ""= / =msgstr ""= / =Content-Type: text/plain; charset=UTF-8=. Plurals are not written. =lrg_po_export_file()= writes that text to a path.
+
+** Extraction and pseudolocale
+:PROPERTIES:
+:CUSTOM_ID: po-extract
+:END:
+
+=lrg_po_extract()= returns the unique keys in a source string, in order. An =@= token (=@hello.world=) is a key when the character before =@= is not itself a key character. =tr("...")=, =tr('...')=, =_("...")= and =_('...')= contribute the quoted string. The match is an exact prefix. There is no gather action in the editor.
+
+=lrg_po_pseudolocalize()= returns a new locale whose code is =qps-ploc=. Each singular string is wrapped in =[= and =]=. The vowels aeiou and AEIOU are doubled as àà éé íí óó úú (and the capital forms). Other characters are copied. There is no preview toggle.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: po-see-also
+:END:
+
+- [[file:locale.org][LrgLocale]]
+- [[file:index.org][I18N module]]

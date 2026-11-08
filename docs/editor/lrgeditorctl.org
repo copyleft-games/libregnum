@@ -48,6 +48,7 @@ Editors listen on =$XDG_RUNTIME_DIR/libregnum/editor-PID.sock= (or =--socket=, =
 | =-s=, =--session SESSION= | Socket path, PID, or any substring of the project or level path        |
 | =-o=, =--output FORMAT=  | =yaml=, =json=, =table=, =wide= (extra columns such as GUIDs), =name= (=node/PATH=) |
 | =--timeout SEC=          | Reply timeout (default 10)                                               |
+| =-n=, =--node NODE=, =--target NODE= | Node and joint target of the =physics= verbs (0.9.0)       |
 | =-h=, =--help=, =--license=, =-v=, =--version= |                                                  |
 
 Exit status: 0 success, 1 the editor reported an error (unknown node, failed save, validation errors), 2 usage error.
@@ -135,6 +136,11 @@ location: [2, 2, -3]
 | =profiler [frames=N] [enable=true\vert{}false]= | Profiler sections as a table (=profiler.sample=) |
 | =data list\vert{}open\vert{}get\vert{}set\vert{}edit\vert{}undo\vert{}redo\vert{}validate\vert{}save\vert{}reload\vert{}close\vert{}reveal [PATH] ...= | The data editors (=data.*=), see [[#verbs-data][Data editors]] |
 | =palette [commands\vert{}files] [QUERY]=   | Open the command palette or quick-open, pre-filled (=palette.open=) |
+| =material ...=, =shader ...=, =shadergraph ...= (aliases =mat=, =sg=) | Materials, user shaders and shader graphs (=material.*=, =shader.*=, =shadergraph.*=), see [[#verbs-0-9-0][0.9.0 verbs]] |
+| =env [get\vert{}set KEY VALUE\vert{}reset\vert{}bake [--wait]\vert{}progress\vert{}show]= (alias =environment=) | The level's =environment:= block (=environment.*=) |
+| =post types\vert{}open\vert{}create\vert{}get\vert{}add\vert{}remove\vert{}move\vert{}set\vert{}save\vert{}preview\vert{}look\vert{}assign ...= | =.rpost= post stacks (=post.*=) |
+| =lod get NODE=, =lod force NODE LEVEL\vert{}auto= | LOD preview of a mesh node (=lod.*=) |
+| =view layers [MASK\vert{}LAYER on\vert{}off] [viewport=N]= | A viewport's render-layer cull mask (=view.layers=) |
 | =preferences [PAGE]= (alias =prefs=)       | Open the preferences dialog, optionally on a page such as =keybindings= (=preferences.open=) |
 | =call METHOD [k=v...\vert{}JSON]=          | Any IPC method                                              |
 | =quit [--force]=                           |                                                             |
@@ -214,6 +220,791 @@ lrgeditorctl data validate && lrgeditorctl data save
 lrgeditorctl data close --force
 #+end_src
 
+** 0.9.0 verbs
+:PROPERTIES:
+:CUSTOM_ID: verbs-0-9-0
+:END:
+The rendering tools of 0.9.0 (materials, user shaders, shader graphs, the level environment, post stacks, LOD preview, render layers and the debug view modes) have a verb family each. They follow the [[#verbs-0-8-1][0.8.1 convention]] with one addition: a family is a table of sub-commands whose positional arguments fill named parameters in order. File arguments (=PATH=, =DEST=) go through the same path rule (sent absolute when they exist relative to the current directory, else resolved by the editor against the project, which is what a file about to be created needs), value arguments (=VALUE=, =INDEX=, =FROM=, =TO=, =LEVEL=, =ENABLED=) are parsed like assignment values (JSON, numbers, =true= / =false=, =null=, =a,b,c= number vectors, and =on= / =off= as booleans), everything else is a string. =key=value= arguments are passed through as extra parameters, the result prints as YAML (=-o json= for JSON), and a wrong sub-command prints the family's usage and exits 2.
+
+| Verb | Method | Notes |
+|------+--------+-------|
+| =material open PATH= | =material.open= | Opens the material editor tab |
+| =material create PATH [parent=P] [shading_model=lit\vert{}unlit\vert{}custom] [shader=S]= | =material.create= | |
+| =material variant PATH [DEST]= | =material.create_variant= | An instance whose parent is =PATH= |
+| =material get PATH= | =material.get= | Every parameter, texture slot, uniform and the instance's =overrides= |
+| =material set PATH KEY VALUE= | =material.set= | =KEY= is a =.rmat= key: =metallic=, =base_color= (=1,0.5,0.2,1=), =textures.albedo=, =uniforms.tint= ... |
+| =material revert PATH KEY= | =material.revert= | Drops an instance's override |
+| =material save PATH=, =material list= | =material.save=, =material.list= | |
+| =material preview PATH [SHAPE] [rotate=BOOL]= | =material.preview= | =SHAPE=: =sphere=, =cube=, =plane= |
+| =material assign NODE PATH [submesh=N]= | =material.assign= | Same as dropping the material on the node in the viewport (undoable) |
+| =shader create PATH [lit=BOOL]= | =shader.create= | A =.rshader= with a fragment stub |
+| =shader compile\vert{}diagnostics\vert{}uniforms\vert{}reload PATH= | =shader.*= | Compile needs a windowed editor (GL) |
+| =shadergraph open\vert{}create\vert{}get\vert{}validate\vert{}glsl\vert{}save PATH= | =shadergraph.*= | =create= takes =master=pbr\vert{}unlit= |
+| =shadergraph types= | =shadergraph.node_types= | The node library |
+| =shadergraph add PATH TYPE [id=I] [x=X] [y=Y]= | =shadergraph.add_node= | |
+| =shadergraph remove PATH ID= | =shadergraph.remove_node= | |
+| =shadergraph connect PATH FROM FROM_PORT TO TO_PORT=, =shadergraph disconnect PATH TO TO_PORT= | =shadergraph.connect=, =shadergraph.disconnect= | |
+| =shadergraph param PATH ID KEY VALUE=, =shadergraph input PATH ID PORT VALUE= | =shadergraph.set_param=, =shadergraph.set_input= | =VALUE= =null= clears an input constant |
+| =env= or =env get= | =environment.get= | ={present, environment, baked, needs_bake}= |
+| =env set KEY VALUE= | =environment.set= | =KEY= is a dotted path in the block (=fog.density=, =sky.source=, =sky.zenith=, =ibl.enabled=, =volumetric.steps=, =post_stack=); one undo step; =values={...}= sets several at once |
+| =env reset= | =environment.reset= | Removes the block (undoable) |
+| =env bake [--wait]= | =environment.bake= | Starts the IBL bake and probe capture (windowed editors). =--wait= polls =environment.progress= until it finishes (up to ten minutes, or =--timeout= seconds when longer) and exits 1 when the bake reports an error |
+| =env progress=, =env show= | =environment.progress=, =environment.show= | |
+| =post types= | =post.effect_types= | Effect types with their parameters |
+| =post open\vert{}get\vert{}save\vert{}assign PATH= | =post.*= | =assign= makes the stack the level's =environment.post_stack= |
+| =post create PATH [preset=default\vert{}empty]= | =post.create= | |
+| =post add PATH TYPE [index=N]=, =post remove PATH INDEX=, =post move PATH FROM TO= | =post.add=, =post.remove=, =post.move= | |
+| =post set PATH INDEX KEY VALUE= | =post.set= | =KEY= is =enabled=, =weight= or an effect parameter |
+| =post preview [PATH] on\vert{}off= | =post.preview= | Live preview of a stack in the viewports, or back to the level's look |
+| =post look PATH [viewport=N]= | =post.save_look= | "Save current look": what a viewport's post chain does now, as a =.rpost= |
+| =lod get NODE= | =lod.get= | Levels with triangle counts, screen sizes and errors, the current and the forced level |
+| =lod force NODE LEVEL= | =lod.force= | Preview only; =auto= (or =level=-1=) goes back to automatic selection. A bare =-1= would be read as an option, hence =auto= |
+| =view layers [MASK]=, =view layers LAYER on\vert{}off= | =view.layers= | =MASK= is a number, =0x= hex, =all= or =none=; =LAYER= an index 0..31 or a layer name (=default=, =ui=, =editor-only=, =ignore-raycast=, =transparent-fx=, =water=, =sky=); =viewport=N= picks a viewport |
+| =view render-mode MODE= (alias =view mode=) | =view.render_mode= | =MODE=: =lit=, =unlit=, =wireframe=, =normals=, =lighting-only= and the debug views =overdraw=, =uv=, =light-complexity=, =ao=, =reflections= |
+
+#+begin_src sh
+lrgeditorctl material create materials/steel.rmat
+lrgeditorctl material set materials/steel.rmat metallic 1
+lrgeditorctl material set materials/steel.rmat base_color 0.8,0.8,0.85,1
+lrgeditorctl material assign Props/Crate materials/steel.rmat
+lrgeditorctl shadergraph connect graphs/glow.rshadergraph time out mul a
+lrgeditorctl env set sky.source gradient
+lrgeditorctl env set fog.density 0.02
+lrgeditorctl env bake --wait
+lrgeditorctl post create looks/night.rpost preset=empty
+lrgeditorctl post add looks/night.rpost vignette
+lrgeditorctl post set looks/night.rpost 0 intensity 0.4
+lrgeditorctl post assign looks/night.rpost
+lrgeditorctl lod force Props/Statue 2; lrgeditorctl lod force Props/Statue auto
+lrgeditorctl view layers 0x5 viewport=1
+lrgeditorctl view mode light-complexity
+#+end_src
+
+=make test-editorctl= drives a few commands of each family; a family whose methods the editor under test does not register is reported as =SKIP=.
+
+*** Lighting bake, sequences, 2D skeletons and animation (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: verbs-0-9-0-m34
+:END:
+The editor tools of the 0.9.0 M3/M4 wave have a family each, with the same conventions as above (positionals fill named parameters, =PATH= / =MODEL= go through the path rule, =~= values are typed, =key=value= passes extra parameters through). Every method and its parameters are in [[file:ipc-protocol.org][IPC Protocol]]: [[file:ipc-protocol.org::#ipc-bake][bake]], [[file:ipc-protocol.org::#sequence-methods][sequence]], and the skeleton, animation-graph, bone-map and clip sections of their editors ([[file:skeleton2d-editor.org][2D skeleton editor]], [[file:animation-editor.org][Animation editor]]).
+
+| Verb | Method | Notes |
+|------+--------+-------|
+| =bake= or =bake get= | =bake.get= | settings, references, state and the last result |
+| =bake set KEY VALUE= | =bake.set= | one setting (=samples=, =texels_per_unit=, =denoise on=, ...); =values={...}= sets several in one undo step |
+| =bake reset= | =bake.set= =reset=true= | drops every =lighting: settings:= key |
+| =bake start [--wait] [save=false]= | =bake.start= | =--wait= polls =bake.progress= (up to an hour, or =--timeout=), prints =bake.get= at the end, exits 1 on failure or cancel |
+| =bake progress=, =bake cancel=, =bake clear=, =bake show= | =bake.*= | |
+| =bake save [DIR]= | =bake.save= | writes the files next to the level (or into =DIR=) and the references |
+| =bake evaluate [X Y Z [NX NY NZ]]= | =bake.evaluate= | the light at a point; without numbers under the viewport centre |
+| =bake preview on\vert{}off=, =bake page N= | =bake.preview= | baked lighting in the viewport; the panel's atlas page |
+| =seq= or =seq list= | =sequence.list= | the open sequence |
+| =seq open\vert{}create PATH= | =sequence.open=, =sequence.create= | =create= takes =length= =fps= =play_mode= |
+| =seq get=, =seq set key=value...=, =seq save [save_as=P]=, =seq undo [redo=true]= | =sequence.*= | =path=P= picks a sequence other than the open one (every =seq= verb) |
+| =seq add-track KIND [binding=NODE]= | =sequence.add_track= | =KIND=: =transform property camera-cut audio event animation subsequence= |
+| =seq add-key TRACK TIME [VALUE] [channel=C]=, =seq set-key TRACK key=N\vert{}at=T ...= | =sequence.add_key=, =sequence.set_key= | |
+| =seq add-section TRACK START name=N [duration=D]= | =sequence.add_section= | |
+| =seq remove track=N [...]=, =seq bind NODE=, =seq play [playing=false]=, =seq scrub TIME= | =sequence.*= | |
+| =seq from-timeline TIMELINE PATH= | =sequence.from_timeline= | |
+| =timeline tangent NODE TIME MODE [name=TL] [channel=C] [slope=S]= | =timeline.tangent= | =MODE=: =eased auto user broken linear constant= |
+| =skel2d create\vert{}open\vert{}get\vert{}save PATH= | =skel2d.*= | |
+| =skel2d add-bone PATH NAME [parent=P length=L ...]=, =set-bone PATH BONE ...=, =remove-bone PATH BONE= | =skel2d.add_bone= ... | |
+| =skel2d add-slot PATH NAME BONE=, =set-slot PATH SLOT ...=, =remove-slot PATH SLOT=, =draw-order PATH ORDER= | =skel2d.*= | =ORDER= is a JSON array of slot names |
+| =skel2d attach\vert{}detach\vert{}mesh\vert{}auto-weights PATH SLOT NAME ...= | =skel2d.*= | |
+| =skel2d paint-weights PATH SLOT NAME BONE X Y [radius=R strength=S]= | =skel2d.paint_weights= | |
+| =skel2d skin PATH NAME OP=, =skel2d clip PATH NAME OP=, =skel2d key PATH TARGET CHANNEL TIME [values=...]= | =skel2d.*= | |
+| =skel2d play\vert{}mode PATH ...=, =skel2d pick PATH X Y= | =skel2d.*= | |
+| =anim open\vert{}create\vert{}get\vert{}enter\vert{}preview\vert{}validate\vert{}save PATH= | =anim.*= | =machine=/layers/0/...= picks a machine |
+| =anim add-layer\vert{}remove-layer PATH NAME=, =anim add-state\vert{}remove-state\vert{}set-state PATH NAME ...= | =anim.*= | |
+| =anim add-transition\vert{}set-transition\vert{}remove-transition PATH FROM TO ...= | =anim.*= | =FROM= =*= is any state; =conditions='[...]'= |
+| =anim add-param PATH NAME TYPE=, =remove-param PATH NAME=, =set-param PATH NAME VALUE= | =anim.add_parameter= ... | =set-param= is live preview only |
+| =anim blend-tree PATH STATE [children='[...]']= | =anim.set_blend_tree= | |
+| =bonemap open\vert{}create\vert{}get\vert{}auto-fill\vert{}rules\vert{}models\vert{}preview\vert{}save PATH=, =bonemap set PATH SOURCE TARGET= | =bonemap.*= | =TARGET= =null= removes the pair |
+| =clip list\vert{}info\vert{}preview MODEL [CLIP]=, =clip morph MODEL TARGET WEIGHT= | =clip.*= | glTF clips and morph targets |
+
+#+begin_src sh
+lrgeditorctl bake set texels_per_unit 4; lrgeditorctl bake set samples 64
+lrgeditorctl bake start --wait
+lrgeditorctl bake evaluate 0 0.01 0 0 1 0
+lrgeditorctl seq create seq/intro.rseq length=8
+lrgeditorctl seq add-track transform binding=Props/Crate
+lrgeditorctl seq add-key 0 1.5 2 channel=location.y; lrgeditorctl seq scrub 1.5; lrgeditorctl seq save
+lrgeditorctl skel2d create rigs/hero.rskel2d; lrgeditorctl skel2d add-bone rigs/hero.rskel2d arm length=40
+lrgeditorctl anim add-state anims/hero.ranim walk clip=walk
+lrgeditorctl bonemap auto-fill maps/mixamo.rbonemap
+lrgeditorctl clip list models/hero.glb
+#+end_src
+
+*** Physics (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: verbs-physics
+:END:
+Three families: =physics= edits a node's =physics:= block (the Physics panel's =physics.*= methods, see [[file:physics.org][Physics in Levels]]), =physics layers= the project's collision layers, collide matrix and world settings, =physasset= the =.rphysasset= ragdoll editor (see [[file:physics-asset-editor.org][Physics Asset Editor and Layers]]). Results print as YAML unless =-o= says otherwise.
+
+=physics= verbs act on =--node NODE= (=-n=; a GUID or name path), or =node=NODE=, or the primary selection. =key=value= arguments go into the method's =values= object (field names as in =physics get=, =-= or =_=), except the top-level keys each verb lists. Vectors are =x,y,z=.
+
+| Command | Method | Notes |
+|---------+--------+-------|
+| =physics [get]= | =physics.get= | body, shapes, joints, project layer names |
+| =physics add-body [KIND] [shape=auto\vert{}KIND\vert{}none]= | =physics.add_body= | =KIND= =dynamic= (default) =static kinematic=; =--kind= works too |
+| =physics remove-body= | =physics.remove_body= | |
+| =physics set-body K=V...= | =physics.set_body= | e.g. =mass=20 layer=debris ccd=true= |
+| =physics add-shape [KIND] [fit=true] [K=V...]= | =physics.add_shape= | =KIND= =box= (default) =sphere capsule cylinder convex mesh= |
+| =physics remove-shape I=, =physics set-shape I K=V...=, =physics move-shape I TO= | =physics.*_shape= | |
+| =physics add-joint [KIND] [--target NODE] [K=V...]= | =physics.add_joint= | =target=NODE= works too; without a target the joint holds to the world |
+| =physics remove-joint I=, =physics set-joint I K=V...= | =physics.*_joint= | =target=NODE= (or =target== for the world) goes into =values= |
+| =physics fit [I] [--kind KIND]= | =physics.fit= | fits shape =I= (0) to the node's model |
+| =physics overlay [NAME...] [+NAME] [-NAME] [viewport=N]= | =physics.overlay= | bare names replace the flags, =+= / =-= turn one on / off; no names reads them |
+| =physics state=, =physics show= | =physics.state=, =physics.show= | live body while playing; bring the panel forward |
+| =physics layers [get]= | =physics.layers.get= | 32 slots, matrix rows, =no_collide= pairs, settings |
+| =physics layers name I NAME=, =physics layers name I -= | =physics.layers.set_name= | =-= (or nothing) unnames the slot |
+| =physics layers collide A B on\vert{}off= | =physics.layers.set_collides= | =A=, =B=: names or indices |
+| =physics layers settings [K=V...]= | =physics.layers.settings= | =gravity=x,y,z fixed_dt= =max_substeps= =iterations= =sleep_threshold= =sleep_substeps= =reset=true= |
+| =physics layers reset [empty=true]=, =physics layers open= | =physics.layers.reset=, =physics.layers.open= | |
+| =physasset open\vert{}get\vert{}stabilize\vert{}save PATH= | =physasset.*= | |
+| =physasset create PATH [model=M total_mass=KG radius_ratio=R]= | =physasset.create= | with =model= one part per bone |
+| =physasset model PATH MODEL= | =physasset.set_model= | the preview model (=.meta= sidecar) |
+| =physasset add-part PATH BONE [K=V...]=, =physasset set-part PATH PART K=V...= | =physasset.add_part=, =physasset.set_part= | =K=V= go into =values=; =PART= an index or bone name |
+| =physasset remove-part PATH PART=, =physasset select PATH PART= | =physasset.*= | |
+| =physasset generate PATH [total_mass=KG radius_ratio=R]= | =physasset.generate= | replaces every part |
+| =physasset exclude\vert{}unexclude PATH A B= | =physasset.exclude= | =unexclude= sends =remove=true= |
+| =physasset set PATH [name=N] [exclude_adjacent=false]= | =physasset.set= | |
+| =physasset simulate PATH [advance=S] [run=false] [reset=true]= | =physasset.simulate= | |
+
+#+begin_src sh
+lrgeditorctl physics add-body dynamic --node Props/Crate
+lrgeditorctl physics set-body mass=20 layer=debris --node Props/Crate
+lrgeditorctl physics add-joint hinge --target Door/Frame axis=0,1,0 limits-enabled=true limit-max=1.6 --node Door
+lrgeditorctl physics overlay shapes contacts; lrgeditorctl physics overlay +aabbs
+lrgeditorctl physics layers name 9 water; lrgeditorctl physics layers collide water debris off
+lrgeditorctl physics layers settings gravity=0,-3.7,0 iterations=12
+lrgeditorctl physasset create chars/hero.rphysasset model=chars/hero.glb total_mass=80
+lrgeditorctl physasset set-part chars/hero.rphysasset shin_l joint=hinge twist_degrees=0,140
+lrgeditorctl physasset exclude chars/hero.rphysasset thigh_l thigh_r
+lrgeditorctl physasset simulate chars/hero.rphysasset advance=2; lrgeditorctl physasset save chars/hero.rphysasset
+#+end_src
+
+*** Navigation, AI, effects, terrain, audio, 2D, scripting, debugging and profiling (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: verbs-m67
+:END:
+One family per editor tool of the 0.9.0 navigation, AI, effects, terrain, audio and 2D wave (M6/M7) and the scripting, debugging and profiling wave (M8: =debug=, =lsp=, =profiler=, =frame=, =script=, ...), one verb per IPC method: the verb is the method name after the family with =.= and =_= turned into =-= (=nav.area.box.add= is =nav area-box-add=). Positional arguments fill the method's leading parameters (shown in capitals, a file path first where the method takes one); everything else is =key=value= (numbers, booleans, =null=, =x,y,z= vectors and JSON are parsed). =--node= (=-n=) fills =node= for the verbs that take one. A bare family runs its =get= (=tiles= has =state= for =tiles.get=, since =tiles NODE= still reads a tilemap). Results print as YAML unless =-o= says otherwise. =asset new KIND [path=P] [name=N] [image=I]= creates any of the new files (=asset.new=). =profiler= keeps its 0.8.1 form: a bare =profiler [frames=N] [enable=BOOL]= (or =profiler sample=) prints the section table; =code open|list|save= stay as they were.
+
+# m67e-generated: begin
+**** nav
+:PROPERTIES:
+:CUSTOM_ID: verbs-nav
+:END:
+=nav= drives the Navigation panel on the open level. =set= takes =key=value= pairs (sent as =values=); the area, box and link verbs take their indices positionally. Methods: [[file:ipc-protocol.org::#ipc-nav][Navigation methods]].
+
+| Command | Method |
+|---------+--------|
+| =nav get [key=value...]= | =nav.get= |
+| =nav set [key=value...]= | =nav.set= |
+| =nav new PATH [key=value...]= | =nav.new= |
+| =nav bake [key=value...]= | =nav.bake= |
+| =nav cancel [key=value...]= | =nav.cancel= |
+| =nav save [key=value...]= | =nav.save= |
+| =nav clear [key=value...]= | =nav.clear= |
+| =nav area-add NAME [key=value...]= | =nav.area.add= |
+| =nav area-remove AREA [key=value...]= | =nav.area.remove= |
+| =nav area-set AREA [key=value...]= | =nav.area.set= |
+| =nav area-box-add AREA [key=value...]= | =nav.area.box.add= |
+| =nav area-box-remove AREA BOX [key=value...]= | =nav.area.box.remove= |
+| =nav area-box-set AREA BOX [key=value...]= | =nav.area.box.set= |
+| =nav link-add [key=value...]= | =nav.link.add= |
+| =nav link-remove INDEX [key=value...]= | =nav.link.remove= |
+| =nav link-set INDEX [key=value...]= | =nav.link.set= |
+| =nav select [key=value...]= | =nav.select= |
+| =nav overlay [key=value...]= | =nav.overlay= |
+| =nav agents [key=value...]= | =nav.agents= |
+| =nav debug-agent [key=value...]= | =nav.debug_agent= |
+| =nav show [key=value...]= | =nav.show= |
+
+#+begin_src sh
+lrgeditorctl nav set agent_radius=0.4 cell_size=0.2
+lrgeditorctl nav area-add water cost=4; lrgeditorctl nav area-box-add water min=-5,0,-5 max=5,1,5
+lrgeditorctl nav link-add start=0,0,0 end=0,2,4 bidirectional=false
+lrgeditorctl nav bake; lrgeditorctl nav save
+lrgeditorctl nav overlay on=polygons,links; lrgeditorctl nav agents
+#+end_src
+
+**** bt
+:PROPERTIES:
+:CUSTOM_ID: verbs-bt
+:END:
+=bt= edits =.rbt= behaviour trees (the =PATH= comes first). Node =props= and =params= are JSON objects: =props='{"seconds":2}'=. Methods: [[file:ipc-protocol.org::#ipc-bt][Behaviour tree methods]].
+
+| Command | Method |
+|---------+--------|
+| =bt open PATH [key=value...]= | =bt.open= |
+| =bt create PATH [key=value...]= | =bt.create= |
+| =bt get PATH [key=value...]= | =bt.get= |
+| =bt palette [key=value...]= | =bt.palette= |
+| =bt add-node PATH TYPE [key=value...]= | =bt.add_node= |
+| =bt remove-node PATH ID [key=value...]= | =bt.remove_node= |
+| =bt move-node PATH ID PARENT [key=value...]= | =bt.move_node= |
+| =bt set-node PATH ID [key=value...]= | =bt.set_node= |
+| =bt set-position PATH ID X Y [key=value...]= | =bt.set_position= |
+| =bt layout PATH [key=value...]= | =bt.layout= |
+| =bt select PATH ID [key=value...]= | =bt.select= |
+| =bt show PATH SUBTREE [key=value...]= | =bt.show= |
+| =bt add-key PATH NAME TYPE [key=value...]= | =bt.add_key= |
+| =bt remove-key PATH NAME [key=value...]= | =bt.remove_key= |
+| =bt set-subtree PATH NAME [key=value...]= | =bt.set_subtree= |
+| =bt remove-subtree PATH NAME [key=value...]= | =bt.remove_subtree= |
+| =bt open-subtree PATH ID [key=value...]= | =bt.open_subtree= |
+| =bt validate PATH [key=value...]= | =bt.validate= |
+| =bt save PATH [key=value...]= | =bt.save= |
+| =bt live PATH [key=value...]= | =bt.live= |
+
+#+begin_src sh
+lrgeditorctl bt create ai/guard.rbt
+lrgeditorctl bt add-node ai/guard.rbt wait parent=root props='{"seconds":2}'
+lrgeditorctl bt layout ai/guard.rbt; lrgeditorctl bt validate ai/guard.rbt; lrgeditorctl bt save ai/guard.rbt
+#+end_src
+
+**** fsm
+:PROPERTIES:
+:CUSTOM_ID: verbs-fsm
+:END:
+=fsm= edits =.rfsm= state machines. Actions and conditions are JSON (see the IPC section). Methods: [[file:ipc-protocol.org::#ipc-fsm][State machine methods]].
+
+| Command | Method |
+|---------+--------|
+| =fsm open PATH [key=value...]= | =fsm.open= |
+| =fsm create PATH [key=value...]= | =fsm.create= |
+| =fsm get PATH [key=value...]= | =fsm.get= |
+| =fsm enter PATH STATE [key=value...]= | =fsm.enter= |
+| =fsm up PATH [key=value...]= | =fsm.up= |
+| =fsm add-state PATH NAME [key=value...]= | =fsm.add_state= |
+| =fsm remove-state PATH STATE [key=value...]= | =fsm.remove_state= |
+| =fsm rename-state PATH STATE NAME [key=value...]= | =fsm.rename_state= |
+| =fsm set-initial PATH STATE [key=value...]= | =fsm.set_initial= |
+| =fsm add-transition PATH FROM TO [key=value...]= | =fsm.add_transition= |
+| =fsm set-transition PATH FROM INDEX [key=value...]= | =fsm.set_transition= |
+| =fsm remove-transition PATH FROM INDEX [key=value...]= | =fsm.remove_transition= |
+| =fsm set-actions PATH STATE PHASE [key=value...]= | =fsm.set_actions= |
+| =fsm set-position PATH STATE X Y [key=value...]= | =fsm.set_position= |
+| =fsm select PATH [key=value...]= | =fsm.select= |
+| =fsm add-key PATH NAME TYPE [key=value...]= | =fsm.add_key= |
+| =fsm remove-key PATH NAME [key=value...]= | =fsm.remove_key= |
+| =fsm validate PATH [key=value...]= | =fsm.validate= |
+| =fsm save PATH [key=value...]= | =fsm.save= |
+| =fsm live PATH [key=value...]= | =fsm.live= |
+| =fsm send-event PATH EVENT [key=value...]= | =fsm.send_event= |
+
+#+begin_src sh
+lrgeditorctl fsm create ai/door.rfsm
+lrgeditorctl fsm add-state ai/door.rfsm open; lrgeditorctl fsm add-transition ai/door.rfsm idle open event=use
+lrgeditorctl fsm set-actions ai/door.rfsm open enter actions='[{"event":"opened"}]'
+#+end_src
+
+**** ai
+:PROPERTIES:
+:CUSTOM_ID: verbs-ai
+:END:
+=ai= reads and pokes the play world's AI: entities with an =LrgAiComponent=, their blackboards and LLM decision brains. Methods: [[file:ipc-protocol.org::#ipc-ai][AI debug methods]].
+
+| Command | Method |
+|---------+--------|
+| =ai show [key=value...]= | =ai.show= |
+| =ai entities [key=value...]= | =ai.entities= |
+| =ai select ENTITY [key=value...]= | =ai.select= |
+| =ai state [key=value...]= | =ai.state= |
+| =ai set-key KEY VALUE [key=value...]= | =ai.set_key= |
+| =ai send-event EVENT [key=value...]= | =ai.send_event= |
+| =ai brains [key=value...]= | =ai.brains= |
+| =ai topic BRAIN TOPIC [key=value...]= | =ai.topic= |
+| =ai log [key=value...]= | =ai.log= |
+
+#+begin_src sh
+lrgeditorctl play start; lrgeditorctl ai entities
+lrgeditorctl ai set-key alert true entity=Guard
+lrgeditorctl ai brains; lrgeditorctl ai log limit=20
+#+end_src
+
+**** particles
+:PROPERTIES:
+:CUSTOM_ID: verbs-particles
+:END:
+=particles= edits =.rparticles= effects and drives the preview. =EMITTER= is an index or a name. Methods: [[file:ipc-protocol.org::#ipc-particles][Particle effect methods]].
+
+| Command | Method |
+|---------+--------|
+| =particles open PATH [key=value...]= | =particles.open= |
+| =particles create PATH [key=value...]= | =particles.create= |
+| =particles get PATH [key=value...]= | =particles.get= |
+| =particles kinds [key=value...]= | =particles.kinds= |
+| =particles set PATH KEY VALUE [key=value...]= | =particles.set= |
+| =particles add-emitter PATH [key=value...]= | =particles.add_emitter= |
+| =particles remove-emitter PATH EMITTER [key=value...]= | =particles.remove_emitter= |
+| =particles move-emitter PATH FROM TO [key=value...]= | =particles.move_emitter= |
+| =particles duplicate-emitter PATH EMITTER [key=value...]= | =particles.duplicate_emitter= |
+| =particles add-module PATH EMITTER KIND [key=value...]= | =particles.add_module= |
+| =particles remove-module PATH EMITTER MODULE [key=value...]= | =particles.remove_module= |
+| =particles move-module PATH EMITTER FROM TO [key=value...]= | =particles.move_module= |
+| =particles select PATH EMITTER [key=value...]= | =particles.select= |
+| =particles solo PATH EMITTER [key=value...]= | =particles.solo= |
+| =particles play PATH PLAYING [key=value...]= | =particles.play= |
+| =particles restart PATH [key=value...]= | =particles.restart= |
+| =particles seek PATH TIME [key=value...]= | =particles.seek= |
+| =particles preview PATH [key=value...]= | =particles.preview= |
+| =particles stats PATH [key=value...]= | =particles.stats= |
+| =particles save PATH [key=value...]= | =particles.save= |
+| =particles render PATH FILE [key=value...]= | =particles.render= |
+
+#+begin_src sh
+lrgeditorctl particles create fx/sparks.rparticles
+lrgeditorctl particles add-module fx/sparks.rparticles 0 gravity
+lrgeditorctl particles set fx/sparks.rparticles lifetime '"[0.5, 1.2]"' emitter=0 module=3
+lrgeditorctl particles seek fx/sparks.rparticles 1.5; lrgeditorctl particles stats fx/sparks.rparticles
+#+end_src
+
+**** weather
+:PROPERTIES:
+:CUSTOM_ID: verbs-weather
+:END:
+=weather= edits =.rweather= assets and previews presets and transitions. Methods: [[file:ipc-protocol.org::#ipc-weather][Weather methods]].
+
+| Command | Method |
+|---------+--------|
+| =weather open PATH [key=value...]= | =weather.open= |
+| =weather create PATH [key=value...]= | =weather.create= |
+| =weather get PATH [key=value...]= | =weather.get= |
+| =weather kinds [key=value...]= | =weather.kinds= |
+| =weather set PATH KEY VALUE [key=value...]= | =weather.set= |
+| =weather add-preset PATH ID [key=value...]= | =weather.add_preset= |
+| =weather remove-preset PATH PRESET [key=value...]= | =weather.remove_preset= |
+| =weather set-preset PATH PRESET [key=value...]= | =weather.set_preset= |
+| =weather add-layer PATH PRESET KIND [key=value...]= | =weather.add_layer= |
+| =weather remove-layer PATH PRESET LAYER [key=value...]= | =weather.remove_layer= |
+| =weather move-layer PATH PRESET FROM TO [key=value...]= | =weather.move_layer= |
+| =weather set-layer PATH PRESET LAYER [key=value...]= | =weather.set_layer= |
+| =weather set-param PATH PRESET LAYER NAME VALUE [key=value...]= | =weather.set_param= |
+| =weather set-transition PATH FROM TO DURATION [key=value...]= | =weather.set_transition= |
+| =weather remove-transition PATH FROM TO [key=value...]= | =weather.remove_transition= |
+| =weather select PATH PRESET [key=value...]= | =weather.select= |
+| =weather preview PATH [key=value...]= | =weather.preview= |
+| =weather save PATH [key=value...]= | =weather.save= |
+| =weather render PATH FILE [key=value...]= | =weather.render= |
+
+#+begin_src sh
+lrgeditorctl weather create fx/sky.rweather
+lrgeditorctl weather add-layer fx/sky.rweather storm rain
+lrgeditorctl weather set-param fx/sky.rweather storm 0 density 0.8
+lrgeditorctl weather preview fx/sky.rweather preset=clear transition_to=storm
+#+end_src
+
+**** terrain
+:PROPERTIES:
+:CUSTOM_ID: verbs-terrain
+:END:
+=terrain= sculpts and paints terrain nodes. =--node= (or =node==) picks the node; default the panel's. =stroke= takes =points=[[x,z],...]= in world units. Methods: [[file:ipc-protocol.org::#ipc-terrain][Terrain methods]].
+
+| Command | Method |
+|---------+--------|
+| =terrain get [key=value...]= | =terrain.get= |
+| =terrain brush [key=value...]= | =terrain.brush= |
+| =terrain stroke [key=value...]= | =terrain.stroke= |
+| =terrain sample X Z [key=value...]= | =terrain.sample= |
+| =terrain add-layer [key=value...]= | =terrain.add_layer= |
+| =terrain remove-layer INDEX [key=value...]= | =terrain.remove_layer= |
+| =terrain set-layer INDEX [key=value...]= | =terrain.set_layer= |
+| =terrain add-foliage [key=value...]= | =terrain.add_foliage= |
+| =terrain remove-foliage INDEX [key=value...]= | =terrain.remove_foliage= |
+| =terrain set-foliage INDEX [key=value...]= | =terrain.set_foliage= |
+| =terrain rebake [key=value...]= | =terrain.rebake= |
+| =terrain save [key=value...]= | =terrain.save= |
+| =terrain create [key=value...]= | =terrain.create= |
+| =terrain show [key=value...]= | =terrain.show= |
+
+#+begin_src sh
+lrgeditorctl terrain create name=island
+lrgeditorctl terrain brush tool=raise radius=6 strength=0.4
+lrgeditorctl terrain stroke points=[[0,0],[4,0],[8,2]] --node island
+lrgeditorctl terrain add-layer name=sand tiling=8 --node island; lrgeditorctl terrain save --node island
+#+end_src
+
+**** water
+:PROPERTIES:
+:CUSTOM_ID: verbs-water
+:END:
+=water= edits =.rwater= files (=path==) or level water nodes (=--node=). Methods: [[file:ipc-protocol.org::#ipc-water][Water methods]].
+
+| Command | Method |
+|---------+--------|
+| =water get [key=value...]= | =water.get= |
+| =water set [key=value...]= | =water.set= |
+| =water set-wave [key=value...]= | =water.set_wave= |
+| =water add-point X Z [key=value...]= | =water.add_point= |
+| =water set-point INDEX [key=value...]= | =water.set_point= |
+| =water remove-point INDEX [key=value...]= | =water.remove_point= |
+| =water save [key=value...]= | =water.save= |
+
+#+begin_src sh
+lrgeditorctl water set path=water/lake.rwater level=1.5
+lrgeditorctl water set-wave index=0 amplitude=0.3 --node Lake
+lrgeditorctl water add-point 4 0 width=3 --node Lake
+#+end_src
+
+**** mixer
+:PROPERTIES:
+:CUSTOM_ID: verbs-mixer
+:END:
+=mixer= edits =.rmixer= bus graphs (=path== picks the file; default the project's mixer). Methods: [[file:ipc-protocol.org::#ipc-mixer][Mixer methods]].
+
+| Command | Method |
+|---------+--------|
+| =mixer show [key=value...]= | =mixer.show= |
+| =mixer open [key=value...]= | =mixer.open= |
+| =mixer create PATH [key=value...]= | =mixer.create= |
+| =mixer set-default PATH [key=value...]= | =mixer.set_default= |
+| =mixer get [key=value...]= | =mixer.get= |
+| =mixer effect-types [key=value...]= | =mixer.effect_types= |
+| =mixer add-bus NAME [key=value...]= | =mixer.add_bus= |
+| =mixer remove-bus NAME [key=value...]= | =mixer.remove_bus= |
+| =mixer set-bus NAME [key=value...]= | =mixer.set_bus= |
+| =mixer set-send SOURCE TARGET LEVEL [key=value...]= | =mixer.set_send= |
+| =mixer remove-send SOURCE TARGET [key=value...]= | =mixer.remove_send= |
+| =mixer add-effect BUS TYPE [key=value...]= | =mixer.add_effect= |
+| =mixer remove-effect BUS ID [key=value...]= | =mixer.remove_effect= |
+| =mixer move-effect BUS ID INDEX [key=value...]= | =mixer.move_effect= |
+| =mixer set-effect BUS ID [key=value...]= | =mixer.set_effect= |
+| =mixer add-snapshot NAME [key=value...]= | =mixer.add_snapshot= |
+| =mixer remove-snapshot NAME [key=value...]= | =mixer.remove_snapshot= |
+| =mixer set-snapshot NAME [key=value...]= | =mixer.set_snapshot= |
+| =mixer capture-snapshot NAME [key=value...]= | =mixer.capture_snapshot= |
+| =mixer set-duck TRIGGER TARGET [key=value...]= | =mixer.set_duck= |
+| =mixer remove-duck TRIGGER TARGET [key=value...]= | =mixer.remove_duck= |
+| =mixer preview [key=value...]= | =mixer.preview= |
+| =mixer meters [key=value...]= | =mixer.meters= |
+| =mixer save [key=value...]= | =mixer.save= |
+
+#+begin_src sh
+lrgeditorctl mixer create audio/main.rmixer buses='["music","sfx"]' set_default=true
+lrgeditorctl mixer add-bus footsteps parent=sfx
+lrgeditorctl mixer add-effect sfx lowpass; lrgeditorctl mixer set-bus music volume=-6
+lrgeditorctl mixer meters
+#+end_src
+
+**** audio
+:PROPERTIES:
+:CUSTOM_ID: verbs-audio
+:END:
+=audio= reads and sets an audio emitter node's attenuation, cone, doppler, occlusion and bus. Methods: [[file:ipc-protocol.org::#ipc-audio][Audio emitter methods]].
+
+| Command | Method |
+|---------+--------|
+| =audio get NODE [key=value...]= | =audio.get= |
+| =audio set NODE [key=value...]= | =audio.set= |
+| =audio curve NODE [key=value...]= | =audio.curve= |
+| =audio buses [key=value...]= | =audio.buses= |
+
+#+begin_src sh
+lrgeditorctl audio set Speaker min_distance=2 max_distance=30 bus=sfx
+lrgeditorctl audio curve Speaker samples=16
+#+end_src
+
+**** tiles
+:PROPERTIES:
+:CUSTOM_ID: verbs-tiles
+:END:
+The rule-tile and grid verbs of =tiles= (=tiles NODE paint|rect|fill|pick|configure= still drive =tilemap.*=): the first word is the verb, the node comes from =--node=, =node== or the selection. A node named like one of these verbs needs the =--node= form. Methods: [[file:ipc-protocol.org::#ipc-tiles][Tile painting methods]].
+
+| Command | Method |
+|---------+--------|
+| =tiles state [key=value...]= | =tiles.get= |
+| =tiles grid [key=value...]= | =tiles.grid= |
+| =tiles brush [key=value...]= | =tiles.brush= |
+| =tiles autopaint [key=value...]= | =tiles.paint= |
+| =tiles refresh [key=value...]= | =tiles.refresh= |
+| =tiles cell-at [key=value...]= | =tiles.cell_at= |
+| =tiles tile-info TILE [key=value...]= | =tiles.tile_info= |
+
+#+begin_src sh
+lrgeditorctl tiles brush rule_tile=grass rotate=1
+lrgeditorctl tiles autopaint cells=[3,4,4,4,5,4] --node Ground
+lrgeditorctl tiles grid orientation=isometric cell_size=64,32 --node Ground
+#+end_src
+
+**** tileset
+:PROPERTIES:
+:CUSTOM_ID: verbs-tileset
+:END:
+=tileset= edits =.rtileset= files: per-tile flags, data, collision, animation and rule tiles. Methods: [[file:ipc-protocol.org::#ipc-tileset][Tileset methods]].
+
+| Command | Method |
+|---------+--------|
+| =tileset create PATH [key=value...]= | =tileset.create= |
+| =tileset open PATH [key=value...]= | =tileset.open= |
+| =tileset get [key=value...]= | =tileset.get= |
+| =tileset set [key=value...]= | =tileset.set= |
+| =tileset select [key=value...]= | =tileset.select= |
+| =tileset tile TILE [key=value...]= | =tileset.tile= |
+| =tileset collision TILE OP [key=value...]= | =tileset.collision= |
+| =tileset rule-tile OP NAME [key=value...]= | =tileset.rule_tile= |
+| =tileset rule RULE_TILE OP [key=value...]= | =tileset.rule= |
+| =tileset preview RULE_TILE [key=value...]= | =tileset.preview= |
+| =tileset save [key=value...]= | =tileset.save= |
+
+#+begin_src sh
+lrgeditorctl tileset create tiles/ground.rtileset image=tiles/ground.png tile_size=16,16
+lrgeditorctl tileset tile 5 flags='["solid"]' path=tiles/ground.rtileset
+lrgeditorctl tileset rule-tile preset grass preset=blob47 first=16 path=tiles/ground.rtileset
+#+end_src
+
+**** sprite
+:PROPERTIES:
+:CUSTOM_ID: verbs-sprite
+:END:
+=sprite= slices =.rsprite= sheets and edits their frames and animation clips. Methods: [[file:ipc-protocol.org::#ipc-sprite][Sprite sheet methods]].
+
+| Command | Method |
+|---------+--------|
+| =sprite create PATH [key=value...]= | =sprite.create= |
+| =sprite open PATH [key=value...]= | =sprite.open= |
+| =sprite get [key=value...]= | =sprite.get= |
+| =sprite slice MODE [key=value...]= | =sprite.slice= |
+| =sprite frame OP [key=value...]= | =sprite.frame= |
+| =sprite clip OP NAME [key=value...]= | =sprite.clip= |
+| =sprite clip-frame CLIP OP [key=value...]= | =sprite.clip_frame= |
+| =sprite event CLIP OP FRAME [key=value...]= | =sprite.event= |
+| =sprite play [key=value...]= | =sprite.play= |
+| =sprite save [key=value...]= | =sprite.save= |
+
+#+begin_src sh
+lrgeditorctl sprite create sprites/hero.rsprite image=sprites/hero.png frame_size=32,32
+lrgeditorctl sprite clip add walk frames=[0,1,2,3] fps=10 path=sprites/hero.rsprite
+lrgeditorctl sprite play clip=walk path=sprites/hero.rsprite
+#+end_src
+
+**** debug
+:PROPERTIES:
+:CUSTOM_ID: verbs-debug
+:END:
+=debug= drives the script debugger: breakpoints, stepping, the stack and variables, watches and the DAP server. Methods: [[file:ipc-protocol.org::#ipc-debug][Script debugger methods]].
+
+| Command | Method |
+|---------+--------|
+| =debug state [key=value...]= | =debug.state= |
+| =debug show [key=value...]= | =debug.show= |
+| =debug breakpoints [key=value...]= | =debug.breakpoints= |
+| =debug set-breakpoint PATH LINE [key=value...]= | =debug.set_breakpoint= |
+| =debug remove-breakpoint PATH LINE [key=value...]= | =debug.remove_breakpoint= |
+| =debug toggle-breakpoint LINE [key=value...]= | =debug.toggle_breakpoint= |
+| =debug clear-breakpoints [key=value...]= | =debug.clear_breakpoints= |
+| =debug continue [key=value...]= | =debug.continue= |
+| =debug pause [key=value...]= | =debug.pause= |
+| =debug step-over [key=value...]= | =debug.step_over= |
+| =debug step-in [key=value...]= | =debug.step_in= |
+| =debug step-out [key=value...]= | =debug.step_out= |
+| =debug stop [key=value...]= | =debug.stop= |
+| =debug stack [key=value...]= | =debug.stack= |
+| =debug scopes [key=value...]= | =debug.scopes= |
+| =debug variables REFERENCE [key=value...]= | =debug.variables= |
+| =debug evaluate EXPRESSION [key=value...]= | =debug.evaluate= |
+| =debug watches [key=value...]= | =debug.watches= |
+| =debug add-watch EXPRESSION [key=value...]= | =debug.add_watch= |
+| =debug remove-watch EXPRESSION [key=value...]= | =debug.remove_watch= |
+| =debug dap-start [key=value...]= | =debug.dap_start= |
+| =debug dap-stop [key=value...]= | =debug.dap_stop= |
+
+#+begin_src sh
+lrgeditorctl debug set-breakpoint scripts/player.lua 12 condition='hp < 10'
+lrgeditorctl play start; lrgeditorctl debug state
+lrgeditorctl debug stack; lrgeditorctl debug scopes; lrgeditorctl debug variables 1
+lrgeditorctl debug evaluate 'self.hp * 2'; lrgeditorctl debug step-over
+lrgeditorctl debug dap-start port=4711   # then M-x libregnum-dape
+#+end_src
+
+**** lsp
+:PROPERTIES:
+:CUSTOM_ID: verbs-lsp
+:END:
+=lsp= asks the code panel's language servers: status, diagnostics, completion, hover, definition, references, rename and formatting. Methods: [[file:ipc-protocol.org::#ipc-lsp][Language server methods]].
+
+| Command | Method |
+|---------+--------|
+| =lsp servers [key=value...]= | =lsp.servers= |
+| =lsp status [key=value...]= | =lsp.status= |
+| =lsp diagnostics [key=value...]= | =lsp.diagnostics= |
+| =lsp complete [key=value...]= | =lsp.complete= |
+| =lsp hover [key=value...]= | =lsp.hover= |
+| =lsp definition [key=value...]= | =lsp.definition= |
+| =lsp references [key=value...]= | =lsp.references= |
+| =lsp rename NEW_NAME [key=value...]= | =lsp.rename= |
+| =lsp format [key=value...]= | =lsp.format= |
+| =lsp restart [key=value...]= | =lsp.restart= |
+
+#+begin_src sh
+lrgeditorctl lsp servers
+lrgeditorctl code open scripts/player.lua:12; lrgeditorctl lsp diagnostics
+lrgeditorctl lsp hover line=12 column=7; lrgeditorctl lsp definition line=12 column=7 jump=true
+lrgeditorctl lsp rename hit_points line=3 column=7
+#+end_src
+
+**** profiler
+:PROPERTIES:
+:CUSTOM_ID: verbs-profiler
+:END:
+=profiler= reads the CPU/GPU profiler: a bare =profiler [frames=N] [enable=BOOL]= (or =profiler sample=) prints the section table of =profiler.sample=; the other verbs switch it, capture and load =.rprof= files, list and compare frames and drive the panel. Methods: [[file:ipc-protocol.org::#ipc-profiler][Profiler capture methods]].
+
+| Command | Method |
+|---------+--------|
+| =profiler set [key=value...]= | =profiler.set= |
+| =profiler capture [key=value...]= | =profiler.capture= |
+| =profiler save PATH [key=value...]= | =profiler.save= |
+| =profiler load PATH [key=value...]= | =profiler.load= |
+| =profiler frames [key=value...]= | =profiler.frames= |
+| =profiler frame [key=value...]= | =profiler.frame= |
+| =profiler compare [key=value...]= | =profiler.compare= |
+| =profiler view [key=value...]= | =profiler.view= |
+
+#+begin_src sh
+lrgeditorctl profiler set enable=true gpu=true
+lrgeditorctl profiler capture frames=240 path=captures/boss.rprof
+lrgeditorctl profiler frames count=10; lrgeditorctl profiler frame index=1234
+lrgeditorctl profiler compare a=1200 b=1234
+lrgeditorctl profiler view mode=flame frame=1234 show=true
+#+end_src
+
+**** frame
+:PROPERTIES:
+:CUSTOM_ID: verbs-frame
+:END:
+=frame= captures one viewport frame's draw calls, lists and inspects them, scrubs the viewport to call N and saves textures and render targets as PNG. Methods: [[file:ipc-protocol.org::#ipc-frame][Frame debugger methods]].
+
+| Command | Method |
+|---------+--------|
+| =frame capture [key=value...]= | =frame.capture= |
+| =frame status [key=value...]= | =frame.status= |
+| =frame calls [key=value...]= | =frame.calls= |
+| =frame call INDEX [key=value...]= | =frame.call= |
+| =frame scrub INDEX [key=value...]= | =frame.scrub= |
+| =frame texture PATH [key=value...]= | =frame.texture= |
+| =frame save PATH [key=value...]= | =frame.save= |
+| =frame load PATH [key=value...]= | =frame.load= |
+| =frame show [key=value...]= | =frame.show= |
+
+#+begin_src sh
+lrgeditorctl frame capture; lrgeditorctl frame status
+lrgeditorctl frame calls pass=opaque limit=20; lrgeditorctl frame call 17
+lrgeditorctl frame scrub 17; lrgeditorctl frame texture /tmp/partial.png target=replay
+lrgeditorctl frame save captures/hall.rframe
+#+end_src
+
+**** script
+:PROPERTIES:
+:CUSTOM_ID: verbs-script
+:END:
+=script= runs editor tool scripts and manages the =editor_scripts/= tools and run-in-editor script bindings. Methods: [[file:ipc-protocol.org::#ipc-script][Tool script methods]].
+
+| Command | Method |
+|---------+--------|
+| =script run CODE [key=value...]= | =script.run= |
+| =script languages [key=value...]= | =script.languages= |
+| =script tools [key=value...]= | =script.tools= |
+| =script run-tool ID [key=value...]= | =script.run_tool= |
+| =script reload [key=value...]= | =script.reload= |
+| =script run-in-editor NODE [key=value...]= | =script.run_in_editor= |
+| =script editor-running [key=value...]= | =script.editor_running= |
+
+#+begin_src sh
+lrgeditorctl script run 'editor:log("hi")'
+lrgeditorctl script run path=editor_scripts/scatter.lua
+lrgeditorctl script run 'editor.notify("hi")' language=python
+lrgeditorctl script tools; lrgeditorctl script run-tool script.tool.scatter
+lrgeditorctl script run-in-editor Spinner enabled=true; lrgeditorctl script editor-running
+#+end_src
+
+**** vscript
+:PROPERTIES:
+:CUSTOM_ID: verbs-vscript
+:END:
+=vscript= edits a =.rvscript= visual script (node graph or blocks) and runs it headless. Methods: [[file:ipc-protocol.org::#ipc-vscript][Visual script methods]].
+
+| Command | Method |
+|---------+--------|
+| =vscript create PATH [key=value...]= | =vscript.create= |
+| =vscript open PATH [key=value...]= | =vscript.open= |
+| =vscript get PATH [key=value...]= | =vscript.get= |
+| =vscript node-types QUERY [key=value...]= | =vscript.node_types= |
+| =vscript gi-search QUERY [key=value...]= | =vscript.gi_search= |
+| =vscript add-node TYPE [key=value...]= | =vscript.add_node= |
+| =vscript remove-node ID [key=value...]= | =vscript.remove_node= |
+| =vscript set-node ID [key=value...]= | =vscript.set_node= |
+| =vscript connect FROM TO [key=value...]= | =vscript.connect= |
+| =vscript disconnect FROM TO [key=value...]= | =vscript.disconnect= |
+| =vscript set-variable NAME [key=value...]= | =vscript.set_variable= |
+| =vscript add-subgraph NAME [key=value...]= | =vscript.add_subgraph= |
+| =vscript remove-subgraph NAME [key=value...]= | =vscript.remove_subgraph= |
+| =vscript add-comment TEXT [key=value...]= | =vscript.add_comment= |
+| =vscript remove-comment ID [key=value...]= | =vscript.remove_comment= |
+| =vscript set-program [key=value...]= | =vscript.set_program= |
+| =vscript select [key=value...]= | =vscript.select= |
+| =vscript validate PATH [key=value...]= | =vscript.validate= |
+| =vscript run [key=value...]= | =vscript.run= |
+| =vscript live PATH [key=value...]= | =vscript.live= |
+| =vscript breakpoint NODE [key=value...]= | =vscript.breakpoint= |
+| =vscript continue [key=value...]= | =vscript.continue= |
+| =vscript save PATH [key=value...]= | =vscript.save= |
+
+#+begin_src sh
+lrgeditorctl vscript create scripts/hello.rvscript
+lrgeditorctl vscript add-node math.add id=sum x=40 y=200
+lrgeditorctl vscript connect sum.result log.text
+lrgeditorctl vscript run; lrgeditorctl vscript save
+#+end_src
+
+**** memory
+:PROPERTIES:
+:CUSTOM_ID: verbs-memory
+:END:
+=memory= reads the memory profiler: type counts, asset resources, snapshots and a sample history. Methods: [[file:ipc-protocol.org::#ipc-memory][Memory profiler methods]].
+
+| Command | Method |
+|---------+--------|
+| =memory status [key=value...]= | =memory.status= |
+| =memory types [key=value...]= | =memory.types= |
+| =memory resources [key=value...]= | =memory.resources= |
+| =memory snapshot [key=value...]= | =memory.snapshot= |
+| =memory snapshots [key=value...]= | =memory.snapshots= |
+| =memory diff FROM [key=value...]= | =memory.diff= |
+| =memory clear-snapshots [key=value...]= | =memory.clear_snapshots= |
+| =memory history [key=value...]= | =memory.history= |
+| =memory show [key=value...]= | =memory.show= |
+
+#+begin_src sh
+lrgeditorctl memory status
+lrgeditorctl memory types sort=bytes limit=20
+lrgeditorctl memory snapshot label=before; lrgeditorctl memory diff from=m1
+lrgeditorctl memory show
+#+end_src
+
+**** network
+:PROPERTIES:
+:CUSTOM_ID: verbs-network
+:END:
+=network= reads peer and message counters, a one-second history, and switches the collector. Methods: [[file:ipc-protocol.org::#ipc-network][Network stats methods]].
+
+| Command | Method |
+|---------+--------|
+| =network stats [key=value...]= | =network.stats= |
+| =network history METRIC [key=value...]= | =network.history= |
+| =network enable [key=value...]= | =network.enable= |
+| =network reset [key=value...]= | =network.reset= |
+| =network show [key=value...]= | =network.show= |
+
+#+begin_src sh
+lrgeditorctl network enable enabled=true
+lrgeditorctl network stats window=10
+lrgeditorctl network history metric=bytes_in seconds=30
+lrgeditorctl network show
+#+end_src
+
+# m67e-generated: end
+
 ** MCP
 :PROPERTIES:
 :CUSTOM_ID: mcp
@@ -228,7 +1019,11 @@ claude mcp add libregnum -- lrgeditorctl mcp
 claude mcp add libregnum-keep -- lrgeditor --mcp /home/me/games/keep
 #+end_src
 
-Tools: =editor_info=, =list_sessions=, =get_tree=, =get_node=, =find_nodes=, =create_node= (with transform), =update_node=, =delete_node=, =duplicate_node=, =move_node=, =add_component=, =set_component=, =remove_component=, =add_script=, =remove_script=, =get_selection=, =set_selection=, =undo=, =redo=, =get_history=, =save_level=, =open_level=, =new_level=, =get_level_yaml=, =validate_level=, =list_actions=, =run_action=, =play=, =run_game=, =get_view=, =set_view=, =focus_view=, =screenshot= (returns a PNG image), =get_log=, =list_assets=, =project_info=, =ui_state=, =notify=, =get_tilemap=, =configure_tilemap=, =paint_tiles=, =paint_tile_rect=, =fill_tiles=, =list_timelines=, =get_timeline=, =set_keyframe=, =remove_keyframe=, =configure_timeline=, =preview_timeline=, =get_thumbnail=, =call_method= (see [[file:editor-tools.org][Editor Tools]]). Added in 0.8.1 (one per new IPC method, arguments passed through): =get_asset_meta= (read-only), =set_asset_meta=, =vcs_status= (read-only), =prefab_overrides= (read-only), =prefab_apply= (destructive), =prefab_revert= (destructive), =prefab_sync=, =prefab_relink=, =prefab_unlink= (destructive), =set_viewport_layout=, =set_render_mode=, =set_overlay=, =inspector_list= and =inspector_get= (read-only), =inspector_set=, =inspector_reset=, =inspector_apply_override= and =inspector_revert_override= (destructive), =inspector_state= (read-only, no arguments; lock the inspector with =run_action= =inspector.toggle-lock=), =hierarchy_reveal=, =hierarchy_rename=, =hierarchy_filter=, =hierarchy_state= (read-only), =asset_reveal=, =asset_rename=, =asset_move=, =asset_duplicate=, =asset_trash= and =asset_orphans= (destructive), =profiler_sample=, =code_open=, =code_list= (read-only), =code_save=, =open_palette=, =open_preferences=, and the data editor tools =data_open=, =data_list=, =data_get= and =data_validate= (read-only), =data_set=, =data_edit=, =data_undo=, =data_redo=, =data_save=, =data_reveal=, =data_reload= and =data_close= (destructive: they can discard unsaved edits). Added in 0.8.3: =source_list=, =source_ls= and =source_search= (read-only), =source_export=, =source_import= and =source_place= (see [[file:asset-sources.org][Asset Sources]]). =notify= takes =level= as a string (=info=, =success=, =warning=, =error=). Tools carry read-only/destructive hints; the server's instructions tell the model how nodes are addressed and the units used. =screenshot= is a deferred tool: inside the editor its reply is sent after the next frame is drawn, so it cannot stall the render loop.
+Tools: =editor_info=, =list_sessions=, =get_tree=, =get_node=, =find_nodes=, =create_node= (with transform), =update_node=, =delete_node=, =duplicate_node=, =move_node=, =add_component=, =set_component=, =remove_component=, =add_script=, =remove_script=, =get_selection=, =set_selection=, =undo=, =redo=, =get_history=, =save_level=, =open_level=, =new_level=, =get_level_yaml=, =validate_level=, =list_actions=, =run_action=, =play=, =run_game=, =get_view=, =set_view=, =focus_view=, =screenshot= (returns a PNG image), =get_log=, =list_assets=, =project_info=, =ui_state=, =notify=, =get_tilemap=, =configure_tilemap=, =paint_tiles=, =paint_tile_rect=, =fill_tiles=, =list_timelines=, =get_timeline=, =set_keyframe=, =remove_keyframe=, =configure_timeline=, =preview_timeline=, =get_thumbnail=, =call_method= (see [[file:editor-tools.org][Editor Tools]]). Added in 0.8.1 (one per new IPC method, arguments passed through): =get_asset_meta= (read-only), =set_asset_meta=, =vcs_status= (read-only), =prefab_overrides= (read-only), =prefab_apply= (destructive), =prefab_revert= (destructive), =prefab_sync=, =prefab_relink=, =prefab_unlink= (destructive), =set_viewport_layout=, =set_render_mode=, =set_overlay=, =inspector_list= and =inspector_get= (read-only), =inspector_set=, =inspector_reset=, =inspector_apply_override= and =inspector_revert_override= (destructive), =inspector_state= (read-only, no arguments; lock the inspector with =run_action= =inspector.toggle-lock=), =hierarchy_reveal=, =hierarchy_rename=, =hierarchy_filter=, =hierarchy_state= (read-only), =asset_reveal=, =asset_rename=, =asset_move=, =asset_duplicate=, =asset_trash= and =asset_orphans= (destructive), =profiler_sample=, =code_open=, =code_list= (read-only), =code_save=, =open_palette=, =open_preferences=, and the data editor tools =data_open=, =data_list=, =data_get= and =data_validate= (read-only), =data_set=, =data_edit=, =data_undo=, =data_redo=, =data_save=, =data_reveal=, =data_reload= and =data_close= (destructive: they can discard unsaved edits). Added in 0.8.3: =source_list=, =source_ls= and =source_search= (read-only), =source_export=, =source_import= and =source_place= (see [[file:asset-sources.org][Asset Sources]]). Added in 0.9.0 (one per new IPC method, arguments passed through): the material tools =material_open=, =material_create=, =material_create_variant=, =material_get= (read-only), =material_set=, =material_revert= (destructive), =material_save=, =material_preview=, =material_assign=, =material_list= (read-only); the shader tools =shader_create=, =shader_compile=, =shader_diagnostics= and =shader_uniforms= (read-only), =shader_reload=; the shader graph tools =shadergraph_open=, =shadergraph_create=, =shadergraph_node_types= and =shadergraph_get= (read-only), =shadergraph_add_node=, =shadergraph_remove_node= (destructive), =shadergraph_connect=, =shadergraph_disconnect= (destructive), =shadergraph_set_param=, =shadergraph_set_input=, =shadergraph_validate= and =shadergraph_glsl= (read-only), =shadergraph_save=; the level look tools =environment_get= (read-only), =environment_set=, =environment_reset= (destructive), =environment_bake=, =environment_progress= (read-only), =environment_show=; the post stack tools =post_effect_types= and =post_get= (read-only), =post_open=, =post_create=, =post_add=, =post_remove= (destructive), =post_move=, =post_set=, =post_save=, =post_preview=, =post_save_look=, =post_assign=; =lod_get= (read-only), =lod_force=; =set_view_layers=; the lighting bake tools =bake_get=, =bake_progress= and =bake_evaluate= (read-only), =bake_set=, =bake_start=, =bake_cancel=, =bake_save=, =bake_clear= (destructive), =bake_preview=, =bake_show=; the sequence tools =sequence_list= and =sequence_get= (read-only), =sequence_open=, =sequence_create=, =sequence_set=, =sequence_add_track=, =sequence_add_key=, =sequence_set_key=, =sequence_add_section=, =sequence_remove= (destructive), =sequence_bind=, =sequence_play=, =sequence_scrub=, =sequence_save=, =sequence_undo=, =sequence_from_timeline= and =timeline_tangent=; the 2D skeleton tools =skel2d_get= and =skel2d_pick= (read-only), =skel2d_create=, =skel2d_open=, =skel2d_add_bone=, =skel2d_set_bone=, =skel2d_remove_bone= (destructive), =skel2d_add_slot=, =skel2d_set_slot=, =skel2d_remove_slot= (destructive), =skel2d_draw_order=, =skel2d_attach=, =skel2d_detach= (destructive), =skel2d_mesh=, =skel2d_auto_weights=, =skel2d_paint_weights=, =skel2d_skin=, =skel2d_clip=, =skel2d_key=, =skel2d_play=, =skel2d_mode=, =skel2d_save=; the animation graph tools =anim_get= and =anim_validate= (read-only), =anim_open=, =anim_create=, =anim_enter=, =anim_add_layer=, =anim_remove_layer= (destructive), =anim_add_state=, =anim_remove_state= (destructive), =anim_set_state=, =anim_add_transition=, =anim_set_transition=, =anim_remove_transition= (destructive), =anim_add_parameter=, =anim_remove_parameter= (destructive), =anim_set_parameter=, =anim_set_blend_tree=, =anim_preview=, =anim_save=; the bone map tools =bonemap_get= (read-only), =bonemap_open=, =bonemap_create=, =bonemap_set=, =bonemap_auto_fill=, =bonemap_set_rules=, =bonemap_set_models=, =bonemap_preview=, =bonemap_save=; and the clip tools =clip_list= and =clip_info= (read-only), =clip_preview=, =clip_set_morph=; the node physics tools =physics_get= and =physics_state= (read-only), =physics_add_body=, =physics_remove_body= (destructive), =physics_set_body=, =physics_add_shape=, =physics_remove_shape= (destructive), =physics_set_shape=, =physics_move_shape=, =physics_add_joint=, =physics_remove_joint= (destructive), =physics_set_joint=, =physics_fit=, =physics_overlay=, =physics_show=; the project layer tools =physics_layers_get= (read-only), =physics_layers_set_name=, =physics_layers_set_collides=, =physics_layers_settings=, =physics_layers_reset= (destructive), =physics_layers_open=; and the ragdoll tools =physasset_get= (read-only), =physasset_open=, =physasset_create=, =physasset_set_model=, =physasset_add_part=, =physasset_remove_part= (destructive), =physasset_set_part=, =physasset_generate= (destructive), =physasset_stabilize=, =physasset_exclude=, =physasset_set=, =physasset_select=, =physasset_simulate=, =physasset_save=. =set_render_mode= accepts the five debug view modes. =notify= takes =level= as a string (=info=, =success=, =warning=, =error=). Tools carry read-only/destructive hints; the server's instructions tell the model how nodes are addressed and the units used. =screenshot= is a deferred tool: inside the editor its reply is sent after the next frame is drawn, so it cannot stall the render loop.
+
+# m67e-mcp: begin
+Added in 0.9.0 M6/M7 (one per IPC method, arguments passed through): the navigation tools =nav_get= (read-only), =nav_set=, =nav_new=, =nav_bake=, =nav_cancel=, =nav_save=, =nav_clear= (destructive), =nav_area_add=, =nav_area_remove= (destructive), =nav_area_set=, =nav_area_box_add=, =nav_area_box_remove= (destructive), =nav_area_box_set=, =nav_link_add=, =nav_link_remove= (destructive), =nav_link_set=, =nav_select=, =nav_overlay=, =nav_agents= (read-only), =nav_debug_agent=, =nav_show=; the behaviour tree tools =bt_open=, =bt_create=, =bt_get= (read-only), =bt_palette= (read-only), =bt_add_node=, =bt_remove_node= (destructive), =bt_move_node=, =bt_set_node=, =bt_set_position=, =bt_layout=, =bt_select=, =bt_show=, =bt_add_key=, =bt_remove_key= (destructive), =bt_set_subtree=, =bt_remove_subtree= (destructive), =bt_open_subtree=, =bt_validate= (read-only), =bt_save=, =bt_live= (read-only); the state machine tools =fsm_open=, =fsm_create=, =fsm_get= (read-only), =fsm_enter=, =fsm_up=, =fsm_add_state=, =fsm_remove_state= (destructive), =fsm_rename_state=, =fsm_set_initial=, =fsm_add_transition=, =fsm_set_transition=, =fsm_remove_transition= (destructive), =fsm_set_actions=, =fsm_set_position=, =fsm_select=, =fsm_add_key=, =fsm_remove_key= (destructive), =fsm_validate= (read-only), =fsm_save=, =fsm_live= (read-only), =fsm_send_event=; the ai debug tools =ai_show=, =ai_entities= (read-only), =ai_select=, =ai_state= (read-only), =ai_set_key=, =ai_send_event=, =ai_brains= (read-only), =ai_topic= (read-only), =ai_log= (read-only); the particle effect tools =particles_open=, =particles_create=, =particles_get= (read-only), =particles_kinds= (read-only), =particles_set=, =particles_add_emitter=, =particles_remove_emitter= (destructive), =particles_move_emitter=, =particles_duplicate_emitter=, =particles_add_module=, =particles_remove_module= (destructive), =particles_move_module=, =particles_select=, =particles_solo=, =particles_play=, =particles_restart=, =particles_seek=, =particles_preview=, =particles_stats= (read-only), =particles_save=, =particles_render=; the weather tools =weather_open=, =weather_create=, =weather_get= (read-only), =weather_kinds= (read-only), =weather_set=, =weather_add_preset=, =weather_remove_preset= (destructive), =weather_set_preset=, =weather_add_layer=, =weather_remove_layer= (destructive), =weather_move_layer=, =weather_set_layer=, =weather_set_param=, =weather_set_transition=, =weather_remove_transition= (destructive), =weather_select=, =weather_preview=, =weather_save=, =weather_render=; the terrain tools =terrain_get= (read-only), =terrain_brush=, =terrain_stroke=, =terrain_sample= (read-only), =terrain_add_layer=, =terrain_remove_layer= (destructive), =terrain_set_layer=, =terrain_add_foliage=, =terrain_remove_foliage= (destructive), =terrain_set_foliage=, =terrain_rebake=, =terrain_save=, =terrain_create=, =terrain_show=; the water tools =water_get= (read-only), =water_set=, =water_set_wave=, =water_add_point=, =water_set_point=, =water_remove_point= (destructive), =water_save=; the mixer tools =mixer_show=, =mixer_open=, =mixer_create=, =mixer_set_default= (destructive), =mixer_get= (read-only), =mixer_effect_types= (read-only), =mixer_add_bus=, =mixer_remove_bus= (destructive), =mixer_set_bus=, =mixer_set_send=, =mixer_remove_send= (destructive), =mixer_add_effect=, =mixer_remove_effect= (destructive), =mixer_move_effect=, =mixer_set_effect=, =mixer_add_snapshot=, =mixer_remove_snapshot= (destructive), =mixer_set_snapshot=, =mixer_capture_snapshot=, =mixer_set_duck=, =mixer_remove_duck= (destructive), =mixer_preview=, =mixer_meters= (read-only), =mixer_save=; the audio emitter tools =audio_get= (read-only), =audio_set=, =audio_curve= (read-only), =audio_buses= (read-only); the tile painting tools =tiles_get= (read-only), =tiles_grid=, =tiles_brush=, =tiles_paint=, =tiles_refresh=, =tiles_cell_at= (read-only), =tiles_tile_info= (read-only); the tileset tools =tileset_create=, =tileset_open=, =tileset_get= (read-only), =tileset_set=, =tileset_select=, =tileset_tile=, =tileset_collision=, =tileset_rule_tile=, =tileset_rule=, =tileset_preview= (read-only), =tileset_save=; the sprite sheet tools =sprite_create=, =sprite_open=, =sprite_get= (read-only), =sprite_slice=, =sprite_frame=, =sprite_clip=, =sprite_clip_frame=, =sprite_event=, =sprite_play=, =sprite_save=; the asset creation tools =asset_new=. Added in 0.9.0 M8 (one per IPC method, arguments passed through): the script debugger tools =debug_state= (read-only), =debug_show=, =debug_breakpoints= (read-only), =debug_set_breakpoint=, =debug_remove_breakpoint= (destructive), =debug_toggle_breakpoint=, =debug_clear_breakpoints= (destructive), =debug_continue=, =debug_pause=, =debug_step_over=, =debug_step_in=, =debug_step_out=, =debug_stop= (destructive), =debug_stack= (read-only), =debug_scopes= (read-only), =debug_variables= (read-only), =debug_evaluate=, =debug_watches= (read-only), =debug_add_watch=, =debug_remove_watch=, =debug_dap_start=, =debug_dap_stop=; the language server tools =lsp_servers= (read-only), =lsp_status= (read-only), =lsp_diagnostics= (read-only), =lsp_complete= (read-only), =lsp_hover= (read-only), =lsp_definition=, =lsp_references= (read-only), =lsp_rename=, =lsp_format=, =lsp_restart=; the profiler capture tools =profiler_set=, =profiler_capture=, =profiler_save=, =profiler_load=, =profiler_frames= (read-only), =profiler_frame= (read-only), =profiler_compare= (read-only), =profiler_view=; the frame debugger tools =frame_capture=, =frame_status= (read-only), =frame_calls= (read-only), =frame_call= (read-only), =frame_scrub=, =frame_texture=, =frame_save=, =frame_load=, =frame_show=; the tool script tools =script_run=, =script_languages= (read-only), =script_tools= (read-only), =script_run_tool=, =script_reload=, =script_run_in_editor=, =script_editor_running= (read-only); the visual script tools =vscript_create=, =vscript_open=, =vscript_get= (read-only), =vscript_node_types= (read-only), =vscript_gi_search= (read-only), =vscript_add_node=, =vscript_remove_node= (destructive), =vscript_set_node=, =vscript_connect=, =vscript_disconnect=, =vscript_set_variable=, =vscript_add_subgraph=, =vscript_remove_subgraph= (destructive), =vscript_add_comment=, =vscript_remove_comment= (destructive), =vscript_set_program=, =vscript_select=, =vscript_validate= (read-only), =vscript_run= (read-only), =vscript_live= (read-only), =vscript_breakpoint=, =vscript_continue=, =vscript_save=; the memory profiler tools =memory_status= (read-only), =memory_types= (read-only), =memory_resources= (read-only), =memory_snapshot=, =memory_snapshots= (read-only), =memory_diff= (read-only), =memory_clear_snapshots= (destructive), =memory_history= (read-only), =memory_show=; the network stats tools =network_stats= (read-only), =network_history= (read-only), =network_enable=, =network_reset= (destructive), =network_show=.
+# m67e-mcp: end
 
 Adding a tool: append a row to the table in =src/editorctl/lrgeditorctl-mcp.c= (name, IPC method, kind, hints, description, JSON-schema properties); both servers pick it up.
 

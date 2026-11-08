@@ -1,0 +1,187 @@
+#+title: Writing a data format
+#+description: How to add a YAML asset format to libregnum: types, composite loading, references, writers, editor validation, tests and docs
+
+* Writing a data format
+:PROPERTIES:
+:CUSTOM_ID: writing-a-data-format
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > Guides > Writing a data format
+#+end_quote
+
+This guide is for anyone adding a YAML file format to libregnum or to a game built on it: a material (=.rmat=), a post-processing stack (=.rpost=), an animation graph (=.ranim=), a behaviour tree (=.rbt=), a navigation setup (=.rnav=), a particle system (=.rparticles=), terrain (=.rterrain=), a mixer graph (=.rmixer=), or a format of your own. It explains how to build the format on the composite loader of =LrgDataLoader= so that loading, strict validation, references and saving come for free, and what to do when a format needs a hand-written loader and writer instead (as =LrgLocale=, =LrgDialogTree=, =LrgSoundBank=, =LrgInputMap= and =LrgHudLayout= have).
+
+The reference for every call used here is [[file:../modules/core/data-loader.org::#composite-documents][Composite documents]] in the data loader page.
+
+** Choosing an approach
+:PROPERTIES:
+:CUSTOM_ID: choosing
+:END:
+| Your data | Approach |
+|-----------+----------|
+| A tree of objects that are (or can be) GObjects with properties: nodes with typed children, settings blocks, lists of typed entries, links between entries | *Composite*: GObject types + =lrg_data_loader_load_composite_file()= + =lrg_data_loader_save_to_file()=. No parsing code |
+| A table keyed by strings (string tables, name-to-file manifests, id-to-state maps), or a format older than 0.9.0 whose shape is fixed | *Hand-written*: parse with yaml-glib, write with the in-tree helpers (=lrg_data_yaml_*=). Keep loader and writer in one file |
+| Mostly objects, with one keyed table inside | Composite, with the table as a =YamlNode= property (=YAML_TYPE_NODE=: the raw node is stored and written back as is) or a =YamlSerializable= custom property |
+
+Composite is the default for every new 0.9.0 format. The rest of this guide follows it, then covers the hand-written case.
+
+** Step 1: the types
+:PROPERTIES:
+:CUSTOM_ID: step-types
+:END:
+Every object a file holds is a GObject; every key is a property.
+
+- *One property per key*, named as the key (=dash-case=: =fill-color=, not =fill_color=). =G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS=. Give numbers real bounds in the =GParamSpec=: the loader enforces them and names them in its messages (=expected a number from 0 to 1=).
+- *Defaults in two places must agree*: the pspec default and the value =init= sets. Saving leaves out values equal to a fresh instance's, so a disagreement only costs file size, but readers of your docs read the pspec.
+- *Sub-objects*: an object property of a concrete class (=g_param_spec_object ("material", ..., MY_TYPE_MATERIAL, ...)=) takes a nested mapping without =type:=. Use an abstract base class or an interface when the slot holds one of several kinds (=MyCondition= with =MyFlagCondition=, =MyTimeCondition=): the document then names the kind with =type:=.
+- *Lists*: a =GListModel= property (hold a =GListStore= created in =init=; it can be read-only, the loader refills it in place) or a =GPtrArray= property. Declare the item type in =class_init= with =lrg_data_loader_set_param_item_type()=; a =GPtrArray= is not loadable without it.
+- *Children*: implement =LrgDataContainer= when an object has an ordered list of children that is its main content (a scene's nodes, a behaviour tree's composite children). =get_child_type= returns the type children default to; =add_child= checks what it gets and says why it refuses (the message reaches the user with the child's path).
+- *Identity*: a =guid= or =id= string property makes an object referable as =ref: <value>=. Prefer =guid= for things other files point at (stable across renames), =id= for things only the same file points at.
+- *Construction*: keep =init= and =constructed= cheap and free of side effects; the writer constructs one pristine instance per type per save, and the loader constructs before it sets properties. Construct-only properties work for scalars and sub-objects but cannot hold references or lists.
+
+** Step 2: registering the types
+:PROPERTIES:
+:CUSTOM_ID: step-register
+:END:
+=type:= values are registry names. Register every type a file may name, with a short lowercase name, once, where the format's module initialises:
+
+#+begin_src C
+lrg_registry_register (registry, "material", LRG_TYPE_MATERIAL);
+lrg_registry_register (registry, "texture-layer", LRG_TYPE_TEXTURE_LAYER);
+#+end_src
+
+The writer uses =lrg_registry_lookup_name()= for the reverse direction: a type that is written with =type:= must be registered, or saving fails. Types only ever used in slots that imply them (a concrete property type, a container's child type) need no registration, but registering them costs nothing and lets a file be explicit.
+
+** Step 3: the loader
+:PROPERTIES:
+:CUSTOM_ID: step-loader
+:END:
+A format's public loader is a thin wrapper that fixes the root type and the resolver:
+
+#+begin_src C
+LrgMaterial *
+lrg_material_new_from_file (const gchar  *path,
+                            GError      **error)
+{
+	g_autoptr(LrgDataLoader) loader = material_loader ();   /* registry + resolver, see below */
+
+	return (LrgMaterial *) lrg_data_loader_load_composite_file (loader, path, LRG_TYPE_MATERIAL, error);
+}
+
+LrgMaterial *
+lrg_material_new_from_data (const gchar  *data,
+                            gssize        length,
+                            GError      **error)
+{
+	g_autoptr(LrgDataLoader) loader = material_loader ();
+
+	return (LrgMaterial *) lrg_data_loader_load_composite_data (loader, data, length, LRG_TYPE_MATERIAL,
+	                                                             NULL, error);
+}
+#+end_src
+
+- *Always provide =_new_from_data=* (or =_load_from_data=). The editor validates documents from their text; a file-only loader forces temporary files, and its messages name the temporary file.
+- *Pass the root type* so files may leave =type:= out at the root; files written by the writer keep it, so both load.
+- *Strictness*: keep the default (=strict=). Turn it off only for formats that deliberately carry foreign keys.
+- *References to other files*: set a resolver (=lrg_data_loader_set_resolver()=). The usual one looks the reference up as an asset path (relative to the project's asset root, or to the document's directory) through the asset manager, or as a GUID through whatever table owns GUIDs, and returns a new reference. Return =NULL= with a =GError= that says why (=no such file=, =not a material=); return plain =NULL= for "not mine", which is reported as an unresolved reference. Objects the resolver returns are tagged, so the writer writes the same =ref:= back.
+- *Errors*: return the loader's =GError= unchanged. It already lists every problem as =file:line:column: /path: message=, which the editor turns into positioned problems.
+
+** Step 4: the writer
+:PROPERTIES:
+:CUSTOM_ID: step-writer
+:END:
+#+begin_src C
+gboolean
+lrg_material_save_to_file (LrgMaterial  *self,
+                           const gchar  *path,
+                           GError      **error)
+{
+	g_autoptr(LrgDataLoader) loader = material_loader ();
+
+	return lrg_data_loader_save_to_file (loader, G_OBJECT (self), path, error);
+}
+#+end_src
+
+Add =_save_to_data= next to it (returning the text) for the editor and for tests. The composite writer already follows every rule below; a hand-written writer must follow them too:
+
+- *Symmetry*: write exactly the format the loader reads, nothing it would reject or misread. When the loader has an implicit rule (=LrgDialogTree= chains a node without =next= to the following node), the writer must either rely on it or defeat it explicitly (it writes =next: null= for a terminal node that is not last).
+- *Determinism*: same object, same bytes. Keep declaration order for anything the user ordered (keep a =GPtrArray= of keys next to a hash table; =LrgLocale=, =LrgSoundBank=, =LrgInputMap= and =LrgDialogTree= do), sort what has no order (metadata maps), and never iterate a =GHashTable= into the output.
+- *Byte-stable round trip*: load the writer's output, save it again, compare bytes. Every writer test does this.
+- *Numbers*: write floats and doubles with =lrg_data_yaml_float()= / =lrg_data_yaml_double()= (shortest text that reads back exactly). yaml-glib's own double nodes use =%g= and lose digits.
+- *Strings*: write them with =lrg_data_yaml_string()=: text that would read back as null (=""=, =~=, =null=) is double-quoted; libyaml quotes the rest as needed.
+- *Defaults*: leave out values equal to the default, so files stay small and diffs stay readable.
+- *Unknown keys*: when users edit the files by hand or other tools add keys, keep the parsed document of the last load and write its unknown keys back in place (=LrgInputMap= does this at the root, in actions and in bindings). The editor's document model keeps comments and unknown keys for every format, so this matters for files the game itself rewrites.
+
+** Hand-written formats
+:PROPERTIES:
+:CUSTOM_ID: hand-written
+:END:
+For formats that are not object trees, parse with yaml-glib (=yaml_parser_load_from_data()=, one shared =*_from_parser()= function used by both the file and the data entry points, with a source name for messages) and build the output as a =YamlNode= tree with the in-tree helpers, then =lrg_data_yaml_to_data()= / =lrg_data_yaml_to_file()=. These helpers are declared in =core/lrg-data-loader.h= for code compiled into libregnum only (=LIBREGNUM_COMPILATION=; they expose yaml-glib types, which the public GIR does not include):
+
+| Helper | Result |
+|--------+--------|
+| =lrg_data_yaml_string (text)= | a string scalar that reads back as =text= (=NULL= gives a null node) |
+| =lrg_data_yaml_double (value)=, =lrg_data_yaml_float (value)= | the shortest exact decimal text |
+| =lrg_data_yaml_int (value)=, =lrg_data_yaml_boolean (value)= | =42=, =true= / =false= |
+| =lrg_data_yaml_to_data (root, &length, error)= | the document text, 2-space block style, no =---= |
+| =lrg_data_yaml_to_file (root, path, error)= | the same text written atomically |
+| =lrg_data_loader_load_composite_node (loader, node, root_type, source, error)= | the composite loader on an already parsed node (a composite section inside a hand-written format; messages carry paths but no positions) |
+| =lrg_data_loader_save_to_node (loader, object, error)= | the composite writer's tree, to embed in a larger document |
+
+A game outside libregnum uses yaml-glib directly for the same job, or builds its formats on the public composite API.
+
+When the loader needs something the caller may not have (an audio device, a GPU), give the data entry point a mode that reads only the description: =lrg_sound_bank_new_from_data()= has =manifest_only=, which records the manifest without decoding audio, so the editor and command-line tools can validate and rewrite banks anywhere.
+
+** Step 5: tests
+:PROPERTIES:
+:CUSTOM_ID: step-tests
+:END:
+One GTest file per format (or one shared file for several small ones, like =tests/test-format-writers.c=), headless:
+
+- *Fixtures in the real format*, as =static const gchar *= texts. Write them in the writer's own layout so the first test can be "load, save, compare with the fixture": that pins the format byte for byte.
+- *Round trip*: load the saved text, save again, compare bytes; check the reloaded object field by field (sub-objects, list order, shared references by pointer identity).
+- *Validation*: one test that feeds several mistakes at once and checks each message, including =file:line:column= and the path (=g_assert_nonnull (strstr (message, "doc.yaml:5:3: /material/colour: unknown property"))=).
+- *References*: forward, backward, external (a test resolver), unresolved, ambiguous, wrong type.
+- *Edits*: build or change an object in code, save, compare with the expected text (new entries go last, removed ones vanish with their unknown keys).
+- *The data entry point* and the file entry point produce the same object.
+
+See =tests/test-data-loader-composite.c= for the composite side and =tests/test-format-writers.c= for hand-written formats.
+
+** Step 6: docs and the skill
+:PROPERTIES:
+:CUSTOM_ID: step-docs
+:END:
+Every format gets a page under =docs/modules/<area>/= with: an overview; the concepts; the format schema as an annotated YAML example (one comment per key: meaning, type, default, bounds); the full API reference (every function, property, signal and vfunc, with ownership and nullability); a worked C example; performance notes; pitfalls; cross-links; and a "Using it from the editor" section. Add the page to its module index, mention every public symbol (=make docs-check= fails otherwise) and add the format's extension, root type and schema summary to the skill's =references/formats.md=.
+
+** Checklist
+:PROPERTIES:
+:CUSTOM_ID: checklist
+:END:
+- [ ] Types: one property per key, bounds, item types declared, =LrgDataContainer= where there are children, =guid= / =id= where things are referenced
+- [ ] Types registered under short names
+- [ ] =_new_from_file= and =_new_from_data= (root type, resolver)
+- [ ] =_save_to_file= and =_save_to_data=
+- [ ] Round-trip, validation, reference and edit tests passing; existing suites still passing
+- [ ] Module page, index entry, =make docs-check= clean, skill reference updated
+- [ ] Editor: a data editor (or at least validation) running =_new_from_data= on the document text
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- =type=, =ref= and =children= (on containers) are reserved keys in composite documents.
+- A =GPtrArray= property without a declared item type is invisible to the loader and the writer.
+- Two objects with the same =id= cannot be referenced by it; the writer falls back to =#/pointer= references for them.
+- Writers that iterate hash tables produce files that change on every save; keep an order array.
+- yaml-glib's =yaml_mapping_set_double_member()= and =yaml_builder_add_double_value()= write =%g= (six significant digits): use the helpers.
+- A plain empty string, =~= or =null= reads back as a null node; write strings with =lrg_data_yaml_string()=.
+- Do not validate through temporary files in tools: give the format a from-data entry point.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../modules/core/data-loader.org][LrgDataLoader]] (composite documents, API reference)
+- [[file:../modules/core/registry.org][LrgRegistry]]
+- [[file:../editor/data-editors.org][Data editors]]
+- [[file:implementing-saveable.org][Implementing Saveable]] (save games, a different mechanism)

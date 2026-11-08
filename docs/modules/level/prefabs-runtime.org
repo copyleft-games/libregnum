@@ -1,0 +1,358 @@
+* Prefabs at Runtime
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime
+:END:
+Since 0.9.0 prefab links are honoured outside the editor. A level can store a linked prefab instance as a *reference* (its source, its overrides and the nodes it added) instead of the expanded subtree, and a prefab can be a *variant* of another prefab. Both are resolved while a level or prefab loads, by the always-built runtime level module (=src/level/=), so =lrg_level_instantiate_3d()=, =lrg_level_instantiate()= and games always see complete node trees, and a prefab edit reaches every level and variant that uses it without re-saving them.
+
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Runtime Level]]* > Prefabs at Runtime
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-overview
+:END:
+| Piece | Where | What it does |
+|-------+-------+--------------|
+| =LrgPrefabStorage= | =level/lrg-prefab.h= | =expanded= (0.8.x format, the default) or =reference= storage of linked instances |
+| =store_prefab_instances= | =.rlevel= root, =project.ryaml= | The level and project settings that pick the storage on save |
+| =LrgLevelSerializer:prefab-storage= | =level/lrg-level-serializer.h= | Per-serializer override of the storage |
+| =lrg_prefab_make_reference()= | =level/lrg-prefab.h= | Builds the sparse reference form of a linked instance |
+| =lrg_prefab_instantiate_reference()= | =level/lrg-prefab.h= | Expands a reference back into the full linked instance, without editor objects |
+| =lrg_prefab_derive_guid()= | =level/lrg-prefab.h= | The guid a prefab node gets inside an instance (what makes references compact and stable) |
+| Prefab variants | =level/lrg-prefab.h= | A prefab whose root is a linked instance of a base prefab; =lrg_prefab_load_resolved()= walks the chain |
+| =guid:= sources | =level/lrg-level-serializer.h=, =core/lrg-asset-manager.h= | A link may name its source by asset guid; the serializer resolves it through the guid index |
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-concepts
+:END:
+*** Expanded and reference storage
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-storage
+:END:
+A linked instance in memory is always complete: every node of the source exists in the instance, carrying the instance's own guid, and the root carries an =LrgPrefabLink= (source path and asset guid, a map from instance node guid to source node guid, and the override keys). How it is written to the =.rlevel= is a choice:
+
+- *Expanded* (=LRG_PREFAB_STORAGE_EXPANDED=, the default): the whole subtree is written, plus the =prefab:= block. This is the 0.8.x format; a reader that ignores links still sees every node, and the level does not need the prefab files to load. A prefab edit reaches the level only when the editor syncs and saves it.
+- *Reference* (=LRG_PREFAB_STORAGE_REFERENCE=): only the instance root (its own state), the =prefab:= block marked =storage: reference=, the values at overridden paths and the nodes the instance added or moved are written. Loading rebuilds the rest from the =.rprefab=. Levels are much smaller and a prefab edit reaches every level the next time it loads, but the prefab files must ship with the game.
+
+| Trade-off | Expanded | Reference |
+|-----------+----------+-----------|
+| File size | Every node of every instance | Root + overrides + added nodes |
+| Prefab edit reaches the level | After the editor syncs and saves the level | On the next load, no re-save |
+| Needs the =.rprefab= at runtime | No | Yes (a missing prefab keeps the bare reference and logs a message) |
+| Unmarked drift (a value that differs from the source but is not an override key) | Kept | Lost: the source value comes back |
+| Child order of untouched parents | Kept | Source order (instances cannot reorder without an override) |
+| Merge conflicts in VCS | Large diffs when a prefab changes | Only real instance edits change the level |
+| Load cost | Parse only | Parse + resolve each distinct prefab once + expand |
+
+The editor marks every edit of an instance node as an override (see [[file:../../editor/prefabs.org::#override-paths][override paths]]), so drift only arises from hand-edited files or from code that changes instance nodes without =lrg_prefab_mark_override()=.
+
+*** Choosing the storage
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-settings
+:END:
+On save the first setting that is not =default= wins:
+
+1. the serializer: =LrgLevelSerializer:prefab-storage= (=lrg_level_serializer_set_prefab_storage()=);
+2. the level: =store_prefab_instances:= at the root of the =.rlevel= (=lrg_prefab_level_get_storage()= / =lrg_prefab_level_set_storage()=, kept with the level);
+3. the project: =store_prefab_instances:= in the =project:= mapping of =project.ryaml=. The serializer uses =LrgLevelSerializer:project-root= or, when unset, the first directory holding a =project.ryaml= at or above the level file;
+4. otherwise =expanded=.
+
+The key may also be spelled =store-prefab-instances=. =lrg_prefab_storage_from_string()= and =lrg_prefab_storage_to_string()= convert the values. Loading always understands both forms in the same file.
+
+*** Derived guids
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-guids
+:END:
+=lrg_prefab_instantiate_linked()= gives the instance root a random guid and every other node =lrg_prefab_derive_guid (root_guid, source_node_guid)=: a name-based, UUIDv5-shaped guid of the two. =lrg_prefab_sync_instance()= uses the same function for nodes the source gains later. Because of that a reference does not have to store guids for source nodes: the loader derives the same guids the editor assigned, so timeline tracks, scripts and saves that refer to instance nodes by guid keep working, and the 3D runtime (=lrg_world3d_find_by_guid()=) finds the same entities whichever storage was used. The map entries a reference does write are the ones that cannot be derived: relinked 0.8.0 instances whose guids were kept, nodes recorded in the sparse tree (so the loader can tell a mapped node from an added one), and stale entries of nodes the instance deleted.
+
+*** What a reference records
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-sparse
+:END:
+=lrg_prefab_make_reference()= keeps, below the root:
+
+- every node that carries an override key (=<guid>:path=),
+- every node moved on purpose (=children/+<guid>= on its new parent),
+- every node the instance added (not in the map), copied whole with its guids and nested links,
+- the ancestors of all of these.
+
+When a node is kept, all its children are kept too, the ones that are not interesting as *placeholders* (only =name= and =guid=), so the loader can restore the child order. Nested links of mapped nodes are dropped (the source brings them back); nested links inside added subtrees are kept (and may themselves be references).
+
+*** How a reference expands
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-expand
+:END:
+=lrg_prefab_instantiate_reference (reference, prefab, error)= runs these steps; the serializer calls it for every =storage: reference= block it reads, after the block's children were parsed (so references inside added subtrees expand first):
+
+1. The root takes the source root's state, then its own name, location, rotation and =locked= flag from the reference.
+2. Every source child is created recursively with its recorded or derived guid and a map entry, except children the instance removed (=children/-<source guid>= on their parent).
+3. Nested links of source nodes are translated to the instance guids.
+4. The recorded structure is applied parent by parent: added subtrees are inserted, nodes moved on purpose are moved (or re-created where they were removed and added elsewhere), recorded nodes whose source node no longer exists are kept as added nodes when they carry overrides, and the recorded child order is restored on the slots those children occupy (children new in the source keep their source position).
+5. Every override key copies its value from the recorded node (the same copy routine a sync uses, so =visual=, =visual/params/x=, =components/+Ai=, =scripts/a.lua/enabled= and so on all work).
+6. Map entries of deleted nodes are carried over, and the 0.8.0 source marker is restored on the root.
+
+The result equals the instance an editor sync would produce, byte for byte when serialized expanded (=tests/test-runtime-prefab.c= checks exactly that).
+
+*** Prefab variants
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-variants
+:END:
+A variant is a =.rprefab= whose root is itself a linked instance of another prefab, its *base*: the root carries a =prefab:= block pointing at the base, and its overrides are the variant's differences. Variants of variants form a chain. Since 0.9.0:
+
+- =lrg_prefab_save()= writes the root's link and =lrg_prefab_load()= keeps it (=lrg_prefab_is_variant()= tells);
+- =lrg_prefab_load_resolved()= loads the base chain first (recursively resolved), then syncs the variant against its base (variant overrides kept), then resolves nested instances the variant holds itself. Nested resolution and the variant chain share one cycle check (=G_IO_ERROR_INVALID_DATA=, "contains itself") and one depth limit of 8 files. =dependencies= lists the bases too, so an editor knows which instances to re-sync when a base changes;
+- =lrg_prefab_get_variant_chain()= lists a prefab and its bases without resolving anything (the editor's prefab bar shows it as =base > variant=);
+- =lrg_prefab_create_variant()= makes a new variant of a base; =lrg_prefab_derive_variant()= turns an instance's overrides into a variant and relinks the instance to it.
+
+Propagation therefore runs base, then variant, then instances: an edit to the base shows in the variant (unless the variant overrides that path), and through the variant in every instance of it, whether the level stores the instance expanded (after the editor syncs) or by reference (on the next load).
+
+*** Finding the source of a reference
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-resolution
+:END:
+For each =storage: reference= block the serializer looks for the =.rprefab=, in this order:
+
+1. by asset guid: a =source: guid:<uuid>=, then the link's =guid:=, through =LrgLevelSerializer:asset-manager= (=lrg_asset_manager_resolve_guid()=) or, without one, through a guid index of the project root built once per load (see [[file:../core/asset-manager.org::#guid-references][guid references]]);
+2. the source path as written: absolute, or relative to the current directory (the editor's convention);
+3. relative to the project root, then relative to the level's directory.
+
+Each distinct prefab is loaded and resolved once per level load. When nothing is found, or the prefab does not load, the bare reference is kept in the level (with its link, so the editor can relink it) and a message is logged; the load does not fail.
+
+Inside prefab files, a relative nested or base source path is tried as written and then relative to the directory of the prefab that names it.
+
+** Format
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-format
+:END:
+*** A reference-stored instance
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-format-reference
+:END:
+#+begin_src yaml
+type: level
+name: yard
+default_view: 3d
+store_prefab_instances: reference      # optional level setting (expanded | reference)
+nodes:
+- name: Crate 1                        # the instance root: its own full state
+  guid: 13e17079-2e91-4133-8014-d689c0773221
+  transform:
+    location: [5, 0, -2]               # instance-owned: always from here
+    rotation: [0, 0, 0]
+    scale: [2, 2, 2]                   # overridden (transform/scale below)
+  visual: { kind: primitive, primitive: cube, params: { prefab:source: prefabs/crate.rprefab } }
+  components:
+  - type: health
+    props: { max: 250 }                # overridden (components/health/max)
+  prefab:
+    source: prefabs/crate.rprefab      # or guid:<uuid>
+    guid: 7c0d...                      # asset guid from crate.rprefab.meta (optional)
+    storage: reference                 # marks the sparse form
+    map:                               # only entries a loader cannot derive
+      13e17079-...: 5d49534c-...       #   the root
+      d73f98df-...: 1386bd50-...       #   recorded nodes (Lid, Knob below)
+      f613a5b7-...: 71888879-...
+    overrides:
+    - transform/scale
+    - components/health/max
+    - children/-235f7657-...           # source child "Handle" removed
+    - d73f98df-...:transform/location  # Lid moved
+    - d73f98df-...:children/+668fc565-...   # Sticker added under Lid
+  children:                            # only kept nodes
+  - name: Lid                          # recorded: has an override
+    guid: d73f98df-...
+    transform: { location: [0, 3, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }
+    children:                          # all of Lid's children, for the order
+    - name: Sticker                    # instance-added: written whole
+      guid: 668fc565-...
+      transform: { location: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }
+    - name: Knob                       # placeholder: name and guid only
+      guid: f613a5b7-...
+#+end_src
+
+The node keys are the regular =.rlevel= node keys ([[file:../../editor/yaml-format.org][.rlevel YAML Format Reference]]); placeholders simply omit everything but =name= and =guid=. For a recorded node only the values at its override keys are used; its other fields are ignored on load (the source wins).
+
+*** A variant prefab
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-format-variant
+:END:
+#+begin_src yaml
+type: level
+name: prefab
+nodes:
+- name: Crate                          # the variant root, a linked instance of the base
+  guid: 0a6b...
+  transform: { location: [0, 0, 0], rotation: [0, 0, 0], scale: [3, 3, 3] }
+  ...                                  # the whole (expanded) subtree, as any prefab
+  prefab:
+    source: prefabs/crate.rprefab      # the base (may itself be a variant)
+    map: { 0a6b...: 5d49..., ... }
+    overrides: [ transform/scale ]     # the variant's differences from the base
+  children: [ ... ]
+#+end_src
+
+Variant files are written expanded, like every prefab; the base is re-applied when the variant loads (=lrg_prefab_load_resolved()=), so a base edit never requires re-saving the variant.
+
+*** Project setting
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-format-project
+:END:
+#+begin_src yaml
+project:
+  name: my-game
+  asset_dirs: [assets]
+  store_prefab_instances: reference    # default for every level of the project
+#+end_src
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-api
+:END:
+*** Storage
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-api-storage
+:END:
+| Symbol | Description |
+|--------+-------------|
+| =LrgPrefabStorage= (=LRG_TYPE_PREFAB_STORAGE=, =lrg_prefab_storage_get_type()=) | =LRG_PREFAB_STORAGE_DEFAULT= (defer), =LRG_PREFAB_STORAGE_EXPANDED=, =LRG_PREFAB_STORAGE_REFERENCE=; nicks =default=, =expanded=, =reference= |
+| =lrg_prefab_storage_from_string (text)= | Parses a setting value (case-insensitive); %NULL or unknown text gives =DEFAULT= |
+| =lrg_prefab_storage_to_string (storage)= | =default=, =expanded= or =reference= (transfer none) |
+| =lrg_prefab_level_get_storage (level)= | The level's own setting, =DEFAULT= when unset |
+| =lrg_prefab_level_set_storage (level, storage)= | Sets it; the serializer writes it as =store_prefab_instances= unless it is =DEFAULT= |
+| =lrg_level_serializer_set_prefab_storage (self, storage)= / =lrg_level_serializer_get_prefab_storage (self)= | The =prefab-storage= property (=DEFAULT=: level, then project) |
+| =lrg_level_serializer_set_project_root (self, root)= / =lrg_level_serializer_get_project_root (self)= | The =project-root= property (nullable; %NULL discovers =project.ryaml= above the level file) |
+| =lrg_level_serializer_set_asset_manager (self, manager)= / =lrg_level_serializer_get_asset_manager (self)= | The =asset-manager= property (nullable, transfer none on get) used to resolve guid sources |
+
+*** References
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-api-reference
+:END:
+| Symbol | Description |
+|--------+-------------|
+| =lrg_prefab_derive_guid (instance_root_guid, source_guid)= | The derived guid of a source node inside an instance (transfer full) |
+| =lrg_prefab_make_reference (instance)= | The sparse form of a linked instance root (transfer full); %NULL when it has no link. The copy of the link keeps the full map |
+| =lrg_prefab_instantiate_reference (reference, prefab, error)= | Expands a sparse root against its resolved source (transfer full); %NULL and =G_IO_ERROR_INVALID_ARGUMENT= when the reference has no link |
+| =lrg_prefab_copy (node, keep_root_link)= | An exact deep copy (same guids, nested links kept); the root link only when asked |
+
+*** Variants
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-api-variants
+:END:
+| Symbol | Description |
+|--------+-------------|
+| =lrg_prefab_is_variant (prefab)= | %TRUE when the root carries a link with a source |
+| =lrg_prefab_get_variant_chain (path, error)= | The prefab and its bases, nearest first (transfer full, %NULL-terminated); %NULL with =G_IO_ERROR_INVALID_DATA= on a loop or a chain deeper than 8, or the load error |
+| =lrg_prefab_create_variant (base, base_path, base_guid)= | A new variant root: a linked instance of the resolved base, no overrides, root location and rotation zeroed (transfer full) |
+| =lrg_prefab_derive_variant (instance, variant_path, variant_guid)= | A variant holding @instance's overrides (fresh guids, the instance's link rewritten as the variant's root link); @instance is relinked to @variant_path with no overrides of its own and its marker updated. %NULL when @instance is not linked. The caller saves the variant |
+| =lrg_prefab_save()=, =lrg_prefab_load()=, =lrg_prefab_load_resolved()=, =lrg_prefab_resolve_nested()= | Unchanged signatures; root links are now written and kept, and resolution walks the base chain (see [[#prefabs-runtime-variants][Prefab variants]]) |
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-examples
+:END:
+*** Load a level that stores instances by reference (game, =BUILD_EDITOR=0=)
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-example-load
+:END:
+#+begin_src c
+g_autoptr(LrgAssetManager)    assets = lrg_asset_manager_new ();
+g_autoptr(LrgLevelSerializer) ser = lrg_level_serializer_new ();
+g_autoptr(LrgLevel)           level = NULL;
+g_autoptr(GError)             error = NULL;
+
+/* The project root makes project-relative paths and guid: sources work. */
+lrg_asset_manager_set_project_root (assets, "/opt/my-game");
+lrg_level_serializer_set_asset_manager (ser, assets);
+
+level = lrg_level_serializer_load_from_file (ser, "/opt/my-game/levels/yard.rlevel", &error);
+if (level == NULL)
+	g_error ("yard: %s", error->message);
+
+/* Every reference is already expanded: instantiate as usual. */
+if (!lrg_level_instantiate_3d (level, world, engine, &error))
+	g_error ("yard: %s", error->message);
+#+end_src
+
+=lrg_level_load_world3d (path, world, error)= does the same with a default serializer: references still expand, with the project root discovered from =project.ryaml= above the level file.
+
+*** Spawn a prefab from code
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-example-spawn
+:END:
+#+begin_src c
+g_autoptr(LrgNode) crate = lrg_prefab_load_resolved ("prefabs/crate_red.rprefab", NULL, &error);
+g_autoptr(LrgNode) inst = NULL;
+
+if (crate == NULL)
+	return FALSE;
+/* A linked instance: guids derived from a fresh root guid. */
+inst = lrg_prefab_instantiate_linked (crate, "prefabs/crate_red.rprefab", NULL);
+lrg_node_set_location_xyz (inst, 4.0f, 0.0f, 2.0f);
+lrg_level_add_node (level, inst, NULL);
+#+end_src
+
+*** Save a level by reference
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-example-save
+:END:
+#+begin_src c
+/* Either per level (persisted in the file) ... */
+lrg_prefab_level_set_storage (level, LRG_PREFAB_STORAGE_REFERENCE);
+/* ... or per call, overriding level and project. */
+lrg_level_serializer_set_prefab_storage (ser, LRG_PREFAB_STORAGE_REFERENCE);
+lrg_level_serializer_save_to_file (ser, level, "levels/yard.rlevel", &error);
+#+end_src
+
+*** Make a variant in code
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-example-variant
+:END:
+#+begin_src c
+g_autoptr(LrgNode) base = lrg_prefab_load_resolved ("prefabs/crate.rprefab", NULL, &error);
+g_autoptr(LrgNode) red = lrg_prefab_create_variant (base, "prefabs/crate.rprefab", NULL);
+
+/* Edits of a variant are overrides relative to its base. */
+lrg_node_set_scale_xyz (red, 1.5f, 1.5f, 1.5f);
+lrg_prefab_mark_override (red, "transform/scale");
+lrg_prefab_save (red, "prefabs/crate_red.rprefab", &error);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-performance
+:END:
+- Expansion is linear in the size of the source plus the reference; a prefab used by many instances is loaded and resolved once per level load (cached by canonical path in the serializer).
+- Guid lookups during expansion are subtree searches; instances with thousands of nodes and many recorded nodes are slower to expand than to parse. Keep huge static geometry in a single mesh node rather than thousands of child nodes.
+- A variant chain costs one load and one sync per link of the chain; chains are capped at 8 files with nesting.
+- A guid source without an explicit asset manager builds one guid index per level load (a directory scan of the project's asset dirs). Pass a shared =LrgAssetManager= (=asset-manager= property) when loading many levels.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-pitfalls
+:END:
+- Reference storage needs the prefab files at runtime; ship them (and their =.meta= sidecars when sources are guids).
+- Values that differ from the source without an override key are not stored by reference. Code that edits instance nodes should call =lrg_prefab_mark_override()= (the editor does it for you).
+- Renaming or moving a prefab file outside the editor breaks path sources; asset guids (the link's =guid:=, or =guid:= sources) survive moves done with the sidecar.
+- =lrg_prefab_save()= now writes a root link: to save a linked instance as an independent prefab save =lrg_prefab_copy (node, FALSE)= instead (=lrg_editor_save_prefab()= does).
+- Integer component values read back from YAML may have another =GValue= integer type than values set in code; =lrg_prefab_sync_instance()= may report a change it rewrites to the same text. Compare serialized text, not the return value, when testing.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-editor
+:END:
+- The editor loads both forms transparently: a reference-stored instance appears as a normal linked instance (all nodes, link, overrides) and is saved back in whatever storage the level or project asks for.
+- Set the storage per level by putting =store_prefab_instances: reference= at the top of the =.rlevel=, or per project in =project.ryaml= (see [[file:../../editor/projects-and-assets.org::#runtime-project-settings][project settings]]).
+- *Create Variant* in the inspector's prefab bar (and =lrg_editor_create_prefab_variant()= / =lrg_editor_prefab_create_variant()=) makes variants; the bar shows the chain =base > variant= and counts overrides relative to the nearest source. See [[file:../../editor/prefabs.org::#prefabs-variants][Prefabs: variants]].
+- Saving a base prefab re-syncs instances of its variants in the open level (=lrg_editor_prefab_changed()= follows the dependencies).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-see-also
+:END:
+- [[file:index.org][Runtime Level Module]]
+- [[file:../../editor/prefabs.org][Prefabs in the editor]] (linked instances, override paths, sync)
+- [[file:../core/asset-manager.org][LrgAssetManager]] (guid index, import settings)
+- [[file:../../editor/projects-and-assets.org][Projects and Assets]] (=.meta= sidecars)
+- [[file:../../editor/yaml-format.org][.rlevel YAML Format Reference]]

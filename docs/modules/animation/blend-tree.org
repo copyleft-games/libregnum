@@ -186,3 +186,39 @@ Uses triangulation or gradient-based weighting to blend between nearby motions i
 2. *Match clip durations* - Prevents foot sliding during blend
 3. *Sync animation phases* - Use normalized time for looping clips
 4. *Cache blend weights* - Recalculate only when parameters change significantly
+
+** 0.9.0: gradient bands, sync, nested trees, named parameters
+:PROPERTIES:
+:CUSTOM_ID: v090
+:END:
+The weights were rewritten:
+- *1D*: linear between the two thresholds around the parameter, the first/last child outside the range, duplicates of a threshold share evenly.
+- *2D cartesian* (=LRG_BLEND_TYPE_2D_FREEFORM=, =2d_cartesian= in .ranim) and *2D directional* (=LRG_BLEND_TYPE_2D_SIMPLE=, =2d_directional=): gradient band interpolation (Johansen 2009). Every child's influence is the minimum over the other children of how far the sample point still is from them along the line between the two; the directional variant measures in (magnitude / mean magnitude, angle x 2) space, so children on a circle blend by angle and a child at the origin blends by speed. The weights are exactly 1 at each child's position, never reach children on the far side and sum to 1. (Before 0.9 both 2D types used inverse distance weighting, which leaks weight to every child.)
+- *Direct*: the children's weights (=weight=, or a parameter through =lrg_blend_tree_child_set_weight_parameter()=), normalized.
+
+Sampling is now hemisphere aligned (a weighted sum of rotations flipped to agree, renormalized), and children may be nested trees.
+
+| function | |
+|-+-|
+| =lrg_blend_tree_compute_weights()= / =lrg_blend_tree_get_child_weight()= | weights without advancing time (blend space preview) |
+| =lrg_blend_tree_add_child_full()= / =lrg_blend_tree_get_child_count()= / =lrg_blend_tree_get_child()= / =lrg_blend_tree_remove_child()= | children |
+| =lrg_blend_tree_child_get_subtree()= / =lrg_blend_tree_child_set_subtree()= | a nested tree child |
+| =lrg_blend_tree_child_get_clip_name()= / =lrg_blend_tree_child_set_clip_name()= | the graph's clip key |
+| =lrg_blend_tree_child_get_weight_parameter()= / =lrg_blend_tree_child_set_weight_parameter()= | direct weight parameter |
+| =lrg_blend_tree_get_parameter_name()= / =lrg_blend_tree_set_parameter_name()= / =lrg_blend_tree_get_parameter_y_name()= / =lrg_blend_tree_set_parameter_y_name()= | the parameters the machine feeds |
+| =lrg_blend_tree_pull_parameters (self, machine)= | read them (the machine calls it every update) |
+| =lrg_blend_tree_get_sync()= / =lrg_blend_tree_set_sync()= | one shared phase (default) or a clock per child |
+| =lrg_blend_tree_get_duration()= / =lrg_blend_tree_get_normalized_time()= / =lrg_blend_tree_set_normalized_time()= / =lrg_blend_tree_reset()= | time |
+| =lrg_blend_tree_get_dominant_clip (self, previous_time, time)= | the clip events come from |
+| =lrg_blend_tree_sample_pose (self, skeleton, poses, n)= | the whole skeleton |
+| =lrg_blend_tree_get_root_motion (self, bone, translation, yaw)= | weighted root motion of the last update |
+
+See [[file:anim-graph.org::#states][the graph page]] for the =blend_tree:= schema.
+
+| function | |
+|-+-|
+| =lrg_blend_tree_child_new()= / =lrg_blend_tree_child_copy()= / =lrg_blend_tree_child_free()= / =lrg_blend_tree_child_get_type()= | the boxed child |
+| =lrg_blend_tree_add_child_2d()= / =lrg_blend_tree_clear_children()= / =lrg_blend_tree_get_children()= | children (the list is owned by the tree) |
+| =lrg_blend_tree_set_parameter_2d()= | the 2D blend position |
+| =lrg_blend_tree_update()= | weights + time (synced or free) |
+| =lrg_blend_tree_get_time()= / =lrg_blend_tree_set_time()= | seconds since reset; setting jumps every child to that time |

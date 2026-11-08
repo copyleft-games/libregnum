@@ -38,6 +38,37 @@
 #include "../lighting/lrg-spot-light2d.h"
 #include "../lighting/lrg-directional-light2d.h"
 #include "../graphics/lrg-light-set.h"
+#include "../world3d/components/lrg-mesh-renderer-component.h"
+#include "../world3d/components/lrg-skinned-model-component.h"
+#include "../world3d/components/lrg-animator-component3d.h"
+#include "../world3d/components/lrg-light-component.h"
+#include "../world3d/components/lrg-camera-component.h"
+#include "../world3d/components/lrg-audio-source-component.h"
+#include "../world3d/components/lrg-audio-listener-component.h"
+#include "../audio/lrg-low-pass.h"
+#include "../audio/lrg-high-pass.h"
+#include "../audio/lrg-echo.h"
+#include "../audio/lrg-reverb.h"
+#include "../audio/lrg-chorus.h"
+#include "../audio/lrg-pitch-shift.h"
+#include "../world3d/components/lrg-billboard-component.h"
+#include "../world3d/components/lrg-tilemap-component.h"
+#include "../world3d/components/lrg-spawn-component.h"
+#include "../world3d/components/lrg-trigger-component.h"
+#include "../world3d/components/lrg-decal-component.h"
+#include "../world3d/components/lrg-lod-component.h"
+#include "../world3d/components/lrg-reflection-probe-component.h"
+#include "../world3d/components/lrg-sequence-component.h"
+#include "../world3d/components/lrg-rigid-body-component.h"
+#include "../world3d/components/lrg-collider-component3d.h"
+#include "../world3d/components/lrg-joint-component.h"
+#include "../world3d/components/lrg-cloth-component.h"
+#include "../world3d/components/lrg-destructible-component.h"
+#include "../world3d/components/lrg-ai-component.h"
+#include "../tilemap/lrg-rule-tile.h"
+#include "../lighting/lrg-shadow-caster.h"
+#include "../atlas/lrg-sprite-animation.h"
+#include "../ecs/components/lrg-skeleton2d-component.h"
 #include "../particles/lrg-particle-system.h"
 #include "../particles/lrg-particle-emitter.h"
 #include "../particles/lrg-particle-force.h"
@@ -71,6 +102,19 @@
 #include "../ai/lrg-bt-composite.h"
 #include "../ai/lrg-bt-decorator.h"
 #include "../ai/lrg-bt-leaf.h"
+#include "../graphics/lrg-terrain-asset.h"
+#include "../graphics/lrg-terrain-brush.h"
+#include "../graphics/lrg-foliage.h"
+#include "../graphics/lrg-water-body.h"
+#include "../world3d/components/lrg-terrain-component.h"
+#include "../world3d/components/lrg-foliage-component.h"
+#include "../world3d/components/lrg-water-component.h"
+#include "../world3d/components/lrg-particle-component.h"
+#include "../particles/lrg-particle-asset.h"
+#include "../core/lrg-color-gradient.h"
+#include "../particles/lrg-gpu-particles.h"
+#include "../weather/lrg-weather-asset.h"
+#include "../world3d/components/lrg-nav-agent-component.h"
 
 #include <stdarg.h>
 #include <string.h>
@@ -462,6 +506,59 @@ static const LrgRegistryBuiltin builtin_catalog[] = {
     { "collider",                  lrg_collider_component_get_type },
     { "animator",                  lrg_animator_component_get_type },
 
+    /* 3D (LrgWorld3D) components: same suffix rule as the ECS ones */
+    { "mesh-renderer",             lrg_mesh_renderer_component_get_type },
+    { "skinned-model",             lrg_skinned_model_component_get_type },
+    { "animator3d",                lrg_animator_component3d_get_type },
+    { "light",                     lrg_light_component_get_type },
+    { "camera",                    lrg_camera_component_get_type },
+    { "audio-source",              lrg_audio_source_component_get_type },
+    { "audio-listener",            lrg_audio_listener_component_get_type },
+    { "low-pass",                   lrg_low_pass_get_type },
+    { "high-pass",                  lrg_high_pass_get_type },
+    { "echo",                       lrg_echo_get_type },
+    { "reverb",                     lrg_reverb_get_type },
+    { "chorus",                     lrg_chorus_get_type },
+    { "pitch-shift",                lrg_pitch_shift_get_type },
+    { "billboard",                 lrg_billboard_component_get_type },
+    { "tilemap",                   lrg_tilemap_component_get_type },
+    { "spawn",                     lrg_spawn_component_get_type },
+    { "trigger",                   lrg_trigger_component_get_type },
+    { "decal",                     lrg_decal_component_get_type },
+    { "lod",                       lrg_lod_component_get_type },
+    { "reflection-probe",          lrg_reflection_probe_component_get_type },
+    { "sequence",                  lrg_sequence_component_get_type },
+    /* physics components (0.9.0 M5): "3d" because the 2D names are taken */
+    { "rigid-body3d",              lrg_rigid_body_component_get_type },
+    { "collider3d",                lrg_collider_component3d_get_type },
+    { "joint3d",                   lrg_joint_component_get_type },
+    { "cloth3d",                   lrg_cloth_component_get_type },
+    { "destructible3d",            lrg_destructible_component_get_type },
+    { "ai",                        lrg_ai_component_get_type },
+    { "rule-tile",                  lrg_rule_tile_get_type },
+    { "shadow-occluder2d",          lrg_shadow_occluder2d_get_type },
+    { "sprite-animation",           lrg_sprite_animation_get_type },
+    { "sprite-animation-player",    lrg_sprite_animation_player_get_type },
+    { "terrain-asset",              lrg_terrain_asset_get_type },
+    { "terrain-layer",              lrg_terrain_layer_get_type },
+    { "terrain-brush",              lrg_terrain_brush_get_type },
+    { "foliage",                    lrg_foliage_get_type },
+    { "foliage-layer",              lrg_foliage_layer_get_type },
+    { "water-body",                 lrg_water_body_get_type },
+    { "terrain3d",                  lrg_terrain_component_get_type },
+    { "foliage3d",                  lrg_foliage_component_get_type },
+    { "water3d",                    lrg_water_component_get_type },
+    { "particles",                  lrg_particle_component_get_type },
+    { "particle-asset",             lrg_particle_asset_get_type },
+    { "particle-asset-emitter",     lrg_particle_asset_emitter_get_type },
+    { "particle-render-settings",   lrg_particle_render_settings_get_type },
+    { "color-gradient",             lrg_color_gradient_get_type },
+    { "gpu-particles",              lrg_gpu_particles_get_type },
+    { "weather-wind",               lrg_weather_wind_get_type },
+    { "weather-particles",          lrg_weather_particles_get_type },
+    { "nav-agent",                  lrg_nav_agent_component_get_type },
+    { "skeleton2d",                lrg_skeleton2d_component_get_type },
+
     /* Scenes and 3D levels */
     { "scene",                     lrg_scene_get_type },
     { "scene-entity",              lrg_scene_entity_get_type },
@@ -475,6 +572,7 @@ static const LrgRegistryBuiltin builtin_catalog[] = {
     { "wall-set",                  lrg_wall_set_get_type },
     { "collision-mesh",            lrg_collision_mesh_get_type },
     { "rope",                      lrg_rope_get_type },
+    { "dynamics-world",            lrg_dynamics_world_get_type },
 
     /* 2D triggers */
     { "trigger-rect",              lrg_trigger_rect_get_type },

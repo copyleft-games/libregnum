@@ -1,0 +1,59 @@
+#+title: Text Editor Marks, Diagnostics and Completion
+#+description: Breakpoint gutter, execution line, diagnostic squiggles, completion popup and hover on LrgTextEditor
+#+authors: Zach Podbielniak
+#+categories: libregnum ui text
+#+created: 2026-11-07T12:00:00-05:00
+#+updated: 2026-11-07T12:00:00-05:00
+#+version: 1.0
+
+* Text editor marks, diagnostics and completion
+:PROPERTIES:
+:CUSTOM_ID: text-editor-marks
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:index.org][UI]]* > *[[file:widgets/text-editor.org][Text Editor]]* > Marks
+#+end_quote
+
+The base editor (caret, undo, syntax, line-number gutter) is [[file:widgets/text-editor.org][the widget page]]. This page is the debugger and language-server surface added on the same =LrgTextEditor=. Positions are 0-based characters, the same as =lrg_text_editor_set_cursor=. The extra gutter column is off unless =show-gutter-marks= is set, so an existing editor keeps its layout. =lrg_text_editor_set_text= does not clear marks, the execution line, diagnostics, the completion popup or the hover.
+
+** Gutter marks
+:PROPERTIES:
+:CUSTOM_ID: text-editor-gutter-marks
+:END:
+=LrgTextGutterMark= (=lrg_text_gutter_mark_get_type=) is a flags type: =LRG_TEXT_GUTTER_MARK_NONE= removes the line, =LRG_TEXT_GUTTER_MARK_BREAKPOINT= is a filled mark, =LRG_TEXT_GUTTER_MARK_BREAKPOINT_DISABLED= is a mark that will not fire, =LRG_TEXT_GUTTER_MARK_CURRENT= is the stopped line. Combine breakpoint and current when both apply.
+
+=lrg_text_editor_get_show_gutter_marks= and =lrg_text_editor_set_show_gutter_marks= control the =show-gutter-marks= property (explicit notify). The column is 14 pixels and off by default. Turning it on widens the gutter. A click in that column emits =gutter-clicked= (one =guint=, the 0-based line) instead of moving the caret. F9 emits the same signal when a handler is connected. F5 and F10 stay with the editor's own keys.
+
+=lrg_text_editor_set_gutter_mark= stores flags for a 0-based line, including lines that do not exist yet. =lrg_text_editor_get_gutter_mark= returns them, or =LRG_TEXT_GUTTER_MARK_NONE=. =lrg_text_editor_clear_gutter_marks= removes every mark and does not clear the execution line.
+
+** Execution line
+:PROPERTIES:
+:CUSTOM_ID: text-editor-execution-line
+:END:
+=lrg_text_editor_set_execution_line= highlights a 0-based line as the line the debugger is stopped on. =-1= clears it; any other negative value is stored as =-1=. =lrg_text_editor_get_execution_line= returns that line or =-1=. The band is the selection colour and is separate from the caret's current-line tint (=lrg_text_editor_set_highlight_current_line=).
+
+** Diagnostics
+:PROPERTIES:
+:CUSTOM_ID: text-editor-diagnostics
+:END:
+=LrgTextDiagnosticSeverity= (=lrg_text_diagnostic_severity_get_type=) matches the Language Server Protocol: =LRG_TEXT_DIAGNOSTIC_ERROR= is 1, =LRG_TEXT_DIAGNOSTIC_WARNING= is 2, =LRG_TEXT_DIAGNOSTIC_INFO= is 3, =LRG_TEXT_DIAGNOSTIC_HINT= is 4. A server number converts with a cast.
+
+=LrgTextDiagnostic= (=lrg_text_diagnostic_get_type=) is a boxed value: 0-based =line=, =column=, =end_line=, =end_column= (exclusive), =severity= and =message=. A zero-width span is drawn as one character. =lrg_text_diagnostic_copy= returns a full copy (nullable in, nullable out). =lrg_text_diagnostic_free= frees one. The squiggle colour is the theme's danger, warning, accent or muted text.
+
+=lrg_text_editor_set_diagnostics= copies the array (transfer none; %NULL clears). =lrg_text_editor_get_diagnostics= returns a new array of copies; free the array and it frees the elements.
+
+** Completion
+:PROPERTIES:
+:CUSTOM_ID: text-editor-completion
+:END:
+=LrgTextCompletion= (=lrg_text_completion_get_type=) is a boxed row: =label=, nullable =detail=, and nullable =insert_text= (%NULL uses the label). =lrg_text_completion_copy= and =lrg_text_completion_free= are the boxed copy and free.
+
+=lrg_text_editor_show_completion= copies the rows and shows the popup. %NULL or an empty array hides it. =lrg_text_editor_hide_completion= hides it. =lrg_text_editor_get_completion_visible= reports that. =lrg_text_editor_get_completion_selected= is the selected row, or =-1= when hidden. =lrg_text_editor_completion_move= steps by =delta= and clamps. While the popup is visible, Up, Down, Enter, Tab and Escape belong to it. =lrg_text_editor_completion_accept= replaces the word at the caret (letters, digits, underscore, walked backward) with the selected insert text as one undo step, hides the popup, and returns %FALSE when the popup is hidden.
+
+** Hover and go to definition
+:PROPERTIES:
+:CUSTOM_ID: text-editor-hover
+:END:
+=lrg_text_editor_show_hover= displays a string the caller fetched. %NULL hides it. =lrg_text_editor_hide_hover= hides it. =lrg_text_editor_get_hover_text= returns the current string (transfer none) or %NULL. The editor does not wrap the string to a width of its own beyond the tooltip.
+
+=goto-definition= fires on F12 and on Ctrl+click when a handler is connected. The detail is two =guint= arguments, the 0-based line and column. With no handler those keys do what they did before.

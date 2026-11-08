@@ -28,6 +28,7 @@
 #include "../../lrg-version.h"
 #include "../../ui/lrg-container.h"
 #include "lrg-editor-app.h"
+#include "../lrg-editor-script-api.h"
 
 G_BEGIN_DECLS
 
@@ -195,6 +196,86 @@ LRG_AVAILABLE_IN_ALL
 guint lrg_editor_console_panel_get_level_count (LrgEditorConsolePanel  *self,
                                                 LrgEditorConsoleLevels  level);
 
+/**
+ * lrg_editor_console_panel_get_script_api:
+ * @self: an #LrgEditorConsolePanel
+ *
+ * The editor script API this console drives (REPL, `editor_scripts/`
+ * and the `script.*` IPC methods).
+ *
+ * Returns: (transfer none): the #LrgEditorScriptApi
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorScriptApi * lrg_editor_console_panel_get_script_api (LrgEditorConsolePanel *self);
+
+/**
+ * lrg_editor_console_panel_set_repl_language:
+ * @self: an #LrgEditorConsolePanel
+ * @language: %LRG_SCRIPT_LANGUAGE_NONE for the command line, or Lua,
+ *   Python or Gjs for the script REPL
+ *
+ * The language chip cycles the same set. Each language keeps its own
+ * history. A half-typed multi-line buffer is dropped when the language
+ * changes.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_console_panel_set_repl_language (LrgEditorConsolePanel *self,
+                                                 LrgScriptLanguage      language);
+
+/**
+ * lrg_editor_console_panel_get_repl_language:
+ * @self: an #LrgEditorConsolePanel
+ *
+ * Returns: the REPL language, or %LRG_SCRIPT_LANGUAGE_NONE when the
+ *   line is the command line
+ */
+LRG_AVAILABLE_IN_ALL
+LrgScriptLanguage lrg_editor_console_panel_get_repl_language (LrgEditorConsolePanel *self);
+
+/**
+ * lrg_editor_console_panel_repl:
+ * @self: an #LrgEditorConsolePanel
+ * @code: one chunk of script (a statement or an expression)
+ * @result: (out) (optional) (nullable) (transfer full): the expression
+ *   value, %NULL for a statement
+ * @error: return location for an error
+ *
+ * Runs @code in the console's REPL context for the selected language
+ * (see lrg_editor_script_api_run_string()). Prints land in
+ * lrg_editor_console_panel_get_repl_output() as well as the log.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_console_panel_repl (LrgEditorConsolePanel  *self,
+                                        const gchar            *code,
+                                        gchar                 **result,
+                                        GError                **error);
+
+/**
+ * lrg_editor_console_panel_get_repl_buffer:
+ * @self: an #LrgEditorConsolePanel
+ *
+ * The multi-line continuation collected so far (lines submitted with a
+ * trailing backslash). Empty when the next submit runs.
+ *
+ * Returns: (transfer none): the buffer, "" when there is none
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_console_panel_get_repl_buffer (LrgEditorConsolePanel *self);
+
+/**
+ * lrg_editor_console_panel_get_repl_output:
+ * @self: an #LrgEditorConsolePanel
+ *
+ * Print output of the last lrg_editor_console_panel_repl() call, lines
+ * joined with newlines.
+ *
+ * Returns: (transfer none): the output, "" when the last run printed nothing
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_console_panel_get_repl_output (LrgEditorConsolePanel *self);
+
 /* ==========================================================================
  * LrgEditorHistoryPanel
  * ========================================================================== */
@@ -294,6 +375,23 @@ LRG_AVAILABLE_IN_ALL
 void lrg_editor_problems_panel_activate_row (LrgEditorProblemsPanel *self,
                                              guint                   index,
                                              gboolean                open);
+
+/**
+ * lrg_editor_problems_panel_get_row_location:
+ * @self: an #LrgEditorProblemsPanel
+ * @index: a listed problem
+ * @line: (out) (optional): 1-based source line, 0 when unknown
+ * @column: (out) (optional): 1-based column, 0 when unknown
+ *
+ * The source location copied from the problem. Headless.
+ *
+ * Returns: %FALSE when @index is out of range
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_problems_panel_get_row_location (LrgEditorProblemsPanel *self,
+                                                     guint                   index,
+                                                     gint                   *line,
+                                                     gint                   *column);
 
 G_END_DECLS
 

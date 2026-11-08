@@ -20,6 +20,43 @@
 G_BEGIN_DECLS
 
 /**
+ * LRG_ANIMATION_TRANSITION_ANY_STATE:
+ *
+ * The source name of an any-state transition: it may fire from whichever
+ * state the machine is in (except its own target, unless
+ * lrg_animation_transition_set_can_transition_to_self() allows it).
+ */
+#define LRG_ANIMATION_TRANSITION_ANY_STATE "*"
+
+/**
+ * LrgTransitionInterruption:
+ * @LRG_TRANSITION_INTERRUPTION_NONE: the transition always runs to the end
+ * @LRG_TRANSITION_INTERRUPTION_SOURCE: transitions leaving the source state
+ *   may cut in
+ * @LRG_TRANSITION_INTERRUPTION_DESTINATION: transitions leaving the
+ *   destination state may cut in
+ * @LRG_TRANSITION_INTERRUPTION_SOURCE_THEN_DESTINATION: the source's
+ *   transitions are checked first, then the destination's
+ * @LRG_TRANSITION_INTERRUPTION_DESTINATION_THEN_SOURCE: the destination's
+ *   transitions are checked first, then the source's
+ *
+ * Which transitions may interrupt a transition in progress. An interrupted
+ * blend continues from the pose the machine had at that moment.
+ */
+typedef enum
+{
+    LRG_TRANSITION_INTERRUPTION_NONE,
+    LRG_TRANSITION_INTERRUPTION_SOURCE,
+    LRG_TRANSITION_INTERRUPTION_DESTINATION,
+    LRG_TRANSITION_INTERRUPTION_SOURCE_THEN_DESTINATION,
+    LRG_TRANSITION_INTERRUPTION_DESTINATION_THEN_SOURCE
+} LrgTransitionInterruption;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_transition_interruption_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TRANSITION_INTERRUPTION (lrg_transition_interruption_get_type ())
+
+/**
  * LrgTransitionCondition:
  * @parameter: Parameter name to check
  * @comparison: Comparison type
@@ -246,5 +283,122 @@ gint                    lrg_animation_transition_get_priority   (LrgAnimationTra
 LRG_AVAILABLE_IN_ALL
 void                    lrg_animation_transition_set_priority   (LrgAnimationTransition *self,
                                                                   gint                    priority);
+
+/**
+ * lrg_animation_transition_set_source:
+ * @self: A #LrgAnimationTransition
+ * @source: the source state name, or %LRG_ANIMATION_TRANSITION_ANY_STATE
+ *
+ * Re-points the transition's source (the state machine editor drags
+ * transition ends with it).
+ */
+LRG_AVAILABLE_IN_ALL
+void                    lrg_animation_transition_set_source     (LrgAnimationTransition *self,
+                                                                  const gchar            *source);
+
+/**
+ * lrg_animation_transition_set_target:
+ * @self: A #LrgAnimationTransition
+ * @target: the target state name
+ *
+ * Re-points the transition's target.
+ */
+LRG_AVAILABLE_IN_ALL
+void                    lrg_animation_transition_set_target     (LrgAnimationTransition *self,
+                                                                  const gchar            *target);
+
+/**
+ * lrg_animation_transition_is_any_state:
+ * @self: A #LrgAnimationTransition
+ *
+ * Returns: whether the source is %LRG_ANIMATION_TRANSITION_ANY_STATE
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean                lrg_animation_transition_is_any_state   (LrgAnimationTransition *self);
+
+/**
+ * lrg_animation_transition_get_offset:
+ * @self: A #LrgAnimationTransition
+ *
+ * Returns: the normalized time (0..1) the target state starts at
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat                  lrg_animation_transition_get_offset     (LrgAnimationTransition *self);
+
+/**
+ * lrg_animation_transition_set_offset:
+ * @self: A #LrgAnimationTransition
+ * @offset: normalized start time of the target, 0..1
+ *
+ * Starts the target state part way in (for example a run cycle entered
+ * on the opposite foot).
+ */
+LRG_AVAILABLE_IN_ALL
+void                    lrg_animation_transition_set_offset     (LrgAnimationTransition *self,
+                                                                  gfloat                  offset);
+
+/**
+ * lrg_animation_transition_get_interruption:
+ * @self: A #LrgAnimationTransition
+ *
+ * Returns: which transitions may interrupt this one
+ */
+LRG_AVAILABLE_IN_ALL
+LrgTransitionInterruption lrg_animation_transition_get_interruption (LrgAnimationTransition *self);
+
+/**
+ * lrg_animation_transition_set_interruption:
+ * @self: A #LrgAnimationTransition
+ * @interruption: the interruption source
+ *
+ * Sets which transitions may cut this one short.
+ */
+LRG_AVAILABLE_IN_ALL
+void                    lrg_animation_transition_set_interruption (LrgAnimationTransition    *self,
+                                                                    LrgTransitionInterruption  interruption);
+
+/**
+ * lrg_animation_transition_get_can_transition_to_self:
+ * @self: A #LrgAnimationTransition
+ *
+ * Returns: whether an any-state transition may fire while its target is
+ *   already the current state
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean                lrg_animation_transition_get_can_transition_to_self (LrgAnimationTransition *self);
+
+/**
+ * lrg_animation_transition_set_can_transition_to_self:
+ * @self: A #LrgAnimationTransition
+ * @allow: whether to restart the target from itself
+ *
+ * Allows an any-state transition to re-enter its own target (a hit
+ * reaction restarting on every hit).
+ */
+LRG_AVAILABLE_IN_ALL
+void                    lrg_animation_transition_set_can_transition_to_self (LrgAnimationTransition *self,
+                                                                             gboolean                allow);
+
+/**
+ * lrg_animation_transition_evaluate_range:
+ * @self: A #LrgAnimationTransition
+ * @parameters: (element-type utf8 GVariant): parameter values
+ * @previous_normalized_time: the source's normalized time before the
+ *   last update (not wrapped: 2.5 is half way through the third loop)
+ * @normalized_time: the source's normalized time now
+ *
+ * Like lrg_animation_transition_evaluate() with crossing semantics for
+ * the exit time: an exit time below 1 is reached once per loop, when
+ * the fractional part of the normalized time passes it during the last
+ * update; an exit time of 1 or more is reached once, when the
+ * normalized time passes it. The state machine uses this form.
+ *
+ * Returns: %TRUE if the transition should fire
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean                lrg_animation_transition_evaluate_range (LrgAnimationTransition *self,
+                                                                  GHashTable             *parameters,
+                                                                  gfloat                  previous_normalized_time,
+                                                                  gfloat                  normalized_time);
 
 G_END_DECLS

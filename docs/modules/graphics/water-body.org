@@ -1,0 +1,139 @@
+#+title: LrgWaterBody - Water Bodies (.rwater)
+#+description: Planes, lake polygons and river splines with LrgWaterSurface shading, the .rwater format, surface building and the water component
+
+* LrgWaterBody - Water Bodies (.rwater)
+:PROPERTIES:
+:CUSTOM_ID: lrgwaterbody
+:END:
+=LrgWaterBody= (0.9.0) describes a body of water: an outline (an axis-aligned plane, a lake polygon or a river spline with a width per point), a rest level, a grid resolution, shore foam settings and everything an =LrgWaterSurface= (see [[file:world-look.org][World look]]) needs to shade it: Gerstner waves, colours and optics. It loads from and saves to the =.rwater= YAML format and builds the surface's geometry headless. =LrgWaterComponent= draws a body in a world through =LrgWorld3DRenderer=.
+
+- *Types* - =LrgWaterBody= (final GObject), =LrgWaterComponent=
+- *Headers* - =graphics/lrg-water-body.h=, =world3d/components/lrg-water-component.h=
+- *Format* - =.rwater=, version =LRG_WATER_BODY_FORMAT_VERSION= (1); =LRG_WATER_BODY_MAX_POINTS= (1024)
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Outlines
+:PROPERTIES:
+:CUSTOM_ID: concepts-shapes
+:END:
+| =LrgWaterBodyShape= | Outline | Rest height |
+|---------------------+---------+-------------|
+| =LRG_WATER_BODY_PLANE= | a =size[0]= x =size[1]= rectangle centred on the origin | =level= |
+| =LRG_WATER_BODY_LAKE= | the polygon through the points (x, z), even-odd | =level= |
+| =LRG_WATER_BODY_RIVER= | a Catmull-Rom spline through the points (x, y, z) with a width per point | the spline height at the nearest point |
+
+=lrg_water_body_contains()= tests a local point and returns the rest height there (buoyancy, swimming, picking); =lrg_water_body_get_bounds()= gives the rest surface's local box.
+
+*** Building the surface
+:PROPERTIES:
+:CUSTOM_ID: concepts-build
+:END:
+=lrg_water_body_build_surface()= clears an =LrgWaterSurface= and adds the body's patches: the outline's bounding box is cut into =cell_size= cells and into tiles of at most 250 x 250 cells (65 535 vertices); each tile with wet cells (cell centre inside the outline) becomes one =lrg_water_surface_add_heightfield()= patch whose vertices sit at the rest height. The shore factor (foam) is the larger of the *band* (1 on the outline, 0 at =foam[0]= inside) and the *depth* (1 where the ground reaches the surface, 0 at =foam[1]= below it; only with a =LrgWaterGroundFunc=). An offset moves everything into draw space. =lrg_water_body_apply_to_surface()= copies only the shading (waves, wave scale, colours, optics).
+
+** The .rwater format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+#+begin_src yaml
+version: 1
+name: pond
+shape: lake                   # plane | lake | river (required)
+level: 2.5                    # plane and lake
+size: [40, 30]                # plane only
+points:                       # lake: [x, z]; river: [x, y, z, width]
+- [0, 0]
+- [20, 0]
+- [20, 10]
+cell_size: 1                  # 0.05 .. 64
+foam: [2, 0.5]                # band width, shallow depth
+waves:                        # 0 .. 4 Gerstner waves
+- direction: [1, 0]           # normalised on load
+  amplitude: 0.1
+  wavelength: 6
+  speed: 1.5
+  steepness: 0.4              # 0 .. 1
+wave_scale: 1
+colors:                       # RGBA 0 .. 1 (stored as bytes)
+  shallow: [0.2, 0.4, 0.4, 1]
+  deep: [0, 0.2, 0.6, 1]
+  foam: [1, 1, 1, 1]
+optics:
+  transparency: 0.4
+  reflection: 0.7
+  refraction: 0.03
+  reflect_distance: 20
+#+end_src
+
+Unknown keys at the root are kept; inside =waves=, =colors= and =optics= an unknown key is an error (=/waves[0]/height: unknown wave key=). Errors name the key path (=<data>: /shape: missing (not a water body)=). Colours are bytes: a colour component that is not a multiple of 1/255 is written back as its byte value (=0.05= becomes =0.050980393=), after which the file is byte stable.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+=LrgWaterBody=: =lrg_water_body_new=, =lrg_water_body_new_from_file=, =lrg_water_body_new_from_data=, =lrg_water_body_save_to_file=, =lrg_water_body_to_data=, =lrg_water_body_get_name= / =lrg_water_body_set_name=, =lrg_water_body_get_shape= / =lrg_water_body_set_shape=, =lrg_water_body_get_level= / =lrg_water_body_set_level=, =lrg_water_body_get_size= / =lrg_water_body_set_size=, =lrg_water_body_get_n_points=, =lrg_water_body_get_point=, =lrg_water_body_add_point=, =lrg_water_body_set_point=, =lrg_water_body_remove_point=, =lrg_water_body_clear_points=, =lrg_water_body_get_cell_size= / =lrg_water_body_set_cell_size=, =lrg_water_body_get_foam= / =lrg_water_body_set_foam=, =lrg_water_body_get_wave_count= / =lrg_water_body_set_wave_count=, =lrg_water_body_get_wave= / =lrg_water_body_set_wave= (=LrgWaterWave=), =lrg_water_body_get_wave_scale= / =lrg_water_body_set_wave_scale=, =lrg_water_body_get_colors= / =lrg_water_body_set_colors=, =lrg_water_body_get_optics= / =lrg_water_body_set_optics=, =lrg_water_body_contains=, =lrg_water_body_get_bounds=, =lrg_water_body_apply_to_surface=, =lrg_water_body_build_surface= (=LrgWaterGroundFunc=). Enums and errors: =LrgWaterBodyShape= (=lrg_water_body_shape_get_type ()=), =LRG_WATER_BODY_ERROR= (=lrg_water_body_error_quark ()=), =LrgWaterBodyError= (=LRG_WATER_BODY_ERROR_PARSE=, =LRG_WATER_BODY_ERROR_INVALID=, =LRG_WATER_BODY_ERROR_IO=, =lrg_water_body_error_get_type ()=).
+
+=LrgWaterComponent=: =lrg_water_component_new=, =lrg_water_component_get_body= / =lrg_water_component_set_body=, =lrg_water_component_get_body_path= / =lrg_water_component_set_body_path=, =lrg_water_component_get_surface=, =lrg_water_component_rebuild=, =lrg_water_component_get_time= / =lrg_water_component_set_time=, =lrg_water_component_get_capture= / =lrg_water_component_set_capture=, =lrg_water_component_level_at=. Properties: =body=, =body-path=, =time=, =capture=, =layer=.
+
+The component builds the surface in world space at the entity's world position (translation only: water stays level) and rebuilds when the position or the body changes (=lrg_water_component_rebuild()= after editing a body in place). Per frame it adds one transparent custom item; its draw captures the frame drawn so far (=capture=, for screen-space reflection and refraction), takes the renderer's sun direction, binds the renderer's light set and draws on the component's wave clock (advanced by update). =lrg_water_component_level_at()= returns the world surface height with waves at a world point.
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+#+begin_src C
+g_autoptr(LrgWaterBody)      lake = lrg_water_body_new (LRG_WATER_BODY_LAKE);
+g_autoptr(LrgWaterComponent) wc = lrg_water_component_new ();
+guint                        k;
+
+for (k = 0; k < 16; k++)
+{
+	gfloat a = (gfloat) k / 16.0f * 2.0f * G_PI;
+
+	lrg_water_body_add_point (lake, cosf (a) * 30.0f, 0.0f, sinf (a) * 20.0f, 1.0f);
+}
+lrg_water_body_set_level (lake, 0.0f);
+lrg_water_component_set_body (wc, lake);
+lrg_entity3d_add_component (lake_entity, LRG_COMPONENT (wc));
+#+end_src
+
+Depth foam against a terrain asset (local coordinates of the body = terrain local here):
+
+#+begin_src C
+static gboolean
+ground (gfloat x, gfloat z, gfloat *out, gpointer user_data)
+{
+	return lrg_terrain_asset_sample_height (LRG_TERRAIN_ASSET (user_data), x, z, out);
+}
+
+lrg_water_body_build_surface (lake, surface, 0, 0, 0, ground, terrain, &error);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+A body builds once (and on change); a 100 x 80 lake at 1-unit cells is one patch of about 8 000 vertices. Drawing is one water-shader draw per patch plus one frame copy when =capture= is on (turn it off for distant or many small bodies).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Water is drawn in the transparent pass: it is not a shadow caster and not in the depth prepass.
+- Rivers do not flow: the Gerstner waves are global per body (direction is the waves', not the spline's).
+- The component ignores the entity's rotation and scale.
+- Each water component's draw captures the frame; several large bodies on screen copy the frame several times.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+A water body is a level node of kind =water= whose asset is the =.rwater=; the runtime makes an =LrgWaterComponent=. In lrgeditor ([[file:../../editor/terrain.org::#editor-water-editor][Water editor]]), Create > Water writes a small lake =.rwater= and adds the node; selecting a lake or river node shows its outline points as viewport handles (drag, Ctrl+click adds, Shift+click removes, one undo step each), and double-clicking the =.rwater= opens the water editor: the body fields, up to four waves and the outline with an animated preview, every change one undo step of the document, the level's water nodes following the unsaved state (the editor rebuilds their =LrgWaterComponent= with =lrg_water_component_rebuild()=). IPC: =water.get=, =water.set=, =water.set_wave=, =water.add_point= / =set_point= / =remove_point=, =water.save= on a ={"path"}= or a ={"node"}=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+[[file:world-look.org][LrgWaterSurface]], [[file:terrain-asset.org][LrgTerrainAsset]], [[file:../../guides/terrain.org][Terrain guide]].

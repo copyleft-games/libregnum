@@ -1,30 +1,392 @@
-* LrgDynamicsWorld - Bounded 3D Motion
+#+title: LrgDynamicsWorld - 3D Rigid-Body Solver
+#+description: The libregnum 0.9 3D physics world: shape bodies, broadphase and layers, persistent contacts with warm starting, sequential impulses with friction and restitution, NGS position correction, islands and sleeping, CCD, kinematic bodies, sensors, contact signals, world queries, the constraint hook, fixed step with interpolation and debug drawing.
+
+* LrgDynamicsWorld - 3D Rigid-Body Solver
 :PROPERTIES:
 :CUSTOM_ID: dynamics
 :END:
+=LrgDynamicsWorld= (=src/physics/lrg-dynamics.h=) is the 3D rigid-body physics engine of libregnum. Since 0.9 it is a full solver written in GObject C (no third-party physics library), with its algorithms ported from Jolt Physics (MIT, Copyright 2021 Jorrit Rouwe): any number of bodies, each with an [[file:physics-shape.org][LrgPhysicsShape]] (sphere, capsule, cylinder, box, convex hull, triangle mesh, heightfield, compound, plane), a dynamic AABB tree [[file:broadphase.org][broadphase]] filtered by [[file:physics-layers.org][physics layers]], a GJK/EPA/face-clipping narrowphase (=lrg_collide_shapes_all()=), persistent contact manifolds with warm starting, a sequential-impulse velocity solver with friction and restitution, a non-linear Gauss-Seidel (NGS) position solver, islands and sleeping, continuous collision for fast bodies, kinematic bodies, sensors with enter/exit signals, contact signals, world queries (rays, shape casts, overlaps) and the [[file:contact-solver.org][LrgPhysicsConstraint]] hook joints are written against.
 
-=LrgDynamicsWorld= (=src/physics/lrg-dynamics.h=) integrates spheres, caller-axis sphyl capsules, and contactless bodies in a Y-up world. It is a separate type from the 2D =LrgRigidBody= / =LrgPhysicsWorld= pair. A box half-extent or =set_inertia_diagonal()= changes only the body-frame inertia diagonal. Contacts are sphere-sphere, sphere-plane, sphyl-sphere, sphyl-plane, and sphyl-sphyl. A sphyl segment uses the unit axis the caller passes; that axis is not the collision library's local +Y sphyl. A contactless body never generates a contact and does not invent a radius. This world does not admit a ragdoll, an Onslaught goal, or an Assault goal, and it does not read Karma physics bytes.
+The 0.8 API is kept and still behaves as before: spheres (=lrg_dynamics_world_add_sphere()=), caller-axis capsules called sphyls (=lrg_dynamics_world_add_sphyl()=), infinite planes (=lrg_dynamics_world_add_plane()=), contactless inertial bodies (=lrg_dynamics_world_add_inertial()=), the limit joint (=lrg_dynamics_world_add_joint()=), freeze, eviction bounds and bone-pose writes (=lrg_dynamics_world_write_bone_pose()=). Those calls now create ordinary bodies of the new solver (with the equivalent shape) and the analytic primitive contact routines of 0.8 are still used between them, so their contact kinds, body order, points and depths are unchanged. The 2D =LrgRigidBody= / =LrgPhysicsWorld= pair is a separate system.
 
-** What a substep does
+One thread owns a world. Results are deterministic: the same calls in the same order with the same fixed step give bit-identical poses (tested).
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Bodies and ids
+:PROPERTIES:
+:CUSTOM_ID: bodies
+:END:
+Bodies live in a slot array. A body id is =slot | (generation << 24)=: the first bodies of a world get the ids 0, 1, 2, ... exactly as in 0.8, and when =lrg_dynamics_world_remove_body()= frees a slot the next body that reuses it gets a different id, so a stale id answers =LRG_DYNAMICS_ERROR_MISSING= instead of naming somebody else. There is no body cap any more (=LRG_DYNAMICS_MAX_BODIES= and =LRG_DYNAMICS_MAX_JOINTS= are kept for source compatibility only); a world takes up to 16777215 live slots. =lrg_dynamics_world_get_body_count()= counts bodies in the world (evicted ones included) and =lrg_dynamics_world_get_body_ids()= lists them in slot order.
+
+A body is one of three kinds (=LrgDynamicsBodyKind=):
+
+- *dynamic*: gravity, forces, contacts and constraints change its velocity; it needs a mass and a shape with a volume (not a mesh, heightfield or plane),
+- *kinematic*: moves with the velocity you give it (=lrg_dynamics_world_move_kinematic()= computes the velocity that reaches a target pose), pushes dynamic bodies and is never pushed back,
+- *static*: never moves (level geometry). Planes are always static.
+
+=lrg_dynamics_world_set_body_kind()= switches kinds at run time. A *frozen* body (=lrg_dynamics_world_set_frozen()=) keeps its pose and velocity, ignores gravity, forces and impulses and acts as static for the others. An *evicted* body (it left =lrg_dynamics_world_set_bounds()=) leaves the simulation but keeps its id and last pose (=lrg_dynamics_world_body_is_active()= is =FALSE=, =lrg_dynamics_world_get_evicted()= lists the last step's evictions).
+
+*** Shapes, origin and centre of mass
+:PROPERTIES:
+:CUSTOM_ID: shapes
+:END:
+=lrg_dynamics_world_add_body()= takes an =LrgPhysicsShape= (refcounted and immutable, so one box shape can serve a thousand crates), a kind, a mass for dynamic bodies, an origin position and an orientation. The *origin* is the shape's local origin: that is what =lrg_dynamics_world_get_position()=, =lrg_dynamics_world_get_transform()= and =lrg_dynamics_world_set_pose()= talk about. The solver itself works on the *centre of mass*, which the world takes from =lrg_physics_shape_get_mass_properties()= (a hull or compound may have its centre of mass away from the origin); =lrg_dynamics_world_get_center_of_mass()= reports it. The inertia tensor is the shape's uniform-density tensor scaled to the mass you give (=lrg_dynamics_world_set_mass()= rescales both); =lrg_dynamics_world_set_inertia_diagonal()= replaces it with a diagonal. =lrg_dynamics_world_set_shape()= swaps a body's shape (mass kept, contacts rebuilt) and =lrg_dynamics_world_get_shape()= returns it (the 0.8 primitives report their equivalent sphere, capsule or plane shape; a contactless body has none).
+
+The 0.8 primitives keep their own rules: a sphere's inertia is (2/5)mr² unless =lrg_dynamics_world_set_box_inertia()= replaces it, a sphyl's capsule runs along the unit axis you pass (the shape library's local +Y capsule is turned onto it), and a contactless body has a mass and a diagonal inertia but no contacts.
+
+*** Materials, damping and gravity factor
+:PROPERTIES:
+:CUSTOM_ID: materials
+:END:
+Every body has a friction and a restitution. Bodies made by =lrg_dynamics_world_add_body()= start with their own material (friction 0.5, restitution 0); the 0.8 primitive calls use the world material set by =lrg_dynamics_world_set_material()= (zero by default) until =lrg_dynamics_world_set_body_material()= gives them one. =lrg_dynamics_world_get_body_material()= reads the values in effect. A contact combines them like Jolt: friction sqrt(fa * fb), restitution max(ea, eb). Bounce only happens above the closing speed =lrg_contact_solver_set_restitution_threshold()= (1 m/s by default), so resting contacts do not jitter.
+
+=lrg_dynamics_world_set_damping()= scales the velocities by max(0, 1 - damping * dt) each substep (shape bodies start at 0.05 linear and angular, the 0.8 primitives at 0). =lrg_dynamics_world_set_gravity_factor()= scales the world gravity per body (0 makes a body float, 2 makes it fall twice as fast).
+
+*** Layers and pair filters
+:PROPERTIES:
+:CUSTOM_ID: layers
+:END:
+Each body has an object layer (0 to 31) and a mask of the layers it may touch (=lrg_dynamics_world_set_body_layer()=, =lrg_dynamics_world_get_body_layer()=; defaults: layer 0, mask =LRG_PHYSICS_LAYERS_ALL=). =lrg_dynamics_world_set_layers()= installs an =LrgPhysicsLayers= collide matrix (read live; =NULL= means everything collides with everything) and =lrg_dynamics_world_get_layers()= returns it. A pair collides when =lrg_physics_layers_should_collide()= says so: the matrix lets the two layers collide and each mask holds the other's layer. The broadphase applies the same rule while finding pairs, so filtered pairs cost nothing. On top of that =lrg_dynamics_world_set_collision_between()= switches individual pairs off (a ragdoll's neighbouring bones). Queries take a =layer_mask= of the layers to report.
+
+*** The substep pipeline
 :PROPERTIES:
 :CUSTOM_ID: substep
 :END:
-=step(dt)= accumulates time and runs at most =set_step_limits()= fixed substeps (default 1/60 s, four substeps). Time that would need another substep past that cap is dropped and reported by =get_dropped_time()=. It is not saved for a later call.
+=lrg_dynamics_world_step()= accumulates time and runs fixed substeps of =lrg_dynamics_world_set_step_limits()= (default 1/60 s, at most four per call). Time that would need a substep past the cap is dropped and reported by =lrg_dynamics_world_get_dropped_time()=; a remainder below one substep is kept for the next call and drives interpolation. Each substep, in the order of Jolt's =PhysicsSystem::Update=:
 
-Each substep is semi-implicit Euler. Dynamic bodies take force, gravity (default zero) and torque. The torque is turned by the diagonal inertia: a solid sphere starts at (2/5)mr², and =set_box_inertia()= replaces that with m/12 times the sum of the squares of the other two half extents. Kinematic bodies integrate velocity only. Static bodies and planes stay put. Frozen bodies skip integration and ignore contact impulses. Sleeping dynamic bodies also skip integration until a force, a torque, a velocity write, or a contact impulse wakes them.
+1. *Forces.* The pose before the substep is remembered (interpolation and CCD). Awake dynamic bodies integrate force, gravity times their gravity factor and torque (world inverse inertia) into their velocities, then damping applies. Forces and torques are consumed.
+2. *Broadphase.* Moving bodies (awake dynamic, moving kinematic) refresh their tree proxy: the tight world AABB of the shape, grown by half the speculative distance on every side and swept by velocity * dt. =lrg_broadphase_find_pairs()= reports overlapping, layer-allowed pairs in sorted order; planes stay out of the tree and are paired with every moving body whose box reaches them. Pairs are sorted by slot so everything downstream is deterministic.
+3. *Narrowphase.* Each pair that has an active body produces contact manifolds: the 0.8 analytic routine for two primitives, =lrg_collide_shapes_all()= otherwise (one manifold per touching compound child or mesh region, up to four points each, with speculative points down to minus the speculative distance). New manifolds are matched to last substep's manifolds of the same pair (feature id or 1 cm proximity, normal within about 5 degrees) and inherit their impulses: that is warm starting. A pair whose bodies moved less than 1 mm and turned less than 2 degrees relative to each other reuses its manifolds with refreshed points (Jolt's body pair cache). Pairs with a sensor only record the overlap. A sleeping body touched by an awake one is woken.
+4. *Islands.* An =LrgIslandBuilder= links awake dynamic bodies that share a manifold or an enabled constraint. Islands sleep and wake as a unit.
+5. *Velocity solve.* Contacts and constraints are set up and warm started, then =LrgContactSolver:velocity-iterations= (default 10) sequential-impulse passes run: contacts first, then constraints in insertion order. A contact is one normal row per point (accumulated impulse >= 0; target velocity 0 when touching, -gap/dt when speculative, -e * closing speed when it bounces) plus manifold friction at each body's friction centre (two tangent rows clamped to the friction circle mu * sum of normal impulses, and a twist row about the normal), all with cached Jacobians.
+6. *Integrate positions.* Awake dynamic and kinematic bodies move by v * dt and turn by omega * dt. A CCD body that moved more than a quarter of its inner radius is then swept from its start pose (see [[#ccd][CCD]]).
+7. *Position solve.* =LrgContactSolver:position-iterations= (default 2) NGS passes push penetrating points apart by =baumgarte= (0.2) times the penetration beyond the slop (0.02 m), at most =max-correction= per pass, moving and turning the bodies directly without adding velocity; constraints run their =solve_position=. Then every constraint's =post_solve= runs.
+8. *Sleep, eviction, events.* Quiet islands go to sleep (see below), dynamic bodies outside the bounds are evicted, and the contact and sensor sets are diffed into queued signals. =LrgDynamicsWorld::pre-substep= and =LrgDynamicsWorld::post-substep= are emitted around every substep; the queued contact and sensor signals are emitted after the last substep of the call.
 
-The contact pass then solves sphere pairs, sphere-plane pairs, and sphyl pairs. A sphyl is a segment of the given half-length along the caller axis, expanded by its radius. The axis must already have length 1 within 1e-4; the world direction is the body orientation applied to that axis. Sphere-sphyl uses the closest point on the segment. Sphyl-plane uses the endpoint with the smaller signed distance. Sphyl-sphyl uses the closest points of the two segments. An inertial body is skipped by every pair. The plane normal must already have length 1; spheres and sphyls are kept on the positive side. Friction, when =set_material()= sets it above zero, opposes tangential slip and uses the stored diagonal, so a spinning or sliding body can slow down. Joints run in the same passes. A joint stores a local anchor and axis on each body (=LRG_DYNAMICS_WORLD_BODY= means the anchor and axis are already in world space). Linear limits bound the distance between the world anchors. Angular limits bound the angle between the world axes, in [0, pi].
-
-After the velocity passes, one position correction pulls violated contacts and limits part of the way closed. A dynamic sphere, sphyl, or contactless body whose center then lies outside =set_bounds()= is evicted. Its id is not reused. =get_evicted()= lists the bodies the last step removed.
-
-** Skeleton pose
+*** Contacts
 :PROPERTIES:
-:CUSTOM_ID: skeleton-pose
+:CUSTOM_ID: contacts
 :END:
-=write_bone_pose()= expresses one active sphere in a parent world pose (or an identity parent for a root) and composes the result with =lrg_bone_pose_compose()=. Scale on the local pose is kept. A failure leaves both pose outputs unchanged. The caller walks a chain by feeding each composed world pose in as the next parent. Translation-only =lrg_bone_pose_multiply()= is not used.
+After a step, =lrg_dynamics_world_get_contact_count()= is the number of *touching* manifolds of the last substep (a point at depth >= 0; speculative manifolds that are still apart are not counted, sleeping pairs are). Two readers share that index:
+
+- =lrg_dynamics_world_get_contact()= is the 0.8 reader: kind, body ids, one point (the deepest; for the primitive pairs the point 0.8 reported), the normal that *pushes A out* (from B toward A) and the penetration before the solve.
+- =lrg_dynamics_world_get_contact_info()= fills an =LrgDynamicsContact= (=lrg_dynamics_contact_copy()= / =lrg_dynamics_contact_free()=) with the *A-to-B* normal (the [[file:collide.org][LrgContactManifold]] convention), the point count, the normal impulse the last substep applied and the closing speed when the contact was made; =lrg_dynamics_world_get_contact_point()= reads every point with its depth and impulse.
+
+=lrg_dynamics_world_get_manifold_count()= counts all manifolds of the last substep, speculative ones included. Generic pairs report =LRG_DYNAMICS_CONTACT_SHAPES=.
+
+*** Islands and sleeping
+:PROPERTIES:
+:CUSTOM_ID: sleeping
+:END:
+A dynamic body is *quiet* in a substep when |v|² + |ω|² is below the threshold of =lrg_dynamics_world_set_sleep()=. When every body of an island has been quiet for the configured number of consecutive substeps (and allows sleep: =lrg_dynamics_world_set_allow_sleep()=), the whole island sleeps: velocities are zeroed, integration and solving stop, and its broadphase proxies are flagged sleeping so they cost nothing. The defaults follow Jolt: 0.03 m/s (9e-4) for half a second (30 substeps at 60 Hz). A sleeping island wakes when a force, torque, impulse, velocity or pose write reaches one of its bodies, when an awake body or a moving kinematic body touches it, when a constraint links it to an awake body, or on =lrg_dynamics_world_wake_body()=. =lrg_dynamics_world_get_sleeping()= reads the flag, =lrg_dynamics_world_get_active_body_count()= counts awake dynamic bodies and =lrg_dynamics_world_get_island_count()= the awake islands of the last substep. Contacts between sleeping bodies (and between a sleeper and static geometry) are kept while they sleep, so no removed/added signals fire when a pile falls asleep.
+
+*** Continuous collision
+:PROPERTIES:
+:CUSTOM_ID: ccd
+:END:
+Without CCD a body moving faster than its own size per substep can pass through thin geometry (speculative contacts only catch what is within the speculative distance). =lrg_dynamics_world_set_ccd()= turns on a linear cast for a body (=lrg_dynamics_world_get_ccd()= reads it): after the position integration, if the body moved more than a quarter of its shape's inner radius, its shape is swept from the start pose to the end pose with =lrg_collide_cast()= against every body the broadphase finds along the swept box (=lrg_broadphase_cast_aabb()=) and every plane. At the earliest time of impact above zero the body is put back to that pose and loses its approach velocity along the hit normal (keeping the material's bounce above the restitution threshold; a dynamic target shares the impulse by mass). The next substep's speculative contact then handles the touch. Two CCD bodies in flight do not sweep against each other.
+
+*** Kinematic bodies
+:PROPERTIES:
+:CUSTOM_ID: kinematic
+:END:
+Call =lrg_dynamics_world_move_kinematic()= every frame with the target pose and the frame time: it sets the linear velocity that brings the centre of mass to the target and the angular velocity of the shortest rotation, so the solver sees the motion and pushes dynamic bodies with the right velocity. =lrg_dynamics_world_set_linear_velocity()= and =lrg_dynamics_world_set_angular_velocity()= work too. Teleporting with =lrg_dynamics_world_set_pose()= moves without pushing (and wakes what touched the body).
+
+*** Sensors
+:PROPERTIES:
+:CUSTOM_ID: sensors
+:END:
+=lrg_dynamics_world_set_sensor()= makes a body a trigger volume: no contact response, only overlap tracking. =LrgDynamicsWorld::sensor-entered= and =LrgDynamicsWorld::sensor-exited= report (sensor, other) when a body starts and stops overlapping it; =lrg_dynamics_world_get_sensor_overlaps()= lists the bodies inside after the last substep and =lrg_dynamics_world_get_sensor()= reads the flag. A static or kinematic sensor sees dynamic and kinematic bodies, a dynamic sensor also sees static ones; layers apply; a sleeping body that stays inside does not exit; an evicted or removed body exits.
+
+*** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+- =LrgDynamicsWorld::contact-added= (=LrgDynamicsContact *=): a pair started touching. The struct is valid during the emission only.
+- =LrgDynamicsWorld::contact-removed= (body A, body B): a pair stopped touching, or one was evicted or removed (a removal outside a step is reported at the next step).
+- =LrgDynamicsWorld::sensor-entered= / =LrgDynamicsWorld::sensor-exited= (sensor, other).
+- =LrgDynamicsWorld::pre-substep= / =LrgDynamicsWorld::post-substep= (dt): around every substep; handlers may apply forces, move kinematic bodies, add and remove bodies.
+
+Contact and sensor signals are queued during the substeps and emitted in pair order after the last substep of =lrg_dynamics_world_step()=. They are only computed while a handler is connected, so an unobserved world pays nothing.
+
+*** Queries
+:PROPERTIES:
+:CUSTOM_ID: queries
+:END:
+All queries take a =layer_mask= (one bit per object layer) and an =ignore_body= (the caster, or =G_MAXUINT=), skip sensors (except the AABB query), and return =LrgRayHit= records whose =body= is the body id:
+
+- =lrg_dynamics_world_raycast()=: closest hit along origin + t * direction, t in [0, max_fraction] (t is measured in multiples of the direction's length; pass a unit direction to get metres),
+- =lrg_dynamics_world_raycast_all()=: every body hit (its closest hit), sorted by t then id,
+- =lrg_dynamics_world_shape_cast()=: sweeps a convex or compound shape along a direction and reports the first touch (t of first contact, normal from the body toward the cast shape); a start that already overlaps reports t = 0,
+- =lrg_dynamics_world_overlap_shape()=: every body whose shape overlaps a query shape at a pose,
+- =lrg_dynamics_world_overlap_aabb()=: every body whose world box overlaps a box (broadphase only, sensors included, planes not).
+
+=lrg_dynamics_world_get_body_aabb()= returns one body's world box.
+
+*** Constraints
+:PROPERTIES:
+:CUSTOM_ID: constraints
+:END:
+Joints are =LrgPhysicsConstraint= subclasses ([[file:contact-solver.org][the constraint hook]]; the joint library itself is [[file:joint.org][LrgJoint]]). =lrg_dynamics_world_add_constraint()= adds one (the world keeps a reference and gives it an id), =lrg_dynamics_world_remove_constraint()= takes it out, =lrg_dynamics_world_get_constraint_count()= and =lrg_dynamics_world_get_constraint()= enumerate them in insertion order. =lrg_dynamics_world_get_solver_body()= copies the =LrgSolverBody= view of a body (or of the world frame, =LRG_DYNAMICS_WORLD_BODY=) for building joint frames outside the step. Removing a body removes its constraints. The 0.8 =lrg_dynamics_world_add_joint()= limit joint is a private constraint of this kind; its id is a constraint id.
+
+*** Fixed step and interpolation
+:PROPERTIES:
+:CUSTOM_ID: interpolation
+:END:
+Render at the interpolated pose to hide the fixed-step stutter: =lrg_dynamics_world_get_interpolation_alpha()= is the leftover time as a fraction of a substep, and =lrg_dynamics_world_get_interpolated_pose()= blends each body's pose before and after the last substep with it (lerp and normalised lerp). A teleport resets the blend.
+
+*** Debug drawing
+:PROPERTIES:
+:CUSTOM_ID: debug-draw
+:END:
+=lrg_dynamics_world_debug_draw()= records the world into an =LrgDebugDraw= on =LRG_DEBUG_CATEGORY_PHYSICS= (the pen is pushed and popped, so your category is untouched). =LrgDynamicsDebugFlags= picks what: =SHAPES= (green dynamic, blue kinematic, grey static, purple frozen, yellow sensor; hulls, meshes and compounds use the shape's cached =lrg_physics_shape_build_debug_mesh()= wireframe), =AABBS=, =CONTACTS= (red penetrating, orange speculative, a short arrow along the normal), =CONSTRAINTS= (each constraint's =debug_draw= vfunc), =SLEEPING= (dims sleeping shapes, or a grey dot alone), =CENTER_OF_MASS= (axes), =VELOCITY= (arrows of v * 0.25 s), =BROADPHASE= (the tree's fat boxes), =ALL=.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** World and stepping
+:PROPERTIES:
+:CUSTOM_ID: api-world
+:END:
+| Function | What it does |
+|----------+--------------|
+| =lrg_dynamics_world_new()= | an empty world: zero gravity, 1/60 s step, four substeps per call |
+| =lrg_dynamics_world_set_gravity()= | world acceleration (Y-up callers pass a negative Y) |
+| =lrg_dynamics_world_set_step_limits()= | fixed substep (0, 0.1] s and the substep cap 1 .. =LRG_DYNAMICS_MAX_SUBSTEPS= |
+| =lrg_dynamics_world_set_material()= | default restitution and friction of bodies without their own material |
+| =lrg_dynamics_world_set_iterations()= | velocity iterations 1 .. 32 (same as the contact solver setting) |
+| =lrg_dynamics_world_set_sleep()= | sleep speed² threshold and quiet substeps |
+| =lrg_dynamics_world_apply_settings()= | a project's =physics:= block in one call: gravity, step limits, iterations, sleep and (optionally) the layer table from an =LrgPhysicsSettings= (=NULL= = the defaults); validated first, nothing changes on error ([[file:physics-layers.org::#settings][Physics Settings]]) |
+| =lrg_dynamics_world_get_settings()= | reads gravity, step limits, iterations and sleep back into an =LrgPhysicsSettings= |
+| =lrg_dynamics_world_set_bounds()= | eviction box for dynamic bodies |
+| =lrg_dynamics_world_step()= | runs the fixed substeps for a frame time, emits queued signals |
+| =lrg_dynamics_world_get_dropped_time()= | time dropped by the substep cap in the last step |
+| =lrg_dynamics_world_get_evicted()= | bodies evicted by the last step |
+| =lrg_dynamics_world_get_contact_solver()= | the =LrgContactSolver= settings object |
+| =lrg_dynamics_world_get_broadphase()= | the =LrgBroadphase= (stats and debug only) |
+| =lrg_dynamics_world_get_interpolation_alpha()= | leftover fraction of a substep |
+| =lrg_dynamics_world_get_interpolated_pose()= | a body's render pose |
+| =lrg_dynamics_world_debug_draw()= | record shapes, boxes, contacts, joints into an =LrgDebugDraw= |
+| =lrg_dynamics_error_quark()= | the =LRG_DYNAMICS_ERROR= domain |
+| =lrg_dynamics_body_kind_get_type()=, =lrg_dynamics_contact_kind_get_type()=, =lrg_dynamics_debug_flags_get_type()=, =lrg_dynamics_contact_get_type()= | GTypes |
+
+*** Bodies
+:PROPERTIES:
+:CUSTOM_ID: api-bodies
+:END:
+| Function | What it does |
+|----------+--------------|
+| =lrg_dynamics_world_add_body()= | a body with any =LrgPhysicsShape= |
+| =lrg_dynamics_world_add_sphere()=, =lrg_dynamics_world_add_sphyl()=, =lrg_dynamics_world_add_plane()=, =lrg_dynamics_world_add_inertial()= | the 0.8 primitives |
+| =lrg_dynamics_world_remove_body()= | removes a body, its constraints and pair filters, wakes its neighbours |
+| =lrg_dynamics_world_get_body_count()=, =lrg_dynamics_world_get_body_ids()= | enumerate bodies |
+| =lrg_dynamics_world_body_is_active()= | =FALSE= after eviction |
+| =lrg_dynamics_world_get_body_kind()=, =lrg_dynamics_world_set_body_kind()= | dynamic / kinematic / static |
+| =lrg_dynamics_world_get_shape()=, =lrg_dynamics_world_set_shape()= | the collision shape |
+| =lrg_dynamics_world_get_mass()=, =lrg_dynamics_world_set_mass()= | mass (inertia scales with it) |
+| =lrg_dynamics_world_get_inertia()=, =lrg_dynamics_world_set_inertia_diagonal()=, =lrg_dynamics_world_set_box_inertia()= | body-frame inertia |
+| =lrg_dynamics_world_get_center_of_mass()= | world centre of mass |
+| =lrg_dynamics_world_set_body_layer()=, =lrg_dynamics_world_get_body_layer()= | object layer and mask |
+| =lrg_dynamics_world_set_layers()=, =lrg_dynamics_world_get_layers()= | the collide matrix |
+| =lrg_dynamics_world_set_collision_between()= | per-pair filter |
+| =lrg_dynamics_world_set_body_material()=, =lrg_dynamics_world_get_body_material()= | friction and restitution |
+| =lrg_dynamics_world_set_damping()=, =lrg_dynamics_world_set_gravity_factor()= | damping and gravity scale |
+| =lrg_dynamics_world_set_ccd()=, =lrg_dynamics_world_get_ccd()= | continuous collision |
+| =lrg_dynamics_world_set_sensor()=, =lrg_dynamics_world_get_sensor()=, =lrg_dynamics_world_get_sensor_overlaps()= | triggers |
+| =lrg_dynamics_world_set_user_data()=, =lrg_dynamics_world_get_user_data()= | a 64-bit caller value (entity id) |
+| =lrg_dynamics_world_set_allow_sleep()=, =lrg_dynamics_world_wake_body()=, =lrg_dynamics_world_get_sleeping()= | sleeping |
+| =lrg_dynamics_world_set_frozen()= | freeze / thaw |
+
+*** Pose, velocity, forces
+:PROPERTIES:
+:CUSTOM_ID: api-motion
+:END:
+| Function | What it does |
+|----------+--------------|
+| =lrg_dynamics_world_set_pose()= | teleport (origin and orientation), wakes |
+| =lrg_dynamics_world_get_position()=, =lrg_dynamics_world_get_orientation()=, =lrg_dynamics_world_get_transform()= | origin pose |
+| =lrg_dynamics_world_get_linear_velocity()=, =lrg_dynamics_world_get_angular_velocity()= | velocities of the centre of mass |
+| =lrg_dynamics_world_set_linear_velocity()=, =lrg_dynamics_world_set_angular_velocity()= | velocity writes (dynamic or kinematic), wake |
+| =lrg_dynamics_world_apply_force()=, =lrg_dynamics_world_apply_torque()=, =lrg_dynamics_world_apply_force_at_point()= | consumed by the next substep, wake |
+| =lrg_dynamics_world_apply_impulse()=, =lrg_dynamics_world_apply_angular_impulse()= | immediate velocity change, wake |
+| =lrg_dynamics_world_move_kinematic()= | kinematic velocity toward a target pose |
+| =lrg_dynamics_world_get_body_aabb()= | world bounds |
+| =lrg_dynamics_world_write_bone_pose()= | body pose into a skeleton bone (parent-relative, scale kept) |
+
+*** Contacts, constraints, queries
+:PROPERTIES:
+:CUSTOM_ID: api-contacts
+:END:
+| Function | What it does |
+|----------+--------------|
+| =lrg_dynamics_world_get_contact_count()=, =lrg_dynamics_world_get_contact()= | touching contacts, 0.8 reader |
+| =lrg_dynamics_world_get_contact_info()=, =lrg_dynamics_world_get_contact_point()= | the same with all points and impulses |
+| =lrg_dynamics_world_get_manifold_count()= | all manifolds incl. speculative |
+| =lrg_dynamics_world_get_active_body_count()=, =lrg_dynamics_world_get_island_count()= | statistics |
+| =lrg_dynamics_world_add_joint()= | the 0.8 limit joint |
+| =lrg_dynamics_world_add_constraint()=, =lrg_dynamics_world_remove_constraint()=, =lrg_dynamics_world_get_constraint_count()=, =lrg_dynamics_world_get_constraint()=, =lrg_dynamics_world_get_solver_body()= | constraint hook |
+| =lrg_dynamics_world_raycast()=, =lrg_dynamics_world_raycast_all()=, =lrg_dynamics_world_shape_cast()=, =lrg_dynamics_world_overlap_shape()=, =lrg_dynamics_world_overlap_aabb()= | queries |
+| =lrg_dynamics_contact_copy()=, =lrg_dynamics_contact_free()= | the boxed =LrgDynamicsContact= |
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** A stack of crates on the ground
+:PROPERTIES:
+:CUSTOM_ID: example-stack
+:END:
+#+begin_src c
+g_autoptr(LrgDynamicsWorld) world = lrg_dynamics_world_new ();
+g_autoptr(LrgPhysicsShape) ground_shape = lrg_physics_shape_new_box (50.0f, 0.5f, 50.0f);
+g_autoptr(LrgPhysicsShape) crate = lrg_physics_shape_new_box (0.5f, 0.5f, 0.5f);
+g_autoptr(GError) error = NULL;
+gfloat gravity[3] = { 0.0f, -9.81f, 0.0f };
+gfloat at[3] = { 0.0f, -0.5f, 0.0f };
+guint ground;
+guint id;
+guint i;
+
+lrg_dynamics_world_set_gravity (world, gravity, &error);
+/* Static ground: its top face is at y = 0. */
+lrg_dynamics_world_add_body (world, ground_shape, LRG_DYNAMICS_BODY_STATIC, 0.0f, at, NULL, &ground, &error);
+/* Ten 1 kg crates; the shape is shared. */
+for (i = 0; i < 10; i++)
+{
+	at[1] = 0.5f + (gfloat) i;
+	lrg_dynamics_world_add_body (world, crate, LRG_DYNAMICS_BODY_DYNAMIC, 1.0f, at, NULL, &id, &error);
+}
+/* Game loop: step with the frame time, render interpolated. */
+lrg_dynamics_world_step (world, frame_dt, NULL, &error);
+#+end_src
+
+*** A trigger zone and contact sounds
+:PROPERTIES:
+:CUSTOM_ID: example-signals
+:END:
+#+begin_src c
+static void
+on_enter (LrgDynamicsWorld *world, guint sensor, guint other, gpointer data)
+{
+	g_message ("body %u entered zone %u (entity %" G_GUINT64_FORMAT ")",
+	           other, sensor, lrg_dynamics_world_get_user_data (world, other));
+}
+
+static void
+on_hit (LrgDynamicsWorld *world, LrgDynamicsContact *c, gpointer data)
+{
+	if (c->relative_speed > 2.0f)
+		play_thud (c->point, c->relative_speed);
+}
+
+/* ... */
+lrg_dynamics_world_set_sensor (world, zone, TRUE, &error);
+g_signal_connect (world, "sensor-entered", G_CALLBACK (on_enter), NULL);
+g_signal_connect (world, "contact-added", G_CALLBACK (on_hit), NULL);
+#+end_src
+
+*** Shooting: a hitscan ray and a CCD bullet
+:PROPERTIES:
+:CUSTOM_ID: example-shoot
+:END:
+#+begin_src c
+LrgRayHit hit;
+gfloat eye[3] = { 0.0f, 1.7f, 0.0f };
+gfloat aim[3] = { 0.0f, 0.0f, -1.0f };     /* unit: t is metres */
+
+/* Hitscan: everything except the projectile layer, ignoring the shooter. */
+if (lrg_dynamics_world_raycast (world, eye, aim, 200.0f,
+                                LRG_PHYSICS_LAYERS_ALL & ~LRG_PHYSICS_LAYER_BIT (LRG_PHYSICS_LAYER_PROJECTILE),
+                                player_body, &hit))
+	apply_damage (lrg_dynamics_world_get_user_data (world, hit.body), hit.point);
+
+/* A physical bullet: a small sphere with CCD so it cannot tunnel. */
+g_autoptr(LrgPhysicsShape) pellet = lrg_physics_shape_new_sphere (0.02f);
+gfloat v[3] = { 0.0f, 0.0f, -400.0f };
+guint bullet;
+lrg_dynamics_world_add_body (world, pellet, LRG_DYNAMICS_BODY_DYNAMIC, 0.01f, eye, NULL, &bullet, &error);
+lrg_dynamics_world_set_ccd (world, bullet, TRUE, &error);
+lrg_dynamics_world_set_linear_velocity (world, bullet, v, &error);
+#+end_src
+
+*** A moving platform
+:PROPERTIES:
+:CUSTOM_ID: example-kinematic
+:END:
+#+begin_src c
+/* Every frame, before stepping: */
+gfloat target[3] = { sinf (t) * 4.0f, 1.0f, 0.0f };
+lrg_dynamics_world_move_kinematic (world, platform, target, NULL, frame_dt, &error);
+lrg_dynamics_world_step (world, frame_dt, NULL, &error);
+#+end_src
+
+*** Layers and settings from a project
+:PROPERTIES:
+:CUSTOM_ID: example-layers
+:END:
+#+begin_src c
+g_autoptr(LrgPhysicsLayers) layers = lrg_physics_layers_new_default ();
+LrgPhysicsSettings          settings;
+
+lrg_physics_settings_init_default (&settings);
+if (!lrg_physics_layers_load_from_file (layers, "project.ryaml", &error)
+    || !lrg_physics_settings_load_from_file (&settings, "project.ryaml", &error))
+	g_warning ("project physics: %s", error->message);   /* defaults stay */
+lrg_dynamics_world_apply_settings (world, &settings, layers, NULL);
+lrg_dynamics_world_set_body_layer (world, debris, LRG_PHYSICS_LAYER_DEBRIS,
+                                   LRG_PHYSICS_LAYERS_ALL & ~LRG_PHYSICS_LAYER_BIT (LRG_PHYSICS_LAYER_CHARACTER),
+                                   &error);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Measured on the development machine (x86_64, one core pinned with =taskset -c 2=, release build) with =tests/test-physics-solver -m perf=: a pile of 1000 boxes (25 columns of 40, slightly turned) dropping onto a ground box and settling for 300 substeps of 1/60 s costs about 12.4 ms per step including world setup (about 80 bodies per millisecond). With =LRG_DYNAMICS_DEBUG=time= the world prints its phase totals at finalize; for that pile per step: broadphase (proxy refresh + pair finding) 2.7 ms, narrowphase 3.6 ms, contact setup 0.9 ms, velocity iterations 3.5 ms, position iterations + sleep + events 1.4 ms. What helps:
+
+- *Sleeping.* A settled pile costs almost nothing: sleeping proxies never pair with static ones and sleeping islands are not solved.
+- *The body pair cache* skips the GJK/EPA/clipping for pairs that barely moved relative to each other (resting contacts of an awake island).
+- *Iterations.* Velocity iterations cost linearly; 10 is Jolt's default. Tall stacks want more (or sleep sooner), loose debris fewer.
+- *Shapes.* Spheres and capsules are much cheaper than hulls; meshes and heightfields are static or kinematic only.
+- *Signals.* Contact and sensor diffs are skipped while nothing is connected.
+
+Everything is single-threaded; islands are independent, so a later parallel solve (Jolt's job system and large island splitter) can slot in without API changes.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Origin is not the centre of mass.* Positions you read and write are the shape origin; impulses at a point and forces at a point use world points; angular velocity turns about the centre of mass.
+- *Two contact normal conventions.* =lrg_dynamics_world_get_contact()= keeps the 0.8 "pushes A out" normal, =LrgDynamicsContact= and =LrgContactManifold= use A to B.
+- *Teleports do not push.* Move kinematic bodies with =lrg_dynamics_world_move_kinematic()=.
+- *Fast and small means CCD.* A 2 cm bullet at 400 m/s tunnels without =lrg_dynamics_world_set_ccd()=.
+- *Mesh shapes are not dynamic.* Use a convex hull or a compound of hulls for a dynamic body.
+- *Removing inside a vfunc.* Do not add or remove bodies or constraints from inside a constraint vfunc (disable the constraint instead); from signal handlers it is fine.
+- *Sleep thresholds.* Very light or very slow bodies (a feather, a slowly creeping platform pushed by forces) may fall asleep: raise the threshold's precision with =lrg_dynamics_world_set_sleep()= or use =lrg_dynamics_world_set_allow_sleep()=.
+- *Behaviour changes since 0.8* (see the [[file:../../guides/migration-0-8-to-0-9.org][migration guide]]): contacts are now solved before positions integrate (0.8 integrated positions first and let a body tunnel through a touching neighbour); the default sleep threshold is 9e-4 for 30 substeps (was 1e-4 for 8); default velocity iterations are 10 (were 8); the world material still defaults to zero friction for the 0.8 primitives, but shape bodies carry their own 0.5 friction and 0.05 damping; there is no body or joint cap; a touching (depth 0) contact counts as a contact; position correction is NGS with a 0.02 m slop (0.8 used a one-shot 0.6 correction with a 0.005 m slop; the 0.8 limit joint keeps its own one-shot correction).
+- *Debugging.* =LRG_DYNAMICS_DEBUG=match= prints manifolds whose points could not be warm started; =LRG_DYNAMICS_DEBUG=time= prints the substep phase times at finalize.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The editor tools (collider gizmos, body/shape/joint inspector, layer matrix, physics asset editor) arrive in the next 0.9 wave. They build on what this world exposes: =lrg_dynamics_world_debug_draw()= for the viewport overlay, =lrg_dynamics_world_get_body_ids()= / =lrg_dynamics_world_get_shape()= / =lrg_dynamics_world_get_body_layer()= / =lrg_dynamics_world_get_body_material()= for inspection, the queries for picking, and the project.ryaml =physics:= block for the layer matrix and the world settings ([[file:physics-layers.org][Physics Layers]]). Project Settings > Physics edits that block, and play-in-editor and games apply it to their worlds with =lrg_dynamics_world_apply_settings()= (through =lrg_world3d_set_physics_settings()=). Levels get bodies through the rigid-body and collider components ([[file:../../guides/physics.org][physics guide]]).
 
 ** Tests
 :PROPERTIES:
 :CUSTOM_ID: tests
 :END:
-=tests/test-dynamics.c= checks the box inertia numbers and the spin they produce, a distance limit under a pulling force, an angular limit under torque, sphere-sphere separation, a sphere that stays on a plane and rolls once friction removes the slip, that large box extents do not create a contact, sphyl-sphere depth along a segment and after the axis is rotated, a miss beside a long capsule, sphyl-plane and sphyl-sphyl depth, a contactless body that overlaps a sphere without a contact, rejection of a non-unit sphyl axis, a stored inertia diagonal that a non-positive component does not replace, a one-second step that integrates only two tenths of a second, sleep then a waking force, freeze against gravity, eviction of one body while its neighbour stays, and a three-bone pose whose composed world position matches the bodies and not the translation-only product.
+=tests/test-dynamics.c= (the 0.8 suite, unchanged except that the eviction case moves its staying sphere off the leaving sphere's path) checks box inertia and spin, the limit joint, sphere and sphyl contacts, contactless bodies, the substep cap, sleep and freeze, eviction and bone poses. =tests/test-physics-solver.c= checks a 10-box stack over 10 s (stays within 5 cm and sleeps), a 36-box pyramid over 5 s, restitution 0, 0.5 and 0.8 (rebound height e²h within 8 %), friction on a 30 degree incline (slide distance g(sin - mu cos)t²/2 within 10 %, and no slide when mu > tan 30), sleep and wake on contact and impulse, a 400 m/s CCD bullet against a 10 cm wall (tunnels without CCD, stops with it), kinematic pushing, sensor enter/exit, contact signals with the impact speed, ray / ray-all / shape-cast / overlap queries with layer masks and ignore, the layer matrix, determinism (two runs of a 100-box pile are bit-identical), the constraint hook with a test rod constraint (call counts and length error), ids and slot reuse, interpolation, debug drawing, and the 1000-box performance figure (=-m perf=).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:contact-solver.org][Contact solver and the constraint hook]] (=LrgSolverBody=, =LrgPhysicsConstraint=, =LrgContactSolver=)
+- [[file:islands.org][Islands]] (=LrgIslandBuilder=)
+- [[file:physics-shape.org][Physics shapes]], [[file:collide.org][Collision]], [[file:broadphase.org][Broadphase]], [[file:physics-layers.org][Physics layers]], [[file:joint.org][Joints]]
+- [[file:../../guides/physics.org][Physics guide]]

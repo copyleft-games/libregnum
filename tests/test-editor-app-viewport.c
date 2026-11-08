@@ -626,7 +626,7 @@ shader_dir (void)
 static void
 test_shader_sources (void)
 {
-	static const gchar *names[] = { "scene.vs", "lit.fs", "unlit.fs", "normals.fs", "post.fs" };
+	static const gchar *names[] = { "scene.vs", "lit.fs", "unlit.fs", "normals.fs" };
 	g_autofree gchar   *dir = shader_dir ();
 	guint               i;
 
@@ -782,6 +782,389 @@ test_gpu_render (EditorAppFixture *f,
 	lrg_editor_scene_renderer_release (renderer);
 }
 
+/*
+ * The 0.9.0 debug views (overdraw, UV, light complexity, AO,
+ * reflections) through the editor viewport: the editor's mode values map
+ * 1:1 onto LrgWorld3DRenderMode, each draws something and they differ
+ * from each other and from the lit view.
+ */
+static void
+test_gpu_debug_modes (EditorAppFixture *f,
+                      gconstpointer     data)
+{
+	g_autoptr(LrgEditorSceneRenderer) renderer = NULL;
+	LrgEditorView                     view;
+	Image                             lit, modes[5];
+	const LrgEditorViewOverlays       base = LRG_EDITOR_VIEW_OVERLAY_SCENE_LIGHTING;
+	gint                              i, j;
+
+	if (!gpu_ready)
+	{
+		g_test_skip ("needs the isolated X display (xrun.sh)");
+		return;
+	}
+
+	g_assert_nonnull (create_node (f, "{'name':'Ground','kind':'primitive','primitive':'plane'}"));
+	g_assert_nonnull (create_node (f, "{'name':'Box','kind':'primitive','primitive':'cube'}"));
+	json_node_unref (efx_ipc_result (f, "{'id':1,'method':'node.set','params':{'node':'Ground','scale':[8,1,8]}}"));
+	json_node_unref (efx_ipc_result (f, "{'id':1,'method':'node.set','params':{'node':'Box','location':[0,1,0]}}"));
+	renderer = lrg_editor_scene_renderer_new (f->editor);
+	lrg_editor_view_init_default (&view, GPU_W, GPU_H);
+	view.position[0] = 5.0f;
+	view.position[1] = 5.0f;
+	view.position[2] = 6.0f;
+	view.target[0] = view.target[1] = view.target[2] = 0.0f;
+
+	lit = gpu_render (renderer, &view, 0, LRG_EDITOR_RENDER_MODE_LIT, base);
+	for (i = 0; i < 5; i++)
+		modes[i] = gpu_render (renderer, &view, 0,
+		                       (LrgEditorRenderMode) (LRG_WORLD3D_RENDER_MODE_OVERDRAW + i), base);
+	for (i = 0; i < 5; i++)
+	{
+		g_assert_cmpuint (image_diff (lit, modes[i]), >, 1000);
+		for (j = i + 1; j < 5; j++)
+			g_assert_cmpuint (image_diff (modes[i], modes[j]), >, 1000);
+	}
+	/* overdraw, UV, light complexity (no point light: the dark ramp end)
+	 * and AO (white without SSAO) draw the scene; reflections without an
+	 * environment is black */
+	g_assert_cmpuint (non_background (modes[1]), >, 200);
+	g_assert_cmpuint (non_background (modes[3]), >, 200);
+
+	UnloadImage (lit);
+	for (i = 0; i < 5; i++)
+		UnloadImage (modes[i]);
+	lrg_editor_scene_renderer_release (renderer);
+}
+
+/*
+ * The level look in the editor viewport: the level environment's sky
+ * replaces the dome, a decal node projects onto the ground, and a
+ * viewport's render-layer mask hides a node's layer.
+ */
+static void
+test_gpu_level_look (EditorAppFixture *f,
+                     gconstpointer     data)
+{
+	g_autoptr(LrgEditorSceneRenderer) renderer = NULL;
+	LrgEditorView                     view;
+	LrgEnvironment                   *env;
+	LrgNode                          *decal;
+	Image                             plain, look, decaled, culled;
+	const LrgEditorViewOverlays       base = LRG_EDITOR_VIEW_OVERLAY_SCENE_LIGHTING | LRG_EDITOR_VIEW_OVERLAY_SKY;
+	const gfloat                      zenith[3] = { 0.9f, 0.3f, 0.1f };
+	const gfloat                      horizon[3] = { 0.9f, 0.6f, 0.3f };
+	const gfloat                      ground[3] = { 0.2f, 0.2f, 0.2f };
+
+	if (!gpu_ready)
+	{
+		g_test_skip ("needs the isolated X display (xrun.sh)");
+		return;
+	}
+
+	g_assert_nonnull (create_node (f, "{'name':'Ground','kind':'primitive','primitive':'plane'}"));
+	json_node_unref (efx_ipc_result (f, "{'id':1,'method':'node.set','params':{'node':'Ground','scale':[8,1,8]}}"));
+	renderer = lrg_editor_scene_renderer_new (f->editor);
+	lrg_editor_view_init_default (&view, GPU_W, GPU_H);
+	view.position[0] = 5.0f;
+	view.position[1] = 3.0f;
+	view.position[2] = 6.0f;
+	view.target[0] = view.target[1] = view.target[2] = 0.0f;
+	plain = gpu_render (renderer, &view, 0, LRG_EDITOR_RENDER_MODE_LIT, base);
+
+	/* An orange gradient environment on the level: the sky follows */
+	env = lrg_level_ensure_environment (lrg_editor_get_level (f->editor));
+	lrg_environment_set_sky_source (env, LRG_ENVIRONMENT_SKY_GRADIENT);
+	lrg_environment_set_gradient (env, zenith, horizon, ground);
+	lrg_environment_set_resolution (env, 32);
+	look = gpu_render (renderer, &view, 0, LRG_EDITOR_RENDER_MODE_LIT, base);
+	{
+		const guint8 *top = (const guint8 *) look.data + ((gsize) (GPU_H - 3) * GPU_W + GPU_W / 2) * 4;
+
+		/* (render textures read back bottom up: row GPU_H - 3 is the top) */
+		g_test_message ("level sky top %d,%d,%d", top[0], top[1], top[2]);
+		g_assert_cmpint (top[0], >, top[2] + 30);
+	}
+	g_assert_true (lrg_world3d_renderer_get_active_environment (
+		lrg_editor_scene_renderer_get_runtime_renderer (renderer)) == env);
+
+	/* A red decal node on the ground */
+	decal = create_node (f, "{'name':'Decal','kind':'decal'}");
+	g_assert_nonnull (decal);
+	{
+		LrgNodeVisual *visual = lrg_node_get_visual (decal);
+		g_autoptr(LrgMaterial3D) red = lrg_material3d_new ();
+
+		lrg_material3d_set_color (red, 0.9f, 0.05f, 0.05f, 1.0f);
+		lrg_node_visual_set_material (visual, red);
+		lrg_node_visual_set_param_double (visual, "size_x", 3.0);
+		lrg_node_visual_set_param_double (visual, "size_y", 1.0);
+		lrg_node_visual_set_param_double (visual, "size_z", 3.0);
+	}
+	decaled = gpu_render (renderer, &view, 0, LRG_EDITOR_RENDER_MODE_LIT, base);
+	g_assert_cmpuint (lrg_decal_set_get_count (lrg_world3d_renderer_get_decal_set (
+		lrg_editor_scene_renderer_get_runtime_renderer (renderer))), ==, 1);
+	g_assert_cmpuint (image_diff (look, decaled), >, 2000);
+
+	/* The viewport mask: layer 0 hidden, the ground goes */
+	g_assert_cmpuint (lrg_editor_scene_renderer_get_cull_mask (renderer, 0), ==, LRG_RENDER_LAYERS_MASK_ALL);
+	lrg_editor_scene_renderer_set_cull_mask (renderer, 0, LRG_RENDER_LAYERS_MASK_ALL & ~LRG_RENDER_LAYERS_BIT (0));
+	culled = gpu_render (renderer, &view, 0, LRG_EDITOR_RENDER_MODE_LIT, base);
+	g_assert_cmpuint (image_diff (decaled, culled), >, 2000);
+	g_assert_cmpuint (lrg_editor_scene_renderer_get_cull_mask (renderer, 1), ==, LRG_RENDER_LAYERS_MASK_ALL);
+	lrg_editor_scene_renderer_set_cull_mask (renderer, 0, LRG_RENDER_LAYERS_MASK_ALL);
+
+	lrg_level_set_environment (lrg_editor_get_level (f->editor), NULL);
+	UnloadImage (plain);
+	UnloadImage (look);
+	UnloadImage (decaled);
+	UnloadImage (culled);
+	lrg_editor_scene_renderer_release (renderer);
+}
+
+/* ==========================================================================
+ * 0.9.0 (ED2): view modes menu, render layers, volume gizmos, material drop
+ * ========================================================================== */
+
+/* The render-mode combo lists every mode, the debug views included. */
+static void
+test_ed2_view_modes (EditorAppFixture *f,
+                     gconstpointer     data)
+{
+	g_autoptr(LrgWidget)    old = NULL;
+	LrgEditorViewportSplit *split = fx_split (f, &old);
+	LrgEditorViewState     *view = lrg_editor_app_get_view_state (f->app);
+	LrgComboBox            *combo = LRG_COMBO_BOX (efx_find (f, "vp0-render-mode"));
+	g_autofree gchar       *reply = NULL;
+
+	g_assert_nonnull (split);
+	g_assert_nonnull (combo);
+	g_assert_cmpuint (lrg_combo_box_get_n_items (combo), ==, 10);
+	lrg_combo_box_set_selected (combo, (gint) LRG_EDITOR_RENDER_MODE_OVERDRAW);
+	g_assert_cmpint (lrg_editor_view_state_get_render_mode (view, 0), ==, LRG_EDITOR_RENDER_MODE_OVERDRAW);
+
+	/* IPC: by nick, and the list of modes */
+	{
+		g_autoptr(JsonNode) r = efx_ipc_result (
+			f, "{'id':1,'method':'view.render_mode','params':{'viewport':0,'mode':'light-complexity'}}");
+		JsonObject         *o = json_node_get_object (r);
+
+		g_assert_cmpstr (json_object_get_string_member (o, "mode"), ==, "light-complexity");
+		g_assert_cmpuint (json_array_get_length (json_object_get_array_member (o, "modes")), ==, 10);
+	}
+	g_assert_cmpint (lrg_editor_view_state_get_render_mode (view, 0), ==, LRG_EDITOR_RENDER_MODE_LIGHT_COMPLEXITY);
+	efx_frames (f, 2);
+	g_assert_cmpint (lrg_combo_box_get_selected (combo), ==, (gint) LRG_EDITOR_RENDER_MODE_LIGHT_COMPLEXITY);
+	reply = efx_ipc (f, "{'id':2,'method':'view.render_mode','params':{'mode':'xray'}}");
+	g_assert_nonnull (strstr (reply, "reflections"));
+}
+
+/* The layers button and view.layers drive the per-viewport cull mask. */
+static void
+test_ed2_layers (EditorAppFixture *f,
+                 gconstpointer     data)
+{
+	g_autoptr(LrgWidget)    old = NULL;
+	LrgEditorViewportSplit *split = fx_split (f, &old);
+	LrgEditorViewportPanel *panel = lrg_editor_viewport_split_get_panel (split, 0);
+
+	g_assert_cmpuint (lrg_editor_viewport_panel_get_layer_mask (panel), ==, LRG_RENDER_LAYERS_MASK_ALL);
+
+	/* the header button opens the layers menu */
+	efx_click_widget (f, efx_find (f, "vp0-layers"));
+	efx_frames (f, 2);
+	g_assert_nonnull (efx_find (f, "vp0-layers"));
+
+	/* a layer toggle from the menu's action */
+	g_assert_true (lrg_widget_activate_action (LRG_WIDGET (panel), "vp.layer-0", NULL));
+	g_assert_cmpuint (lrg_editor_viewport_panel_get_layer_mask (panel) & LRG_RENDER_LAYERS_BIT (0), ==, 0);
+	g_assert_true (lrg_widget_activate_action (LRG_WIDGET (panel), "vp.layers-none", NULL));
+	g_assert_cmpuint (lrg_editor_viewport_panel_get_layer_mask (panel), ==, LRG_RENDER_LAYERS_MASK_NONE);
+	g_assert_true (lrg_widget_activate_action (LRG_WIDGET (panel), "vp.layers-all", NULL));
+
+	/* IPC: by name, by index, whole masks */
+	{
+		g_autoptr(JsonNode) r = efx_ipc_result (
+			f, "{'id':1,'method':'view.layers','params':{'viewport':0,'layer':'water','enabled':false}}");
+		JsonObject         *o = json_node_get_object (r);
+
+		g_assert_cmpint (json_object_get_int_member (o, "mask"), ==,
+		                 (gint64) (LRG_RENDER_LAYERS_MASK_ALL & ~LRG_RENDER_LAYERS_BIT (LRG_RENDER_LAYERS_WATER)));
+		g_assert_cmpuint (json_array_get_length (json_object_get_array_member (o, "layers")), ==, 32);
+	}
+	{
+		g_autoptr(JsonNode) r = efx_ipc_result (
+			f, "{'id':2,'method':'view.layers','params':{'viewport':0,'layer':9}}");
+	}
+	g_assert_cmpuint (lrg_editor_viewport_panel_get_layer_mask (panel) & LRG_RENDER_LAYERS_BIT (9), ==, 0);
+	{
+		g_autoptr(JsonNode) r = efx_ipc_result (f, "{'id':3,'method':'view.layers','params':{'mask':'all'}}");
+	}
+	g_assert_cmpuint (lrg_editor_viewport_panel_get_layer_mask (panel), ==, LRG_RENDER_LAYERS_MASK_ALL);
+	{
+		g_autofree gchar *e = efx_ipc (f, "{'id':4,'method':'view.layers','params':{'layer':40}}");
+
+		g_assert_nonnull (strstr (e, "\"error\""));
+	}
+}
+
+/* Viewport pixel -> canvas point for panel 0. */
+static void
+vp_to_canvas (EditorAppFixture *f,
+              gfloat            u,
+              gfloat            v,
+              gfloat           *x,
+              gfloat           *y)
+{
+	LrgEditorView view;
+	gfloat        rx, ry, rw, rh;
+
+	efx_viewport_rect (f, &rx, &ry, &rw, &rh);
+	lrg_editor_view_state_get_view (lrg_editor_app_get_view_state (f->app), 0, &view);
+	*x = rx + u * rw / view.width;
+	*y = ry + v * rh / view.height;
+}
+
+/* The volume handles: math, a drag on the canvas, undo, Escape. */
+static void
+test_ed2_volume_gizmo (EditorAppFixture *f,
+                       gconstpointer     data)
+{
+	g_autoptr(LrgWidget)    old = NULL;
+	LrgEditorViewportSplit *split = fx_split (f, &old);
+	LrgEditorViewState     *vs = lrg_editor_app_get_view_state (f->app);
+	LrgEditorView           view;
+	LrgNode                *light, *decal, *probe;
+	gfloat                  p[3], u, v, x, y;
+	gdouble                 value;
+
+	g_assert_nonnull (split);
+	light = create_node (f, "{'kind':'light','name':'lamp'}");
+	g_assert_nonnull (light);
+	lrg_node_set_location_xyz (light, 0.0f, 0.0f, 0.0f);
+	lrg_node_visual_set_param_double (lrg_node_get_visual (light), "range", 3.0);
+	lrg_editor_select (f->editor, light, FALSE);
+	efx_frames (f, 3);
+	g_assert_true (lrg_editor_volume_has_gizmo (light));
+	lrg_editor_view_state_get_view (vs, 0, &view);
+
+	/* the range handle sits on the sphere; hit test finds it */
+	g_assert_true (lrg_editor_volume_get_handle_position (&view, light, LRG_EDITOR_VOLUME_HANDLE_RANGE, p));
+	g_assert_cmpfloat_with_epsilon (sqrtf (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]), 3.0f, 1e-3f);
+	g_assert_true (lrg_editor_view_project (&view, p, &u, &v, NULL));
+	g_assert_cmpint (lrg_editor_volume_hit_test (&view, light, u, v), ==, LRG_EDITOR_VOLUME_HANDLE_RANGE);
+	g_assert_cmpint (lrg_editor_volume_hit_test (&view, light, u + 40.0f, v + 40.0f), ==,
+	                 LRG_EDITOR_VOLUME_HANDLE_NONE);
+	g_assert_false (lrg_editor_volume_get_handle_position (&view, light, LRG_EDITOR_VOLUME_HANDLE_CONE, p));
+
+	/* drag it outwards on the canvas: the range grows, one undo step */
+	vp_to_canvas (f, u, v, &x, &y);
+	efx_drag (f, GRL_MOUSE_BUTTON_LEFT, x, y, x + 60.0f, y, 4);
+	value = lrg_node_visual_get_param_double (lrg_node_get_visual (light), "range", 0.0);
+	g_assert_cmpfloat (value, >, 3.2);
+	lrg_editor_undo (f->editor);
+	g_assert_cmpfloat_with_epsilon (lrg_node_visual_get_param_double (lrg_node_get_visual (light), "range", 0.0), 3.0,
+	                                1e-6);
+
+	/* Escape during a drag puts the old value back */
+	efx_move (f, x, y);
+	efx_button (f, x, y, GRL_MOUSE_BUTTON_LEFT, TRUE);
+	efx_move (f, x + 50.0f, y);
+	efx_key (f, GRL_KEY_ESCAPE, LRG_INPUT_MODIFIER_NONE);
+	efx_button (f, x + 50.0f, y, GRL_MOUSE_BUTTON_LEFT, FALSE);
+	g_assert_cmpfloat_with_epsilon (lrg_node_visual_get_param_double (lrg_node_get_visual (light), "range", 0.0), 3.0,
+	                                1e-6);
+
+	/* a spot cone: the angle follows the pointer on the base plane */
+	{
+		g_auto(GValue) s = G_VALUE_INIT;
+		gfloat         rim[3];
+
+		g_value_init (&s, G_TYPE_STRING);
+		g_value_set_string (&s, "spot");
+		lrg_node_visual_set_param (lrg_node_get_visual (light), "light_type", &s);
+		lrg_node_visual_set_param_double (lrg_node_get_visual (light), "spot_angle", 60.0);
+		g_assert_true (lrg_editor_volume_get_handle_position (&view, light, LRG_EDITOR_VOLUME_HANDLE_CONE, rim));
+		g_assert_true (lrg_editor_view_project (&view, rim, &u, &v, NULL));
+		g_assert_true (lrg_editor_volume_drag_value (&view, light, LRG_EDITOR_VOLUME_HANDLE_CONE, u, v, &value));
+		g_assert_cmpfloat_with_epsilon (value, 60.0, 0.5);
+		g_assert_true (lrg_editor_volume_drag_value (&view, light, LRG_EDITOR_VOLUME_HANDLE_INNER_CONE, u, v, &value));
+		g_assert_cmpfloat (value, <=, 60.0);
+	}
+
+	/* a decal box (sizes over the node's scale) and a probe box */
+	decal = create_node (f, "{'kind':'decal','name':'stain'}");
+	g_assert_nonnull (decal);
+	lrg_node_set_location_xyz (decal, 0.0f, 0.0f, 0.0f);
+	lrg_node_set_scale_xyz (decal, 2.0f, 1.0f, 1.0f);
+	lrg_node_visual_set_param_double (lrg_node_get_visual (decal), "size_x", 1.5);
+	g_assert_true (lrg_editor_volume_get_handle_position (&view, decal, LRG_EDITOR_VOLUME_HANDLE_SIZE_X, p));
+	g_assert_cmpfloat_with_epsilon (p[0], 1.5f, 1e-3f);
+	g_assert_true (lrg_editor_view_project (&view, p, &u, &v, NULL));
+	g_assert_true (lrg_editor_volume_drag_value (&view, decal, LRG_EDITOR_VOLUME_HANDLE_SIZE_X, u, v, &value));
+	g_assert_cmpfloat_with_epsilon (value, 1.5, 0.02);
+
+	probe = create_node (f, "{'kind':'reflection-probe','name':'mirror'}");
+	g_assert_nonnull (probe);
+	lrg_node_set_location_xyz (probe, 1.0f, 0.0f, 0.0f);
+	g_assert_true (lrg_editor_volume_get_handle_position (&view, probe, LRG_EDITOR_VOLUME_HANDLE_EXTENT_Y, p));
+	g_assert_cmpfloat_with_epsilon (p[1], 5.0f, 1e-3f);
+	g_assert_cmpstr (lrg_editor_volume_handle_get_param (LRG_EDITOR_VOLUME_HANDLE_EXTENT_Y), ==, "extents_y");
+
+	/* the overlay paints volumes without a GPU */
+	lrg_editor_select (f->editor, probe, FALSE);
+	efx_frames (f, 2);
+	lrg_canvas_record (lrg_editor_app_get_canvas (f->app));
+}
+
+/* Dropping a .rmat on a mesh assigns it (ED1's undoable command). */
+static void
+test_ed2_material_drop (EditorAppFixture *f,
+                        gconstpointer     data)
+{
+	g_autoptr(LrgWidget)    old = NULL;
+	LrgEditorViewportSplit *split = fx_split (f, &old);
+	LrgEditorViewportPanel *panel = lrg_editor_viewport_split_get_panel (split, 0);
+	LrgEditorViewState     *vs = lrg_editor_app_get_view_state (f->app);
+	LrgEditorViewCamera    *cam = lrg_editor_view_state_get_camera (vs, 0);
+	g_autoptr(GError)       error = NULL;
+	g_autofree gchar       *mat = NULL;
+	LrgNode                *cube;
+	LrgNode                *hit;
+	gint64                  undo;
+	guint                   before;
+
+	g_assert_true (lrg_editor_app_new_project (f->app, f->project, "Mat", &error));
+	g_assert_no_error (error);
+	efx_frames (f, 2);
+	split = fx_split (f, &old);
+	panel = lrg_editor_viewport_split_get_panel (split, 0);
+	cam = lrg_editor_view_state_get_camera (vs, 0);
+	mat = g_build_filename (f->project, "steel.rmat", NULL);
+	g_assert_true (g_file_set_contents (mat, "name: steel\nmetallic: 1.0\nroughness: 0.3\n", -1, NULL));
+
+	cube = create_node (f, "{'primitive':'cube','name':'block'}");
+	lrg_node_set_location_xyz (cube, 0.0f, 0.0f, 0.0f);
+	lrg_editor_view_camera_set_axis_view (cam, LRG_EDITOR_AXIS_VIEW_TOP);
+	lrg_editor_view_camera_frame_all (cam, lrg_editor_get_level (f->editor), 50.0f);
+	lrg_editor_view_state_camera_changed (vs, 0);
+	efx_frames (f, 2);
+
+	before = lrg_level_count_nodes (lrg_editor_get_level (f->editor));
+	undo = undo_count (f);
+	hit = lrg_editor_viewport_panel_drop_asset (panel, mat, cam->view.width * 0.5f, cam->view.height * 0.5f);
+	g_assert_true (hit == cube);
+	g_assert_nonnull (lrg_node_visual_get_material_ref (lrg_node_get_visual (cube)));
+	g_assert_cmpuint (lrg_level_count_nodes (lrg_editor_get_level (f->editor)), ==, before);
+	g_assert_cmpint (undo_count (f), ==, undo + 1);
+	lrg_editor_undo (f->editor);
+	g_assert_null (lrg_node_visual_get_material_ref (lrg_node_get_visual (cube)));
+
+	/* nothing under the pointer: no node, no command */
+	g_assert_null (lrg_editor_viewport_panel_drop_asset (panel, mat, 2.0f, 2.0f));
+	g_assert_cmpint (undo_count (f), ==, undo);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -811,6 +1194,18 @@ main (int   argc,
 	g_test_add_func ("/editor-app/viewport/gizmo-paint", test_gizmo_paint);
 	g_test_add_func ("/editor-app/viewport/shader-sources", test_shader_sources);
 	g_test_add ("/editor-app/viewport/gpu-render", EditorAppFixture, NULL, efx_setup, test_gpu_render, efx_teardown);
+	g_test_add ("/editor-app/viewport/gpu-debug-modes", EditorAppFixture, NULL, efx_setup, test_gpu_debug_modes,
+	            efx_teardown);
+	g_test_add ("/editor-app/viewport/gpu-level-look", EditorAppFixture, NULL, efx_setup, test_gpu_level_look,
+	            efx_teardown);
+
+	g_test_add ("/editor-app/viewport/ed2-view-modes", EditorAppFixture, NULL, efx_setup, test_ed2_view_modes,
+	            efx_teardown);
+	g_test_add ("/editor-app/viewport/ed2-layers", EditorAppFixture, NULL, efx_setup, test_ed2_layers, efx_teardown);
+	g_test_add ("/editor-app/viewport/ed2-volume-gizmo", EditorAppFixture, NULL, efx_setup, test_ed2_volume_gizmo,
+	            efx_teardown);
+	g_test_add ("/editor-app/viewport/ed2-material-drop", EditorAppFixture, NULL, efx_setup, test_ed2_material_drop,
+	            efx_teardown);
 
 	result = g_test_run ();
 	if (gpu_ready)

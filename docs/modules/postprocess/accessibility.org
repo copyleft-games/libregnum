@@ -188,3 +188,9 @@ static LrgColorblindType option_to_type[] = {
     LRG_COLORBLIND_ACHROMATOPSIA
 };
 #+end_src
+
+** In a post stack
+:PROPERTIES:
+:CUSTOM_ID: colorblind-post-stack
+:END:
+The type name is =colorblind-filter=, with the parameters =filter-type= (an =LrgColorblindType= nick such as =deuteranopia=), =mode= (an =LrgColorblindMode= nick) and =strength=. Accessibility settings usually belong to the player rather than to a level's look. =lrg_post_stack_build()= removes processor effects the stack does not list, so do not add the filter to the processor by hand next to a stack: append it to (a copy of) the level's stack in code with =lrg_post_stack_add_effect()= and =lrg_post_stack_set_param()= from the player's settings, then build. See [[file:post-stack.org][post-stack.org]].

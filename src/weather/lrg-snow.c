@@ -315,6 +315,31 @@ lrg_snow_update (LrgWeatherEffect *effect,
         update_screen (self, delta_time, wind_x, wind_y, intensity);
 }
 
+/* adopt_default_screen_area:
+ * A screen-space snow whose area is still the 1280x720 default takes
+ * the effect viewport. A custom area, and world-space snow, stay put. */
+static void
+adopt_default_screen_area (LrgSnow *self)
+{
+    gint width;
+    gint height;
+
+    if (is_world (self))
+        return;
+    if (self->area_x != 0.0f || self->area_y != 0.0f
+        || self->area_width != 1280.0f || self->area_height != 720.0f)
+        return;
+
+    lrg_weather_effect_get_viewport (LRG_WEATHER_EFFECT (self), &width, &height);
+    if (width <= 0 || height <= 0)
+        return;
+
+    self->area_x = 0.0f;
+    self->area_y = 0.0f;
+    self->area_width = (gfloat) width;
+    self->area_height = (gfloat) height;
+}
+
 /* The 2D pass: a dot per live flake (flake size is its diameter) and
  * the accumulated snow as a band along the bottom of the area. */
 static void
@@ -323,6 +348,8 @@ lrg_snow_render (LrgWeatherEffect *effect)
     LrgSnow *self = LRG_SNOW (effect);
     Color    color;
     guint    i;
+
+    adopt_default_screen_area (self);
 
     if (!lrg_weather_effect_is_active (effect) || is_world (self) || !lrg_weather_can_draw ())
         return;
@@ -556,4 +583,23 @@ lrg_snow_get_flake (LrgSnow    *self,
     out_position->y = flake->y;
     out_position->z = 0.0f;
     return TRUE;
+}
+
+void
+lrg_snow_get_area (LrgSnow *self,
+                   gfloat  *x,
+                   gfloat  *y,
+                   gfloat  *width,
+                   gfloat  *height)
+{
+    g_return_if_fail (LRG_IS_SNOW (self));
+
+    if (x != NULL)
+        *x = self->area_x;
+    if (y != NULL)
+        *y = self->area_y;
+    if (width != NULL)
+        *width = self->area_width;
+    if (height != NULL)
+        *height = self->area_height;
 }

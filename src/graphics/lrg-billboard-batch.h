@@ -253,6 +253,30 @@ lrg_billboard_batch_set_wind_time (LrgBillboardBatch *self,
                                    gdouble            seconds);
 
 /**
+ * lrg_billboard_batch_set_layer:
+ * @self: an #LrgBillboardBatch
+ * @layer: a render layer 0 .. 31 (see lrg_render_layers_get_name())
+ *
+ * Puts the whole batch on a render layer (0, "default", until set).
+ * lrg_billboard_batch_draw() and lrg_billboard_batch_draw_shadow() draw
+ * nothing while the layer is outside lrg_render_layers_get_active_mask().
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_billboard_batch_set_layer (LrgBillboardBatch *self,
+                               guint              layer);
+
+/**
+ * lrg_billboard_batch_get_layer:
+ * @self: an #LrgBillboardBatch
+ *
+ * Returns: the batch's render layer
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_billboard_batch_get_layer (LrgBillboardBatch *self);
+
+/**
  * lrg_billboard_batch_set_visible:
  * @self: an #LrgBillboardBatch
  * @index: a billboard index

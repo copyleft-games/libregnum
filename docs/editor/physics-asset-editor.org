@@ -1,0 +1,368 @@
+#+title: Physics Asset Editor and Layers
+#+description: The lrgeditor tools for ragdoll .rphysasset assets (parts on a skeleton, joint limit gizmos, Generate from skeleton, Stabilize, Simulate) and for the project's collision layers, collide matrix and world settings (Project Settings > Physics), with their physasset.* and physics.layers.* IPC methods, lrgeditorctl verbs and MCP tools
+#+authors: Zach Podbielniak
+#+categories: libregnum editor physics ragdoll
+#+created: 2026-11-07T00:00:00-05:00
+#+updated: 2026-11-07T00:00:00-05:00
+#+version: 0.9.0
+
+* Physics Asset Editor and Layers
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-editor
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Physics Asset Editor and Layers
+#+end_quote
+
+Two editor tools, both since 0.9.0:
+
+- the *physics asset editor* (=LrgEditorPhysicsAssetEditor=, =src/editor/ui/data/lrg-editor-physics-asset-editor.{h,c}=) edits =.rphysasset= ragdoll descriptions ([[file:../modules/physics/ragdoll.org][LrgPhysicsAsset and LrgRagdoll]]): one rigid part per bone with a shape, a mass and a joint to its parent part, plus collision exclusions. It shows the parts on a skinned model in a live 3D preview with the joint limits drawn as arcs and cones, generates a starting asset from the skeleton, evens the masses out and drops the model as a passive ragdoll to try the result;
+- the *Physics page of Project Settings* edits the project's collision layers ([[file:../modules/physics/physics-layers.org][LrgPhysicsLayers]]): the 32 layer names, the symmetric collide matrix and the world settings (gravity, substep, solver iterations, sleep) of the =physics:= block of =project.ryaml=.
+
+Per-node bodies, shapes and joints in levels are edited in the Physics panel, see [[file:physics.org][Physics in Levels]].
+
+#+begin_example
++---------------------------------------------------------------------------------------+
+| (U) hero.rphysasset . Physics asset   [Save][Revert][Validate] (0)                    |
++-------------------------------------+-------------------------------------------------+
+| PARTS . 14 . 70.0 kg                | [chars/hero.glb                     v] [Simulate][Reset] |
+| [lower_arm_r  v] [Add Part][Remove] | +---------------------------------------------+ |
+|  pelvis        capsule   9.12 kg    | | (hero.glb . 15 bones)                       | |
+|  spine         capsule   7.80 kg    | |                  ()                         | |
+| [upper_arm_l]  capsule   4.31 kg    | |        o=o=o=[]=O=[]=o=o=o   <- parts      | |
+|  ...                                | |                  ||     twist arc, swing    | |
+| SELECTED PART                       | |                 |  |    cone of upper_arm_l | |
+|  v Part . upper_arm_l               | |                 |  |                        | |
+|    Shape       capsule          [v] | |   ..........grid..........                 | |
+|    Radius      0.06                 | |        ( Mesh | Shapes | Joints )           | |
+|    ...                              | +---------------------------------------------+ |
+|  v Joint to spine                   |                                                 |
+|    Kind        swing-twist      [v] |                                                 |
+|    Twist min / max, Swing Y / Z ... |                                                 |
+| GENERATE FROM SKELETON              |                                                 |
+| [70] [0.20] [Generate][Stabilize]   |                                                 |
+| COLLISION EXCLUSIONS                |                                                 |
+|  thigh_l <-> thigh_r       [Remove] |                                                 |
+| [a v] [b v] [Exclude]               |                                                 |
++-------------------------------------+-------------------------------------------------+
+#+end_example
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-concepts
+:END:
+*** The document is the truth
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-document
+:END:
+The editor is one of the [[file:data-editors.org][data editors]]: it sits on an =LrgEditorDocument= of format =LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET= (nick =physics-asset=), so it has the shared toolbar (title with a dirty dot, Save, Revert, Validate, the issue chip), the "changed on disk" banner, the issues list and its own undo history, separate from the level's. After every change the document text is parsed with the engine's strict loader (=lrg_physics_asset_new_from_data()=) into an =LrgPhysicsAsset=; =lrg_editor_physics_asset_editor_get_asset()= returns it. Text the loader refuses (typed in the YAML pane, or a file edited elsewhere) becomes an error issue with the loader's message and empties the views until it is fixed.
+
+Edits never change that parsed asset. They parse a fresh copy, change it through the =LrgPhysicsAsset= API (which validates sizes, masses, limits and bone uniqueness) and write the result back:
+
+- a *part edit* rewrites =/parts/<index>= in the writer's canonical form (defaults left out, floats in their shortest form), so keys that do not apply to a shape or joint kind (which the strict loader refuses) disappear with the kind change;
+- a *structural edit* (add or remove a part, Generate, Stabilize, exclusions, the asset's name and =exclude-adjacent=) rewrites the whole document as one labelled undo group ("Add Part pelvis", "Generate from Skeleton", "Stabilize Masses", ...).
+
+Every edit is one undo step. A drag in the property grid (a spin box scrub) is one step too: the grid's =edit-begin= gesture id is passed to =lrg_editor_document_replace_gesture()=, which merges consecutive replacements of the same part.
+
+*** The preview model
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-model
+:END:
+A physics asset names bones, not a model. To place the parts the editor needs a skeleton: the *preview model*, any skinned =.glb= / =.gltf= of the project (the picker lists them). The strict =.rphysasset= format has no room for editor state, so the choice is kept in the asset's =.meta= sidecar ([[file:projects-and-assets.org][Projects and Assets]]) as the =preview_model= setting, a path relative to the asset. It is not part of the undo history. Without a sidecar setting the editor tries the project's models (at most 32) and takes the first whose skeleton has every bone the asset names.
+
+The preview model's skeleton is what Generate, Stabilize, Add Part (sizing a part along its bone), the parent-part lookup (which part a joint connects to), validation and Simulate use. Without one those report "Pick a preview model with a skeleton first"; editing the parts' values still works.
+
+*** Parts, parents and joints
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-parts
+:END:
+Each part follows one bone. Its shape (capsule along its local Y, box or sphere) sits at =offset= / =rotation= in the bone's frame. The part's *parent part* is the part of the nearest ancestor bone that has one; a part without one is a root and has no joint (the grid hides the joint rows, =physasset.get= reports =parent: null=). The joint frame (=joint_position=, =joint_rotation=) is in the bone's frame; its X axis is the twist axis. Limits are measured from the bind pose:
+
+| Joint kind | Limits | Gizmo |
+|------------+--------+-------|
+| =swing-twist= (default) | =twist= [min, max] about X, =swing= [y, z] half angles | yellow twist arc and violet elliptic cone |
+| =cone= | =swing= [y, z] | violet cone |
+| =hinge= | =twist= [min, max] (the hinge angle) | yellow arc |
+| =point= | none | frame axes only |
+| =fixed= | none | frame axes only |
+
+The cone is the set of directions the twist axis may take: at angle t around X its half angle follows the ellipse of =swing_y= (toward the joint's Z) and =swing_z= (toward Y). The twist arc starts at the joint's Y axis.
+
+*** Simulate
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-simulate
+:END:
+Simulate builds an =LrgDynamicsWorld= with the project's world settings (gravity, substep, iterations, sleep; see [[#project-physics][Project Settings > Physics]]), a static ground plane at the bottom of the model's bind bounds, and an =LrgRagdoll= of the current asset in =LRG_RAGDOLL_PASSIVE= mode, placed from the bind pose. Every frame the world steps, =lrg_ragdoll_write_pose()= writes the bodies into the skeleton and the skinned mesh follows; the bodies, sleeping state and contacts are drawn with =lrg_dynamics_world_debug_draw()=. Stop (the same button) and Reset put the model back in its bind pose (Reset restarts a running simulation). Any edit of the document stops the simulation, since the ragdoll holds the asset it was built from.
+
+** The .rphysasset format
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-format
+:END:
+The format is the engine's ([[file:../modules/physics/ragdoll.org::#format][LrgRagdoll: the .rphysasset format]]); the editor writes exactly what =lrg_physics_asset_save_to_data()= writes (vectors as block sequences, shown in flow style here for brevity). An excerpt of what the editor saved after =physasset.create ... model=chars/hero.glb total_mass=75= on the 15-bone humanoid, a swing-twist limit edit on =upper_arm_l= and an exclusion:
+
+#+begin_src yaml
+version: 1
+name: hero                      # the file's base name on create
+parts:
+  - bone: pelvis                # a capsule (the default shape) from the bone to its first child
+    half-height: 0.075          # radius 0.05 is the default, so it is left out
+    offset: [0, 0.125, 0]       # centred between the bone and its first child
+    mass: 5.451723              # by volume, then stabilised; 75 kg in all
+    joint:                      # written but unused: pelvis has no parent part (a root)
+      rotation: [0, 0, 0.7071068, 0.7071068]   # twist axis (X) along the bone
+  - bone: head
+    shape: sphere               # a leaf bone gets a sphere
+    radius: 0.07
+    offset: [0, 0.07, 0]
+    mass: 5.2336545
+    joint:
+      rotation: [0, 0, 0.7071068, 0.7071068]
+  - bone: upper_arm_l
+    radius: 0.060000002
+    half-height: 0.09
+    offset: [0.15, 0, 0]
+    rotation: [0, 0, -0.7071068, 0.7071068]   # the capsule turned onto the arm (+X)
+    mass: 5.2336545
+    joint:                      # kind swing-twist (the default); the bone points along X already
+      twist: [-0.69813174, 0.69813174]       # -40 to 40 degrees
+      swing: [1.2217306, 0.7853982]          # 70 and 45 degrees
+  # ... one part per bone with children, a sphere per leaf
+exclusions:                     # beyond the automatic parent/child exclusion
+  - [thigh_l, thigh_r]
+#+end_src
+
+The editor-only preview model lives next to it in =hero.rphysasset.meta=:
+
+#+begin_src yaml
+guid: 4f0c...
+importer: generic
+settings:
+  preview_model: hero.glb     # relative to the asset
+#+end_src
+
+** Opening and creating
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-open
+:END:
+- Double click a =.rphysasset= in the [[file:editor-app.org::#editor-panel-assets][Assets panel]] (glyph =Rd=, type "Physics asset"), use =physasset.open=, or call =lrg_editor_physics_asset_editor_open (app, path, &error)= (=lrg_editor_data_editor_open()= works too: the registry maps =LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET= to this type).
+- Assets panel background menu > *New Physics Asset* writes =new_physics_asset.rphysasset= (no parts) and starts a rename.
+- Right click a =.glb= / =.gltf= > *New Physics Asset from Model* writes =<model>.rphysasset= with one part per bone (=lrg_physics_asset_new_from_skeleton()=, 70 kg, radius ratio 0.2) and the model remembered as the preview.
+- =lrg_editor_physics_asset_editor_create (app, path, model, total_mass, radius_ratio, &n_parts, &error)= and =physasset.create= do the same from code.
+- =lrg_editor_document_detect_format()= recognises =.rphysasset= by its extension, and a YAML mapping with =version:= and a =parts:= sequence whose first item has a =bone:= key (or an empty one) by content. A new document (=lrg_editor_document_new (LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET)=) is =version: 1= with =parts: []=, which the loader accepts.
+
+** The panel
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-panel
+:END:
+*** Left column
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-left
+:END:
+One scrolling column (=physasset-grid-scroll=):
+
+| Section | Widgets (names) | What it does |
+|---------+-----------------+--------------|
+| PARTS | summary (=physasset-summary=: count and total mass), bone picker (=physasset-add-bone=, the bones without a part), Add Part (=physasset-add-part=), Remove (=physasset-remove-part=) | Add Part takes the generator's part for that bone as the template (a capsule from the bone to its first child, joint along the bone) with the mean mass of the existing parts |
+| part rows | one per part (=physasset-part-<bone>=): the bone as a button, the shape, the mass | a click selects; the selected row is highlighted; a bone the preview skeleton lacks shows "no bone!" |
+| SELECTED PART | the property grid (=physasset-grid=), see below | |
+| GENERATE FROM SKELETON | total mass (=physasset-generate-mass=, kg), radius ratio (=physasset-generate-ratio=), Generate (=physasset-generate=), Stabilize Masses (=physasset-stabilize=) | Generate replaces every part and exclusion (the name and =exclude-adjacent= stay); Stabilize evens out masses along each chain (a child 0.8 to 1.2 times its parent, total kept) |
+| COLLISION EXCLUSIONS | a row per pair with Remove (=physasset-exclusion-remove-<i>=), two bone pickers (=physasset-exclude-a=, =-b=) and Exclude (=physasset-exclude=) | pairs of parts that never collide, beyond the automatic parent/child exclusion |
+
+*** The property grid
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-grid
+:END:
+The grid shows the selected part (rows depend on the shape and joint kind, so the strict format's rules are never broken) and the asset:
+
+| Group | Rows (property names) |
+|-------+-----------------------|
+| Part · <bone> | =bone= (renames the part), =shape= (=capsule box sphere=), =radius= (capsule, sphere), =half-height= (capsule), =extent-x= / =-y= / =-z= (box half extents), =offset-x= / =-y= / =-z=, =rotation-x= / =-y= / =-z= (Euler, shown in degrees, applied X then Y then Z), =mass= (kg) |
+| Joint to <parent bone> (non-root parts) | =joint= (=swing-twist cone hinge point fixed=), =joint-x= / =-y= / =-z= (pivot), =joint-rotation-x= / =-y= / =-z= (frame, degrees), =twist-min= / =twist-max= (hinge, swing-twist; degrees), =swing-y= / =swing-z= (cone, swing-twist; degrees), =friction= (N m), =motor-max-torque=, =motor-frequency= (Hz), =motor-damping= |
+| Asset | =name=, =exclude-adjacent= ("Jointed parts never collide") |
+
+A shape change carries the size over: a capsule becomes the box around it (half extents r, h + r, r), a box becomes the capsule inside it, a capsule becomes a sphere of radius r + h / 2. A refused value (a mass or size of zero, a twist minimum above the maximum, a bone that already has a part) shows the validation message as a toast and leaves the document alone.
+
+*** The preview
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-preview
+:END:
+On the right: the preview model picker (=physasset-model=), Simulate / Stop (=physasset-simulate=) and Reset (=physasset-reset=) above the 3D view (=physasset-preview=). Drag to orbit, wheel to zoom. The caption shows the model and its bone count, or the simulated time. The chip bar toggles the mesh (=physasset-show-mesh=), the part shapes (=physasset-show-shapes=) and the joint gizmos (=physasset-show-joints=).
+
+| Drawn | Colour |
+|-------+--------|
+| part shapes (authoring) | cyan wire; the selected part orange |
+| bodies (simulating) | the world's debug colours: green dynamic, dimmed when sleeping; contacts red |
+| selected joint frame | X (twist axis) red arrow, Y green, Z blue |
+| twist range | yellow arc in the joint's YZ plane with spokes at min and max |
+| swing range | violet elliptic cone with four spokes |
+
+The shapes and gizmos are drawn on top of the mesh (no depth test), so parts inside the body stay visible.
+
+*** Validation
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-validation
+:END:
+Beyond the loader's errors, Validate reports: an asset without parts (info), a part on a bone the preview skeleton lacks (error), and a part weighing more than 4 times or less than a quarter of its parent part (warning, "Stabilize masses": large mass ratios across a joint are the main cause of limit overshoot and joint stretch in a sequential-impulse solver).
+
+** Project Settings > Physics
+:PROPERTIES:
+:CUSTOM_ID: project-physics
+:END:
+File > Project Settings has two pages since 0.9.0 (=project-settings-tabs=): General (the 0.8.1 form) and Physics (=project-physics-page=). =physics.layers.open= and =lrgeditorctl physics layers open= open the dialog on the Physics page. The page edits a copy of the project's =LrgPhysicsLayers= and of the world settings; *Save* assigns the copy to the project (=lrg_physics_layers_assign()=) and writes =project.ryaml=, *Cancel* drops it. *Reset to Defaults* (=project-physics-defaults=) puts the copy back to the nine default layers and default settings.
+
+| Section | Widgets | Notes |
+|---------+---------+-------|
+| World | Gravity X / Y / Z (=project-physics-gravity-x= ...), Substep (=project-physics-fixed-dt=, seconds), Max substeps (=-max-substeps=, 1 to 8), Solver iterations (=-iterations=, 1 to 32), Sleep below \vert{}v\vert{}²+\vert{}ω\vert{}² (=-sleep=) for N substeps (=-sleep-substeps=) | invalid values are reported on Save and the old settings kept |
+| Layers | 32 name fields in two columns (=project-physics-layer-0= ... =-31=) | names are unique, not ="all"=, not a number; an invalid name shows the reason in red under the matrix and is not applied |
+| Collide matrix | =project-physics-matrix= | the upper triangle of the symmetric matrix over the named slots (at least one): row i holds the cells j >= i, so each pair shows once. A filled accent cell with a check collides. Hovering lights up the cell's row and column and names the pair under the matrix (=project-physics-status=: "debris ⟷ ragdoll: collide"); a click toggles the pair (and its mirror) |
+
+*** The physics: block
+:PROPERTIES:
+:CUSTOM_ID: project-physics-block
+:END:
+The layer table is =LrgProject='s (=layers=, =no_collide=, see [[file:../modules/physics/physics-layers.org::#format][the physics: block]]). The world settings are written next to it:
+
+#+begin_src yaml
+physics:
+  layers: [default, static, dynamic, kinematic, character, trigger, debris, ragdoll, projectile, water]
+  no_collide:
+  - [static, static]
+  - [debris, ragdoll]          # the cell clicked in the matrix
+  # ...
+  gravity: [0, -1.62, 0]       # m/s², Y up; default [0, -9.81, 0]
+  fixed_dt: 0.016666700        # the fixed substep, seconds, at most 0.1; default 1/60
+  max_substeps: 4              # substeps one step may run, 1 to 8; default 4
+  iterations: 10               # solver passes per substep, 1 to 32; default 10
+  sleep_threshold: 0.0009      # |v|²+|ω|² below which a body is quiet; default 9e-4
+  sleep_substeps: 30           # quiet substeps before an island sleeps; default 30
+#+end_src
+
+The settings are the engine's =LrgPhysicsSettings= and live on the open =LrgProject= next to the layer table (=lrg_project_get_physics_settings()=, =lrg_project_set_physics_settings()=); =lrg_project_save()= writes both halves into the block and keeps every key it does not know (=editor_physics_project_save()=, used by the dialog and the =physics.layers.*= methods, is now just set-and-save). A broken value in the file is reported when the project opens and reads as the default.
+
+*The runtime honours the block.* Play-in-editor gives its world the open project's settings and layer table (=lrg_editor_play_session_set_project()=, set by the app on every Play; unsaved Project Settings edits apply on the next Play, matrix edits even while playing), and a game loading its levels with =lrg_level_load_world3d()= / =lrg_level_instantiate_3d()= reads the saved block from the =project.ryaml= above the level ([[file:../modules/physics/physics-layers.org::#runtime][The block at runtime]]). The physics asset preview's Simulate uses the same settings (=lrg_dynamics_world_apply_settings()=).
+
+** Using it from C
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-c
+:END:
+#+begin_src C
+g_autoptr(GError)              error = NULL;
+LrgEditorPhysicsAssetEditor   *ed;
+LrgPhysicsAsset               *asset;
+g_autoptr(LrgPhysicsAssetPart) knee = NULL;
+gint                           i;
+
+/* generate from a model, open it */
+if (!lrg_editor_physics_asset_editor_create (app, "chars/hero.rphysasset", "chars/hero.glb", 75.0f, 0.2f, NULL, &error))
+	g_warning ("%s", error->message);
+ed = lrg_editor_physics_asset_editor_open (app, "chars/hero.rphysasset", &error);
+
+/* a knee: a hinge that bends one way (one undo step) */
+asset = lrg_editor_physics_asset_editor_get_asset (ed);
+i = lrg_physics_asset_find_part (asset, "shin_l");
+knee = lrg_physics_asset_part_copy (lrg_physics_asset_get_part (asset, (guint) i));
+knee->joint = LRG_JOINT_HINGE;
+knee->twist_min = 0.0f;
+knee->twist_max = 2.4f;
+lrg_editor_physics_asset_editor_set_part (ed, (guint) i, knee, &error);
+
+/* structural edits */
+lrg_editor_physics_asset_editor_set_exclusion (ed, "thigh_l", "thigh_r", TRUE, &error);
+lrg_editor_physics_asset_editor_stabilize (ed, &error);
+lrg_editor_physics_asset_editor_select_part (ed, i);
+
+/* try it: two seconds of a passive drop, then back to the bind pose */
+if (lrg_editor_physics_asset_editor_set_simulating (ed, TRUE, &error))
+{
+	lrg_editor_physics_asset_editor_advance (ed, 2.0f);
+	g_print ("ragdoll parts: %u\n",
+	         lrg_ragdoll_get_part_count (lrg_editor_physics_asset_editor_get_ragdoll (ed)));
+	lrg_editor_physics_asset_editor_set_simulating (ed, FALSE, NULL);
+}
+lrg_editor_data_editor_save (LRG_EDITOR_DATA_EDITOR (ed), &error);
+#+end_src
+
+*** API reference
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-api
+:END:
+| Function | Description |
+|----------+-------------|
+| =LRG_TYPE_EDITOR_PHYSICS_ASSET_EDITOR=, =lrg_editor_physics_asset_editor_get_type()= | the final type, a subclass of =LrgEditorDataEditor= |
+| =lrg_editor_physics_asset_editor_new (app, document)= | the editor of a physics asset document, not docked |
+| =lrg_editor_physics_asset_editor_install (app)= | registers =physasset.*= and =physics.layers.*= (the Assets panel calls it) |
+| =lrg_editor_physics_asset_editor_open (app, path, &error)= | opens or presents the tab of =path= |
+| =lrg_editor_physics_asset_editor_create (app, path, model, total_mass, radius_ratio, &n_parts, &error)= | writes a new asset (empty, or generated from =model='s skeleton with =model= remembered); =G_IO_ERROR_EXISTS= when =path= exists |
+| =lrg_editor_physics_asset_editor_get_asset (self)= | the parsed asset (replaced after every edit; =NULL= while the text does not load) |
+| =lrg_editor_physics_asset_editor_get_load_error (self)= | the loader's message, or =NULL= |
+| =lrg_editor_physics_asset_editor_set_model (self, model, &error)= / =lrg_editor_physics_asset_editor_get_model (self)= | the preview model (=NULL= clears); written to the =.meta= sidecar |
+| =lrg_editor_physics_asset_editor_get_skeleton (self)= | the preview model's skeleton (posed by the ragdoll while simulating) |
+| =lrg_editor_physics_asset_editor_select_part (self, index)= / =lrg_editor_physics_asset_editor_get_selected_part (self)= | the selected part (-1 for none) |
+| =lrg_editor_physics_asset_editor_add_part (self, bone, &error)= | appends a part on a bone without one and selects it; returns its index or -1 |
+| =lrg_editor_physics_asset_editor_remove_part (self, index, &error)= | removes a part and the exclusions naming its bone |
+| =lrg_editor_physics_asset_editor_set_part (self, index, part, &error)= | replaces a part (validated, canonical form) |
+| =lrg_editor_physics_asset_editor_generate (self, total_mass, radius_ratio, &error)= | replaces every part from the skeleton (keeps the name and =exclude-adjacent=) |
+| =lrg_editor_physics_asset_editor_stabilize (self, &error)= | evens out the masses (nothing written when nothing changes) |
+| =lrg_editor_physics_asset_editor_set_exclusion (self, bone_a, bone_b, excluded, &error)= | adds or removes one exclusion |
+| =lrg_editor_physics_asset_editor_set_simulating (self, simulating, &error)= / =lrg_editor_physics_asset_editor_get_simulating (self)= | starts (passive ragdoll on a ground plane) or stops (back to the bind pose) |
+| =lrg_editor_physics_asset_editor_advance (self, seconds)= | steps a running simulation now, in 1/60 s frames (tests, IPC) |
+| =lrg_editor_physics_asset_editor_get_ragdoll (self)= | the simulated =LrgRagdoll=, or =NULL= |
+| =lrg_editor_physics_asset_editor_render_preview (self, size)= | renders the preview into a =GrlImage= (needs a graphics context) |
+| =lrg_editor_document_replace_gesture (doc, path, yaml, gesture_id, &error)= | the document call part edits go through: a replace that merges within one gesture |
+
+** IPC, lrgeditorctl and MCP
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-ipc
+:END:
+The methods are listed in [[file:ipc-protocol.org::#ipc-physics-assets][IPC protocol: physics layer and physics asset methods]]; the verbs in [[file:lrgeditorctl.org::#verbs-physics][lrgeditorctl: Physics]]; each method has an MCP tool of the same name with =_= for =.= (=physasset_set_part=, =physics_layers_set_collides=, ...).
+
+#+begin_src sh
+lrgeditorctl physasset create chars/hero.rphysasset model=chars/hero.glb total_mass=80
+lrgeditorctl physasset set-part chars/hero.rphysasset shin_l joint=hinge twist_degrees=0,140
+lrgeditorctl physasset set-part chars/hero.rphysasset head shape=sphere radius=0.12
+lrgeditorctl physasset exclude chars/hero.rphysasset thigh_l thigh_r
+lrgeditorctl physasset simulate chars/hero.rphysasset advance=2
+lrgeditorctl physasset save chars/hero.rphysasset
+lrgeditorctl physics layers name 9 water
+lrgeditorctl physics layers collide water debris off
+lrgeditorctl physics layers settings gravity=0,-3.7,0 iterations=12
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-performance
+:END:
+- Every edit re-parses the asset (a few kilobytes of YAML for a 60-bone rig, well under a millisecond) and writes one part or the whole file; nothing touches the disk until Save.
+- The preview renders every frame while its tab is visible; hidden tabs do not step. The shapes and gizmos are one =LrgDebugDraw= batch (a handful of draw calls).
+- Simulate steps the world once per frame with the project's substep (at most =max_substeps= substeps); a 15-part ragdoll costs well under a millisecond per frame.
+- The automatic model lookup (no =preview_model= in the sidecar) loads the skeletons of up to 32 project models once when the editor opens; set the model explicitly in large projects.
+- Project Settings saves write =project.ryaml= twice (=lrg_project_save()=, then the settings patch).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-pitfalls
+:END:
+- The strict loader refuses keys that do not apply (=radius= on a box, =twist= on a cone). Edits through the editor never produce them; YAML typed by hand may, and the asset then does not load until fixed.
+- The preview model is editor state in the sidecar: moving the asset without its =.meta= loses it (the automatic lookup usually finds the model again).
+- Joint limits are measured from the bind pose of the skeleton the ragdoll is built on; a model with a different bind pose needs its own asset.
+- A part's =rotation= / =joint_rotation= rows show Euler angles; values near ±90 degrees on Y (gimbal lock) may read back differently from what was typed while describing the same rotation.
+- =physics.layers.*= methods save =project.ryaml= at once and are not undoable; use the dialog for an explicit Save / Cancel.
+- Project Settings saves =project.ryaml=; a game only sees saved settings, while Play uses the editor's current (possibly unsaved) ones. Save before testing the built game.
+- Setting =fixed_dt= / =max_substeps= changes the play world's =LrgWorld3D:fixed-step= / =max-substeps= too (one physics substep per fixed update).
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-tests
+:END:
+=tests/test-editor-app-physasset.c= (headless; =/gpu/= under =build-aux/xrun.sh=): formats and detection, open and Generate (sidecar, undo), Stabilize and the mass ratio warning, parts through the canvas (remove, Add Part from the bone picker, row selection), canonical part writes, refused values, exclusions, a grid drag as one undo step, shape and joint kind rows, rotation rows, Simulate (the head falls, Stop restores the bind pose, an edit stops it), every =physasset.*= method and its errors, =physics.layers.*= (names, matrix, settings kept across later saves), Project Settings > Physics (name, a matrix click, gravity, Save; Cancel), the Assets panel entries, and the rendered preview. The humanoid model is written by the test (no downloads). =tests/editorctl-smoke.sh= covers the verbs and MCP tools.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: physics-asset-see-also
+:END:
+- [[file:../modules/physics/ragdoll.org][LrgPhysicsAsset and LrgRagdoll]] - the format and the runtime ragdoll
+- [[file:../modules/physics/joint.org][LrgJoint]] - joint kinds, limits and motors
+- [[file:../modules/physics/physics-layers.org][LrgPhysicsLayers]] - the layer table and the =physics:= block
+- [[file:physics.org][Physics in Levels]] - bodies, shapes and joints on nodes, the Physics panel and overlay
+- [[file:data-editors.org][Data editors]] - the document model the editor sits on
+- [[file:animation-editor.org][Animation editors]] - the bone map editor's model pickers work the same way

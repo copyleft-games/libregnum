@@ -215,6 +215,8 @@ G_GNUC_INTERNAL gchar *  editor_app_create_script   (LrgEditorApp *self, const g
                                                      GError **error);
 G_GNUC_INTERNAL void     editor_app_apply_settings  (LrgEditorApp *self);
 G_GNUC_INTERNAL void     editor_app_reset_layout    (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_app_own_panel       (LrgEditorApp *self, const gchar *id, const gchar *title,
+                                                     const gchar *icon, LrgWidget *content);
 G_GNUC_INTERNAL void     editor_app_show_panel      (LrgEditorApp *self, const gchar *id);
 G_GNUC_INTERNAL void     editor_app_toggle_panel    (LrgEditorApp *self, const gchar *id);
 G_GNUC_INTERNAL gboolean editor_app_panel_is_shown  (LrgEditorApp *self, const gchar *id);
@@ -257,6 +259,7 @@ G_GNUC_INTERNAL void     editor_dialog_recover      (LrgEditorApp *self);
 G_GNUC_INTERNAL void     editor_dialog_about        (LrgEditorApp *self);
 G_GNUC_INTERNAL void     editor_dialog_shortcuts    (LrgEditorApp *self);
 G_GNUC_INTERNAL void     editor_dialog_project_settings (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_dialog_export (LrgEditorApp *self);
 G_GNUC_INTERNAL void     editor_dialog_close_all    (LrgEditorApp *self);
 
 /* --- lrg-editor-play.c --- */

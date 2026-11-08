@@ -164,6 +164,15 @@ lrg_particle_reset (LrgParticle *self)
     self->max_life = 0.0f;
     self->age = 0.0f;
     self->alive = FALSE;
+    self->start_size = 1.0f;
+    self->start_color_r = 1.0f;
+    self->start_color_g = 1.0f;
+    self->start_color_b = 1.0f;
+    self->start_color_a = 1.0f;
+    self->start_rotation_velocity = 0.0f;
+    self->random = 0.0f;
+    self->id = 0;
+    self->collisions = 0;
 }
 
 /*
@@ -204,6 +213,15 @@ lrg_particle_spawn (LrgParticle *self,
     self->max_life = life;
     self->age = 0.0f;
     self->alive = TRUE;
+    self->start_size = 1.0f;
+    self->start_color_r = 1.0f;
+    self->start_color_g = 1.0f;
+    self->start_color_b = 1.0f;
+    self->start_color_a = 1.0f;
+    self->start_rotation_velocity = 0.0f;
+    self->random = 0.0f;
+    self->id = 0;
+    self->collisions = 0;
 }
 
 /*

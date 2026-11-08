@@ -7,7 +7,9 @@
  * LrgEditorSceneRenderer: draws the editor's 3D scene view (grid, nodes,
  * icons, selection bounds, transform gizmo, orientation axes, overlay
  * text) into the render texture of an editor viewport, and renders model
- * and font thumbnails for the asset browser.
+ * and font thumbnails for the asset browser.  The scene itself is drawn by
+ * the engine's shared #LrgWorld3DRenderer, so the viewport and a game
+ * look the same.
  */
 
 #pragma once
@@ -26,7 +28,11 @@
 #include "../../graphics/lrg-light-set.h"
 #include "../../lighting/lrg-shadow-renderer.h"
 #include "../../graphics/lrg-sky-dome.h"
+#include "../../graphics/lrg-lod-group.h"
+#include "../../lighting/lrg-lightmap3d.h"
 #include "../../postprocess/lrg-post-processor.h"
+#include "../../world3d/lrg-world3d-renderer.h"
+#include "../lrg-editor-play-session.h"
 
 G_BEGIN_DECLS
 
@@ -36,11 +42,15 @@ G_BEGIN_DECLS
  * LrgEditorSceneRenderer:
  *
  * Renders the level of an #LrgEditor as seen by one camera of an
- * #LrgEditorViewState. The renderer owns every GPU resource it needs
- * (lit shader, primitive meshes, model and texture caches); they are
- * created lazily by the first lrg_editor_scene_renderer_render() and
- * freed by lrg_editor_scene_renderer_release(). Without a window every
- * call is a harmless no-op.
+ * #LrgEditorViewState. The level's nodes are turned into a transient
+ * #LrgRenderList every render and drawn by an #LrgWorld3DRenderer the
+ * renderer owns (lit shader, primitive meshes, model and texture caches,
+ * lights, shadows, sky, post); while a 3D level plays, the play session's
+ * #LrgWorld3D is drawn instead (lrg_editor_scene_renderer_set_play_session()).
+ * GPU resources are created lazily by the first
+ * lrg_editor_scene_renderer_render() and freed by
+ * lrg_editor_scene_renderer_release(). Without a window every call is a
+ * harmless no-op.
  */
 LRG_AVAILABLE_IN_ALL
 G_DECLARE_FINAL_TYPE (LrgEditorSceneRenderer, lrg_editor_scene_renderer, LRG, EDITOR_SCENE_RENDERER, GObject)
@@ -135,6 +145,45 @@ void lrg_editor_scene_renderer_set_playing (LrgEditorSceneRenderer *self,
  */
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_editor_scene_renderer_get_playing (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_set_play_session:
+ * @self: an #LrgEditorSceneRenderer
+ * @session: (nullable): the editor's play session, or %NULL
+ *
+ * While @session runs a 3D level (lrg_editor_play_session_get_world3d()
+ * returns a world), every render draws that runtime world through the
+ * shared #LrgWorld3DRenderer with the world's own lights, instead of the
+ * authoring nodes. The grid and the 2D overlays (gizmo, axes, label,
+ * stats) still draw; node icons, bounds and tilemap grids do not (the
+ * play entities are not the authoring nodes).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_scene_renderer_set_play_session (LrgEditorSceneRenderer *self,
+                                                 LrgEditorPlaySession   *session);
+
+/**
+ * lrg_editor_scene_renderer_get_play_session:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * Returns: (transfer none) (nullable): the play session
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorPlaySession * lrg_editor_scene_renderer_get_play_session (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_get_runtime_renderer:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * The shared engine renderer the viewport draws through. Its render
+ * mode, flags, background and post processor are set from the viewport
+ * before every render; its asset caches, light set, shadow renderer and
+ * sky dome are the viewport's.
+ *
+ * Returns: (transfer none): the runtime renderer
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWorld3DRenderer * lrg_editor_scene_renderer_get_runtime_renderer (LrgEditorSceneRenderer *self);
 
 /**
  * lrg_editor_scene_renderer_render:
@@ -266,7 +315,9 @@ LrgLightSet * lrg_editor_scene_renderer_get_light_set (LrgEditorSceneRenderer *s
  * spot lights in the engine's 3D light set: "spot" lights (or a
  * "spot_angle" above 0) are previewed as point lights. Without a
  * directional light in the level the default editor sun is used so the
- * scene stays readable. Works without a window.
+ * scene stays readable. The lights go through
+ * lrg_world3d_renderer_sync_lights() as #LrgLight3DDesc records, exactly
+ * as a game's light components do. Works without a window.
  *
  * Returns: the number of the level's lights in the set (0 when
  *   @scene_lighting is %FALSE)
@@ -329,6 +380,143 @@ LrgPostProcessor * lrg_editor_scene_renderer_get_post_processor (LrgEditorSceneR
                                                                  guint                   slot);
 
 /**
+ * lrg_editor_scene_renderer_set_cull_mask:
+ * @self: an #LrgEditorSceneRenderer
+ * @slot: a viewport index or %LRG_EDITOR_SCENE_RENDERER_PREVIEW_SLOT
+ * @mask: the render layers the viewport shows (bit n = layer n)
+ *
+ * Sets which render layers one viewport draws (default
+ * %LRG_RENDER_LAYERS_MASK_ALL).  Items on other layers are skipped in
+ * every colour pass of that viewport; shadows and lights are unaffected.
+ * Slots out of range are ignored.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_scene_renderer_set_cull_mask (LrgEditorSceneRenderer *self,
+                                              guint                   slot,
+                                              guint32                 mask);
+
+/**
+ * lrg_editor_scene_renderer_get_cull_mask:
+ * @self: an #LrgEditorSceneRenderer
+ * @slot: a viewport index or %LRG_EDITOR_SCENE_RENDERER_PREVIEW_SLOT
+ *
+ * Returns: the viewport's render-layer mask (%LRG_RENDER_LAYERS_MASK_ALL
+ *   for slots out of range)
+ */
+LRG_AVAILABLE_IN_ALL
+guint32 lrg_editor_scene_renderer_get_cull_mask (LrgEditorSceneRenderer *self,
+                                                 guint                   slot);
+
+/**
+ * lrg_editor_scene_renderer_get_lod_group:
+ * @self: an #LrgEditorSceneRenderer
+ * @asset: a model asset (path or `guid:`, as stored on the node)
+ *
+ * The LOD group the viewport uses for mesh-asset nodes showing @asset:
+ * built from the cached model and the asset's `.meta` LOD keys
+ * (lrg_lod_group_new_from_model_with_meta()) on first use and kept until
+ * lrg_editor_scene_renderer_forget_asset().  The viewport draws the
+ * level lrg_lod_group_get_force_level() names when it is 0 or more,
+ * otherwise the level the viewport camera's screen size selects.  The
+ * inspector's LOD preview sets the forced level on it.
+ *
+ * Returns: (transfer none) (nullable): the group; %NULL without a window,
+ *   before the model loaded, or when the `.meta` gives fewer than two
+ *   levels
+ */
+LRG_AVAILABLE_IN_ALL
+LrgLodGroup * lrg_editor_scene_renderer_get_lod_group (LrgEditorSceneRenderer *self,
+                                                       const gchar            *asset);
+
+/**
+ * lrg_editor_scene_renderer_recapture_probes:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * Captures every reflection-probe node again before the next frame (the
+ * viewport recaptures a probe by itself only when the probe node moves
+ * or its extents or resolution change; call this after editing the
+ * scene around probes, as the environment panel's "Bake" does).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_scene_renderer_recapture_probes (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_set_show_baked:
+ * @self: an #LrgEditorSceneRenderer
+ * @show: whether the authoring view applies the level's baked lighting
+ *
+ * While authoring, the viewport applies the level's `lighting:` block
+ * (its `.rlightmap` and `.rprobes`, or the bake panel's unsaved result,
+ * see lrg_editor_scene_renderer_set_baked_override()) to the nodes the
+ * way a game draws them: lightmapped nodes read their lightmap entry,
+ * other geometry inside a baked probe volume its probe grid.  %FALSE
+ * draws realtime lighting only (to compare).  On by default.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_scene_renderer_set_show_baked (LrgEditorSceneRenderer *self,
+                                               gboolean                show);
+
+/**
+ * lrg_editor_scene_renderer_get_show_baked:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * Returns: whether the authoring view applies baked lighting
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_scene_renderer_get_show_baked (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_set_baked_override:
+ * @self: an #LrgEditorSceneRenderer
+ * @lightmap: (nullable): a lightmap to show instead of the level's
+ * @grids: (nullable) (element-type LrgProbeGrid): probe grids to show
+ *   instead of the level's
+ *
+ * Shows a bake that is not on disk yet (the bake panel's result before it
+ * is saved next to the level) instead of the level's `lighting:`
+ * references.  Both %NULL / empty go back to the references.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_scene_renderer_set_baked_override (LrgEditorSceneRenderer *self,
+                                                   LrgLightmap3D          *lightmap,
+                                                   GPtrArray              *grids);
+
+/**
+ * lrg_editor_scene_renderer_reload_lighting:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * Reloads the level's `.rlightmap` and `.rprobes` before the next frame
+ * (the viewport reloads by itself when the references change; call this
+ * after rewriting the files under the same names).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_scene_renderer_reload_lighting (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_get_baked_lightmap:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * The lightmap the authoring view applies (loaded now if needed).
+ *
+ * Returns: (transfer none) (nullable): the lightmap, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgLightmap3D * lrg_editor_scene_renderer_get_baked_lightmap (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_get_baked_probe_grids:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * The probe grids the authoring view applies (loaded now if needed);
+ * probe-volume nodes colour their probe dots from the grid baked for
+ * their box.
+ *
+ * Returns: (transfer none) (element-type LrgProbeGrid): the grids
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_editor_scene_renderer_get_baked_probe_grids (LrgEditorSceneRenderer *self);
+
+/**
  * lrg_editor_scene_renderer_get_generation:
  * @self: an #LrgEditorSceneRenderer
  *
@@ -347,8 +535,9 @@ guint lrg_editor_scene_renderer_get_generation (LrgEditorSceneRenderer *self);
  * @node: a node
  *
  * Whether @node references a model, sprite or tileset file that does
- * not exist (resolved against the base directory). Works without a
- * window; the viewport paints these nodes with magenta boxes.
+ * not exist (resolved against the base directory), or a terrain / water
+ * node whose `.rterrain` / `.rwater` does not load (0.9.0). Works
+ * without a window; the viewport paints these nodes with magenta boxes.
  *
  * Returns: %TRUE when the node's asset is missing
  */
@@ -378,7 +567,8 @@ void lrg_editor_scene_renderer_camera_node_view (LrgNode       *node,
  * @name: a shader name: "scene.vs", "lit.fs", "unlit.fs", "normals.fs"
  *   or "post.fs"
  *
- * The built-in GLSL of the editor's viewport shaders. The readable
+ * The built-in GLSL of the viewport shaders, which are the shared
+ * renderer's (lrg_world3d_renderer_get_shader_source()). The readable
  * copies live in data/editor/shaders/@name.glsl; the library embeds
  * them so an installed editor needs no data files.
  *

@@ -1,0 +1,391 @@
+#+title: Particle and Weather Editors
+#+description: The lrgeditor tools for visual effects: the .rparticles particle editor (emitters, module stacks by stage, renderers, a live deterministic preview with timeline, solo, seed override and a GPU toggle) and the .rweather weather editor (presets, layers with schema-generated parameter forms, transitions, a live preview scene with crossfades), with their particles.* and weather.* IPC methods
+#+authors: Zach Podbielniak
+#+categories: libregnum editor vfx particles weather
+#+created: 2026-11-07T00:00:00-05:00
+#+updated: 2026-11-07T00:00:00-05:00
+#+version: 0.9.0
+
+* Particle and Weather Editors
+:PROPERTIES:
+:CUSTOM_ID: vfx-editors
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Particle and Weather Editors
+#+end_quote
+
+Two data editors, both since 0.9.0:
+
+- the *particle editor* (=LrgEditorParticleEditor=, =src/editor/ui/data/lrg-editor-particle-editor.{h,c}=) edits =.rparticles= particle effects ([[file:../modules/particles/particle-asset.org][LrgParticleAsset and LrgParticleEffect]]): the emitter list, each emitter's module stack grouped by stage, every module's parameters (curves, gradients, ranges, colours and vectors get their own editors), the renderer block (billboards, ribbons and trails, mesh particles), and a live 3D preview that plays the effect deterministically, scrubs a timeline, plays a single emitter alone and runs the emitters inside the GPU subset on =LrgGpuParticles=;
+- the *weather editor* (=LrgEditorWeatherEditor=, =src/editor/ui/data/lrg-editor-weather-editor.{h,c}=) edits =.rweather= files ([[file:../modules/weather/weather-asset.org][LrgWeatherAsset]]): presets, each preset's layer stack (rain, snow, fog, lightning, wind, GPU particle layers and registered game kinds) with a parameter form generated from the kind's schema, intensities, the transition rules, and a preview scene that keeps rain falling while sliders move and crossfades between presets with the durations the rules give.
+
+Both open from the Assets panel (double click a =.rparticles= / =.rweather= file, or New > Particle Effect / New > Weather) as tabs next to the code panel, like every data editor ([[file:data-editors.org][Data editors]]). Both are driven over IPC (=particles.*=, =weather.*=), from =lrgeditorctl= and from MCP.
+
+#+begin_example
++-----------------------------------------------------------------------------------------------+
+| (*) fire.rparticles . Particle effect      [Save][Revert][Validate] (0)                       |
++----------------------------------------+------------------------------------------------------+
+| [Effect Settings]                      | [Pause][Restart] ======o================  1.20 s     |
+| EMITTERS . 2                           | Speed [1.00] [ ]Seed [42] [x]Ground [ ]GPU [Night v] |
+| [Add][Duplicate][Remove][^][v]         | +--------------------------------------------------+ |
+|  [x] [main            ] [S]  310  GPU  | | (playing . 1.20 s . 352 particles)               | |
+|  [x] [sparks          ] [S]   42  CPU  | |                    .  *  .                       | |
+| MODULE STACK . main                    | |                 . * ** * .      <- the effect    | |
+| [drag  (FORCE)              v] [Add Module] |              *  ****  *                       | |
+| [Renderer: billboard]                  | |                  \||/      [] selected bounds    | |
+| SPAWN                                  | |   ............grid............                   | |
+|  [x] [spawn-rate       ] [^][v][x]     | +--------------------------------------------------+ |
+| SHAPE                                  | main 310 / 500   sparks 42 / 1000   . bounds 1.2 x  |
+|  [x] [shape            ] [^][v][x]     | main: runs on the GPU                                |
+| INIT ... FORCE ... OVER LIFE ...       | sparks: CPU (sub-emitter is not GPU capable)         |
+| MODULE . spawn-rate                    |                                                      |
+|  Rate        40                        |                                                      |
+|  Rate curve  [curve editor]            |                                                      |
+|  Per distance 0                        |                                                      |
+| unknown key /emitters/0/colour ...     |                                                      |
++----------------------------------------+------------------------------------------------------+
+#+end_example
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: vfx-concepts
+:END:
+
+*** The document is the truth
+:PROPERTIES:
+:CUSTOM_ID: vfx-document
+:END:
+Each editor edits one =LrgEditorDocument= of format =LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES= or =LRG_EDITOR_DOCUMENT_FORMAT_WEATHER=. Its text is parsed with the engine's strict loader (=lrg_particle_asset_new_from_data()=, =lrg_weather_asset_new_from_data()=) into the engine object the views and the preview use. A text that does not load (a typo in the YAML pane, a value out of range) is an issue whose message starts with the key path; the views then show the message and edits are refused until the text loads again. Saving writes the engine writer's bytes, so a saved file always reads back identically.
+
+*** Three kinds of edits
+:PROPERTIES:
+:CUSTOM_ID: vfx-edits
+:END:
+- *Grid edits* (a value typed, a slider or spin box dragged, a curve point moved, a colour picked) change the parsed object in place through its GObject property (particle modules, emitters, render settings) or the asset API (weather layer parameters, intensities, presets). The particle asset is validated after the change (=lrg_particle_asset_validate()=) and the value is reverted when that fails. The changed object is then written back into the document at its YAML path in the writer's canonical form; all the writes of one gesture merge into one undo step (=lrg_editor_document_replace_gesture()=). Because the parsed object is kept, the grid rows stay put and the preview keeps playing while a value is dragged.
+- *Structural edits* (emitters added, duplicated, removed or moved, modules added, moved or removed; weather presets and layers) are one labelled undo step each. Particle structure edits change a fresh copy parsed from the document and write it back; the document change then re-parses the asset (and rebuilds the preview). Weather structure edits go through the asset API in place and sync the preview.
+- *Value edits by key* (=lrg_editor_particle_editor_set_value()=, the =particles.set= IPC method) write the value in file syntax into a scratch copy of the document text and run the strict loader on it: a bad value fails with the loader's message (which names the key path) and nothing changes; a good one is written back canonically. Setting a value equal to its default removes the key (the writer leaves defaults out).
+
+Every change from outside the editor (undo, redo, the YAML pane, a reload after the file changed on disk) re-parses the asset and rebuilds the preview at the same time position.
+
+*** Stages, module order and the "add module" placement
+:PROPERTIES:
+:CUSTOM_ID: vfx-stages
+:END:
+A module belongs to one stage (spawn, shape, init, force, collision, over life, event; =LrgParticleModuleStage=) and stages always run in that order, so only the order among modules of one stage matters ([[file:../modules/particles/particle-asset.org::#concepts-modules][the module stack]]). The stack view groups the modules by stage; the up and down arrows move a module past its neighbour of the same stage. Add Module (or =lrg_editor_particle_editor_add_module()= with index -1) inserts after the last module of the same or an earlier stage, so the file reads in stage order. A new =sub-emitter= module gets the first other emitter as its target, since the asset does not validate without one.
+
+*** Mute and solo
+:PROPERTIES:
+:CUSTOM_ID: vfx-mute-solo
+:END:
+- *Mute* is the emitter's =enabled= key: a document edit, saved with the file, honoured by every game.
+- *Solo* is preview state only: the preview draws the soloed emitter and every emitter its sub-emitter modules trigger (transitively); all emitters keep simulating, so turning solo off shows the full effect at the same moment. Nothing is written.
+
+*** The preview
+:PROPERTIES:
+:CUSTOM_ID: vfx-preview
+:END:
+The particle preview is an =LrgParticleEffect= of the parsed asset with =auto-reload= on (in-place edits show at once), stepped in the panel's =step()= at the preview speed (0.05 to 4) and drawn into an =LrgViewport= with an orbit camera that frames the effect's bounds (eased, so the camera does not follow every particle). Drag to orbit, wheel to zoom.
+- The timeline seeks with =lrg_particle_effect_seek()= in fixed 1/60 s steps: the same time always shows the same particles, whatever the frame rate. Its length is two cycles plus a second for looping finite effects, a cycle plus a second for one-shot effects and 5 s for endless ones.
+- A finished one-shot effect starts over after 0.6 s while Play is on, so it can be watched repeatedly.
+- The seed override plays the effect with another seed (=lrg_particle_effect_set_seed()=) without touching the file's =seed=: try variations, keep the one you like by typing it into the effect settings.
+- Ground draws a grid at y = 0 (where plane collisions usually are); the background presets (Night, Dusk, Grey, Sky, White) help judge additive effects (dark) and smoke (light).
+- The selected emitter's bounds (including fading trails) are drawn as a box.
+- Textures and meshes of the renderer resolve against the project through an =LrgAssetManager=.
+
+*** The GPU toggle
+:PROPERTIES:
+:CUSTOM_ID: vfx-gpu
+:END:
+With GPU on, every enabled emitter inside the GPU subset of =.rparticles= ([[file:../modules/particles/gpu-particles.org::#rparticles-subset][the subset table]]) is simulated and drawn by its own =LrgGpuParticles= built with =lrg_gpu_particles_new_from_asset()= (on the GPU when a GL 3.3 context is available, on its bit-identical CPU twin otherwise); the other emitters stay on the effect. Each emitter row shows GPU or CPU, modules that are never GPU capable show "CPU only" in the stack, and the status line under the preview gives =lrg_gpu_particles_check_emitter()='s message for every emitter that stays on the CPU (it names the module and the parameter, for example a turbulence with =octaves: 2=). The toggle is preview state: a game picks the backend per emitter itself (see [[file:../guides/vfx.org][the VFX guide]]).
+
+*** Weather presets, layers and the preview
+:PROPERTIES:
+:CUSTOM_ID: vfx-weather-concepts
+:END:
+The weather preview is an =LrgWeatherManager= with every preset registered (=lrg_weather_asset_apply()=). Selecting a preset shows it at once at full level; every edit of a preset calls =lrg_weather_asset_sync_weather()= on its live weather, so a rain slider changes the rain without restarting it, and a new preset is registered on the spot. "Crossfade" fades from the shown preset to another over =lrg_weather_asset_resolve_transition()='s duration (exact rule, then =from/*=, =*/to=, =*/*=, then =default-transition=), which is the quickest way to check the transition table. The scene is a ground plane, a ring of pillars and a hut tinted by the combined ambient light, with world-space rain, snow and bolts (=lrg_weather_manager_render_world()=), screen-space effects (=lrg_weather_manager_render()=), fog veils and lightning flashes (=lrg_weather_manager_render_overlay()=). The caption shows the preset, a running crossfade and the effective wind (base wind plus wind layers).
+
+Layer parameters come from =lrg_weather_asset_list_kind_params()=: one grid row per parameter of the kind, typed by its =GParamSpec= (ranges, enum nicks, =GrlColor= pickers, =LrgGradientStops= editors). Parameters the layer does not set show the effect's default in the "default" state; the row's reset button unsets a parameter again. Layer intensity (the level the layer has at full strength) and enabled sit on the layer row.
+
+** Opening and creating
+:PROPERTIES:
+:CUSTOM_ID: vfx-opening
+:END:
+- Double click a =.rparticles= or =.rweather= file in the Assets panel, run =data.open=, or call =lrg_editor_particle_editor_open()= / =lrg_editor_weather_editor_open()=. An open tab is presented instead of opening a second one.
+- New files: the Assets panel's New menu (New Particle Effect, New Weather), the =asset.new= IPC method, or =lrg_editor_particle_editor_create()= / =lrg_editor_weather_editor_create()= (=particles.create=, =weather.create=). Templates:
+  | Format | =default= (or none) | =empty= |
+  |--------+--------------------+---------|
+  | =.rparticles= | one looping emitter =main=: spawn-rate 40/s, a narrow cone, speed 1.5 to 3, life 0.9 to 1.5 s, size 0.15 to 0.3, a warm colour, light gravity, size and alpha fading over life, additive billboards | no emitters |
+  | =.rweather= | presets =clear= (light wind) and =storm= (rain, fog, lightning, gusts), =default-preset: clear=, rules =clear -> storm= 8 s and =* -> clear= 12 s | no presets |
+  The name is the file name without its extension. An existing file is never overwritten (=G_IO_ERROR_EXISTS=).
+
+** The particle editor
+:PROPERTIES:
+:CUSTOM_ID: vfx-particle-panel
+:END:
+*** Left column
+:PROPERTIES:
+:CUSTOM_ID: vfx-particle-left
+:END:
+- *Effect Settings* selects the asset itself: =name=, =seed=, =duration=, =loop=, =prewarm=, =local-space=.
+- *Emitters*: Add (a new emitter with spawn-rate, velocity and lifetime, named =emitter=, =emitter 2=, ...), Duplicate (a deep copy after the selected one, named =<name> copy=, unknown keys included), Remove (refused while another emitter's sub-emitter triggers it), and the arrows to reorder (emitter order is draw order). Each row has the mute checkbox (=enabled=), the emitter button (selects it), S (solo), the live particle count and, with GPU on, the backend.
+- *Module stack* of the selected emitter, grouped by stage. The kind picker lists =lrg_particle_module_list_kinds()= (the 20 built-ins and registered custom kinds) with their stage. Each module row: enabled checkbox, the module button (selects it), "CPU only" with GPU on when the module is never GPU capable, up / down within its stage, remove. The Renderer button selects the emitter's =renderer:= block.
+- *Properties*: the property grid of the selection. Emitters hide their =renderer= object (it has its own button); the renderer shows =kind=, =blend= and =layer= plus the keys of its kind only (billboards: texture and flipbook; ribbons: mode, width and its curve, colour gradient, UVs, trail settings; meshes: mesh, primitive, scale, alignment, lighting). Renaming an emitter updates the =sub-emitter= modules that name it; an empty or taken name is refused.
+- *Warnings*: the unknown keys of the asset (=lrg_particle_asset_get_unknown_keys()=). The loader keeps them on save, so a typo (=colour:=) silently does nothing; they are also warnings in the issues list, with their line.
+
+*** Right column
+:PROPERTIES:
+:CUSTOM_ID: vfx-particle-right
+:END:
+Play / Pause, Restart, the timeline and the time; Speed, the seed override, Ground, GPU and the background; the preview; the statistics line (live / capacity per emitter, the effect's bounds) and the GPU status lines.
+
+*** Validation
+:PROPERTIES:
+:CUSTOM_ID: vfx-particle-validation
+:END:
+Besides the loader's error (with the key path and its line), the issues list warns about every unknown key and every emitter that never emits (no spawn module and no emitter triggers it), and says when the effect has no emitters. Clicking an issue selects the emitter, module or renderer of its path.
+
+** The weather editor
+:PROPERTIES:
+:CUSTOM_ID: vfx-weather-panel
+:END:
+#+begin_example
++-----------------------------------------------------------------------------------------------+
+| (*) sky.rweather . Weather            [Save][Revert][Validate] (0)                            |
++------------------------------------------+----------------------------------------------------+
+| [File Settings]                          | Show [storm v]  Transition to [clear v] [Crossfade]|
+| PRESETS . 2                              | +------------------------------------------------+ |
+| [Add Preset][Remove]                     | | (fading to clear . 3.1 / 12.0 s . wind 4.2, 0) | |
+|  [clear      ] Clear sky . 1 layer  default | |    / / / /  rain   [] [] pillars  /  /       | |
+|  [storm      ] Thunderstorm . 4 layers   | |   /  /  ##hut## /  /    lightning bolt  \    | |
+| LAYERS . storm                           | |  ============ ground ======================  | |
+| [snow                       v] [Add Layer]| +------------------------------------------------+ |
+|  [x] [rain             ] ====o== [^][v][x]| Drag to orbit, wheel to zoom. ...                |
+|  [x] [fog              ] =======o[^][v][x]|                                                    |
+|  [x] [lightning        ] =======o[^][v][x]|                                                    |
+|  [x] [gusts (wind)     ] =======o[^][v][x]|                                                    |
+| LAYER . rain (rain)                      |                                                    |
+|  Space          world                [v] |                                                    |
+|  Drop count     4000                     |                                                    |
+|  Colour         [#a0aabeaa]              |                                                    |
+| TRANSITIONS                              |                                                    |
+|  clear -> storm            [8.0]  [x]    |                                                    |
+|  * -> clear                [12.0] [x]    |                                                    |
+| [* v] -> [none v] [5.0] [Add Rule]       |                                                    |
++------------------------------------------+----------------------------------------------------+
+#+end_example
+
+- *File Settings*: =name=, =default-preset= (must name a preset) and =default-transition=.
+- *Presets*: Add Preset (=preset=, =preset-2=, ...), Remove (also removes the rules naming it and clears =default-preset= when it was the default). The row shows the display name, the layer count and which preset is the default; clicking it selects and previews it. The preset's grid has =name=, =ambient-color= and =ambient-brightness=.
+- *Layers* of the selected preset: the kind picker (=lrg_weather_asset_list_kinds()=), Add Layer (the id is the kind, numbered when the preset already has one: =wind-2=), and per layer the enabled checkbox, the layer button, the intensity slider (a drag is one undo step), up, down and remove.
+- *Properties* of a layer: one row per kind parameter, unset ones in the default state.
+- *Transitions*: one row per rule with its duration (edits apply at once) and remove; the add row takes =from= and =to= from the presets plus =*= and =none=.
+- *Validation*: the loader's error with its key path (=presets[0].layers[1].params.drops= becomes =/presets/0/layers/1/params/drops=, located in the text), a file without presets, a file without a default preset (it starts with a clear sky), a preset whose layers are all disabled.
+
+** Using it from C
+:PROPERTIES:
+:CUSTOM_ID: vfx-c
+:END:
+#+begin_src C
+/* Script an effect in a running editor (an embedder, a plugin, a test) */
+g_autoptr(GError)        error = NULL;
+LrgEditorParticleEditor *fx;
+gint                     sparks, m;
+
+if (!lrg_editor_particle_editor_create (app, "fx/impact.rparticles", "empty", &error))
+	g_warning ("%s", error->message);
+fx = lrg_editor_particle_editor_open (app, "fx/impact.rparticles", &error);
+
+sparks = lrg_editor_particle_editor_add_emitter (fx, "sparks", &error);
+m = lrg_editor_particle_editor_add_module (fx, (guint) sparks, "burst", -1, &error);
+lrg_editor_particle_editor_set_value (fx, "/emitters/0/modules/0", "count", "[20, 30]", 0, &error);
+lrg_editor_particle_editor_set_value (fx, "/emitters/0/renderer", "kind", "ribbon", 0, &error);
+lrg_editor_particle_editor_set_value (fx, "", "duration", "1", 0, &error);
+lrg_editor_particle_editor_set_value (fx, "", "loop", "false", 0, &error);
+
+/* look at it at 0.3 s, the same picture every time */
+lrg_editor_particle_editor_seek (fx, 0.3f);
+g_message ("%u particles", lrg_editor_particle_editor_get_active_count (fx, -1));
+lrg_editor_data_editor_save (LRG_EDITOR_DATA_EDITOR (fx), &error);
+#+end_src
+
+#+begin_src C
+/* Build a blizzard preset and check the crossfade the rules give */
+LrgEditorWeatherEditor *sky = lrg_editor_weather_editor_open (app, "data/sky.rweather", &error);
+gint                    p = lrg_editor_weather_editor_add_preset (sky, "blizzard", "Blizzard", &error);
+gint                    snow = lrg_editor_weather_editor_add_layer (sky, (guint) p, "snow", NULL, &error);
+
+lrg_editor_weather_editor_set_param (sky, (guint) p, (guint) snow, "space", "world", 0, &error);
+lrg_editor_weather_editor_set_param (sky, (guint) p, (guint) snow, "flake-count", "6000", 0, &error);
+lrg_editor_weather_editor_set_layer (sky, (guint) p, (guint) snow, 0.8f, -1, 0, &error);
+lrg_editor_weather_editor_set_transition (sky, "*", "blizzard", 20.0f, &error);
+lrg_editor_weather_editor_preview_preset (sky, "clear", &error);
+g_message ("fade: %.1f s", lrg_editor_weather_editor_transition_to (sky, "blizzard", &error));
+#+end_src
+
+*** API reference: LrgEditorParticleEditor
+:PROPERTIES:
+:CUSTOM_ID: vfx-particle-api
+:END:
+| Function | Description |
+|----------+-------------|
+| =LRG_TYPE_EDITOR_PARTICLE_EDITOR=, =lrg_editor_particle_editor_get_type()= | the final type, a subclass of =LrgEditorDataEditor= |
+| =lrg_editor_particle_editor_new (app, document)= | the editor of a particle document, not docked (transfer full) |
+| =lrg_editor_particle_editor_install (app)= | registers the =particles.*= IPC methods (every editor and the Assets panel call it; safe to repeat) |
+| =lrg_editor_particle_editor_open (app, path, &error)= | opens or presents the tab of =path= (transfer none); =LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND= for another format |
+| =lrg_editor_particle_editor_create (app, path, template_name, &error)= | writes a new effect from a template (=default=, =empty=) |
+| =lrg_editor_particle_editor_get_asset (self)= | the parsed asset (transfer none; replaced after outside changes; =NULL= while the text does not load) |
+| =lrg_editor_particle_editor_get_load_error (self)= | the loader's message, or =NULL= |
+| =lrg_editor_particle_editor_get_effect (self)= | the preview =LrgParticleEffect= (transfer none) |
+| =lrg_editor_particle_editor_select (self, emitter, module)= | emitter -1 for the effect settings; module -1 for the emitter, -2 for its renderer; =FALSE= when out of range |
+| =lrg_editor_particle_editor_get_selected_emitter (self)=, =lrg_editor_particle_editor_get_selected_module (self)= | the selection |
+| =lrg_editor_particle_editor_add_emitter (self, name, &error)= | appends an emitter (spawn-rate, velocity, lifetime), selects it, returns its index or -1 |
+| =lrg_editor_particle_editor_duplicate_emitter (self, emitter, &error)= | inserts a deep copy after it; returns the new index or -1 |
+| =lrg_editor_particle_editor_remove_emitter (self, emitter, &error)= | refused while a sub-emitter names it |
+| =lrg_editor_particle_editor_move_emitter (self, from, to, &error)= | reorders (draw order) |
+| =lrg_editor_particle_editor_add_module (self, emitter, kind, index, &error)= | adds a module (index -1: after its stage), selects it, returns its index or -1 |
+| =lrg_editor_particle_editor_remove_module (self, emitter, module, &error)=, =lrg_editor_particle_editor_move_module (self, emitter, from, to, &error)= | stack edits |
+| =lrg_editor_particle_editor_set_value (self, object_path, key, value, gesture, &error)= | one value in file syntax through the strict loader; =NULL= removes the key; object paths =""=, =/emitters/N=, =/emitters/N/renderer=, =/emitters/N/modules/M= |
+| =lrg_editor_particle_editor_set_playing (self, playing)=, =lrg_editor_particle_editor_get_playing (self)= | play / pause the preview |
+| =lrg_editor_particle_editor_restart (self)= | from 0 (with prewarm), playing |
+| =lrg_editor_particle_editor_seek (self, time)=, =lrg_editor_particle_editor_get_time (self)= | deterministic scrubbing (up to 30 s) |
+| =lrg_editor_particle_editor_advance (self, seconds)= | steps a playing preview now, in 1/60 s frames at the preview speed (tests, IPC) |
+| =lrg_editor_particle_editor_set_speed (self, speed)=, =lrg_editor_particle_editor_get_speed (self)= | 0.05 .. 4 |
+| =lrg_editor_particle_editor_set_seed_override (self, seed)=, =lrg_editor_particle_editor_get_seed_override (self)= | -1 for the asset's seed; restarts the preview |
+| =lrg_editor_particle_editor_set_show_ground (self, show)=, =lrg_editor_particle_editor_get_show_ground (self)= | the grid at y = 0 |
+| =lrg_editor_particle_editor_set_background (self, color)=, =lrg_editor_particle_editor_get_background (self, &color)= | the clear colour (alpha ignored) |
+| =lrg_editor_particle_editor_set_solo (self, emitter)=, =lrg_editor_particle_editor_get_solo (self)= | -1 for none; preview only |
+| =lrg_editor_particle_editor_set_gpu (self, gpu)=, =lrg_editor_particle_editor_get_gpu (self)= | the GPU toggle (preview only) |
+| =lrg_editor_particle_editor_get_gpu_status (self, emitter, &message)= | whether the emitter is inside the GPU subset; the reason when not (transfer full) |
+| =lrg_editor_particle_editor_get_emitter_on_gpu (self, emitter)= | whether the preview runs it on the GPU right now |
+| =lrg_editor_particle_editor_get_active_count (self, emitter)= | live particles of an emitter, or of all with -1 |
+| =lrg_editor_particle_editor_render_preview (self, size)= | renders the preview into a square =GrlImage= (transfer full; =NULL= without a graphics context) |
+
+*** API reference: LrgEditorWeatherEditor
+:PROPERTIES:
+:CUSTOM_ID: vfx-weather-api
+:END:
+| Function | Description |
+|----------+-------------|
+| =LRG_TYPE_EDITOR_WEATHER_EDITOR=, =lrg_editor_weather_editor_get_type()= | the final type, a subclass of =LrgEditorDataEditor= |
+| =lrg_editor_weather_editor_new (app, document)= | the editor of a weather document, not docked (transfer full) |
+| =lrg_editor_weather_editor_install (app)= | registers the =weather.*= IPC methods |
+| =lrg_editor_weather_editor_open (app, path, &error)= | opens or presents the tab of =path= (transfer none) |
+| =lrg_editor_weather_editor_create (app, path, template_name, &error)= | writes a new file from a template (=default=, =empty=) |
+| =lrg_editor_weather_editor_get_asset (self)=, =lrg_editor_weather_editor_get_load_error (self)= | the parsed asset (transfer none) or why it does not load |
+| =lrg_editor_weather_editor_get_manager (self)= | the preview's =LrgWeatherManager= (transfer none) |
+| =lrg_editor_weather_editor_select (self, preset, layer)= | preset -1 for the file settings, layer -1 for the preset; selecting a preset previews it |
+| =lrg_editor_weather_editor_get_selected_preset (self)=, =lrg_editor_weather_editor_get_selected_layer (self)= | the selection |
+| =lrg_editor_weather_editor_set_setting (self, key, value, &error)= | =name=, =default-preset=, =default-transition= (=NULL= clears or resets) |
+| =lrg_editor_weather_editor_add_preset (self, id, name, &error)= | appends a preset (id =NULL=: =preset=, =preset-2=, ...), registers it on the preview, selects it |
+| =lrg_editor_weather_editor_remove_preset (self, preset, &error)= | removes it, its rules and the default naming it |
+| =lrg_editor_weather_editor_set_preset (self, preset, name, ambient, brightness, gesture, &error)= | display name, ambient tint, brightness (=NULL= / negative keep a value) |
+| =lrg_editor_weather_editor_add_layer (self, preset, kind, id, &error)= | appends a layer, returns its index or -1 |
+| =lrg_editor_weather_editor_remove_layer (self, preset, layer, &error)=, =lrg_editor_weather_editor_move_layer (self, preset, from, to, &error)= | stack edits |
+| =lrg_editor_weather_editor_set_layer (self, preset, layer, intensity, enabled, gesture, &error)= | intensity (negative keeps it), enabled (1, 0, -1 keeps it) |
+| =lrg_editor_weather_editor_set_param (self, preset, layer, name, value, gesture, &error)= | a parameter in file syntax; =NULL= unsets it |
+| =lrg_editor_weather_editor_set_transition (self, from, to, seconds, &error)=, =lrg_editor_weather_editor_remove_transition (self, from, to, &error)= | the rules (ends: a preset id, =*=, =none=) |
+| =lrg_editor_weather_editor_preview_preset (self, preset_id, &error)= | shows a preset at once (=NULL=: no weather) |
+| =lrg_editor_weather_editor_transition_to (self, preset_id, &error)= | crossfades the preview; returns the duration or a negative value |
+| =lrg_editor_weather_editor_get_preview_preset (self)= | the preset shown or faded to |
+| =lrg_editor_weather_editor_advance (self, seconds)= | steps the preview weather now (tests, IPC) |
+| =lrg_editor_weather_editor_render_preview (self, width, height)= | renders the preview scene into a =GrlImage= (transfer full; =NULL= without a graphics context) |
+
+** IPC, lrgeditorctl and MCP
+:PROPERTIES:
+:CUSTOM_ID: vfx-ipc
+:END:
+Every method takes =path= (the file, absolute or project-relative; opened in its tab when it is not open). =emitter= is an index or an emitter name, =module= an index in that emitter's stack, =preset= an index or a preset id, =layer= an index or a layer id. Values (=value=) are file syntax: a JSON number or boolean, a string exactly as in the file (="[4, 8]"=, ="#ffc040"= (quoted for YAML automatically), ="0 1; 1 0 ease-out-quad"=, ="0 #ffffffff; 1 #00000000"=), an array of numbers, or =null= to remove the key. Each edit is one undo step (=data.undo= / =data.redo= with the same =path=). Errors: =INVALID_PARAMS= (missing or malformed parameters, the engine's validation message with the key path, a taken name), =NOT_FOUND= (no such file, emitter, module, preset or layer), =FAILED= (the file does not load, no graphics context for =render=).
+
+| Method | Parameters | Result |
+|--------+------------+--------|
+| =particles.open= | =path= | ={path, panel}= |
+| =particles.create= | =path=, =template?= | ={path}= |
+| =particles.get= | =path= | ={path, dirty, load_error, name, seed, duration, loop, prewarm, local_space, emitters: [{index, name, enabled, max_particles, start_delay, renderer: {key: text}, modules: [{index, kind, stage, enabled, gpu_capable, values: {key: text}}]}], unknown_keys, selected: {emitter, module}}= |
+| =particles.kinds= | - | ={kinds: [{kind, stage, gpu_capable}]}= |
+| =particles.set= | =path=, =key=, =value=, =emitter?=, =module?=, =renderer?= | ={ok}=: the effect's key without =emitter=, the emitter's, its renderer's (=renderer: true=) or a module's |
+| =particles.add_emitter= | =path=, =name?=, =index?= | ={index, name}= |
+| =particles.remove_emitter= | =path=, =emitter= | ={ok}= |
+| =particles.move_emitter= | =path=, =from=, =to= | ={ok}= |
+| =particles.duplicate_emitter= | =path=, =emitter= | ={index, name}= |
+| =particles.add_module= | =path=, =emitter=, =kind=, =index?= | ={index}= |
+| =particles.remove_module= | =path=, =emitter=, =module= | ={ok}= |
+| =particles.move_module= | =path=, =emitter=, =from=, =to= | ={ok}= |
+| =particles.select= | =path=, =emitter?= (none / -1 / null: the settings), =module?=, =renderer?= | ={emitter, module}= |
+| =particles.solo= | =path=, =emitter= (=null= clears) | ={solo}= |
+| =particles.play= | =path=, =playing?= (default true) | the preview state |
+| =particles.restart= | =path= | the preview state |
+| =particles.seek= | =path=, =time= | the statistics |
+| =particles.preview= | =path=, =speed?=, =seed?= (=null=: the asset's), =ground?=, =background?= (="#rrggbb"=), =gpu?= | ={time, playing, speed, seed, ground, background, gpu, solo}= |
+| =particles.stats= | =path= | the preview state plus ={active, bounds, emitters: [{name, enabled, active, capacity, bounds, gpu_ok, gpu_message, simulation ("effect" / "gpu-emitter"), backend ("cpu" / "gpu"), drawn}]}= |
+| =particles.save= | =path= | ={path}= |
+| =particles.render= | =path=, =file=, =size?= (512) | ={file, width, height}= |
+| =weather.open= | =path= | ={path, panel}= |
+| =weather.create= | =path=, =template?= | ={path}= |
+| =weather.get= | =path= | ={path, dirty, load_error, name, default_preset, default_transition, presets: [{index, id, name, ambient_color, ambient_brightness, layers: [{index, kind, id, intensity, enabled, params: {name: text}}]}], transitions: [{from, to, duration}], selected, preview}= |
+| =weather.kinds= | =kind?= | ={kinds: [{kind, params: [{name, type, blurb, default, min?, max?, values?}]}]}= |
+| =weather.set= | =path=, =key=, =value= | ={ok}= |
+| =weather.add_preset= | =path=, =id?=, =name?= | ={index, id}= |
+| =weather.remove_preset= | =path=, =preset= | ={ok}= |
+| =weather.set_preset= | =path=, =preset=, =name?=, =ambient_color?=, =ambient_brightness?= | ={ok}= |
+| =weather.add_layer= | =path=, =preset=, =kind=, =id?= | ={index, id}= |
+| =weather.remove_layer= | =path=, =preset=, =layer= | ={ok}= |
+| =weather.move_layer= | =path=, =preset=, =from=, =to= | ={ok}= |
+| =weather.set_layer= | =path=, =preset=, =layer=, =intensity?=, =enabled?= | ={ok}= |
+| =weather.set_param= | =path=, =preset=, =layer=, =name=, =value= (=null= unsets) | ={ok}= |
+| =weather.set_transition= | =path=, =from=, =to=, =duration= | ={ok}= |
+| =weather.remove_transition= | =path=, =from=, =to= | ={ok}= |
+| =weather.select= | =path=, =preset?=, =layer?= | ={preset, layer}= |
+| =weather.preview= | =path=, =preset?= (show; ="none"=), =transition_to?= (crossfade; ="none"=), =advance?= (seconds to step) | ={active, transitioning, duration, remaining, wind_x, wind_y}= |
+| =weather.save= | =path= | ={path}= |
+| =weather.render= | =path=, =file=, =width?= (640), =height?= (360) | ={file, width, height}= |
+
+The full protocol, the =lrgeditorctl= verbs and the MCP tools (one per method, =_= for =.=: =particles_set=, =weather_set_param=, ...) are in [[file:ipc-protocol.org][IPC protocol]] and [[file:lrgeditorctl.org][lrgeditorctl]].
+
+#+begin_src sh
+# raw requests over the socket (lrgeditorctl call sends one)
+lrgeditorctl call particles.create '{"path":"fx/fire.rparticles"}'
+lrgeditorctl call particles.set '{"path":"fx/fire.rparticles","emitter":"main","module":2,"key":"speed","value":"[2, 5]"}'
+lrgeditorctl call particles.seek '{"path":"fx/fire.rparticles","time":1.2}'
+lrgeditorctl call weather.set_param '{"path":"data/sky.rweather","preset":"storm","layer":"rain","name":"drop-count","value":6000}'
+lrgeditorctl call weather.preview '{"path":"data/sky.rweather","preset":"clear","transition_to":"storm"}'
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: vfx-performance
+:END:
+- A grid drag writes one object's subtree per step (a module, a weather layer); the YAML pane and the issues list follow. Nothing touches the disk until Save.
+- Structural particle edits and outside changes re-parse the asset (microseconds to a millisecond for typical effects) and rebuild the preview effect, seeking it back to the same time: up to 30 s of 1/60 s steps (1 800 steps), which for dense effects can take a noticeable fraction of a second. Restart first when working far along the timeline.
+- The preview costs what the effect costs at runtime (see [[file:../modules/particles/particle-asset.org::#performance][particle performance]]); the statistics refresh five times a second. GPU emitters count their particles with a read-back, also five times a second.
+- The weather preview updates every frame while its tab is visible; edits sync only the edited preset (=lrg_weather_asset_sync_weather()= re-applies its parameters without reallocating, except when a capacity changes or a parameter is unset).
+- Hidden editor tabs do not step: previews pause with their tab.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: vfx-pitfalls
+:END:
+- *Comments are not kept* for =.rparticles= and =.rweather= documents: saving writes the engine writer's canonical bytes. Unknown keys are kept.
+- *The preview's GPU toggle and solo are not saved.* Mute (=enabled: false=) is.
+- *An emitter that only exists to be triggered* has no spawn module; the "never emits" warning disappears once a sub-emitter names it.
+- *A sub-emitter target cannot be removed* while it is named; remove or retarget the sub-emitter module first. Renaming the target in the editor updates the reference, renaming it in the YAML pane does not.
+- *Colours in file syntax start with =#=*: through =particles.set= / =set_value()= they are quoted automatically; typed into the YAML pane they need quotes (='#ffc040'=).
+- *Seeks are capped at 30 s*; longer effects scrub within that window.
+- *The weather preview draws fog as a screen veil.* In a lit 3D scene the shaders fog through =lrg_weather_manager_apply_fog()=; set =veil-opacity: 0= for such scenes, as the format page recommends, and judge the shader fog in the level viewport.
+- *Particle layers of weather* (=kind: particles=) with an =asset:= resolve the =.rparticles= relative to the =.rweather= file; the preview uses the document's folder.
+- *=default-preset= must name a preset*; removing that preset clears it.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: vfx-tests
+:END:
+=tests/test-editor-app-vfx.c= (headless; =/gpu/= under =build-aux/xrun.sh=): the formats and the registry, both templates and refusals, opening, emitters (add, duplicate, move, remove, mute, every step undone), the module stack (stage placement, sub-emitter targets and renames, enable, move, remove, the canvas rows), =set_value()= (ranges, bad values with their key path, colours, defaults removed, renderer blocks, the saved file reloads), a grid drag as one undo step with the parsed asset kept, renderer rows by kind, the preview (deterministic seek, pause, speed, restart, the seed override, solo, the GPU subset messages and the toggle), validation (unknown keys, idle emitters, a file that does not load), the canvas buttons, every =particles.*= method and its errors; the weather editor's presets, layers, intensities, parameters (typed, file syntax, unset), presets' ambient, settings and rules with every step undone, the schema grid (a drag is one step, preset and settings rows), the preview (crossfade durations from the rules, sync of the live weather after an edit, rebuild after undo), validation with key paths, every =weather.*= method and its errors; and the rendered previews. =tests/editorctl-smoke.sh= covers the verbs and MCP tools.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: vfx-see-also
+:END:
+- [[file:../modules/particles/particle-asset.org][Particle assets (.rparticles)]], [[file:../modules/particles/gpu-particles.org][GPU particles]], [[file:../modules/particles/ribbon-renderer.org][Ribbons and trails]], [[file:../modules/particles/mesh-renderer.org][Mesh particles]]
+- [[file:../modules/weather/weather-asset.org][Weather assets (.rweather)]], [[file:../modules/weather/index.org][The weather module]]
+- [[file:../guides/vfx.org][Visual effects guide]]
+- [[file:data-editors.org][Data editors]] (the shared toolbar, issues list, undo and the YAML pane)
+- [[file:ipc-protocol.org][IPC protocol]], [[file:lrgeditorctl.org][lrgeditorctl]]

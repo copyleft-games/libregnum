@@ -118,9 +118,15 @@ draw_veil (LrgFog *self,
 static void
 lrg_fog_render (LrgWeatherEffect *effect)
 {
+    gint width;
+    gint height;
+
     if (!lrg_weather_can_draw ())
         return;
-    draw_veil (LRG_FOG (effect), GetScreenWidth (), GetScreenHeight ());
+    /* Explicit render-target size when the manager stored one,
+     * otherwise the framebuffer (not the window). */
+    lrg_weather_effect_resolve_viewport (effect, &width, &height);
+    draw_veil (LRG_FOG (effect), width, height);
 }
 
 /* The overlay pass of a 3D scene: the veil (0 opacity when the scene

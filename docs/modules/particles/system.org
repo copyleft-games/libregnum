@@ -290,3 +290,88 @@ my_particle_system_class_init (MyParticleSystemClass *klass)
     system_class->on_particle_death = my_particle_system_on_particle_death;
 }
 #+end_src
+
+** Render layers
+:PROPERTIES:
+:CUSTOM_ID: render-layers
+:END:
+The =layer= property (=lrg_particle_system_set_layer()= / =lrg_particle_system_get_layer()=, 0 by default) puts a system on a render layer. =lrg_particle_system_draw()= and =lrg_particle_billboard_renderer_draw()= draw nothing while =lrg_particle_system_is_layer_visible()= is =FALSE= (the layer is outside the active cull mask); custom renderers should test it too. See [[file:../graphics/render-layers.org][Render layers]].
+
+** Module stack (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: module-stack
+:END:
+Besides the legacy emitter and force lists, a system runs a /module stack/: =LrgParticleModule= objects, each in one stage (=LrgParticleModuleStage=: =SPAWN=, =SHAPE=, =INIT=, =FORCE=, =COLLISION=, =OVER_LIFE=, =EVENT=). Every update the spawn modules return particle counts; new particles go through the shape and init modules (their results become the start values); every live particle goes through the force modules, the integration step, the collision modules and the over-life modules; birth, death and collision events go to the event modules. Stages run in that order, modules of a stage in stack order. The step order and data flow are described in detail in [[file:particle-asset.org::#concepts-modules][Particle assets: the module stack]]; the built-in modules (created by kind name with =lrg_particle_module_new()=) and the =.rparticles= format that stores them live there too. Legacy emitters and forces keep working and run before the modules.
+
+*** The generator
+:PROPERTIES:
+:CUSTOM_ID: rng
+:END:
+=LrgParticleRng= is a PCG32 generator (XSH-RR output, 64-bit state), a plain boxed struct (=state=, =inc=). Each system owns one, seeded from =seed= and reseeded on =lrg_particle_system_restart()= and on play after a stop.
+
+| Function | Description |
+|----------+-------------|
+| =lrg_particle_rng_get_type ()= | boxed =GType= (=LRG_TYPE_PARTICLE_RNG=) |
+| =lrg_particle_rng_new (seed)=, =lrg_particle_rng_copy (self)=, =lrg_particle_rng_free (self)= | heap generators (=g_autoptr= works) |
+| =lrg_particle_rng_seed (self, seed)= | restart a sequence |
+| =lrg_particle_rng_next_u32 (self)= | 32 random bits |
+| =lrg_particle_rng_next_float (self)= | [0, 1), 24 bits |
+| =lrg_particle_rng_range (self, min, max)= | [min, max); returns =min= without drawing when equal |
+| =lrg_particle_rng_unit_vector (self, out)= | uniform direction |
+
+*** Modules
+:PROPERTIES:
+:CUSTOM_ID: module-class
+:END:
+=LrgParticleModule= is a derivable, abstract GObject with one property, =enabled=. A subclass sets =LrgParticleModuleClass.stage= in =class_init= and implements the vfunc of its stage; all vfuncs are optional:
+
+| Vfunc | Stage | Called |
+|-------+-------+--------|
+| =reset (self)= | any | at a fresh start (play after stop, restart): clear accumulators |
+| =spawn_count (self, ctx)= | =SPAWN= | once per step: particles to emit |
+| =init_particle (self, ctx, particle)= | =SHAPE=, =INIT= | per new particle |
+| =update_particle (self, ctx, particle)= | =FORCE=, =COLLISION=, =OVER_LIFE= | per live particle per step |
+| =particle_event (self, ctx, particle, event)= | =EVENT= | per birth, death, collision (=LrgParticleEvent=) |
+
+=LrgParticleModuleContext= is what a vfunc sees: =system=, =rng=, =dt= (time-scaled), =time= (since play), =cycle_time=, =cycle_fraction= (0 .. 1 of the duration), =cycle= (completed loops), =origin= (system position or the sub-emitter point), =rotation= (quaternion x y z w), =direction= (spawn direction: the rotated +Y before the shape stage; shape modules write it, velocity modules read it), =inherit_velocity= (the system's own movement per second), =moved= (distance moved this step), =event_point= and =event_normal= (for events).
+
+| Function | Description |
+|----------+-------------|
+| =lrg_particle_module_get_stage (self)= | the class's stage |
+| =lrg_particle_module_get_enabled (self)=, =set_enabled (self, enabled)= | on/off |
+| =lrg_particle_module_reset (self)= | calls =reset= |
+| =lrg_particle_module_spawn_count (self, ctx)= | calls =spawn_count= (0 when disabled or absent) |
+| =lrg_particle_module_init_particle (self, ctx, p)=, =update_particle (self, ctx, p)=, =particle_event (self, ctx, p, event)= | call the vfuncs when enabled |
+| =lrg_particle_module_copy (self)= | same type, same property values (curves deep-copied), fresh run state |
+| =lrg_particle_module_stage_get_type ()=, =lrg_particle_event_get_type ()= | enum types |
+
+*** System functions
+:PROPERTIES:
+:CUSTOM_ID: module-system-api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_particle_system_add_module (self, module)=, =remove_module=, =clear_modules= | the stack (the system refs; one module per system) |
+| =lrg_particle_system_get_n_modules (self)=, =get_module (self, index)= | read the stack |
+| =lrg_particle_system_get_seed=, =set_seed= | property =seed= (uint64); reseeds the generator |
+| =lrg_particle_system_get_rng (self)= | the generator (transfer none) |
+| =lrg_particle_system_get_name=, =set_name= | property =name=; sub-emitters find targets by it |
+| =lrg_particle_system_set_lookup_func (self, func, data, destroy)=, =lrg_particle_system_lookup (self, name)= | how sibling systems are found (=LrgParticleSystemLookupFunc=; =LrgParticleEffect= sets it) |
+| =lrg_particle_system_set_raycast_func (self, func, data, destroy)=, =lrg_particle_system_raycast (self, from, to, mask, point, normal)= | the world raycast for collision modules (=LrgParticleRaycastFunc=) |
+| =lrg_particle_system_spawn (self, origin, velocity, count)= | spawns through the shape and init stages at =origin=, adds =velocity= to each (sub-emitters, impacts); works while paused |
+| =lrg_particle_system_raise_event (self, particle, event, point, normal)= | delivers an event to the event modules (collision modules call it) |
+| =lrg_particle_system_restart (self)= | stop + play: cleared, reseeded, modules reset |
+| =lrg_particle_system_get_time (self)= | seconds since play (start delay included) |
+| =lrg_particle_system_is_emitting (self)= | %FALSE after a non-looping duration |
+| =lrg_particle_system_get_start_delay=, =set_start_delay= | property =start-delay= |
+| =lrg_particle_system_get_rotation (self, out)=, =set_rotation (self, quat)= | orientation of shapes and directions |
+| =lrg_particle_system_get_local_space=, =set_local_space= | property =local-space=: live particles follow =set_position()= |
+| =lrg_particle_system_get_bounds (self, min, max)= | box around live particles (half sizes included) |
+
+Play after a stop starts the module clock at zero (reseeded); play after a pause resumes. =lrg_particle_system_is_alive()= also counts a playing, still-emitting module stack.
+
+** Symbol index
+:PROPERTIES:
+:CUSTOM_ID: symbol-index
+:END:
+The remaining public symbols of =particles/lrg-particle-system.h=, by their full names (the tables above abbreviate getter and setter pairs): =lrg_particle_module_set_enabled ()=, =lrg_particle_module_update_particle ()=, =lrg_particle_module_particle_event ()=, =lrg_particle_system_remove_module ()=, =lrg_particle_system_clear_modules ()=, =lrg_particle_system_get_module ()=, =lrg_particle_system_set_seed ()=, =lrg_particle_system_set_name ()=, =lrg_particle_system_set_start_delay ()=, =lrg_particle_system_set_rotation ()=, =lrg_particle_system_set_local_space ()=.

@@ -12,6 +12,7 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_INPUT
 
 #include "lrg-input-map.h"
+#include "../core/lrg-data-loader.h"
 #include "../lrg-log.h"
 #include <yaml-glib.h>
 
@@ -22,6 +23,8 @@
 typedef struct
 {
     GHashTable *actions;  /* name -> LrgInputAction* (owned) */
+    GPtrArray  *order;    /* action names, in the order added */
+    YamlNode   *source;   /* root of the last loaded document: unknown keys */
 } LrgInputMapPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgInputMap, lrg_input_map, G_TYPE_OBJECT)
@@ -529,6 +532,8 @@ lrg_input_map_finalize (GObject *object)
     LrgInputMapPrivate *priv = lrg_input_map_get_instance_private (self);
 
     g_clear_pointer (&priv->actions, g_hash_table_unref);
+    g_clear_pointer (&priv->order, g_ptr_array_unref);
+    g_clear_pointer (&priv->source, yaml_node_unref);
 
     G_OBJECT_CLASS (lrg_input_map_parent_class)->finalize (object);
 }
@@ -550,6 +555,22 @@ lrg_input_map_init (LrgInputMap *self)
                                            g_str_equal,
                                            g_free,
                                            g_object_unref);
+    priv->order = g_ptr_array_new_with_free_func (g_free);
+}
+
+/* the index of @name in the declaration order, or -1 */
+static gint
+order_index (LrgInputMapPrivate *priv,
+             const gchar        *name)
+{
+    guint i;
+
+    for (i = 0; i < priv->order->len; i++)
+    {
+        if (g_str_equal (g_ptr_array_index (priv->order, i), name))
+            return (gint)i;
+    }
+    return -1;
 }
 
 /* ==========================================================================
@@ -595,6 +616,10 @@ lrg_input_map_add_action (LrgInputMap    *self,
     priv = lrg_input_map_get_instance_private (self);
     name = lrg_input_action_get_name (action);
 
+    /* a new name goes last; a replaced action keeps its place */
+    if (!g_hash_table_contains (priv->actions, name))
+        g_ptr_array_add (priv->order, g_strdup (name));
+
     g_hash_table_insert (priv->actions,
                          g_strdup (name),
                          g_object_ref (action));
@@ -624,6 +649,7 @@ lrg_input_map_remove_action (LrgInputMap *self,
 
     if (g_hash_table_remove (priv->actions, name))
     {
+        g_ptr_array_remove_index (priv->order, (guint)order_index (priv, name));
         lrg_debug (LRG_LOG_DOMAIN_INPUT,
                    "Removed action '%s' from map (count: %u)",
                    name, g_hash_table_size (priv->actions));
@@ -686,11 +712,16 @@ GList *
 lrg_input_map_get_actions (LrgInputMap *self)
 {
     LrgInputMapPrivate *priv;
+    GList              *actions = NULL;
+    guint               i;
 
     g_return_val_if_fail (LRG_IS_INPUT_MAP (self), NULL);
 
     priv = lrg_input_map_get_instance_private (self);
-    return g_hash_table_get_values (priv->actions);
+    for (i = priv->order->len; i > 0; i--)
+        actions = g_list_prepend (actions, g_hash_table_lookup (priv->actions,
+                                                                g_ptr_array_index (priv->order, i - 1)));
+    return actions;
 }
 
 /*
@@ -727,6 +758,7 @@ lrg_input_map_clear (LrgInputMap *self)
 
     priv = lrg_input_map_get_instance_private (self);
     g_hash_table_remove_all (priv->actions);
+    g_ptr_array_set_size (priv->order, 0);
 
     lrg_debug (LRG_LOG_DOMAIN_INPUT, "Cleared all actions from map");
 }
@@ -885,23 +917,16 @@ lrg_input_map_get_axis (LrgInputMap *self,
  * ========================================================================== */
 
 /*
- * lrg_input_map_load_from_file:
- * @self: an #LrgInputMap
- * @path: (type filename): path to the YAML file
- * @error: (nullable): return location for error
- *
- * Loads input mappings from a YAML file.
- *
- * This clears any existing actions before loading.
- *
- * Returns: %TRUE on success, %FALSE on error
+ * Loads the actions of a parsed document. @source names the text in
+ * messages (a path, or "<data>").
  */
-gboolean
-lrg_input_map_load_from_file (LrgInputMap  *self,
-                              const gchar  *path,
-                              GError      **error)
+static gboolean
+load_from_parser (LrgInputMap  *self,
+                  YamlParser   *parser,
+                  const gchar  *source,
+                  GError      **error)
 {
-    g_autoptr(YamlParser) parser = NULL;
+    LrgInputMapPrivate   *priv = lrg_input_map_get_instance_private (self);
     YamlDocument         *doc;
     YamlNode             *root;
     YamlMapping          *root_map;
@@ -909,22 +934,12 @@ lrg_input_map_load_from_file (LrgInputMap  *self,
     GList                *keys;
     GList                *l;
 
-    g_return_val_if_fail (LRG_IS_INPUT_MAP (self), FALSE);
-    g_return_val_if_fail (path != NULL, FALSE);
-
-    parser = yaml_parser_new ();
-
-    if (!yaml_parser_load_from_file (parser, path, error))
-    {
-        return FALSE;
-    }
-
     doc = yaml_parser_get_document (parser, 0);
 
     if (doc == NULL)
     {
         g_set_error (error, LRG_INPUT_MAP_ERROR, LRG_INPUT_MAP_ERROR_PARSE,
-                     "Failed to parse YAML document from %s", path);
+                     "Failed to parse YAML document from %s", source);
         return FALSE;
     }
 
@@ -959,7 +974,11 @@ lrg_input_map_load_from_file (LrgInputMap  *self,
         return FALSE;
     }
 
-    /* Iterate over action names */
+    /* the document, for the keys the engine does not know */
+    g_clear_pointer (&priv->source, yaml_node_unref);
+    priv->source = yaml_node_copy (root);
+
+    /* Iterate over action names (document order) */
     keys = yaml_mapping_get_members (actions_map);
 
     for (l = keys; l != NULL; l = l->next)
@@ -990,9 +1009,297 @@ lrg_input_map_load_from_file (LrgInputMap  *self,
 
     lrg_info (LRG_LOG_DOMAIN_INPUT,
               "Loaded %u actions from %s",
-              lrg_input_map_get_action_count (self), path);
+              lrg_input_map_get_action_count (self), source);
 
     return TRUE;
+}
+
+/*
+ * lrg_input_map_load_from_file:
+ * @self: an #LrgInputMap
+ * @path: (type filename): path to the YAML file
+ * @error: (nullable): return location for error
+ *
+ * Loads input mappings from a YAML file.
+ *
+ * This clears any existing actions before loading.
+ *
+ * Returns: %TRUE on success, %FALSE on error
+ */
+gboolean
+lrg_input_map_load_from_file (LrgInputMap  *self,
+                              const gchar  *path,
+                              GError      **error)
+{
+    g_autoptr(YamlParser) parser = NULL;
+
+    g_return_val_if_fail (LRG_IS_INPUT_MAP (self), FALSE);
+    g_return_val_if_fail (path != NULL, FALSE);
+
+    parser = yaml_parser_new ();
+
+    if (!yaml_parser_load_from_file (parser, path, error))
+    {
+        return FALSE;
+    }
+
+    return load_from_parser (self, parser, path, error);
+}
+
+gboolean
+lrg_input_map_load_from_data (LrgInputMap  *self,
+                              const gchar  *data,
+                              gssize        length,
+                              GError      **error)
+{
+    g_autoptr(YamlParser) parser = NULL;
+
+    g_return_val_if_fail (LRG_IS_INPUT_MAP (self), FALSE);
+    g_return_val_if_fail (data != NULL || length == 0, FALSE);
+
+    parser = yaml_parser_new ();
+
+    if (!yaml_parser_load_from_data (parser, data != NULL ? data : "", length, error))
+    {
+        return FALSE;
+    }
+
+    return load_from_parser (self, parser, "<data>", error);
+}
+
+/* ==========================================================================
+ * Saving
+ * ========================================================================== */
+
+/* sets @key of @mapping to @node (consumed) */
+static void
+put (YamlMapping *mapping,
+     const gchar *key,
+     YamlNode    *node)
+{
+    yaml_mapping_set_member (mapping, key, node);
+    yaml_node_unref (node);
+}
+
+/* the modifiers sequence, or %NULL for none */
+static YamlNode *
+modifiers_node (LrgInputModifiers mods)
+{
+    g_autoptr(YamlSequence) seq = NULL;
+
+    if (mods == LRG_INPUT_MODIFIER_NONE)
+        return NULL;
+    seq = yaml_sequence_new ();
+    if (mods & LRG_INPUT_MODIFIER_SHIFT)
+        yaml_sequence_add_string_element (seq, "SHIFT");
+    if (mods & LRG_INPUT_MODIFIER_CTRL)
+        yaml_sequence_add_string_element (seq, "CTRL");
+    if (mods & LRG_INPUT_MODIFIER_ALT)
+        yaml_sequence_add_string_element (seq, "ALT");
+    return yaml_node_new_sequence (seq);
+}
+
+/* the binding keys the loader reads, by binding type */
+static const gchar * const keyboard_keys[] = { "type", "key", "modifiers", NULL };
+static const gchar * const mouse_keys[] = { "type", "button", "modifiers", NULL };
+static const gchar * const pad_button_keys[] = { "type", "gamepad", "button", NULL };
+static const gchar * const pad_axis_keys[] = { "type", "gamepad", "axis", "threshold", "positive", NULL };
+
+/*
+ * One binding: its known keys, then the unknown keys of @old (the binding
+ * at the same index of the loaded document) when it has the same type.
+ */
+static YamlNode *
+binding_node (const LrgInputBinding *binding,
+              YamlMapping           *old)
+{
+    g_autoptr(YamlMapping) map = yaml_mapping_new ();
+    const gchar * const *known = NULL;
+    const gchar *type_name = NULL;
+    YamlNode *mods;
+    guint i;
+
+    switch (lrg_input_binding_get_binding_type (binding))
+    {
+    case LRG_INPUT_BINDING_KEYBOARD:
+        type_name = "keyboard";
+        known = keyboard_keys;
+        put (map, "type", lrg_data_yaml_string (type_name));
+        put (map, "key", lrg_data_yaml_string (key_to_yaml_string (lrg_input_binding_get_key (binding))));
+        mods = modifiers_node (lrg_input_binding_get_modifiers (binding));
+        if (mods != NULL)
+            put (map, "modifiers", mods);
+        break;
+
+    case LRG_INPUT_BINDING_MOUSE_BUTTON:
+        type_name = "mouse_button";
+        known = mouse_keys;
+        put (map, "type", lrg_data_yaml_string (type_name));
+        put (map, "button", lrg_data_yaml_string (
+            mouse_button_to_yaml_string (lrg_input_binding_get_mouse_button (binding))));
+        mods = modifiers_node (lrg_input_binding_get_modifiers (binding));
+        if (mods != NULL)
+            put (map, "modifiers", mods);
+        break;
+
+    case LRG_INPUT_BINDING_GAMEPAD_BUTTON:
+        type_name = "gamepad_button";
+        known = pad_button_keys;
+        put (map, "type", lrg_data_yaml_string (type_name));
+        put (map, "gamepad", lrg_data_yaml_int (lrg_input_binding_get_gamepad (binding)));
+        put (map, "button", lrg_data_yaml_string (
+            gamepad_button_to_yaml_string (lrg_input_binding_get_gamepad_button (binding))));
+        break;
+
+    case LRG_INPUT_BINDING_GAMEPAD_AXIS:
+        type_name = "gamepad_axis";
+        known = pad_axis_keys;
+        put (map, "type", lrg_data_yaml_string (type_name));
+        put (map, "gamepad", lrg_data_yaml_int (lrg_input_binding_get_gamepad (binding)));
+        put (map, "axis", lrg_data_yaml_string (
+            gamepad_axis_to_yaml_string (lrg_input_binding_get_gamepad_axis (binding))));
+        put (map, "threshold", lrg_data_yaml_float (lrg_input_binding_get_threshold (binding)));
+        put (map, "positive", lrg_data_yaml_boolean (lrg_input_binding_get_positive (binding)));
+        break;
+
+    default:
+        break;
+    }
+
+    /* the old binding's extra keys, when it was the same kind of binding */
+    if (old != NULL && type_name != NULL &&
+        g_strcmp0 (yaml_mapping_get_string_member (old, "type"), type_name) == 0)
+    {
+        for (i = 0; i < yaml_mapping_get_size (old); i++)
+        {
+            const gchar *key = yaml_mapping_get_key (old, i);
+
+            if (!g_strv_contains (known, key))
+                yaml_mapping_set_member (map, key, yaml_mapping_get_value (old, i));
+        }
+    }
+
+    return yaml_node_new_mapping (map);
+}
+
+/* the `bindings` list of @action; @old is the loaded action's list */
+static YamlNode *
+bindings_node (LrgInputAction *action,
+               YamlSequence   *old)
+{
+    g_autoptr(YamlSequence) seq = yaml_sequence_new ();
+    guint count = lrg_input_action_get_binding_count (action);
+    guint i;
+
+    for (i = 0; i < count; i++)
+    {
+        const LrgInputBinding *binding = lrg_input_action_get_binding (action, i);
+        YamlMapping *old_map = NULL;
+        g_autoptr(YamlNode) node = NULL;
+
+        if (binding == NULL)
+            continue;
+        if (old != NULL && i < yaml_sequence_get_length (old))
+            old_map = yaml_sequence_get_mapping_element (old, i);
+        node = binding_node (binding, old_map);
+        yaml_sequence_add_element (seq, node);
+    }
+    return yaml_node_new_sequence (seq);
+}
+
+/* one action: the loaded action's keys in place, `bindings` regenerated */
+static YamlNode *
+action_node (LrgInputAction *action,
+             YamlMapping    *old)
+{
+    g_autoptr(YamlMapping) map = yaml_mapping_new ();
+    YamlSequence *old_bindings = NULL;
+    gboolean wrote_bindings = FALSE;
+    guint i;
+
+    if (old != NULL)
+        old_bindings = yaml_mapping_get_sequence_member (old, "bindings");
+
+    for (i = 0; old != NULL && i < yaml_mapping_get_size (old); i++)
+    {
+        const gchar *key = yaml_mapping_get_key (old, i);
+
+        if (g_str_equal (key, "bindings"))
+        {
+            put (map, "bindings", bindings_node (action, old_bindings));
+            wrote_bindings = TRUE;
+        }
+        else
+        {
+            yaml_mapping_set_member (map, key, yaml_mapping_get_value (old, i));
+        }
+    }
+    if (!wrote_bindings)
+        put (map, "bindings", bindings_node (action, old_bindings));
+
+    return yaml_node_new_mapping (map);
+}
+
+/* the document: the loaded root's keys in place, `actions` regenerated */
+static YamlNode *
+map_to_yaml (LrgInputMap *self)
+{
+    LrgInputMapPrivate *priv = lrg_input_map_get_instance_private (self);
+    g_autoptr(YamlMapping) root = yaml_mapping_new ();
+    g_autoptr(YamlMapping) actions = yaml_mapping_new ();
+    g_autoptr(YamlNode) actions_node = NULL;
+    YamlMapping *old_root = NULL;
+    YamlMapping *old_actions = NULL;
+    gboolean wrote_actions = FALSE;
+    guint i;
+
+    if (priv->source != NULL && yaml_node_get_node_type (priv->source) == YAML_NODE_MAPPING)
+    {
+        old_root = yaml_node_get_mapping (priv->source);
+        old_actions = yaml_mapping_get_mapping_member (old_root, "actions");
+    }
+
+    for (i = 0; i < priv->order->len; i++)
+    {
+        const gchar *name = g_ptr_array_index (priv->order, i);
+        YamlMapping *old = old_actions != NULL ? yaml_mapping_get_mapping_member (old_actions, name) : NULL;
+
+        put (actions, name, action_node (g_hash_table_lookup (priv->actions, name), old));
+    }
+    actions_node = yaml_node_new_mapping (actions);
+
+    for (i = 0; old_root != NULL && i < yaml_mapping_get_size (old_root); i++)
+    {
+        const gchar *key = yaml_mapping_get_key (old_root, i);
+
+        if (g_str_equal (key, "actions"))
+        {
+            yaml_mapping_set_member (root, "actions", actions_node);
+            wrote_actions = TRUE;
+        }
+        else
+        {
+            yaml_mapping_set_member (root, key, yaml_mapping_get_value (old_root, i));
+        }
+    }
+    if (!wrote_actions)
+        yaml_mapping_set_member (root, "actions", actions_node);
+
+    return yaml_node_new_mapping (root);
+}
+
+gchar *
+lrg_input_map_save_to_data (LrgInputMap  *self,
+                            gsize        *length,
+                            GError      **error)
+{
+    g_autoptr(YamlNode) root = NULL;
+
+    g_return_val_if_fail (LRG_IS_INPUT_MAP (self), NULL);
+    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+    root = map_to_yaml (self);
+    return lrg_data_yaml_to_data (root, length, error);
 }
 
 /*
@@ -1010,191 +1317,20 @@ lrg_input_map_save_to_file (LrgInputMap  *self,
                             const gchar  *path,
                             GError      **error)
 {
-    LrgInputMapPrivate    *priv;
-    g_autoptr(YamlBuilder) builder = NULL;
-    g_autoptr(YamlGenerator) generator = NULL;
-    g_autoptr(YamlDocument) doc = NULL;
-    GHashTableIter         iter;
-    gpointer               key;
-    gpointer               value;
-    gchar                 *yaml_str;
-    gboolean               ret;
+    g_autoptr(YamlNode) root = NULL;
+    gboolean ret;
 
     g_return_val_if_fail (LRG_IS_INPUT_MAP (self), FALSE);
     g_return_val_if_fail (path != NULL, FALSE);
 
-    priv = lrg_input_map_get_instance_private (self);
-
-    builder = yaml_builder_new ();
-
-    yaml_builder_begin_mapping (builder);  /* root */
-    yaml_builder_set_member_name (builder, "actions");
-    yaml_builder_begin_mapping (builder);  /* actions */
-
-    /* Iterate over actions */
-    g_hash_table_iter_init (&iter, priv->actions);
-
-    while (g_hash_table_iter_next (&iter, &key, &value))
-    {
-        const gchar    *action_name = key;
-        LrgInputAction *action = value;
-        guint           binding_count;
-        guint           i;
-
-        yaml_builder_set_member_name (builder, action_name);
-        yaml_builder_begin_mapping (builder);  /* action */
-
-        yaml_builder_set_member_name (builder, "bindings");
-        yaml_builder_begin_sequence (builder);  /* bindings */
-
-        binding_count = lrg_input_action_get_binding_count (action);
-
-        for (i = 0; i < binding_count; i++)
-        {
-            const LrgInputBinding *binding;
-            LrgInputBindingType    type;
-            LrgInputModifiers      mods;
-
-            binding = lrg_input_action_get_binding (action, i);
-
-            if (binding == NULL)
-            {
-                continue;
-            }
-
-            type = lrg_input_binding_get_binding_type (binding);
-
-            yaml_builder_begin_mapping (builder);  /* binding */
-
-            switch (type)
-            {
-            case LRG_INPUT_BINDING_KEYBOARD:
-                yaml_builder_set_member_name (builder, "type");
-                yaml_builder_add_string_value (builder, "keyboard");
-                yaml_builder_set_member_name (builder, "key");
-                yaml_builder_add_string_value (builder,
-                    key_to_yaml_string (lrg_input_binding_get_key (binding)));
-
-                mods = lrg_input_binding_get_modifiers (binding);
-
-                if (mods != LRG_INPUT_MODIFIER_NONE)
-                {
-                    yaml_builder_set_member_name (builder, "modifiers");
-                    yaml_builder_begin_sequence (builder);
-
-                    if (mods & LRG_INPUT_MODIFIER_SHIFT)
-                    {
-                        yaml_builder_add_string_value (builder, "SHIFT");
-                    }
-                    if (mods & LRG_INPUT_MODIFIER_CTRL)
-                    {
-                        yaml_builder_add_string_value (builder, "CTRL");
-                    }
-                    if (mods & LRG_INPUT_MODIFIER_ALT)
-                    {
-                        yaml_builder_add_string_value (builder, "ALT");
-                    }
-
-                    yaml_builder_end_sequence (builder);
-                }
-                break;
-
-            case LRG_INPUT_BINDING_MOUSE_BUTTON:
-                yaml_builder_set_member_name (builder, "type");
-                yaml_builder_add_string_value (builder, "mouse_button");
-                yaml_builder_set_member_name (builder, "button");
-                yaml_builder_add_string_value (builder,
-                    mouse_button_to_yaml_string (lrg_input_binding_get_mouse_button (binding)));
-
-                mods = lrg_input_binding_get_modifiers (binding);
-
-                if (mods != LRG_INPUT_MODIFIER_NONE)
-                {
-                    yaml_builder_set_member_name (builder, "modifiers");
-                    yaml_builder_begin_sequence (builder);
-
-                    if (mods & LRG_INPUT_MODIFIER_SHIFT)
-                    {
-                        yaml_builder_add_string_value (builder, "SHIFT");
-                    }
-                    if (mods & LRG_INPUT_MODIFIER_CTRL)
-                    {
-                        yaml_builder_add_string_value (builder, "CTRL");
-                    }
-                    if (mods & LRG_INPUT_MODIFIER_ALT)
-                    {
-                        yaml_builder_add_string_value (builder, "ALT");
-                    }
-
-                    yaml_builder_end_sequence (builder);
-                }
-                break;
-
-            case LRG_INPUT_BINDING_GAMEPAD_BUTTON:
-                yaml_builder_set_member_name (builder, "type");
-                yaml_builder_add_string_value (builder, "gamepad_button");
-                yaml_builder_set_member_name (builder, "gamepad");
-                yaml_builder_add_int_value (builder,
-                    lrg_input_binding_get_gamepad (binding));
-                yaml_builder_set_member_name (builder, "button");
-                yaml_builder_add_string_value (builder,
-                    gamepad_button_to_yaml_string (lrg_input_binding_get_gamepad_button (binding)));
-                break;
-
-            case LRG_INPUT_BINDING_GAMEPAD_AXIS:
-                yaml_builder_set_member_name (builder, "type");
-                yaml_builder_add_string_value (builder, "gamepad_axis");
-                yaml_builder_set_member_name (builder, "gamepad");
-                yaml_builder_add_int_value (builder,
-                    lrg_input_binding_get_gamepad (binding));
-                yaml_builder_set_member_name (builder, "axis");
-                yaml_builder_add_string_value (builder,
-                    gamepad_axis_to_yaml_string (lrg_input_binding_get_gamepad_axis (binding)));
-                yaml_builder_set_member_name (builder, "threshold");
-                yaml_builder_add_double_value (builder,
-                    lrg_input_binding_get_threshold (binding));
-                yaml_builder_set_member_name (builder, "positive");
-                yaml_builder_add_boolean_value (builder,
-                    lrg_input_binding_get_positive (binding));
-                break;
-            }
-
-            yaml_builder_end_mapping (builder);  /* binding */
-        }
-
-        yaml_builder_end_sequence (builder);  /* bindings */
-        yaml_builder_end_mapping (builder);  /* action */
-    }
-
-    yaml_builder_end_mapping (builder);  /* actions */
-    yaml_builder_end_mapping (builder);  /* root */
-
-    doc = yaml_builder_get_document (builder);
-
-    if (doc == NULL)
-    {
-        g_set_error (error, LRG_INPUT_MAP_ERROR, LRG_INPUT_MAP_ERROR_IO,
-                     "Failed to build YAML document");
-        return FALSE;
-    }
-
-    generator = yaml_generator_new ();
-    yaml_generator_set_document (generator, doc);
-    yaml_str = yaml_generator_to_data (generator, NULL, error);
-
-    if (yaml_str == NULL)
-    {
-        return FALSE;
-    }
-
-    ret = g_file_set_contents (path, yaml_str, -1, error);
-    g_free (yaml_str);
+    root = map_to_yaml (self);
+    ret = lrg_data_yaml_to_file (root, path, error);
 
     if (ret)
     {
         lrg_info (LRG_LOG_DOMAIN_INPUT,
                   "Saved %u actions to %s",
-                  g_hash_table_size (priv->actions), path);
+                  lrg_input_map_get_action_count (self), path);
     }
 
     return ret;

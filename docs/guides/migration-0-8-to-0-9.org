@@ -1,0 +1,163 @@
+#+title: Migrating from libregnum 0.8 to 0.9
+#+description: What changes for games, tools and embeddings when moving from libregnum 0.8.x to 0.9.0: the runtime level module, include paths, BUILD_EDITOR=0 builds and the shared 3D math
+#+authors: Zach Podbielniak
+#+categories: libregnum guide migration
+#+created: 2026-11-06T23:59:00-05:00
+#+updated: 2026-11-07T12:00:00-05:00
+#+version: 0.1
+
+* Migrating from 0.8 to 0.9
+:PROPERTIES:
+:CUSTOM_ID: migration-0-9
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *Guides* > Migrating from 0.8 to 0.9
+#+end_quote
+
+libregnum 0.9.0 adds a 3D runtime, materials, physics, navigation and more on top of 0.8.1. This guide is the checklist of what an existing game, tool or embedding has to know, item by item, with a link to the page that covers each one in depth. It grows with each 0.9.0 milestone; the first section is the module move that everything else builds on. No API was renamed or removed: every 0.8 program keeps compiling.
+
+** Checklist
+:PROPERTIES:
+:CUSTOM_ID: migration-0-9-checklist
+:END:
+| You have | What happens in 0.9.0 | What to do | Details |
+|----------+-----------------------+------------+---------|
+| A game that loads =.rlevel= / =.rprefab= files | The level types moved to the always-built =src/level/= module | Nothing; you may now build the library with =BUILD_EDITOR=0= | [[#migration-0-9-level-module][Runtime level module]] |
+| A game that re-parsed =.rlevel= itself because it shipped without the editor | =lrg_level_serializer_load_from_file()= and =lrg_level_instantiate()= exist in every build | Replace the custom parser with the level API | [[file:../modules/level/index.org::#level-game-loading][Loading a level in a game]] |
+| =#include "editor/lrg-level.h"= (or another moved header) inside the library or a =LIBREGNUM_COMPILATION= tool | Forwarding header, still compiles | Use =<libregnum.h>=, or ="level/lrg-level.h"= inside the library | [[#migration-0-9-include-paths][Include paths]] |
+| An installed =<libregnum/editor/lrg-node.h>= include | Still installed (forwarder) when the editor is built | Include =<libregnum.h>= | [[#migration-0-9-include-paths][Include paths]] |
+| Code calling =lrg_editor_math_compose()= and friends from game code | Still works (wrapper), but needs =BUILD_EDITOR=1= | Call =lrg_math3d_compose()= etc. from core | [[#migration-0-9-math][Shared 3D math]] |
+| Code computing a node's world matrix with =lrg_editor_node_get_world_matrix()= | Still works (wrapper) | Call =lrg_node_get_world_matrix()= (no editor needed) | [[file:../modules/level/index.org][Runtime level module]] |
+| GObject-Introspection bindings (Lua, Python, GJS) | Same =Libregnum= namespace and names; new =Libregnum.math3d_*= functions and =Node.get_world_matrix= | Nothing | [[#migration-0-9-gir][Introspection]] |
+
+** The runtime level module
+:PROPERTIES:
+:CUSTOM_ID: migration-0-9-level-module
+:END:
+In 0.8 the level data model lived in =src/editor/= and was only compiled with =BUILD_EDITOR=1=, so a library built for a shipped game (=BUILD_EDITOR=0=) could not load the levels the editor saved. In 0.9.0 these files moved, unchanged, into the always-built =src/level/=:
+
+| Moved to =src/level/= | Contents |
+|-----------------------+----------|
+| =lrg-level.{c,h}= | =LrgLevel= |
+| =lrg-node.{c,h}=, =lrg-node-private.h= | =LrgNode= (now with =lrg_node_get_local_matrix()= / =lrg_node_get_world_matrix()=) |
+| =lrg-node-visual.{c,h}= | =LrgNodeVisual= |
+| =lrg-node-tilemap.{c,h}= | =LrgNodeTilemap=, =lrg_node_tilemap_to_runtime()= |
+| =lrg-timeline.{c,h}= | =LrgTimeline=, =LrgTimelineTrack= |
+| =lrg-component-desc.{c,h}= | =LrgComponentDesc= |
+| =lrg-script-binding.{c,h}= | =LrgScriptBinding= |
+| =lrg-level-serializer.{c,h}= | =LrgLevelSerializer= |
+| =lrg-prefab.{c,h}= | =LrgPrefabLink=, =lrg_prefab_*= |
+| =lrg-level-instantiate.{c,h}= | =lrg_level_instantiate()=, =lrg_level_to_scene()= |
+| =lrg-editor-value-private.h= | private GValue comparison helpers used by the param bags |
+
+Kept in =src/editor/= (editor-only): =LrgEditor= and commands, selection, gizmo, view math, tile painter, timeline editing, settings and migration, actions, server, validation, =LrgProject=, =LrgAssetDatabase=, =.meta= sidecars, thumbnails, VCS, external editor, documents, node model/source, play session, and the Blender scene importer (=lrg-scene-import.h=: =lrg_level_from_scene()=, =lrg_level_import_scene_file()=), which converts at authoring time and is not needed to play a level.
+
+Behaviour is identical: the file formats, the API and the serializer output did not change. The runtime level module's page explains [[file:../modules/level/index.org::#level-game-loading][loading a level without the editor]] and [[file:../modules/level/index.org::#level-game-prefab][spawning prefabs at runtime]].
+
+*** Building without the editor
+:PROPERTIES:
+:CUSTOM_ID: migration-0-9-no-editor
+:END:
+#+begin_src sh
+make BUILD_EDITOR=0 BUILD_EDITOR_UI=0 lib
+#+end_src
+
+The resulting library exports the whole level API and no =lrg_editor_*= object types. =tests/check-level-noeditor.sh= automates the check (it builds into =build/noeditor=, verifies the exported symbols with =nm -D= and runs =test-level-runtime= against that library).
+
+** Include paths
+:PROPERTIES:
+:CUSTOM_ID: migration-0-9-include-paths
+:END:
+=#include <libregnum.h>= works exactly as before and is the only supported way for applications; the level headers are now included unconditionally (no =LRG_BUILD_EDITOR= guard).
+
+Each old header path is kept as a one-line forwarder:
+
+#+begin_src C
+/* src/editor/lrg-level.h (0.9.0) */
+#pragma once
+#include "../level/lrg-level.h"
+#+end_src
+
+- Inside the library and in tools compiled with =LIBREGNUM_COMPILATION=, both ="editor/lrg-level.h"= and ="level/lrg-level.h"= work; new code should use the =level/= path.
+- The forwarders are installed with the editor (=BUILD_EDITOR=1=) under =<libregnum/editor/>= next to the real headers under =<libregnum/level/>=.
+- The forwarders are excluded from the GObject-Introspection scan so each declaration is scanned once (from =src/level/=); =GIR_EXCLUDE= lists them through =LRG_LEVEL_COMPAT_HEADERS=.
+
+** Shared 3D math
+:PROPERTIES:
+:CUSTOM_ID: migration-0-9-math
+:END:
+The editor's matrix helpers moved to core as [[file:../modules/core/math3d.org][lrg-math3d]] and gained quaternions, look-at and projections. The editor API is unchanged and bit-identical:
+
+| 0.8 (editor-only) | 0.9 (core, always built) |
+|-------------------+--------------------------|
+| =lrg_editor_math_identity()= | =lrg_math3d_identity()= |
+| =lrg_editor_math_compose()= / =_decompose()= | =lrg_math3d_compose()= / =lrg_math3d_decompose()= |
+| =lrg_editor_math_multiply()= / =_invert()= | =lrg_math3d_multiply()= / =lrg_math3d_invert()= |
+| =lrg_editor_math_transform_point()= / =_direction()= | =lrg_math3d_transform_point()= / =lrg_math3d_transform_direction()= |
+| =lrg_editor_node_get_local_matrix()= / =_world_matrix()= | =lrg_node_get_local_matrix()= / =lrg_node_get_world_matrix()= |
+| (inline in =lrg_editor_view_get_view_matrix()=) | =lrg_math3d_look_at()= |
+| (inline in =lrg_editor_view_get_projection_matrix()=) | =lrg_math3d_perspective()= (radians) / =lrg_math3d_ortho()= |
+| none | quaternions: =lrg_math3d_euler_to_quat()=, =lrg_math3d_quat_to_euler()=, =lrg_math3d_quat_slerp()=, =lrg_math3d_compose_quat()=, =lrg_math3d_decompose_quat()= ... |
+
+** Introspection
+:PROPERTIES:
+:CUSTOM_ID: migration-0-9-gir
+:END:
+The =Libregnum-1= namespace keeps every type and function name. New in M0: namespace functions =Libregnum.math3d_*= (fixed-size float arrays) and the =Libregnum.Node= methods =get_local_matrix= / =get_world_matrix=. A typelib from a =BUILD_EDITOR=0= build now contains =Level=, =Node=, =LevelSerializer=, =PrefabLink= and the prefab functions as well.
+
+** Play-in-editor objects
+:PROPERTIES:
+:CUSTOM_ID: migration-play-objects
+:END:
+| Change | Effect | What to do | See |
+|--------+--------+------------+-----|
+| 3D-default levels now play in =LrgWorld3D= | editor plugins reading play objects as =LrgGameObject= get =NULL= for 3D levels | use =lrg_editor_play_session_get_live_*= / =apply_live=, or mark the level 2D | [[file:../editor/view-model.org::#play-3d][view model]] |
+
+** Post-processing renders for real
+:PROPERTIES:
+:CUSTOM_ID: migration-post-real
+:END:
+=LrgPostProcessor= and the bloom, vignette, FXAA, film grain and screen shake effects now really render (before 0.9 they were no-ops): a chain that was set up but invisible will now show. Every built-in effect scales by =LrgPostEffect:intensity=. =LrgScreenShake= offsets are smooth noise instead of per-frame jitter. Post stacks can be authored as =.rpost= files: see [[file:../modules/postprocess/post-stack.org][Post Stacks]].
+
+** 3D physics: LrgDynamicsWorld
+:PROPERTIES:
+:CUSTOM_ID: migration-dynamics
+:END:
+=LrgDynamicsWorld= is now a full 3D rigid-body solver (shapes, layers, islands, CCD, constraints; see [[file:physics.org][Physics]]). The 0.8 API is kept, but some behaviour changes:
+
+| Change | Effect | What to do |
+|--------+--------+------------|
+| Contacts are solved before positions integrate | a fast body no longer tunnels through a touching neighbour | tests that relied on tunnelling need their bodies moved apart |
+| Body ids are =slot \| generation<<24= | the first ids are still 0, 1, 2...; a removed id never comes back; no body/joint cap (the =MAX_*= macros limit nothing) | keep ids as opaque =guint= values |
+| Sleep is per island; defaults 9e-4 for 30 substeps (0.8: 1e-4 for 8); sleeping zeroes velocities | bodies sleep a little later and as groups | tune with =lrg_dynamics_world_set_sleep()= |
+| 10 velocity iterations by default (0.8: 8); NGS position correction (slop 0.02, baumgarte 0.2) | stiffer stacks | tune through =lrg_dynamics_world_get_contact_solver()= |
+| A contact at depth exactly 0 counts as touching | resting contacts are reported | none |
+| Shape bodies default to friction 0.5, restitution 0, damping 0.05; 0.8 primitives keep the world material and zero damping | new bodies slide less | set materials explicitly |
+| =get_contact()= keeps the "pushes A out" normal; =LrgDynamicsContact= uses the A-to-B normal | two conventions | read the docs of the call you use |
+
+** Added in 0.9.0, no 0.8 caller has to change
+:PROPERTIES:
+:CUSTOM_ID: migration-0-9-additions
+:END:
+These are new. Old calls keep their meaning. The pages have the schemas.
+
+| Area | What you can call | Notes |
+|------+--------------------+-------|
+| Levels | =lrg_node_add_tag()=, =lrg_node_set_level_path()=, =lrg_level_instance_mount()=, =LrgLevelStream= | =level:= and =tags:= are written by the serializer. Childless sub-levels instantiate to depth 8. |
+| Packs | =LrgPackWriter=, =lrgpack=, IPC =export.profiles= / =export.run= | [[file:../modules/core/pack-writer.org][pack writer]] |
+| Locales | =lrg_po_import_file()=, =lrg_po_export_file()=, =lrg_po_extract()=, =lrg_po_pseudolocalize()= | [[file:../modules/i18n/po.org][PO]] |
+| Editor-only (=BUILD_EDITOR=1=) | =lrg_editor_gizmo_apply()=, =lrg_level_merge_files()=, =lrg_level_merge_install_driver()=, =LrgCollabSession=, =lrg_editor_scenes_ensure()=, =lrg_game_view_letterbox()=, =lrg_editor_vcs_panel_new()= | [[file:../editor/workflows.org][workflows]]. These are IPC methods (=gizmo.*=, =scenes.*=, =collab.*=, =po.*=, =export.*=) and =lrgeditorctl= verbs. =lrgeditorctl merge= installs =lrgeditor --merge %O %A %B=. |
+| UI documents | =lrg_ui_layout_place()=, =lrg_editor_ui_layout_editor_place()=, =lrg_ui_animation_sample()=, =lrg_inspector_nested_get()= | [[file:../editor/workflows.org][workflows]] |
+| Level audio and nav | =lrg_level_set_audio_mixer()=, nav-agent =destination-x= / =target-node=, =lrg_nav_bake_set_tile_extent()= | A named mixer that fails to load fails instantiate. Tile extent 0 is one bake and is not stored in =.rnav=. |
+
+A game that only loads levels can ignore every row except the level one. =examples/game-showcase-3d --self-test= exercises the set without a window.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: migration-0-9-see-also
+:END:
+- [[file:../modules/level/index.org][Runtime Level Module]]
+- [[file:../modules/level/streaming.org][Streaming and instances]]
+- [[file:../modules/core/math3d.org][3D Math (lrg-math3d)]]
+- [[file:../CHANGELOG.org][Changelog]]
+- [[file:editor-migration-0-8-1.org][Migrating to the 0.8.1 Editor]]

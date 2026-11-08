@@ -17,6 +17,8 @@ The module is built around six core components:
 - *LrgBTDecorator*: Wrapper nodes that modify child behavior (Inverter, Repeater, etc.)
 - *LrgBTLeaf*: Terminal nodes that perform actions (Action, Condition, Wait)
 
+Since 0.9.0 trees are also assets: =.rbt= files ([[file:bt-asset.org][bt-asset.org]]) with typed blackboard schemas, leaves bound by name to registered C functions or script functions, subtrees and a runner that records which nodes every tick reached. Gameplay logic that is better as states than as a tree uses =.rfsm= logic state machines ([[file:logic-machine.org][logic-machine.org]]); =LrgAiComponent= ([[file:ai-component.org][ai-component.org]]) runs either, or both over one blackboard, on an entity.
+
 Beside the trees, the decision layer ([[file:decision.org][decision.org]]) asks a decision model (TypeSafe's Jev, a local Ollama model, built in with =AI=1=) typed questions about a game's state and writes the judgments to a blackboard, where =lrg_bt_condition_new_judgment()= and =lrg_bt_condition_new_choice()= branch on them:
 
 - *LrgDecisionRequest*, *LrgJudgments*: the questions and their typed answers
@@ -175,6 +177,11 @@ Modify child behavior:
 - [[file:bt-composite.org][LrgBTComposite]] - Composite nodes (Sequence, Selector, Parallel)
 - [[file:bt-decorator.org][LrgBTDecorator]] - Decorator nodes (Inverter, Repeater, etc.)
 - [[file:bt-leaf.org][LrgBTLeaf]] - Leaf nodes (Action, Condition, Wait)
+- [[file:bt-asset.org][Behaviour tree assets (.rbt)]] - LrgBtAsset, LrgBtAssetNode, LrgBtRunner, the action/condition registry (0.9.0)
+- [[file:logic-machine.org][Logic state machines (.rfsm)]] - LrgLogicMachine and its states, transitions, actions, conditions (0.9.0)
+- [[file:ai-component.org][LrgAiComponent]] - Runs a tree and/or a machine on an entity (0.9.0)
+- [[file:decision.org][Decisions]] - LLM-backed judgments: LrgDecisionRequest, LrgDecider, LrgDecisionBrain, inspector hooks
+- [[file:../../guides/ai.org][AI guide]] - Trees, state machines and decisions together
 
 ** Examples
 :PROPERTIES:

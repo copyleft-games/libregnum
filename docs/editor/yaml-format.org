@@ -58,6 +58,7 @@ nodes:
 | =default_view= | string | Yes | ="3d"= or ="2d"= (controls IDE viewport hint) |
 | =nodes= | sequence | Yes | Root-level node sequence (children of the implicit root) |
 | =timelines= | sequence | No | Keyframed animation clips (see [[#timelines][Timelines]]); omitted when the level has none |
+| =environment= | mapping | No | Sky, image-based lighting, ambient, fog, volumetric fog and post stack of the level (0.9.0, see [[#environment][Environment]]); omitted when the level has none |
 
 ** Node Fields
 :PROPERTIES:
@@ -115,12 +116,29 @@ visual:
     height: 8
     tile_width: 16         # tileset slicing in pixels
     tile_height: 16
+    orientation: isometric # 0.9.0, optional: orthogonal (default), isometric, staggered, hexagonal
+    stagger_axis: x        # staggered/hexagonal: x or y (default y)
+    stagger_index: even    # staggered/hexagonal: odd (default) or even
+    hex_side_length: 8     # hexagonal: pixels of the flat side (0 = from the tile size)
+    cell_width: 32         # grid cell in pixels when it differs from the tile (0 = tile size)
+    cell_height: 16
     layers:                # bottom first
       - name: base
         visible: true
         rows:              # one string per row, space-separated tile ids
           - "1 1 2 0 ..."  # 0 = empty, N = tileset tile N-1
 #+end_src
+
+Since 0.9.0 the inline =material:= block also takes =emission: [r, g, b]= and =emission_strength:=, and =material:= may instead be a scalar reference to a material asset, stored as =LrgNodeVisual:material-ref= (=lrg_node_visual_get_material_ref()= / =lrg_node_visual_set_material_ref()=):
+
+#+begin_src yaml
+visual:
+  kind: mesh-asset
+  asset: guid:a1b2c3d4-...
+  material: guid:3f0c9a1e-...   # or materials/crate.rmat
+#+end_src
+
+Instantiation loads it with =lrg_asset_manager_load_material()= into the mesh renderer's =material= slot. See [[file:../modules/graphics/material.org::#level-references][Material level references]] and the [[file:../modules/graphics/material.org::#rmat-format][.rmat format]].
 
 For =tilemap= nodes, =asset= is the tileset image and =params.tile_size= the world size of one cell. Rows are padded/truncated to =width= on load. See [[file:editor-tools.org::#tilemap-painting][Tilemap painting]].
 
@@ -139,6 +157,78 @@ For =tilemap= nodes, =asset= is the tileset image and =params.tile_size= the wor
 | =camera= | =LRG_NODE_VISUAL_CAMERA= |
 | =audio-emitter= | =LRG_NODE_VISUAL_AUDIO_EMITTER= |
 | =prefab-instance= | =LRG_NODE_VISUAL_PREFAB_INSTANCE= |
+| =decal= | =LRG_NODE_VISUAL_DECAL= (0.9.0) |
+| =reflection-probe= | =LRG_NODE_VISUAL_REFLECTION_PROBE= (0.9.0) |
+| =probe-volume= | =LRG_NODE_VISUAL_PROBE_VOLUME= (0.9.0 M3: a box of baked light probes) |
+| =terrain= | =LRG_NODE_VISUAL_TERRAIN= (0.9.0 M7: a .rterrain, see [[file:../modules/graphics/terrain-asset.org][LrgTerrainAsset]]) |
+| =water= | =LRG_NODE_VISUAL_WATER= (0.9.0 M7: a .rwater, see [[file:../modules/graphics/water-body.org][LrgWaterBody]]) |
+
+**** Decal and reflection-probe nodes (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: decal-probe-nodes
+:END:
+Two node kinds shape a level's look together with the [[#environment][environment]] block. Older readers keep the kind string they do not know (the node loads as =none=). Every param is optional; the defaults are the components'. At runtime =lrg_level_instantiate_3d()= turns them into an =LrgDecalComponent= and an =LrgReflectionProbeComponent= (see [[file:../modules/level/index.org::#level-look][The level's look]]); the editor draws their boxes as gizmos.
+
+#+begin_src yaml
+- name: Oil stain
+  transform:
+    location: [2.0, 0.0, -1.0]  # box centre; the box projects along local -Y (onto the floor here)
+    rotation: [0.0, 0.6, 0.0]
+  visual:
+    kind: decal
+    asset: textures/oil.png     # albedo texture (path or guid:) -> albedo-path
+    material:
+      color: [1.0, 1.0, 1.0, 0.85]  # tint and alpha -> color-r .. color-a
+    params:
+      size_x: 2.0               # box width (local X)
+      size_y: 0.5               # projection depth (local Y)
+      size_z: 1.5               # box height (local Z)
+      normal: textures/oil_n.png  # optional normal map -> normal-path
+      orm: textures/oil_orm.png   # optional occlusion/roughness/metallic -> orm-path
+      opacity: 1.0
+      fade_angle: 60.0          # degrees: surfaces turned further away fade out
+      fade_width: 20.0          #   over this many degrees
+      sort_order: 0             # higher draws over lower
+      normal_strength: 1.0
+      blend: alpha              # LrgDecalBlend nick
+- name: Hall probe
+  transform:
+    location: [0.0, 2.0, 0.0]   # capture point and box centre
+  visual:
+    kind: reflection-probe
+    params:
+      extents_x: 8.0            # HALF sizes of the axis-aligned box (times the node scale)
+      extents_y: 2.0
+      extents_z: 4.0
+      blend_distance: 1.0       # influence fades over this band inside the box
+      intensity: 1.0
+      box_projection: true      # parallax-corrected (rooms); false for open areas
+      resolution: 128           # cubemap edge (power of two 16..1024)
+#+end_src
+
+| Kind | Param | Type | Default | Meaning |
+|------+-------+------+---------+---------|
+| decal | =asset= (visual field) | string | none | albedo texture |
+| decal | =size_x=, =size_y=, =size_z= | double | 1 | box size; Y is the projection depth |
+| decal | =normal=, =orm= | string | none | extra texture maps |
+| decal | =opacity=, =fade_angle=, =fade_width=, =sort_order=, =normal_strength=, =blend= | | as =LrgDecal= | look of the decal |
+| reflection-probe | =extents_x=, =extents_y=, =extents_z= | double | 5 | half sizes of the box |
+| reflection-probe | =blend_distance= | double | 1 | influence fade band |
+| reflection-probe | =intensity= | double | 1 | multiplier |
+| reflection-probe | =box_projection= | bool | true | box projection |
+| reflection-probe | =resolution= | int | 128 | cubemap edge |
+| reflection-probe | =near_clip=, =far_clip=, =auto_recapture= | double / bool | 0.05, 1000, true | capture planes, recapture after moves |
+| probe-volume | =extents_x=, =extents_y=, =extents_z= | double | 5 | half sizes of the world-aligned probe box around the node |
+| probe-volume | =spacing= | double | 0 | distance between probes; 0 = =lighting: settings: probe_spacing= (else 2) |
+| probe-volume | =resolution= | int | 0 | probes per axis (2 .. 64); 0 = from the spacing |
+| terrain | =asset= | string | none | the .rterrain (path or =guid:=) |
+| terrain | =cast_shadows=, =physics=, =foliage= | bool | true | chunk shadows, static heightfield body, foliage layers |
+| terrain | =layer= | int | -1 | render layer (-1 = the entity's) |
+| water | =asset= | string | none | the .rwater (path or =guid:=) |
+| water | =capture= | bool | true | screen-space reflection/refraction capture |
+| water | =layer= | int | -1 | render layer (-1 = the entity's) |
+
+Probe volumes become unbaked =LrgProbeGrid= boxes on the world (=lrg_node_visual_get_probe_volume()=) for the lightmap baker, unless the level already lists baked grids; see [[file:bake.org::#editor-bake-probe-volumes][Lighting Bake > Probe volumes]].
 
 *** Components
 :PROPERTIES:
@@ -163,6 +253,76 @@ components:
 =int64= typed YAML scalars; floating-point values are stored as floats. The
 serializer uses a heuristic: a YAML scalar without a decimal point is read back
 as =int64=.
+
+*** Physics Block (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: physics
+:END:
+A node with a =physics:= mapping is a physics body: =lrg_level_instantiate_3d()= gives its entity one =LrgRigidBodyComponent= (the body settings), one =LrgColliderComponent3D= per =shapes:= entry and one =LrgJointComponent= per =joints:= entry, and attaches a physics world to the =LrgWorld3D= when it has none. In memory the block is an =LrgNodePhysics= (=lrg_node_get_physics()=) holding =LrgNodePhysicsShape= and =LrgNodePhysicsJoint= objects; prefabs (=.rprefab=) use the same node format, so a prefab root or child can carry a body. The 2D instantiation (=lrg_level_instantiate()=) ignores the block.
+
+#+begin_src yaml
+physics:
+  body: dynamic                 # static | kinematic | dynamic  (LrgDynamicsBodyKind nick)
+  mass: 20                      # kg, dynamic bodies; inertia from the shapes
+  layer: debris                 # collision layer name or index; omitted = layer 0
+  friction: 0.5
+  restitution: 0.1
+  linear_damping: 0.05
+  angular_damping: 0.05
+  gravity_factor: 1
+  ccd: true                     # continuous collision; omitted when false
+  shapes:                       # in order; several make a compound
+    - kind: box                 # sphere | capsule | cylinder | box | convex | mesh | plane
+      half_extents: [0.5, 0.5, 0.5]   # box only
+    - kind: capsule
+      radius: 0.25              # sphere / capsule / cylinder
+      half_height: 0.4          # capsule: half the cap-centre distance; cylinder: half the height
+      offset: [0, 0.9, 0]       # node-local; omitted when zero
+      rotation: [0, 0, 90]      # node-local Euler degrees; omitted when zero
+    - kind: sphere
+      radius: 2
+      trigger: true             # a sensor with its own body; omitted when false
+      layer: triggers           # layer of a shape with its own body; omitted = the body's
+    - kind: mesh
+      mesh: models/rock.glb     # convex / mesh source; omitted = the node's own model
+      friction: 0.9             # per-shape material override; omitted = the body's
+      restitution: 0
+  joints:
+    - kind: hinge               # fixed | point | hinge | slider | distance | cone | swing-twist | six-dof
+      target: 8d1c...-guid      # GUID of the other node; omitted = the fixed world
+      anchor: [0.5, 0, 0]       # node-local pivot; omitted when zero
+      axis: [0, 1, 0]           # node-local axis; omitted when +Y
+      limits: [-1.57, 1.57]     # min, max; omitted when off
+      spring: [4, 0.7]          # frequency Hz, damping ratio; omitted when 0 Hz
+      motor: [3.14, 50]         # target velocity, max force; omitted when off
+      break_force: 500          # N; omitted when 0 (unbreakable)
+#+end_src
+
+| Key | Type | Default | Notes |
+|-----+------+---------+-------|
+| =body= | nick | =static= | static bodies never move; kinematic ones follow the entity and push; dynamic ones drive it |
+| =mass= | float | 1 | always written |
+| =layer= | string | (none) | resolved through the world's =LrgPhysicsLayers= (project =physics:= block); unknown names warn and use layer 0 |
+| =friction=, =restitution=, =linear_damping=, =angular_damping=, =gravity_factor= | float | 0.5, 0, 0.05, 0.05, 1 | always written |
+| =ccd= | bool | false | written only when true |
+| =shapes[].kind= | nick | =box= | =LrgCollider3DKind= |
+| =shapes[].half_extents= | [x, y, z] | 0.5 each | written for boxes |
+| =shapes[].radius=, =half_height= | float | 0.5 | written for the kinds that use them |
+| =shapes[].mesh= | string | (none) | path relative to the level, or =guid:= |
+| =shapes[].offset=, =rotation= | [x, y, z] | 0 | written when not zero |
+| =shapes[].trigger= | bool | false | |
+| =shapes[].friction=, =restitution= | float | (body's) | written when set (>= 0) |
+| =shapes[].layer= | string | (body's) | used by shapes with their own body (triggers) |
+| =joints[].kind= | nick | =point= | =LrgJointKind= |
+| =joints[].target= | GUID | (world) | |
+| =joints[].anchor= | [x, y, z] | 0 | |
+| =joints[].axis= | [x, y, z] | [0, 1, 0] | normalised on load |
+| =joints[].limits= | [min, max] | off | radians (hinge, cone, swing-twist) or metres (slider, distance) |
+| =joints[].spring= | [Hz, ratio] | off | soft limits / distance spring |
+| =joints[].motor= | [velocity, max force] | off | hinge and slider velocity motor |
+| =joints[].break_force= | float | 0 | |
+
+Keys are written in the order above and defaults are left out where noted, so a load / save round trip is byte stable. Joint targets are node GUIDs; a joint to a node instantiated later is resolved once that node's entity exists. In prefab instances, targets inside the prefab are rewritten to the instance's GUIDs, and the whole block is one override path (=physics=). See [[file:../modules/world3d/components.org::#physics-components][the physics components]] for what each key does at runtime and [[file:../guides/physics.org::#levels][the physics guide]] for authoring.
 
 *** Scripts
 :PROPERTIES:
@@ -329,6 +489,130 @@ timelines:
           - time: 1.5
             value: 1.5708
 #+end_src
+
+** Environment
+:PROPERTIES:
+:CUSTOM_ID: environment
+:END:
+Optional, additive (0.9.0; older readers ignore it, and a level without the block is written back without it). The block is an [[file:../modules/lighting/environment.org][LrgEnvironment]]: =lrg_level_get_environment()= returns it after loading, =lrg_level_ensure_environment()= creates a default one to edit. Every sub-block and key is optional: missing keys take the defaults of =lrg_environment_new()=. Unknown keys, at the top of the block and inside each sub-block, are kept and written back in place, so files from newer versions survive a round trip. A malformed block (an unknown =sky.source= or =fog.type=) fails the whole load with =LRG_LEVEL_ERROR_PARSE=.
+
+#+begin_src yaml
+environment:
+  sky:
+    source: equirect        # color | gradient | sky_dome | cubemap | equirect
+    color: [0.5, 0.6, 0.8]  # color source; sRGB 0..1 like every engine colour (> 1 = brighter)
+    zenith: [0.35, 0.5, 0.75]   # gradient / sky_dome: straight up
+    horizon: [0.7, 0.72, 0.75]  #   at the horizon
+    ground: [0.3, 0.28, 0.25]   #   straight down
+    path: skies/noon.hdr    # equirect panorama, or a cubemap cross; path or guid:<uuid>
+    faces: [px.png, nx.png, py.png, ny.png, pz.png, nz.png]  # cubemap from six images (+X -X +Y -Y +Z -Z)
+    exposure: 0.0           # stops: everything is multiplied by 2^exposure
+    rotation: 0.0           # degrees about +Y, counter-clockwise from above (ignored for sky_dome)
+  ibl:
+    enabled: true           # false: the lit shader uses the flat ambient colour
+    diffuse_intensity: 1.0
+    specular_intensity: 1.0
+    resolution: 128         # cubemap edge, power of two 16..1024
+  ambient:
+    color: [0.2, 0.2, 0.2]  # flat ambient (sRGB), used without IBL
+    intensity: 1.0
+  fog:
+    enabled: false
+    type: exponential       # uniform | linear | exponential | height (LrgFogType nicks)
+    color: [0.7, 0.75, 0.8, 1.0]  # sRGB + the cap of the fog amount in alpha
+    density: 0.02           # exponential / uniform / height
+    start: 10.0             # linear
+    end: 100.0              # linear
+    height_base: 0.0        # height fog (and volumetric fog) full below this height
+    height_falloff: 0.1     #   thinning per unit above it
+  volumetric:
+    enabled: false          # the screen-space LrgVolumetricFog pass
+    density: 0.02
+    anisotropy: 0.6         # Henyey-Greenstein g, -0.95..0.95
+    steps: 32               # 4..128
+    max_distance: 100.0
+    intensity: 1.0
+  post_stack: post/day.rpost  # path or guid: of the .rpost stack (LrgPostStack)
+#+end_src
+
+At runtime =lrg_level_instantiate_3d()= gives the world a copy of this block (=lrg_world3d_get_environment()=) with its sky images loaded, and the stack named by =post_stack= (=lrg_world3d_get_post_stack()=); relative paths resolve against the level file's directory first. See [[file:../modules/level/index.org::#level-look][The level's look]].
+
+| Key | Type | Default | Meaning |
+|-----+------+---------+---------|
+| =sky.source= | string | =gradient= | =LrgEnvironmentSkySource= nick (=_= and =-= both accepted) |
+| =sky.color= | [r, g, b] | 0.5 grey | colour of the =color= source |
+| =sky.zenith= / =horizon= / =ground= | [r, g, b] | blue-grey / light grey / brown-grey | gradient colours; also the colours of the dome built for a =sky_dome= source |
+| =sky.path= | string | none | equirect panorama (=.hdr= read linear, other images sRGB) or the cross of a =cubemap= source; resolved by =lrg_environment_load_sources()= |
+| =sky.faces= | 6 strings | none | cubemap faces when there is no cross |
+| =sky.exposure= | float | 0 | exposure in stops |
+| =sky.rotation= | float | 0 | rotation in degrees about +Y |
+| =ibl.enabled= | bool | true | image-based lighting wanted |
+| =ibl.diffuse_intensity= / =specular_intensity= | float | 1 | multipliers |
+| =ibl.resolution= | int | 128 | radiance / prefiltered cubemap edge |
+| =ambient.color= / =intensity= | [r, g, b] / float | 0.2 grey / 1 | flat ambient |
+| =fog.*= | | off | distance fog handed to =lrg_light_set_set_fog()= |
+| =volumetric.*= | | off | parameters of =LrgVolumetricFog= |
+| =post_stack= | string | none | the level's post-processing stack |
+
+A level that only wants a coloured sky and a dimmer ambient writes just those keys:
+
+#+begin_src yaml
+environment:
+  sky: { source: color, color: [0.1, 0.1, 0.15] }
+  ambient: { color: [0.05, 0.05, 0.08] }
+#+end_src
+
+** Lighting
+:PROPERTIES:
+:CUSTOM_ID: lighting
+:END:
+Optional, additive (0.9.0 M3): the level's baked lighting. Written only when the level has a lightmap, a probe grid or a bake setting (=lrg_level_has_lighting()=); older readers ignore it. A malformed block (=probes= not a sequence, a setting that is not a number or boolean, =lightmap= not a scalar) fails the load with =LRG_LEVEL_ERROR_PARSE=.
+
+#+begin_src yaml
+lighting:
+  lightmap: maps/town.rlightmap        # .rlightmap index: path (relative to the level) or guid:<uuid>
+  probes:                              # .rprobes grids, same reference rules, any number
+    - maps/town-0.rprobes
+    - guid:3f2a9c4e-...
+  settings:                            # what the bake panel hands the baker; numbers, booleans as true/false or 0/1
+    texels_per_unit: 8                 # lightmap texels per world unit (times each mesh's lightmap_scale)
+    samples: 256                       # rays per texel / probe
+    bounces: 2                         # indirect bounces
+    max_lightmap_size: 1024            # largest atlas page edge
+    denoise: true                      # written back as 1
+    probe_spacing: 2                   # default world units between probes of a probe volume
+#+end_src
+
+| Key | Type | Meaning |
+|-+-+-|
+| =lightmap= | string | [[file:../modules/lighting/lightmap3d.org][LrgLightmap3D]] index; =lrg_level_get_lightmap_ref()= / =lrg_level_set_lightmap_ref()= |
+| =probes= | sequence of strings | [[file:../modules/lighting/probe-grid.org][LrgProbeGrid]] files, in order, without duplicates; =lrg_level_get_probe_refs()=, =lrg_level_add_probe_ref()=, =lrg_level_remove_probe_ref()= |
+| =settings= | mapping string -> number | bake settings; =lrg_level_set_bake_setting()=, =lrg_level_get_bake_setting()=, =lrg_level_get_bake_setting_keys()=; any key is kept (the baker documents the ones it reads) |
+
+=lrg_level_clear_lighting()= drops the block. At runtime =lrg_level_instantiate_3d()= loads the lightmap into =lrg_world3d_set_lightmap()= and each grid into =lrg_world3d_add_probe_grid()=; a reference that does not resolve or load logs a warning and is skipped (the level still loads, lit by realtime lights and the environment).
+
+Node params that steer the bake (they map onto component properties by name): =static_lighting= and =lightmap_scale= on primitive and mesh-asset visuals (=LrgMeshRendererComponent:static-lighting= / =lightmap-scale=), =bake_mode= (=realtime= / =mixed= / =baked=) on lights (=LrgLightComponent:bake-mode=). Lightmap entries are keyed by node GUID, which is why GUIDs must stay stable. The editor's Lighting panel writes the whole block ([[file:bake.org][Lighting Bake in the Editor]]).
+
+** Navigation
+:PROPERTIES:
+:CUSTOM_ID: navigation
+:END:
+Optional, additive (0.9.0 M6): the level's navigation mesh. Written only when the level has one of the keys (=lrg_level_has_navigation()=); older readers ignore it. The block is strict: an unknown key, a reference that is not a non-empty scalar or a =bake_on_load= that is not a boolean fails the load with =LRG_LEVEL_ERROR_PARSE= and a message naming the key (=navigation.settngs: unknown key=).
+
+#+begin_src yaml
+navigation:
+  settings: nav/castle.rnav            # .rnav bake settings (LrgNavBake): path relative to the level, or guid:<uuid>
+  data: nav/castle.rnavmesh            # the baked mesh (lrg_nav_poly_mesh_save() bytes), same reference rules
+  bake_on_load: false                  # true: bake from the instantiated world when data is missing or fails
+#+end_src
+
+| Key | Type | Meaning |
+|-+-+-|
+| =settings= | string | the [[file:../modules/pathfinding/nav-bake.org][.rnav]] settings; =lrg_level_get_nav_settings_ref()= / =lrg_level_set_nav_settings_ref()= |
+| =data= | string | the baked [[file:../modules/pathfinding/nav-poly-mesh.org][LrgNavPolyMesh]]; =lrg_level_get_nav_data_ref()= / =lrg_level_set_nav_data_ref()= |
+| =bake_on_load= | boolean | =lrg_level_get_nav_bake_on_load()= / =lrg_level_set_nav_bake_on_load()=; written only when true |
+
+=lrg_level_clear_navigation()= drops the block. At runtime =lrg_level_instantiate_3d()=, after every entity exists, loads =data= (giving it the area costs of =settings=), or with =bake_on_load= bakes the mesh from the instantiated world with =settings= (defaults without them), and calls =lrg_world3d_set_navigation()=. A reference that does not resolve or load logs a warning; the level loads without navigation. Agents are =LrgNavAgentComponent= components on nodes ([[file:../modules/pathfinding/nav-agent.org][nav-agent]]).
 
 ** Notes
 :PROPERTIES:

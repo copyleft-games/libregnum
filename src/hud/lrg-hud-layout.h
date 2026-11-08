@@ -467,4 +467,42 @@ lrg_hud_layout_load_from_file (LrgHudLayout  *self,
                                const gchar   *path,
                                GError       **error);
 
+/**
+ * lrg_hud_layout_load_from_data:
+ * @self: an #LrgHudLayout
+ * @data: (array length=length) (element-type guint8): YAML text of
+ *   lrg_hud_layout_save_to_data()
+ * @length: length of @data in bytes, or -1 when it is nul-terminated
+ * @error: return location for a #GError
+ *
+ * Replaces the player's state with the text's, exactly as
+ * lrg_hud_layout_load_from_file() does with a file (empty text is an
+ * empty layout). On error nothing changes.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_hud_layout_load_from_data (LrgHudLayout  *self,
+                               const gchar   *data,
+                               gssize         length,
+                               GError       **error);
+
+/**
+ * lrg_hud_layout_save_to_data:
+ * @self: an #LrgHudLayout
+ * @length: (out) (optional): return location for the text length
+ * @error: return location for a #GError
+ *
+ * The text lrg_hud_layout_save_to_file() writes: `version` and a `pieces`
+ * mapping (ids sorted) with offsets in their shortest exact form.
+ *
+ * Returns: (transfer full) (nullable): the YAML text, or %NULL on error
+ */
+LRG_AVAILABLE_IN_ALL
+gchar *
+lrg_hud_layout_save_to_data (LrgHudLayout  *self,
+                             gsize         *length,
+                             GError       **error);
+
 G_END_DECLS

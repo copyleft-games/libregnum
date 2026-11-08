@@ -233,6 +233,12 @@ a_project_settings (gpointer data)
 }
 
 static void
+a_export (gpointer data)
+{
+	editor_dialog_export (APP (data));
+}
+
+static void
 a_import_scene (gpointer data)
 {
 	editor_dialog_import_scene (APP (data));
@@ -1054,6 +1060,7 @@ editor_app_register_actions (LrgEditorApp *self)
 		{ "file.new-project", "New Project...", "File", NULL, a_new_project, NULL, NULL },
 		{ "file.open-project", "Open Project...", "File", "Ctrl+Shift+O", a_open_project, NULL, NULL },
 		{ "file.project-settings", "Project Settings...", "File", NULL, a_project_settings, has_project, NULL },
+		{ "file.export", "Export...", "File", NULL, a_export, has_project, NULL },
 		{ "file.import-scene", "Import Scene (Blender YAML)...", "File", NULL, a_import_scene, NULL, NULL },
 		{ "file.quit", "Quit", "File", "Ctrl+Q", a_quit, NULL, NULL },
 

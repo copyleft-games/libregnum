@@ -143,6 +143,19 @@ GrlRenderTexture * lrg_lighting_manager_get_light_target (LrgLightingManager *se
 LRG_AVAILABLE_IN_ALL
 guint lrg_lighting_manager_get_rendered_light_count (LrgLightingManager *self);
 
+/**
+ * lrg_lighting_manager_get_shadowed_light_count:
+ * @self: an #LrgLightingManager
+ *
+ * Gets how many lights of the last lrg_lighting_manager_render() had
+ * shadow geometry and were drawn through the shadow path (one scratch
+ * pass per shadow sample).
+ *
+ * Returns: the number of shadowed lights
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_lighting_manager_get_shadowed_light_count (LrgLightingManager *self);
+
 LRG_AVAILABLE_IN_ALL
 void lrg_lighting_manager_composite (LrgLightingManager *self);
 

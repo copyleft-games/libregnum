@@ -192,6 +192,29 @@ node_matches (LrgEditorNodeModel *self,
 	g_autofree gchar *folded = (name != NULL) ? g_utf8_casefold (name, -1) : NULL;
 	g_autofree gchar *gfold = (guid != NULL) ? g_utf8_casefold (guid, -1) : NULL;
 
+	/*
+	 * "tag:" is an operator, not a name substring. The needle is already
+	 * casefolded, so the prefix stays "tag:". An empty tag matches every
+	 * tagged node. A name that merely contains the text "tag:" does not.
+	 */
+	if (self->needle != NULL && g_str_has_prefix (self->needle, "tag:"))
+	{
+		g_auto(GStrv) tags = lrg_node_get_tags (node);
+		const gchar  *want = self->needle + 4;
+		guint         i;
+
+		if (tags == NULL)
+			return FALSE;
+		for (i = 0; tags[i] != NULL; i++)
+		{
+			g_autofree gchar *tfold = g_utf8_casefold (tags[i], -1);
+
+			if (tfold != NULL && strstr (tfold, want) != NULL)
+				return TRUE;
+		}
+		return FALSE;
+	}
+
 	return (folded != NULL && strstr (folded, self->needle) != NULL) ||
 	       (gfold != NULL && strstr (gfold, self->needle) != NULL);
 }

@@ -1,0 +1,183 @@
+#+title: The rendering pipeline
+#+description: Anatomy of one LrgWorld3DRenderer frame in libregnum 0.9.0: lights, environment, decals, shadows, depth prepass and SSAO, sky, opaque / cutout / transparent, volumetric fog, probes and post, with what each pass reads and writes and its measured cost
+#+authors: Zach Podbielniak
+#+categories: libregnum guide graphics rendering performance
+#+created: 2026-11-07T03:30:00-05:00
+#+updated: 2026-11-07T03:30:00-05:00
+#+version: 0.1
+
+* The rendering pipeline
+:PROPERTIES:
+:CUSTOM_ID: rendering-pipeline
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *Guides* > The rendering pipeline
+#+end_quote
+
+Every 3D frame in libregnum, a game's and the editor viewport's, is drawn by one object: [[file:../modules/world3d/renderer.org][LrgWorld3DRenderer]]. This guide walks through one frame pass by pass: what triggers each pass, what it reads, what it leaves for the next one, how to switch it, and what it costs. It ends with measured per-pass timings and a checklist for keeping a frame cheap. For how a single pixel is shaded (materials, the BRDF, the light model) read [[file:materials-and-pbr.org][Materials and PBR]] alongside.
+
+** The frame at a glance
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+#+begin_example
+  lrg_world3d_renderer_render (renderer, world, camera, target, w, h)
+   │
+   ├─ collect      lrg_world3d_collect_render(): items (OPAQUE / CUTOUT / TRANSPARENT /
+   │               SHADOW_CASTER), lights, sorted for the camera
+   ├─ lights       LrgLight3DDesc -> LrgLightSet (sun, points, spots, layers, shadow flags)
+   ├─ environment  look in effect (override > world > fallback); bake if dirty;
+   │               ambient + fog + IBL hook onto the light set
+   ├─ decals       world decal components -> decal set -> select around the eye -> hook
+   ├─ SHADOW       cascades of the sun, cube faces of shadowed points, spot maps:
+   │               SHADOW_CASTER replayed with the caster shader
+   ├─ PREPASS      OPAQUE + CUTOUT into depth + view normals    (SSAO or volumetric on)
+   ├─ SSAO         occlusion from the prepass, blurred -> hook  (SSAO on)
+   ├─ clear        target, or the RGBA16F scene image when post runs
+   ├─ SKY          environment sky (or the sky dome)
+   ├─ draw-background signal (editor grid)
+   ├─ OPAQUE       static batch, then items front to back: material, LOD fade,
+   │               draw layer, probe pick per item
+   ├─ CUTOUT       alpha tested at 0.5 (or the material's cutoff)
+   ├─ VOLUMETRIC   ray march of the prepass depth, composited   (environment volumetric)
+   ├─ TRANSPARENT  back to front, depth writes off
+   ├─ draw-overlay signal (editor icons), debug draw, labels
+   └─ POST         lrg_post_processor_process() over the scene image -> target
+#+end_example
+
+The upper-case names are =LrgWorld3DRenderPass= values: =lrg_world3d_renderer_get_pass_count()= reports how many draws each made and, with timing on, =lrg_world3d_renderer_get_pass_time()= how long each took.
+
+** Before any pixel: lights, look and decals
+:PROPERTIES:
+:CUSTOM_ID: setup
+:END:
+
+*** Lights
+:PROPERTIES:
+:CUSTOM_ID: lights
+:END:
+The list's =LrgLight3DDesc= records rebuild the =LrgLightSet= every frame. The first enabled directional light becomes the sun (without one the renderer's fallback sun, unless =fallback-sun= is off); every point and spot light goes through =lrg_light_set_add_light_desc()=, which keeps its cone, its layer mask, its shadow request and (from an =LrgLightComponent=) its shadow bias. The light set selects the lights near the eye and, with many lights, bins them into its clustered grid; the lit shader then walks only the lights of the fragment's cell. Cost: CPU only, linear in the number of lights.
+
+*** The look in effect
+:PROPERTIES:
+:CUSTOM_ID: look
+:END:
+The environment and post stack come from three layers, highest first: the renderer's own (=lrg_world3d_renderer_set_environment()=, =lrg_world3d_renderer_set_post_stack()=), the rendered world's (=lrg_world3d_set_environment()=, filled from a level's =environment:= block by =lrg_level_instantiate_3d()=), and the fallback (=lrg_world3d_renderer_set_fallback_look()=, which the editor fills with the edited level's look). The environment found is:
+
+1. *baked* if =lrg_environment_needs_bake()= says so: a radiance cubemap of its sky, the irradiance harmonics, a prefiltered specular mip chain (GGX importance sampled into each face of each mip) and the BRDF table. This happens once (again only when a sky setting changes) and is the most expensive thing a renderer does; =lrg_world3d_renderer_bake_environment()= lets you do it behind a loading screen;
+2. *applied*: its ambient colour and distance/height fog go onto the light set (=lrg_environment_apply_to_light_set()=);
+3. *bound* as the lit shader's environment hook when image-based light is on (=ibl-enabled= and the environment's own flag): the indirect light becomes =kd * albedo * irradiance + prefiltered(reflect) * (F0 * brdf.x + brdf.y)= instead of the flat ambient.
+
+*** Decals
+:PROPERTIES:
+:CUSTOM_ID: decals
+:END:
+World renders refill the world's decal set from its =LrgDecalComponent=s, a hand-built list uses =lrg_world3d_renderer_get_decal_set()=. =lrg_decal_set_select()= keeps the decals around the eye and bins them into a grid like the light set's; the lit shader then projects the decals of the fragment's cell onto albedo, normal, roughness and metallic before lighting. No extra pass: the cost is per lit fragment inside a decal's cell.
+
+** Shadow passes
+:PROPERTIES:
+:CUSTOM_ID: shadows
+:END:
+With =LRG_WORLD3D_RENDER_FLAG_SHADOWS=, a lit mode and a perspective view, =LrgShadowRenderer= plans the passes: three cascades of the sun around the view by default, six cube faces per shadowed point light, one perspective map per shadowed spot light. Each pass replays the =SHADOW_CASTER= list with the caster shader (alpha tested, LOD-faded). This is usually the most expensive geometry work of the frame: every caster is drawn once per pass, so a shadowed point light multiplies its casters by six. Reduce it with the caster mask (=lrg_shadow_renderer_set_caster_mask()=), fewer cascades or by leaving =CAST_SHADOW= off small props.
+
+** Depth prepass and SSAO
+:PROPERTIES:
+:CUSTOM_ID: prepass
+:END:
+When SSAO is on (=lrg_world3d_renderer_set_ssao_enabled()=, lit modes), in the AO view or the volumetric fog runs, the opaque and cutout items are drawn once more into an =LrgDepthPrepass= the size of the view: depth plus view-space normals, using exactly the colour passes' matrices. =lrg_ssao_render()= then builds the occlusion from it (a hemisphere kernel, noise, a blur; =lrg_world3d_renderer_get_ssao()= exposes radius, bias, intensity, power, kernel size, half resolution and blur) and the lit shader multiplies the indirect light and the material occlusion by it. The direct light is not darkened: on a scene lit mostly by a strong sun SSAO is subtle, under image-based light it is very visible. The AO view shows the term alone.
+
+** Colour passes
+:PROPERTIES:
+:CUSTOM_ID: colour
+:END:
+The target is cleared (or the half-float scene image when post runs), the sky is drawn (the environment's, else the dome), the =draw-background= signal lets the editor draw its grid, then the three categories replay:
+
+- *Opaque*: the static batch first (static entities' plain meshes merged into a few draws), then every other item front to back. Per item the renderer binds the item's =LrgMaterial= (or the parameters of a legacy =LrgMaterial3D=), sets =lodFade= for items of a LOD cross-fade, tells the light set the item's render layer (lights with a layer mask skip other layers) and, when the environment has reflection probes, picks the two probes around the item's centre (the environment is rebound only when the pair changes). Baked light (0.9.0 M3): an item whose entity GUID has an entry in the world's lightmap reads it, else the probe grid around its centre; lightmapped items are never static-batched, and lightmapped primitives and models without a second UV set draw the baker's unwrapped mesh of them (a cached =lrg_uv_unwrap_new_lightmap_primitive()= mesh per primitive and size, a merged and unwrapped copy per =GrlModel=, split back per material) with the world matrix alone, so their uv2 match the atlas (see [[file:lighting-bake.org::#lighting-bake-pitfalls][Lighting bake > Pitfalls]]).
+- *Cutout*: alpha tested at 0.5, or at the material's own cutoff.
+- *Volumetric fog*: between the opaque and blended items, when the environment enables it, =lrg_volumetric_fog_render()= marches the prepass depth through height-shaped fog lit by the sun and its shadow cascades (at the fog's resolution scale) and composites the in-scattered light.
+- *Transparent*: back to front without depth writes.
+
+The =draw-overlay= signal, the debug draw and its labels close the 3D part.
+
+** Reflection probes
+:PROPERTIES:
+:CUSTOM_ID: probes
+:END:
+Probes are not a per-frame pass. =lrg_world3d_renderer_capture_probes()= captures every probe of the environment in effect (=lrg_world3d_renderer_capture_probe()= one probe from any list): six faces of sky plus the lit opaque and cutout items, then a prefilter. Capture after loading a level and again when the scene around a probe changes; in the editor a probe node recaptures when it moves or resizes, and =lrg_editor_scene_renderer_recapture_probes()= recaptures all. Per frame a probe costs only the per-item pick and its texture lookups in the lit shader.
+
+** Post-processing
+:PROPERTIES:
+:CUSTOM_ID: post
+:END:
+With =LRG_WORLD3D_RENDER_FLAG_POST= and a processor with effects (the post stack in effect built into an internal processor, else =post-processor=), the colour passes drew into an RGBA16F scene image, so values above 1 survive. =lrg_post_processor_process()= runs every enabled effect in priority order through the processor's ping-pong targets and the result is copied into the original target. Put bloom before the tonemap (it wants the HDR values) and display-space effects (vignette, FXAA, colour grade) after it; the preview processor of =lrg_world3d_renderer_new_preview_post_processor()= is ordered that way. Each enabled effect is one full-screen pass (bloom several).
+
+** Debug views
+:PROPERTIES:
+:CUSTOM_ID: debug-views
+:END:
+| Mode | Shows | Notes |
+|------+-------+-------|
+| =LRG_WORLD3D_RENDER_MODE_OVERDRAW= | How many surfaces cover each pixel (additive, no depth test) | Find stacked geometry and large transparent quads |
+| =LRG_WORLD3D_RENDER_MODE_UV= | Texture coordinates over a checker | Find stretched, mirrored or missing UVs |
+| =LRG_WORLD3D_RENDER_MODE_LIGHT_COMPLEXITY= | Point and spot lights reaching each pixel | Black, blue 1, green 2-3, yellow 4-7, red 8+: the lit shader's per-fragment light loop |
+| =LRG_WORLD3D_RENDER_MODE_AO= | Material occlusion times SSAO | Runs SSAO even while it is off; tune the radius and intensity here |
+| =LRG_WORLD3D_RENDER_MODE_REFLECTIONS= | The prefiltered environment and probe reflection at each surface's roughness | Check probe boxes and captures |
+
+They clear to black and skip the sky and the post chain. Lit, unlit, wireframe, normals and lighting only are as before; lighting only now runs shadows and SSAO but ignores decals.
+
+** Measured costs
+:PROPERTIES:
+:CUSTOM_ID: costs
+:END:
+Measured with =lrg_world3d_renderer_set_timing()= on *software GL* (Mesa llvmpipe 26.2, LLVM 22, under Xvfb on a 20-core x86_64 machine that was running other builds at the same time, load average about 24): 960 x 540, a list of 14 items (ground, wall, block, ten spheres with =LrgMaterial=s), a shadowed sun, a shadowed spot light and three point lights, five frames per configuration, the faster of two runs. Each row adds one feature to the previous. Timing waits for the GPU after each pass, so the numbers are honest per pass but the frame is slower than untimed; on a hardware GPU every pass is one to two orders of magnitude cheaper and the proportions, not the milliseconds, are what carries over.
+
+| Configuration | Frame (ms) | Shadow | Sky | Opaque | Prepass | SSAO | Volumetric | Post |
+|---------------+-----------:+-------:+----:+-------:+--------:+-----:+-----------:+-----:|
+| Base: lit, shadows, sky dome | 89 | 43 | 6 | 39 | | | | |
+| + environment (gradient sky, IBL) | 140 | 56 | 7 | 76 | | | | |
+| + SSAO | 163 | 51 | 6 | 82 | 9 | 14 | | |
+| + a decal | 153 | 46 | 6 | 76 | 10 | 14 | | |
+| + a reflection probe (64 px) | 153 | 46 | 5 | 80 | 8 | 14 | | |
+| + volumetric fog (32 steps) | 268 | 62 | 8 | 118 | 9 | 17 | 54 | |
+| + preview post (5 effects) | 335 | 63 | 7 | 110 | 11 | 17 | 58 | 68 |
+
+One-off costs: environment bake (128 px gradient sky, all maps) 235 ms; probe capture (64 px, six faces and prefilter) 112 ms. Debug views on the same scene: overdraw 6 ms, UV 8 ms, light complexity 12 ms, reflections 62 ms, AO 84 ms (with its prepass and SSAO).
+
+What the table says:
+- *Shadows* are a third to half of a simple frame: two shadowed lights mean three cascades plus a spot map, each replaying every caster.
+- *Image-based light* roughly doubles the opaque pass on software GL (cubemap fetches per fragment); on hardware it is cheap.
+- *SSAO* (prepass + occlusion + blur) costs about a quarter of the opaque pass at full resolution; =lrg_ssao_set_half_resolution()= quarters the occlusion pass.
+- *Decals and probes* cost nothing measurable per frame at this scale (the noise of the machine is larger); their cost grows with decals per cell and with fragments inside probe boxes.
+- *Volumetric fog* is the most expensive per-frame feature here; lower its steps or resolution scale before anything else.
+- *Post* costs one full-screen pass per effect; bloom is the heaviest.
+
+The numbers come from a scratch benchmark driving the public API; any game can reproduce them with =lrg_world3d_renderer_set_timing()= and =lrg_world3d_renderer_get_pass_time()=.
+
+** A checklist for a cheap frame
+:PROPERTIES:
+:CUSTOM_ID: checklist
+:END:
+1. Bake the environment and capture probes on a loading screen (=bake_environment()=, =capture_probes()=).
+2. Shadow only what reads: caster mask, =CAST_SHADOW= off for small props, few shadowed point lights.
+3. Mark static scenery static and turn on =BATCH_STATIC= (items with an =LrgMaterial= draw one by one).
+4. SSAO at half resolution; volumetric fog with few steps and a low resolution scale.
+5. Keep the post stack short; disable effects instead of zeroing their intensity.
+6. Check the light complexity view: red areas loop over eight or more lights per fragment.
+7. Check the overdraw view for stacked transparent quads.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The editor viewport draws through the same renderer, so the passes above are what the viewport shows. The viewport's =Render Mode= menu holds the five debug views, the =Shadows=, =Sky= and =Post= overlays switch those passes, each viewport has a render-layer mask, and the level's =environment:= block and =post_stack:= show while authoring (as the renderer's fallback look). The environment panel's settings and its bake, the post-stack editor's live preview, decal and reflection-probe nodes, the level's baked lightmaps and probe grids (the Lighting panel, [[file:../editor/bake.org][Lighting Bake]]) and the inspector's LOD preview all land in this pipeline. See [[file:../modules/world3d/renderer.org::#editor][the renderer page]] and [[file:../editor/environment.org][the environment panel]].
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../modules/world3d/renderer.org][LrgWorld3DRenderer]]
+- [[file:materials-and-pbr.org][Materials and PBR]]
+- [[file:../modules/graphics/light-set.org][LrgLightSet]], [[file:../modules/lighting/shadow-renderer.org][LrgShadowRenderer]]
+- [[file:../modules/lighting/environment.org][LrgEnvironment]], [[file:../modules/lighting/reflection-probe.org][LrgReflectionProbe]], [[file:../modules/lighting/volumetric-fog.org][LrgVolumetricFog]]
+- [[file:../modules/graphics/depth-prepass.org][LrgDepthPrepass]], [[file:../modules/graphics/ssao.org][LrgSsao]], [[file:../modules/graphics/decal.org][LrgDecal]], [[file:../modules/graphics/lod-group.org][LrgLodGroup]]
+- [[file:../modules/postprocess/post-stack.org][LrgPostStack]] and [[file:../modules/postprocess/index.org][post-processing]]

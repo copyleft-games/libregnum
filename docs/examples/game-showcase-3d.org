@@ -1,0 +1,38 @@
+#+title: 3D showcase
+#+description: examples/game-showcase-3d.c loads an editor level and checks physics, navigation, a skeletal clip, streaming cells and a UI animation
+#+authors: Zach Podbielniak
+#+categories: libregnum examples
+#+created: 2026-11-07T12:00:00-05:00
+#+updated: 2026-11-08T01:20:00-05:00
+#+version: 0.1
+
+* 3D showcase
+:PROPERTIES:
+:CUSTOM_ID: game-showcase-3d
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:../index.org::#complete-examples][Examples]]* > 3D showcase
+#+end_quote
+
+=examples/game-showcase-3d.c= is the 0.9.0 game-shaped example. =--self-test= needs no window. It tags a node, asks =LrgLevelStream= which cell contains a point, samples a =LrgUiAnimation= and an =LrgAnimationClip=, drops a sphere in an =LrgDynamicsWorld=, walks an =LrgNavAgent= across a baked floor, and loads =examples/data/pbr-showcase/pbr-showcase.rlevel= into an =LrgWorld3D=. The default path is that file from the repository root and =data/pbr-showcase/pbr-showcase.rlevel= from =examples/=. A missing level fails the self-test. The success line names the level path and the entity count. With a display, and without =--self-test=, the same level is drawn with =LrgWorld3DRenderer= until Esc. Orbit controls and the rendering toggles stay in [[file:pbr-showcase.org][pbr-showcase]]; physics toys stay in [[file:physics-sandbox.org][physics-sandbox]].
+
+** Build and run
+:PROPERTIES:
+:CUSTOM_ID: game-showcase-3d-build
+:END:
+From the repository root, =make examples=. Then, from the repository root or from =examples/=:
+
+#+begin_src sh
+./build/release/examples/game-showcase-3d --self-test
+./build/release/examples/game-showcase-3d --help
+./build/release/examples/game-showcase-3d --license
+./build/release/examples/game-showcase-3d --level data/levels/level-3d-runtime.rlevel --frames 120
+#+end_src
+
+=--frames N= closes the window after N frames. No display runs the self-test and exits 0.
+
+** What is not in this binary
+:PROPERTIES:
+:CUSTOM_ID: game-showcase-3d-limits
+:END:
+The unified transform gizmo, a second inspector, WYSIWYG canvas drag, the export dialog and a live multi-user session live in the editor, documented in [[file:../editor/workflows.org][editor workflows]]. Packing a project is =lrgpack= and =export.run=, documented in [[file:../modules/core/pack-writer.org][LrgPackWriter]].

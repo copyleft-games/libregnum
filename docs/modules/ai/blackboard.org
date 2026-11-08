@@ -515,6 +515,69 @@ lrg_blackboard_set_bool(bb, "player_visible", FALSE);
 /* Nodes access the same blackboard during execution */
 #+end_src
 
+** Typed access and comparisons (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: typed-access
+:END:
+| Function | Description |
+|----------+-------------|
+| =GType lrg_blackboard_get_value_type (self, key)= | =G_TYPE_INT=, =G_TYPE_FLOAT=, =G_TYPE_BOOLEAN=, =G_TYPE_STRING=, =G_TYPE_OBJECT=, =G_TYPE_POINTER=, or =G_TYPE_INVALID= for a missing key |
+| =gchar *lrg_blackboard_dup_value_text (self, key)= | display text: numbers in the C locale, =true=/=false=, strings, =Type@0xaddr=, =0xaddr= |
+| =GVariant *lrg_blackboard_dup_variant (self, key)= | =i=, =d=, =b= or =s=; =NULL= for objects, pointers, missing keys |
+| =gboolean lrg_blackboard_set_variant (self, key, value)= | store a =b=, an integer, a =d= or an =s= variant with the typed setter |
+| =gboolean lrg_blackboard_test (self, key, op, operand)= | compare the value with =operand= |
+| =guint64 lrg_blackboard_get_serial (self)= | bumped by every set, remove and non-empty clear |
+| =lrg_blackboard_op_to_string (op)=, =lrg_blackboard_op_from_string (text, &op)=, =lrg_blackboard_op_get_type()= | the =LrgBlackboardOp= spellings |
+
+=LrgBlackboardOp= is =LRG_BLACKBOARD_OP_EQ=, =_NE=, =_LT=, =_LE=, =_GT=, =_GE=, =_SET= (the key is present and truthy: non-zero, true, a non-empty string, a non-NULL object or pointer) and =_UNSET=; spelled =eq=, =ne=, =lt=, =le=, =gt=, =ge=, =set=, =unset= in files (the symbols =\=\==, =!\==, =<=, =<\==, =>=, =>\== parse too). Numbers compare numerically whatever their storage (a float key against a double operand is compared in single precision), booleans compare as 0/1, strings bytewise with string operands; a missing key or an incomparable pair makes everything false except =ne= and =unset=. These are the semantics of =.rbt= =check= and =guard= nodes and =.rfsm= =when:= conditions.
+
+#+begin_src C
+if (lrg_blackboard_test (bb, "ammo", LRG_BLACKBOARD_OP_LE, g_variant_new_int32 (0)))
+	reload ();
+#+end_src
+
+=lrg_blackboard_get_serial()= lets an inspector redraw only when something changed:
+
+#+begin_src C
+if (lrg_blackboard_get_serial (bb) != view->seen_serial)
+{
+	g_auto(GStrv) keys = lrg_blackboard_dup_keys (bb);
+
+	view->seen_serial = lrg_blackboard_get_serial (bb);
+	for (i = 0; keys[i] != NULL; i++)
+	{
+		g_autofree gchar *text = lrg_blackboard_dup_value_text (bb, keys[i]);
+
+		draw_row (keys[i], lrg_blackboard_get_value_type (bb, keys[i]), text);
+	}
+}
+#+end_src
+
+** LrgBlackboardSchema (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: schema
+:END:
+An ordered list of typed keys with optional defaults: the =blackboard:= section of [[file:bt-asset.org][.rbt]] and [[file:logic-machine.org][.rfsm]] files.
+
+| Function | Description |
+|----------+-------------|
+| =lrg_blackboard_schema_new (void)= | |
+| =gboolean lrg_blackboard_schema_add_key (self, name, type, default_value)= | declare or replace; =FALSE= for a type outside int/float/bool/string/object or a default that does not convert (=1.5= for an int) |
+| =gboolean lrg_blackboard_schema_remove_key (self, name)= | |
+| =lrg_blackboard_schema_get_key_count=, =lrg_blackboard_schema_get_key_name (self, index)=, =lrg_blackboard_schema_has_key= | |
+| =lrg_blackboard_schema_get_key_type (self, name)=, =lrg_blackboard_schema_get_key_default (self, name)= | the default as =i=, =d=, =b= or =s= |
+| =void lrg_blackboard_schema_apply_defaults (self, blackboard, overwrite)= | write defaults (keys without one get 0, 0.0, false, ""; objects nothing) |
+| =gboolean lrg_blackboard_schema_validate (self, blackboard, error)= | present declared keys have their declared type (=G_IO_ERROR_INVALID_DATA= otherwise) |
+| =lrg_blackboard_schema_type_to_string (type)=, =lrg_blackboard_schema_type_from_string (text)= | =int=, =float=, =bool=, =string=, =object= |
+
+#+begin_src C
+g_autoptr(LrgBlackboardSchema) schema = lrg_blackboard_schema_new ();
+
+lrg_blackboard_schema_add_key (schema, "health", G_TYPE_FLOAT, g_variant_new_double (100.0));
+lrg_blackboard_schema_add_key (schema, "target", G_TYPE_OBJECT, NULL);
+lrg_blackboard_schema_apply_defaults (schema, bb, FALSE);
+#+end_src
+
 ** Related Types
 :PROPERTIES:
 :CUSTOM_ID: related-types

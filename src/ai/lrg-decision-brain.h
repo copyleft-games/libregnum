@@ -173,6 +173,138 @@ LRG_AVAILABLE_IN_ALL
 gchar *
 lrg_decision_brain_dup_status (LrgDecisionBrain *self);
 
+/* --- inspector access (0.9.0) ------------------------------------------ */
+
+/**
+ * lrg_decision_brain_dup_topics:
+ * @self: an #LrgDecisionBrain
+ *
+ * Every topic asked so far, in bytewise order: the rows of a decisions
+ * inspector.
+ *
+ * Returns: (transfer full) (array zero-terminated=1): topic names
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gchar **
+lrg_decision_brain_dup_topics (LrgDecisionBrain *self);
+
+/**
+ * lrg_decision_brain_get_request:
+ * @self: an #LrgDecisionBrain
+ * @topic: a topic
+ *
+ * The topic's last question as JSON (its state and the typed questions:
+ * what the decider turns into the model prompt), whether it went out or
+ * was answered from the cache.
+ *
+ * Returns: (transfer none) (nullable): the JSON, %NULL before the first
+ *   question
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *
+lrg_decision_brain_get_request (LrgDecisionBrain *self,
+                                const gchar      *topic);
+
+/**
+ * lrg_decision_brain_get_latency:
+ * @self: an #LrgDecisionBrain
+ * @topic: a topic
+ *
+ * Returns: the seconds the topic's last answered question took, -1 when
+ *   none was answered by the model
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble
+lrg_decision_brain_get_latency (LrgDecisionBrain *self,
+                                const gchar      *topic);
+
+/**
+ * lrg_decision_brain_get_pending_seconds:
+ * @self: an #LrgDecisionBrain
+ * @topic: a topic
+ *
+ * Returns: how long the topic's question has been out, -1 when it is not
+ *   busy
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble
+lrg_decision_brain_get_pending_seconds (LrgDecisionBrain *self,
+                                        const gchar      *topic);
+
+/**
+ * lrg_decision_brain_get_topic_counts:
+ * @self: an #LrgDecisionBrain
+ * @topic: a topic
+ * @out_asked: (out) (optional): questions sent to the model
+ * @out_answered: (out) (optional): questions the model answered
+ * @out_cached: (out) (optional): questions answered from the cache
+ * @out_failed: (out) (optional): questions that failed
+ *
+ * Returns: %TRUE if @topic is known (the counts are 0 otherwise)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_decision_brain_get_topic_counts (LrgDecisionBrain *self,
+                                     const gchar      *topic,
+                                     guint            *out_asked,
+                                     guint            *out_answered,
+                                     guint            *out_cached,
+                                     guint            *out_failed);
+
+/**
+ * lrg_decision_brain_get_totals:
+ * @self: an #LrgDecisionBrain
+ * @out_asked: (out) (optional): questions sent to the model
+ * @out_answered: (out) (optional): questions the model answered
+ * @out_cached: (out) (optional): questions answered from the cache
+ * @out_failed: (out) (optional): questions that failed
+ * @out_input_tokens: (out) (optional): prompt tokens reported
+ * @out_output_tokens: (out) (optional): answer tokens reported
+ * @out_mean_seconds: (out) (optional): mean latency of answered questions
+ *
+ * The brain-wide counters (what lrg_decision_brain_dup_status() prints).
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_decision_brain_get_totals (LrgDecisionBrain *self,
+                               guint            *out_asked,
+                               guint            *out_answered,
+                               guint            *out_cached,
+                               guint            *out_failed,
+                               gint64           *out_input_tokens,
+                               gint64           *out_output_tokens,
+                               gdouble          *out_mean_seconds);
+
+/**
+ * lrg_decision_brain_dup_topic_state:
+ * @self: an #LrgDecisionBrain
+ * @topic: a topic
+ *
+ * One topic for an inspector, as YAML: `topic`, `busy`,
+ * `pending-seconds`, `latency`, `age`, the four counts, `model`, `error`,
+ * `request` (the question JSON) and `latest` (the answer JSON).
+ *
+ * Returns: (transfer full) (nullable): the text, %NULL for an unknown topic
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gchar *
+lrg_decision_brain_dup_topic_state (LrgDecisionBrain *self,
+                                    const gchar      *topic);
+
 G_END_DECLS
 
 #endif /* LRG_DECISION_BRAIN_H */

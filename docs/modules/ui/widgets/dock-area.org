@@ -85,9 +85,44 @@ The new panel becomes the active tab of its stack; the area's /active panel/ (=l
 :PROPERTIES:
 :CUSTOM_ID: dock-area-tabs
 :END:
-Each stack has a tab strip (=tab-height=, by default the theme's control height). Tabs take their natural width (padding, optional icon, title, close button), clamped to 56..220 units, shrinking in proportion when the strip is too narrow. A spring-driven accent indicator slides and stretches under the active tab (bouncy); tab hover fades on a spring; the close button (a cross drawn with =LRG_ICON_CROSS=) shows on the active and the hovered tab, with a hover disc.
+Each stack has a tab strip (=tab-height=, by default the theme's control height). A tab's natural width is its padding, optional icon, title and close button, clamped to 56..220 units. When the row is wider than the strip the tabs shrink in proportion towards a readable minimum of 96 (a short title keeps its natural width; a long one ends in an ellipsis, and the icon stays beside the label). A spring-driven accent indicator slides and stretches under the active tab (bouncy); tab hover fades on a spring; the close button (a cross drawn with =LRG_ICON_CROSS=) shows on the active and the hovered tab, with a hover disc.
 
 In right-to-left layouts (=lrg_widget_is_rtl()=) tab strips start from the right, close buttons move to the leading edge, insertion points mirror and Left / Right swap. The split tree stays physical (the area opts out of automatic mirroring with =lrg_widget_class_set_handles_direction()=).
+
+=LrgTabView= is a different widget: its tabs share the width equally and do not scroll. Editor panels use =LrgDockArea=.
+
+** Tab overflow
+:PROPERTIES:
+:CUSTOM_ID: dock-area-overflow
+:END:
+When the readable minimums themselves do not fit, the strip overflows (=lrg_dock_area_get_tabs_overflow()=). Tabs stay at that minimum (still icon plus an ellipsized label, never a bare icon). Three buttons of 22 units take the trailing end, in this order: scroll back (=LRG_DOCK_STRIP_BUTTON_SCROLL_BACK=), scroll forward (=LRG_DOCK_STRIP_BUTTON_SCROLL_FORWARD=) and the tab list (=LRG_DOCK_STRIP_BUTTON_LIST=). =lrg_dock_strip_button_get_type()= is the =GType= (nicks =scroll-back=, =scroll-forward=, =list=). =lrg_dock_area_get_strip_button_rect()= is their rectangles; it returns =FALSE= when the strip fits.
+
+The tab row scrolls inside the region left of those buttons. =lrg_dock_area_get_tab_scroll()= is the offset currently drawn (it glides on a spring); =lrg_dock_area_get_tab_scroll_max()= is the farthest it can go. =lrg_dock_area_scroll_tabs()= adds to the target and glides (what the wheel does). =lrg_dock_area_set_tab_scroll()= jumps, and may scroll the active tab out of view. The active tab comes back when a tab of that stack is activated, the stack's tab count changes, or the stack is resized. =lrg_dock_area_get_tab_visible()= is whether a tab lies entirely in the visible region. =lrg_dock_area_get_tab_rect()= follows the scroll, so a tab scrolled away lies outside that region.
+
+=lrg_dock_area_popup_tab_list()= opens an =LrgMenu= under the list button (under the strip's trailing end when the strip does not overflow) with one row per tab, icon and full title, the active tab highlighted. Picking a row presents that panel and scrolls its tab into view. The area must be on a canvas. =lrg_dock_area_get_tab_list_menu()= is that menu, =NULL= until the list has been opened once, so tests can read or activate its rows.
+
+A wheel notch over the strip scrolls 48 units towards the last tab (wheel down, or wheel right; the horizontal axis swaps in right-to-left layouts). The wheel over panel content does not scroll the strip. Dragging a tab near either end of an overflowing strip, or over its buttons, scrolls the strip while the drag lasts. Reorder and drag-out are unchanged: a drop on the strip still inserts there, and a drop on no target still floats the panel.
+
+#+begin_src C
+if (lrg_dock_area_get_tabs_overflow (dock, panel))
+{
+	gfloat max_scroll = lrg_dock_area_get_tab_scroll_max (dock, panel);
+
+	lrg_dock_area_scroll_tabs (dock, panel, 48.0f);
+	if (!lrg_dock_area_get_tab_visible (dock, panel))
+		lrg_dock_area_present_panel (dock, panel);
+	lrg_dock_area_popup_tab_list (dock, panel);
+	lrg_dock_area_set_tab_scroll (dock, panel, max_scroll);
+}
+#+end_src
+
+** Canvas shortcuts on one key
+:PROPERTIES:
+:CUSTOM_ID: dock-area-canvas-shortcuts
+:END:
+A dock does not own the keyboard. The canvas does, and one key can serve more than one action. =lrg_canvas_add_shortcut()= replaces every binding of that chord (the new one has priority 0). =lrg_canvas_add_shortcut_full()= stacks a binding beside the others: =priority= is tried first (higher first), and equal priorities stay in registration order (a new binding is inserted after the ones already there). On a key press the canvas walks that order and fires the first action that resolves and is enabled. A disabled or missing action is skipped, so the next binding of the same key runs. =lrg_canvas_list_shortcut_actions()= is that order. =lrg_canvas_remove_shortcut_for_action()= drops one binding and leaves the rest of the chord. =lrg_canvas_remove_shortcut()= still drops the whole chord.
+
+That is how the editor's Tiles panel and =tool.toggle-snap= share Y. Flip-vertical is enabled only while a tilemap is being painted, and it is registered at a higher priority than snap, so Y flips the brush then and toggles snapping everywhere else. Shift+X flips vertically either way. See [[file:../actions.org::#actions-shortcuts][Actions and shortcuts]].
 
 ** Behaviour
 :PROPERTIES:
@@ -104,6 +139,9 @@ In right-to-left layouts (=lrg_widget_is_rtl()=) tab strips start from the right
 | Release while dragging                    | Drop on the target; no target: tear off into a floating frame                           |
 | Escape / gamepad B while dragging         | Cancel; nothing changes                                                                 |
 | Left / Right with the area focused        | Previous / next tab of the active panel's stack                                         |
+| Click a strip's scroll arrow              | Scroll one tab towards the first or the last (overflowing strips only)                  |
+| Click a strip's list button               | =lrg_dock_area_popup_tab_list()=; picking a row presents that tab                        |
+| Wheel over an overflowing strip           | Scroll 48 units towards the last tab (down / right; axis swaps in right-to-left)        |
 
 Clicks on the strips and dividers focus the area itself, so Escape reaches it during a drag. Events from panel content are left to the content (they only bubble through).
 
@@ -196,7 +234,16 @@ floating:
 | =lrg_dock_area_get_panel()=                | Look a panel up by id                                             |
 | =lrg_dock_area_get_stack_panels()=         | The panels sharing a panel's stack                                |
 | =lrg_dock_area_get_stack_rect()=           | World rectangle of a panel's stack (strip included)               |
-| =lrg_dock_area_get_tab_rect()=             | World rectangle of a panel's tab                                  |
+| =lrg_dock_area_get_tab_rect()=             | World rectangle of a panel's tab (follows the strip scroll)       |
+| =lrg_dock_area_get_tabs_overflow()=        | Whether the stack's tabs do not fit at the readable minimum       |
+| =lrg_dock_area_get_tab_scroll()=           | Scroll offset currently drawn                                     |
+| =lrg_dock_area_get_tab_scroll_max()=       | Largest scroll offset of that strip                               |
+| =lrg_dock_area_set_tab_scroll()=           | Jump the scroll; may hide the active tab until it is activated    |
+| =lrg_dock_area_scroll_tabs()=              | Glide the scroll by a delta (the wheel)                           |
+| =lrg_dock_area_get_tab_visible()=          | Whether the tab lies entirely in the visible region               |
+| =lrg_dock_area_get_strip_button_rect()=    | One overflow button (=LrgDockStripButton=)                        |
+| =lrg_dock_area_popup_tab_list()=           | Menu of every tab; a row presents that panel                      |
+| =lrg_dock_area_get_tab_list_menu()=        | The menu the list button shows, or =NULL= before the first open   |
 | =lrg_dock_area_get_panel_share()=          | Share of its parent split a panel's stack takes                   |
 | =lrg_dock_area_set_panel_share()=          | Move the divider directly above a panel's stack                   |
 | =lrg_dock_area_describe()=                 | Compact text form of the tree (tests, debugging)                  |
@@ -207,7 +254,7 @@ floating:
 | =lrg_dock_area_get_tab_height()= / =lrg_dock_area_set_tab_height()= | =tab-height=                    |
 | =lrg_dock_area_get_min_panel_size()= / =lrg_dock_area_set_min_panel_size()= | =min-panel-size=        |
 | =lrg_dock_area_get_allow_floating()= / =lrg_dock_area_set_allow_floating()= | =allow-floating=        |
-| =lrg_dock_area_get_type()=, =lrg_dock_panel_get_type()=, =lrg_dock_position_get_type()= | =GType=s; =LrgDockPosition= (nicks =left=, =right=, =top=, =bottom=, =center=) |
+| =lrg_dock_area_get_type()=, =lrg_dock_panel_get_type()=, =lrg_dock_position_get_type()=, =lrg_dock_strip_button_get_type()= | =GType=s; =LrgDockPosition= (nicks =left=, =right=, =top=, =bottom=, =center=); =LrgDockStripButton= (nicks =scroll-back=, =scroll-forward=, =list=) |
 
 | Panel function                                | Purpose                                         |
 |-----------------------------------------------+-------------------------------------------------|
@@ -303,11 +350,14 @@ A hot reload leaves reused panels where the user dragged them (=position= only m
 - The frame's right and bottom 5 units are its resize zones; the panel content does not cover them.
 - =lrg_dock_area_remove_panel()= drops the area's reference: keep your own if you want to dock the panel again later.
 - Hidden tabs are invisible widgets: their content is laid out but not painted or hit-tested.
+- =lrg_dock_area_set_tab_scroll()= and the wheel may move the active tab out of the visible region. It comes back when that stack's active tab, tab count or width changes, not on every scroll.
+- =lrg_canvas_add_shortcut()= replaces every binding of a chord. Share a key with =lrg_canvas_add_shortcut_full()= so a disabled action falls through to the next one.
 
 ** See also
 :PROPERTIES:
 :CUSTOM_ID: dock-area-see-also
 :END:
 - [[file:splitter.org][Splitter]] (a single divider, the same =handle= look)
+- [[file:../actions.org::#actions-shortcuts][Actions and shortcuts]] (several actions on one key)
 - [[file:../../ui/widgets/canvas.org][Canvas]] (overlay layer, pointer capture)
 - The immediate-mode =LrgGuiDock= (=src/gui/lrg-gui-dock.c=) used by the editor

@@ -40,6 +40,21 @@ typedef struct _LrgParticle LrgParticle;
  * @max_life: Initial lifetime in seconds (for interpolation)
  * @age: Current age (max_life - life)
  * @alive: Whether the particle is active
+ * @start_size: size at spawn, after the initial modules (0.9.0); the
+ *   over-life modules scale it
+ * @start_color_r: red at spawn (0.9.0); colour over life multiplies it
+ * @start_color_g: green at spawn (0.9.0)
+ * @start_color_b: blue at spawn (0.9.0)
+ * @start_color_a: alpha at spawn (0.9.0)
+ * @start_rotation_velocity: angular velocity at spawn in radians per
+ *   second (0.9.0); rotation over life scales it
+ * @random: a per-particle random number in [0, 1) drawn from the
+ *   system's seeded generator at spawn (0.9.0), for stable per-particle
+ *   variation (mesh tumble axis, noise phase)
+ * @id: spawn serial number within its system, counting from 1 (0.9.0);
+ *   ribbons connect particles in this order, trails key their history
+ *   on it
+ * @collisions: number of collisions so far (0.9.0)
  *
  * Represents the complete state of a single particle.
  * Used by #LrgParticleSystem and #LrgParticlePool.
@@ -74,6 +89,17 @@ struct _LrgParticle
 
     /* State */
     gboolean alive;
+
+    /* Module stack data (0.9.0) */
+    gfloat start_size;
+    gfloat start_color_r;
+    gfloat start_color_g;
+    gfloat start_color_b;
+    gfloat start_color_a;
+    gfloat start_rotation_velocity;
+    gfloat random;
+    guint32 id;
+    guint32 collisions;
 
     /*< private >*/
     gpointer _reserved[4];

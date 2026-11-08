@@ -7,6 +7,10 @@
 
 #include "config.h"
 #include "lrg-post-effect.h"
+#include <raylib.h>
+#include <rlgl.h>
+#include <string.h>
+#include <gio/gio.h>
 
 /**
  * SECTION:lrg-post-effect
@@ -59,9 +63,31 @@ typedef struct
     gint     priority;
     guint    width;
     guint    height;
+    LrgPostQuality quality;
 } LrgPostEffectPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgPostEffect, lrg_post_effect, G_TYPE_OBJECT)
+
+GType
+lrg_post_quality_get_type (void)
+{
+    static gsize type_id = 0;
+
+    if (g_once_init_enter (&type_id))
+    {
+        static const GEnumValue values[] = {
+            { LRG_POST_QUALITY_LOW, "LRG_POST_QUALITY_LOW", "low" },
+            { LRG_POST_QUALITY_MEDIUM, "LRG_POST_QUALITY_MEDIUM", "medium" },
+            { LRG_POST_QUALITY_HIGH, "LRG_POST_QUALITY_HIGH", "high" },
+            { LRG_POST_QUALITY_ULTRA, "LRG_POST_QUALITY_ULTRA", "ultra" },
+            { 0, NULL, NULL }
+        };
+        GType id = g_enum_register_static (g_intern_static_string ("LrgPostQuality"), values);
+
+        g_once_init_leave (&type_id, id);
+    }
+    return (GType)type_id;
+}
 
 enum
 {
@@ -70,6 +96,7 @@ enum
     PROP_INTENSITY,
     PROP_PRIORITY,
     PROP_INITIALIZED,
+    PROP_QUALITY_TIER,
     N_PROPS
 };
 
@@ -128,8 +155,10 @@ lrg_post_effect_real_get_name (LrgPostEffect *self)
     return "Unknown Effect";
 }
 
+/* Shut down in dispose, not finalize: the subclass shutdown vfunc must
+ * run while the subclass fields are still alive. */
 static void
-lrg_post_effect_finalize (GObject *object)
+lrg_post_effect_dispose (GObject *object)
 {
     LrgPostEffect        *self = LRG_POST_EFFECT (object);
     LrgPostEffectPrivate *priv = lrg_post_effect_get_instance_private (self);
@@ -137,7 +166,7 @@ lrg_post_effect_finalize (GObject *object)
     if (priv->initialized)
         lrg_post_effect_shutdown (self);
 
-    G_OBJECT_CLASS (lrg_post_effect_parent_class)->finalize (object);
+    G_OBJECT_CLASS (lrg_post_effect_parent_class)->dispose (object);
 }
 
 static void
@@ -163,6 +192,9 @@ lrg_post_effect_get_property (GObject    *object,
     case PROP_INITIALIZED:
         g_value_set_boolean (value, priv->initialized);
         break;
+    case PROP_QUALITY_TIER:
+        g_value_set_enum (value, (gint)priv->quality);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -175,18 +207,20 @@ lrg_post_effect_set_property (GObject      *object,
                               GParamSpec   *pspec)
 {
     LrgPostEffect        *self = LRG_POST_EFFECT (object);
-    LrgPostEffectPrivate *priv = lrg_post_effect_get_instance_private (self);
 
     switch (prop_id)
     {
     case PROP_ENABLED:
-        priv->enabled = g_value_get_boolean (value);
+        lrg_post_effect_set_enabled (self, g_value_get_boolean (value));
         break;
     case PROP_INTENSITY:
-        priv->intensity = CLAMP (g_value_get_float (value), 0.0f, 1.0f);
+        lrg_post_effect_set_intensity (self, g_value_get_float (value));
         break;
     case PROP_PRIORITY:
-        priv->priority = g_value_get_int (value);
+        lrg_post_effect_set_priority (self, g_value_get_int (value));
+        break;
+    case PROP_QUALITY_TIER:
+        lrg_post_effect_set_quality_tier (self, (LrgPostQuality)g_value_get_enum (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -198,7 +232,7 @@ lrg_post_effect_class_init (LrgPostEffectClass *klass)
 {
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
 
-    object_class->finalize = lrg_post_effect_finalize;
+    object_class->dispose = lrg_post_effect_dispose;
     object_class->get_property = lrg_post_effect_get_property;
     object_class->set_property = lrg_post_effect_set_property;
 
@@ -264,6 +298,22 @@ lrg_post_effect_class_init (LrgPostEffectClass *klass)
                               G_PARAM_READABLE |
                               G_PARAM_STATIC_STRINGS);
 
+    /**
+     * LrgPostEffect:quality-tier:
+     *
+     * The quality tier the effect renders at (set by the owning
+     * #LrgPostProcessor from its own tier).
+     */
+    properties[PROP_QUALITY_TIER] =
+        g_param_spec_enum ("quality-tier",
+                           "Quality Tier",
+                           "Quality tier",
+                           LRG_TYPE_POST_QUALITY,
+                           LRG_POST_QUALITY_HIGH,
+                           G_PARAM_READWRITE |
+                           G_PARAM_STATIC_STRINGS |
+                           G_PARAM_EXPLICIT_NOTIFY);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -278,6 +328,7 @@ lrg_post_effect_init (LrgPostEffect *self)
     priv->priority = 0;
     priv->width = 0;
     priv->height = 0;
+    priv->quality = LRG_POST_QUALITY_HIGH;
 }
 
 /*
@@ -297,16 +348,23 @@ lrg_post_effect_initialize (LrgPostEffect  *self,
                             guint           height,
                             GError        **error)
 {
-    LrgPostEffectClass *klass;
+    LrgPostEffectClass   *klass;
+    LrgPostEffectPrivate *priv;
 
     g_return_val_if_fail (LRG_IS_POST_EFFECT (self), FALSE);
     g_return_val_if_fail (width > 0 && height > 0, FALSE);
 
     klass = LRG_POST_EFFECT_GET_CLASS (self);
 
-    if (klass->initialize != NULL)
-        return klass->initialize (self, width, height, error);
+    /* Subclasses need not chain up: the wrapper keeps the bookkeeping so
+     * lrg_post_effect_apply() runs once initialisation succeeded. */
+    if (klass->initialize != NULL && !klass->initialize (self, width, height, error))
+        return FALSE;
 
+    priv = lrg_post_effect_get_instance_private (self);
+    priv->width = width;
+    priv->height = height;
+    priv->initialized = TRUE;
     return TRUE;
 }
 
@@ -327,6 +385,7 @@ lrg_post_effect_shutdown (LrgPostEffect *self)
 
     if (klass->shutdown != NULL)
         klass->shutdown (self);
+    ((LrgPostEffectPrivate *)lrg_post_effect_get_instance_private (self))->initialized = FALSE;
 }
 
 /*
@@ -563,4 +622,123 @@ lrg_post_effect_set_priority (LrgPostEffect *self,
 
     priv->priority = priority;
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PRIORITY]);
+}
+
+LrgPostQuality
+lrg_post_effect_get_quality_tier (LrgPostEffect *self)
+{
+    LrgPostEffectPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_POST_EFFECT (self), LRG_POST_QUALITY_HIGH);
+
+    priv = lrg_post_effect_get_instance_private (self);
+    return priv->quality;
+}
+
+void
+lrg_post_effect_set_quality_tier (LrgPostEffect  *self,
+                             LrgPostQuality  quality)
+{
+    LrgPostEffectPrivate *priv;
+
+    g_return_if_fail (LRG_IS_POST_EFFECT (self));
+    g_return_if_fail (quality <= LRG_POST_QUALITY_ULTRA);
+
+    priv = lrg_post_effect_get_instance_private (self);
+    if (priv->quality == quality)
+        return;
+    priv->quality = quality;
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_QUALITY_TIER]);
+}
+
+/* ==========================================================================
+ * Helpers for effect implementations
+ * ========================================================================== */
+
+GrlShader *
+lrg_post_effect_compile_shader (const gchar  *fragment_source,
+                                GError      **error)
+{
+    g_autoptr(GrlShader) shader = NULL;
+    Shader *handle;
+
+    g_return_val_if_fail (fragment_source != NULL, NULL);
+    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+    if (!IsWindowReady ())
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                             "no GL context (open a window first)");
+        return NULL;
+    }
+
+    /* NULL vertex source: raylib's default vertex shader */
+    shader = grl_shader_new_from_memory (NULL, fragment_source, error);
+    if (shader == NULL)
+        return NULL;
+
+    /* On a compile failure raylib hands back its default shader */
+    handle = grl_shader_get_handle (shader);
+    if (handle == NULL || handle->id == 0 || handle->id == rlGetShaderIdDefault ())
+    {
+        g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                             "the post-effect shader did not compile (GLSL 330 needed; see the raylib log)");
+        return NULL;
+    }
+    return g_steal_pointer (&shader);
+}
+
+void
+lrg_post_effect_draw_fullscreen (guint texture_id,
+                                 guint width,
+                                 guint height)
+{
+    Texture2D tex;
+    Rectangle src;
+    Rectangle dst;
+    Vector2   origin = { 0.0f, 0.0f };
+
+    if (texture_id == 0 || width == 0 || height == 0)
+        return;
+
+    /* Only the id and size matter to the draw; the format is nominal */
+    tex.id = texture_id;
+    tex.width = (int)width;
+    tex.height = (int)height;
+    tex.mipmaps = 1;
+    tex.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+
+    /* Negative source height: render textures are stored bottom up */
+    src.x = 0.0f;
+    src.y = 0.0f;
+    src.width = (float)width;
+    src.height = -(float)height;
+    dst.x = 0.0f;
+    dst.y = 0.0f;
+    dst.width = (float)width;
+    dst.height = (float)height;
+    DrawTexturePro (tex, src, dst, origin, 0.0f, WHITE);
+}
+
+void
+lrg_post_effect_bind_framebuffer (guint framebuffer_id,
+                                  guint width,
+                                  guint height)
+{
+    RenderTexture2D rt;
+
+    if (framebuffer_id == 0)
+    {
+        /* Back to the window: EndTextureMode() also restores the
+         * viewport and the screen-scale modelview of BeginDrawing() */
+        EndTextureMode ();
+        return;
+    }
+
+    /* BeginTextureMode() reads only the id and the colour size */
+    memset (&rt, 0, sizeof rt);
+    rt.id = framebuffer_id;
+    rt.texture.width = (int)MAX (width, 1u);
+    rt.texture.height = (int)MAX (height, 1u);
+    BeginTextureMode (rt);
 }

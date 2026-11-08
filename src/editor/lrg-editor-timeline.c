@@ -18,6 +18,7 @@
 #include "lrg-node.h"
 #include "lrg-timeline.h"
 #include <math.h>
+#include <string.h>
 
 #define MATCH_TOLERANCE (0.001f)
 
@@ -234,25 +235,26 @@ remove_key_func (LrgTimelineTrack *track,
 
 typedef struct
 {
-	gfloat        from;
-	gfloat        to;
-	LrgEasingType easing;
+	gfloat                 from;
+	gfloat                 to;
+	LrgEasingType          easing;
+	LrgSequenceTangentMode mode;
+	gfloat                 in_tangent;
+	gfloat                 out_tangent;
 } KeyEdit;
 
 static guint
 move_key_func (LrgTimelineTrack *track,
                gpointer          data)
 {
-	KeyEdit      *ke = data;
-	gint          idx = lrg_timeline_track_find_key (track, ke->from, MATCH_TOLERANCE);
-	gfloat        value;
-	LrgEasingType easing;
+	KeyEdit *ke = data;
+	gint     idx = lrg_timeline_track_find_key (track, ke->from, MATCH_TOLERANCE);
 
-	if (idx < 0 || !lrg_timeline_track_get_key (track, (guint) idx, NULL, &value, &easing))
+	/* move_key keeps the value, the easing and the Bézier handles; a
+	 * remove + set_key pair would drop the handles */
+	if (idx < 0)
 		return 0;
-	lrg_timeline_track_remove_key (track, (guint) idx);
-	lrg_timeline_track_set_key (track, ke->to, value, easing);
-	return 1;
+	return lrg_timeline_track_move_key (track, (guint) idx, ke->to) >= 0 ? 1 : 0;
 }
 
 static guint
@@ -266,7 +268,36 @@ easing_func (LrgTimelineTrack *track,
 	if (idx < 0 || !lrg_timeline_track_get_key (track, (guint) idx, &t, &value, NULL))
 		return 0;
 	lrg_timeline_track_set_key (track, t, value, ke->easing);
+	/* Picking an easing makes a Bézier key an eased key again */
+	idx = lrg_timeline_track_find_key (track, t, MATCH_TOLERANCE);
+	if (idx >= 0)
+		lrg_timeline_track_clear_key_tangents (track, (guint) idx);
 	return 1;
+}
+
+static guint
+tangents_func (LrgTimelineTrack *track,
+               gpointer          data)
+{
+	KeyEdit *ke = data;
+	gint     idx = lrg_timeline_track_find_key (track, ke->from, MATCH_TOLERANCE);
+
+	if (idx < 0)
+		return 0;
+	return lrg_timeline_track_set_key_tangents (track, (guint) idx, ke->mode, ke->in_tangent, ke->out_tangent)
+	       ? 1 : 0;
+}
+
+static guint
+clear_tangents_func (LrgTimelineTrack *track,
+                     gpointer          data)
+{
+	KeyEdit *ke = data;
+	gint     idx = lrg_timeline_track_find_key (track, ke->from, MATCH_TOLERANCE);
+
+	if (idx < 0)
+		return 0;
+	return lrg_timeline_track_clear_key_tangents (track, (guint) idx) ? 1 : 0;
 }
 
 /* Drops tracks a removal left empty. */
@@ -324,6 +355,7 @@ lrg_editor_timeline_move_key (LrgEditor   *self,
 
 	if ((live = find_live (self, name)) == NULL || !isfinite (to_time))
 		return 0;
+	memset (&ke, 0, sizeof ke);
 	ke.from = from_time;
 	ke.to = MAX (to_time, 0.0f);
 	ke.easing = LRG_EASING_LINEAR;
@@ -352,6 +384,7 @@ lrg_editor_timeline_set_easing (LrgEditor     *self,
 
 	if ((live = find_live (self, name)) == NULL)
 		return 0;
+	memset (&ke, 0, sizeof ke);
 	ke.from = time;
 	ke.to = time;
 	ke.easing = easing;
@@ -359,6 +392,64 @@ lrg_editor_timeline_set_easing (LrgEditor     *self,
 	n = foreach_track (edit, node, channel, easing_func, &ke);
 	if (n > 0 && !lrg_timeline_equal (live, edit))
 		commit (self, live, edit, "Set Easing", FALSE);
+	return n;
+}
+
+guint
+lrg_editor_timeline_set_tangents (LrgEditor              *self,
+                                  const gchar            *name,
+                                  LrgNode                *node,
+                                  const gchar            *channel,
+                                  gfloat                  time,
+                                  LrgSequenceTangentMode  mode,
+                                  gfloat                  in_tangent,
+                                  gfloat                  out_tangent)
+{
+	LrgTimeline           *live;
+	g_autoptr(LrgTimeline) edit = NULL;
+	KeyEdit                ke;
+	guint                  n;
+
+	g_return_val_if_fail (LRG_IS_EDITOR (self), 0);
+	g_return_val_if_fail (LRG_IS_NODE (node), 0);
+
+	if ((live = find_live (self, name)) == NULL || !isfinite (in_tangent) || !isfinite (out_tangent))
+		return 0;
+	memset (&ke, 0, sizeof ke);
+	ke.from = time;
+	ke.mode = mode;
+	ke.in_tangent = in_tangent;
+	ke.out_tangent = out_tangent;
+	edit = lrg_timeline_copy (live);
+	n = foreach_track (edit, node, channel, tangents_func, &ke);
+	if (n > 0 && !lrg_timeline_equal (live, edit))
+		commit (self, live, edit, "Set Tangents", FALSE);
+	return n;
+}
+
+guint
+lrg_editor_timeline_clear_tangents (LrgEditor   *self,
+                                    const gchar *name,
+                                    LrgNode     *node,
+                                    const gchar *channel,
+                                    gfloat       time)
+{
+	LrgTimeline           *live;
+	g_autoptr(LrgTimeline) edit = NULL;
+	KeyEdit                ke;
+	guint                  n;
+
+	g_return_val_if_fail (LRG_IS_EDITOR (self), 0);
+	g_return_val_if_fail (LRG_IS_NODE (node), 0);
+
+	if ((live = find_live (self, name)) == NULL)
+		return 0;
+	memset (&ke, 0, sizeof ke);
+	ke.from = time;
+	edit = lrg_timeline_copy (live);
+	n = foreach_track (edit, node, channel, clear_tangents_func, &ke);
+	if (n > 0)
+		commit (self, live, edit, "Clear Tangents", FALSE);
 	return n;
 }
 

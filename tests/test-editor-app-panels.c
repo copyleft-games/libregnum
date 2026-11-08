@@ -77,6 +77,20 @@ find (EditorAppFixture *f,
 	return w;
 }
 
+/* Scrolls @name into view. The jump is instant: the tiles panel is
+ * taller than its viewport, and a spring leaves the click short. */
+static void
+reveal (EditorAppFixture *f,
+        const gchar      *scroll,
+        const gchar      *name)
+{
+	LrgScrollBox *box = LRG_SCROLL_BOX (find (f, scroll));
+
+	lrg_scroll_box_set_kinetic (box, FALSE);
+	lrg_scroll_box_scroll_to_widget (box, find (f, name));
+	efx_frames (f, 2);
+}
+
 /* A named widget inside @root (the docked copy of a panel shares names) */
 static LrgWidget *
 in_panel (LrgWidget   *root,
@@ -419,7 +433,10 @@ test_profiler_sample (EditorAppFixture *f,
 	efx_move (f, x + w - 1.0f, y + h * 0.5f);
 	g_assert_cmpint (lrg_editor_profiler_panel_get_hovered_frame (prof), >=, 0);
 
-	/* Pause freezes the ring, Clear empties it */
+	/* Pause freezes the ring, Clear empties it.
+	 * The readout updates on an idle and the toolbar then drops labels,
+	 * which shifts every chip. Land that reflow before the click samples. */
+	efx_frame (f);
 	efx_click_widget (f, find (f, "profiler-pause"));
 	g_assert_true (lrg_editor_profiler_panel_get_paused (prof));
 	g_free (frames);
@@ -641,6 +658,7 @@ test_tiles_layers (EditorAppFixture *f,
 	grid = lrg_node_visual_get_tilemap (lrg_node_get_visual (node));
 	g_assert_nonnull (grid);
 	g_assert_cmpuint (lrg_node_tilemap_get_n_layers (grid), ==, 1);
+	reveal (f, "tiles-scroll", "tiles-add-layer");
 	efx_click_widget (f, find (f, "tiles-add-layer"));
 	grid = lrg_node_visual_get_tilemap (lrg_node_get_visual (node));
 	g_assert_cmpuint (lrg_node_tilemap_get_n_layers (grid), ==, 2);
@@ -648,12 +666,14 @@ test_tiles_layers (EditorAppFixture *f,
 	g_assert_nonnull (efx_find (f, "tiles-layer-1"));
 
 	undo = lrg_editor_get_undo_count (editor);
+	reveal (f, "tiles-scroll", "tiles-layer-name");
 	type_line (f, find (f, "tiles-layer-name"), "Walls");
 	grid = lrg_node_visual_get_tilemap (lrg_node_get_visual (node));
 	g_assert_cmpstr (lrg_node_tilemap_get_layer_name (grid, 1), ==, "Walls");
 	g_assert_cmpuint (lrg_editor_get_undo_count (editor), ==, undo + 1);
 
 	efx_frame (f);
+	reveal (f, "tiles-scroll", "tiles-layer-eye-1");
 	efx_click_widget (f, find (f, "tiles-layer-eye-1"));
 	grid = lrg_node_visual_get_tilemap (lrg_node_get_visual (node));
 	g_assert_false (lrg_node_tilemap_get_layer_visible (grid, 1));
@@ -663,7 +683,9 @@ test_tiles_layers (EditorAppFixture *f,
 
 	/* Click the bottom layer to make it current, then remove it */
 	efx_frame (f);
+	reveal (f, "tiles-scroll", "tiles-layer-0");
 	efx_click_widget (f, find (f, "tiles-layer-0"));
+	reveal (f, "tiles-scroll", "tiles-remove-layer");
 	efx_click_widget (f, find (f, "tiles-remove-layer"));
 	grid = lrg_node_visual_get_tilemap (lrg_node_get_visual (node));
 	g_assert_cmpuint (lrg_node_tilemap_get_n_layers (grid), ==, 1);
@@ -671,7 +693,8 @@ test_tiles_layers (EditorAppFixture *f,
 	lrg_editor_undo (editor);
 	efx_frame (f);
 
-	/* Tools follow the view state (and switch paint mode on) */
+	/* Tools sit at the top of the panel, above the layer rows */
+	reveal (f, "tiles-scroll", "tiles-paint");
 	efx_click_widget (f, find (f, "tiles-tool-fill"));
 	g_assert_cmpint (lrg_editor_view_state_get_tile_tool (view_state), ==, LRG_EDITOR_TILE_TOOL_FILL);
 	g_assert_true (lrg_editor_view_state_get_tile_mode (view_state));
@@ -685,6 +708,7 @@ test_tiles_layers (EditorAppFixture *f,
 	lrg_editor_tiles_panel_get_palette_size (tiles, &cols, &rows);
 	g_assert_cmpuint (cols, ==, 8);
 	g_assert_cmpuint (rows, ==, 4);
+	reveal (f, "tiles-scroll", "tiles-palette");
 	efx_rect_of (find (f, "tiles-palette"), &x, &y, &w, &h);
 	efx_click (f, x + w / 8.0f * 2.5f, y + h / 4.0f * 0.5f);
 	g_assert_cmpint (lrg_editor_view_state_get_tile_tool (view_state), ==, LRG_EDITOR_TILE_TOOL_BRUSH);
@@ -702,6 +726,7 @@ test_tiles_layers (EditorAppFixture *f,
 		g_autoptr(LrgDragPayload) payload = lrg_drag_payload_new_string (LRG_EDITOR_TILES_ASSET_TYPE, png,
 		                                                                 LRG_DRAG_ACTION_COPY);
 
+		reveal (f, "tiles-scroll", "tiles-tileset");
 		efx_rect_of (find (f, "tiles-tileset"), &x, &y, &w, &h);
 		g_assert_true (lrg_canvas_begin_drag (canvas, NULL, payload, x + 4.0f, y + 4.0f));
 		efx_move (f, x + w * 0.5f, y + h * 0.5f);

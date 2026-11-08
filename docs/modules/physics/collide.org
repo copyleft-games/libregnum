@@ -1,0 +1,313 @@
+* lrg-collide - Narrowphase, Contacts and Casts
+:PROPERTIES:
+:CUSTOM_ID: collide
+:END:
+=src/physics/lrg-collide.h= collides two [[file:physics-shape.org][LrgPhysicsShape]] instances placed by rigid world transforms. It produces contact manifolds of up to 4 points with a shared normal, per-point depths and persistent feature ids. It also answers closest points (GJK) and penetration depth (EPA), boolean overlap, world ray casts, and shape casts (time of impact) for continuous collision. =LrgDynamicsWorld= calls it for every pair the broadphase reports. Everything is plain functions over shapes and matrices: no world, no allocation in the convex-convex path, and deterministic results for the same inputs.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgContactManifold= - boxed plain struct, =LRG_TYPE_CONTACT_MANIFOLD= (=lrg_contact_manifold_get_type()=)
+- =LrgRayHit= - see [[file:physics-shape.org::#types][LrgPhysicsShape]]
+- *Header* - =physics/lrg-collide.h=
+
+#+begin_src C
+#define LRG_CONTACT_MANIFOLD_MAX_POINTS (4)
+
+typedef struct {
+    gfloat  normal[3];        /* unit, world, from A to B */
+    guint   n_points;         /* 0..4 */
+    gfloat  points_a[12];     /* world points on A's surface, xyz per point */
+    gfloat  points_b[12];     /* world points on B's surface */
+    gfloat  depths[4];        /* > 0 overlap, < 0 speculative gap */
+    guint32 feature_ids[4];   /* stable while the same features touch */
+    gint    child_a, child_b; /* top-level compound child, or -1 */
+    guint   sub_shape_a, sub_shape_b;  /* triangle id or LRG_PHYSICS_NO_SUB_SHAPE */
+    guint   material_a, material_b;    /* per-triangle material ids */
+} LrgContactManifold;
+#+end_src
+
+** Conventions
+:PROPERTIES:
+:CUSTOM_ID: conventions
+:END:
+- *Normal* points from A to B. Moving B along =+normal= by the depth, or A along =-normal=, separates the pair. A solver pushing A out uses =-normal=.
+- *Points* are in world space, one on each surface. For every point, =depth = dot (point_a - point_b, normal)=.
+- *Depth* is positive when overlapping. A *speculative* contact (the shapes are apart but within =speculative_distance=) has a negative depth down to =-speculative_distance=. Solvers let speculative contacts push only enough to close the gap within the step, which stops fast bodies tunnelling and resting stacks jittering.
+- *Feature ids* identify which features touch. A clipped face point uses the nearest vertex of each touching face, mixed with both face ids. An edge-edge box contact uses the two edges. Mesh contacts also mix in the triangle id. Ids are unique within a manifold and stay identical while the same corners touch, including the moment a corner sits exactly on a clipping plane (aligned stacks), so a solver can match points across steps by id and warm start them.
+- *Transforms* are rigid, column-major 4x4 (=lrg-math3d.h=). No scale.
+
+** Algorithms
+:PROPERTIES:
+:CUSTOM_ID: algorithms
+:END:
+*** Working frame and precision
+:PROPERTIES:
+:CUSTOM_ID: precision
+:END:
+Every pair is evaluated in double precision, translated so shape A sits at the origin. The shapes are wrapped as *proxies*: a shape with its rotation and translation, or a bare triangle. Each proxy offers the core support, the full support, and the supporting face. Results go back to =gfloat= world space at the end.
+
+*** GJK
+:PROPERTIES:
+:CUSTOM_ID: gjk
+:END:
+GJK finds the closest points of two convex sets by walking a simplex of up to 4 support points of the Minkowski difference A - B towards the origin. The closest point on each simplex (point, segment, triangle, tetrahedron) comes from Voronoi-region tests (Ericson / Jolt =ClosestPoint=), which reduce the simplex to the supporting feature and keep the barycentric weights. The weights map back to the witness points on A and B. GJK stops when the support point makes no progress, when the simplex encloses the origin (overlap), or early once the separation is proven larger than the caller's limit (the radii plus the speculative distance), which makes far pairs cheap.
+
+*** Cores, radii and EPA
+:PROPERTIES:
+:CUSTOM_ID: epa
+:END:
+GJK first runs on the *cores* (sphere = point, capsule = segment, hull = hull without its convex radius). For two spheres or capsules the core distance is a closed-form segment-segment closest point and GJK is skipped entirely. If the cores are apart, the result is exact: =depth = rA + rB - core distance=, along the core direction. Only when the cores overlap does EPA run, on the full shapes:
+
+1. Seed from the full-shape GJK simplex. A 1-point simplex is replaced by four tetrahedral directions, a 2-point simplex gets three supports at 120 degrees around it, and a 3-point simplex gets supports on both sides.
+2. Build the largest tetrahedron, wound outward, and add the other seeds.
+3. While the origin is outside a face, expand towards that face. If that fails, the shapes only touch.
+4. Repeatedly push the face closest to the origin out by a new support point, replacing the faces it sees with a fan to the horizon, until the gap drops below 1e-7 + 1e-6 x depth.
+5. The origin's projection on the closest face, through its barycentric coordinates, gives the deepest points on A and B. Its normal is the A->B normal.
+
+*** Specialised pairs
+:PROPERTIES:
+:CUSTOM_ID: specialised
+:END:
+| Pair                          | Method                                                                                                    |
+|-------------------------------+-----------------------------------------------------------------------------------------------------------|
+| sphere-sphere                 | centre distance, 1 point                                                                                  |
+| sphere/capsule pairs          | segment-segment closest points + radii, then supporting faces (2 points for parallel capsules)              |
+| sphere-box                    | clamp the centre into the box; a centre inside leaves through the nearest face; 1 point                   |
+| box-box                       | separating axis test over 15 axes; face axes preferred unless an edge axis is clearly shallower (< 0.95 x face - 5 mm); face axis -> clipping, edge axis -> 1 point at the closest points of the two edges |
+| everything else               | GJK (+ EPA) then face clipping                                                                            |
+
+*** Face clipping (manifolds)
+:PROPERTIES:
+:CUSTOM_ID: clipping
+:END:
+Once the normal is known, the manifold comes from the two *supporting faces*: A's face along =+normal= and B's along =-normal=. Supporting faces by shape:
+
+- box: the face whose normal is closest to the direction (4 points)
+- hull: the face with the largest normal . direction (its polygon, offset by the convex radius)
+- cylinder: the cap (8-point polygon) when within ~6 degrees of the axis, the side segment within ~3 degrees of perpendicular, else one point
+- capsule: the side segment when within ~3 degrees of perpendicular, else one point
+- sphere: one point
+- triangle: the triangle
+
+The clipping is a port of Jolt's =ManifoldBetweenTwoFaces=. If both faces have at least 2 points and one has at least 3, the face with fewer points is clipped against the other one's edge planes. If the clipping face is a segment, the polygon is clipped against its slab instead (=ClipPolyVsEdge=). Each clipped point is projected back onto the clipping face's plane along the normal and kept if it is closer than the speculative distance. Two parallel segments (capsule on capsule) are clipped to their common span. If nothing survives, the single deepest-point pair from GJK/EPA is used.
+
+*** Reduction to 4 points
+:PROPERTIES:
+:CUSTOM_ID: reduction
+:END:
+More than 4 points (a cylinder cap, a hull face, merged mesh contacts) are reduced like Jolt's =PruneContactPoints=. The first kept point maximises (distance from A's centre)^2 x depth^2, which favours the deepest point with the largest lever arm. The second is the furthest from the first. The third and fourth are the furthest on each side of that line, which maximises the supporting area. The kept points form a polygon, in order.
+
+*** Convex vs plane
+:PROPERTIES:
+:CUSTOM_ID: plane
+:END:
+The convex shape's deepest point along =-plane normal= decides contact. Every vertex of its supporting face within the speculative distance becomes a point, projected onto the plane, and the points are reduced to 4.
+
+*** Convex vs triangle mesh / heightfield
+:PROPERTIES:
+:CUSTOM_ID: triangles
+:END:
+1. Transform the convex shape's world AABB, padded by the speculative distance, into the static shape's local frame and collect the overlapping triangles (AABB tree for meshes, cell range for heightfields).
+2. Collide the convex shape with each triangle as a convex pair (GJK/EPA on a 3-point proxy). Triangles are two-sided: the triangle normal is turned towards the convex shape.
+3. *Internal-edge removal* (port of Jolt's =ActiveEdges::FixNormal=). If the contact normal is not the face normal and the contact lies on a triangle edge or vertex none of whose edges is active, the normal is replaced by the face normal and the depth is re-measured along it. Interior contacts always use the face normal. This is what stops a box sliding over a triangulated floor from catching on the internal diagonals.
+4. Clip the convex shape's face against the triangle to get the points, and mix the triangle id into the feature ids.
+5. Sort the per-triangle manifolds deepest first (ties by triangle id), merge manifolds whose normals agree within about 2.5 degrees (cos > 0.999), re-project their points onto the group normal, and reduce each group to 4 points. A box on a flat quad split into two triangles therefore gives one 4-point manifold; a box in an inside corner gives one manifold per wall.
+
+*** Compounds
+:PROPERTIES:
+:CUSTOM_ID: compounds
+:END:
+A compound on either side recurses into its children: the child's world matrix is the compound's times the child's, and children whose world AABB misses the other shape are skipped. Each child pair produces its own manifolds, tagged with the top-level child index. A static kind (mesh, heightfield, plane) as A swaps the pair and flips the results, so either order works.
+
+*** Shape casts: conservative advancement
+:PROPERTIES:
+:CUSTOM_ID: casts
+:END:
+=lrg_collide_cast()= sweeps a shape from =xf_from= to =xf_to=. The translation is interpolated linearly and the rotation by slerp, so spinning bodies are handled. At the current time t:
+
+1. Place the shape at t and get the signed distance to the target (GJK/EPA on the full shapes).
+2. If the distance is within the 1 mm tolerance, report t. If the shapes already overlap at t = 0, report 0.
+3. Otherwise bound the approach speed by =displacement . normal + rotation angle x (shape extent + child offset)=, and advance t by =(distance - tolerance / 2) / bound=. Stop when the bound is not positive or t passes 1.
+
+This never steps past the first contact, because the bound is conservative. Meshes and heightfields are swept per triangle inside the swept AABB (start and end bounds, padded by the shape extent when rotating), keeping the earliest hit with its triangle, material and user id. Moving compounds sweep each child. A plane target marches the deepest support point. The returned =LrgRayHit= has =fraction = toi=, the point midway between the surfaces, and the normal from the target towards the moving shape.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_collide_shapes (a, xf_a, b, xf_b, out, speculative_distance)= | deepest manifold; =TRUE= if it has points |
+| =lrg_collide_shapes_all (a, xf_a, b, xf_b, speculative_distance, out)= | append every manifold to a =GArray= of =LrgContactManifold=; returns how many |
+| =lrg_collide_closest_points (a, xf_a, b, xf_b, distance, point_a, point_b, normal)= | GJK/EPA for convex shapes: distance (negative = depth), witness points, A->B normal |
+| =lrg_collide_overlap (a, xf_a, b, xf_b)= | boolean overlap (touching counts); GJK only for convex pairs |
+| =lrg_collide_ray (shape, xf, origin, dir, max_fraction, hit)= | world-space ray cast |
+| =lrg_collide_cast (shape, xf_from, xf_to, target, xf_target, toi, hit)= | time of impact of a swept shape |
+| =lrg_contact_manifold_get_type ()= | boxed type |
+| =lrg_contact_manifold_new ()=, =lrg_contact_manifold_copy (m)=, =lrg_contact_manifold_free (m)= | heap copies |
+| =lrg_contact_manifold_reset (m)= | empty: 0 points, normal +Y, children -1, sub-shapes =LRG_PHYSICS_NO_SUB_SHAPE= |
+| =lrg_contact_manifold_get_point (m, index, point_a, point_b, depth, feature_id)= | binding-friendly accessor |
+
+Constant: =LRG_CONTACT_MANIFOLD_MAX_POINTS= (4).
+
+Use =lrg_collide_shapes_all()= whenever a compound, mesh or heightfield is involved. =lrg_collide_shapes()= returns only the deepest of several manifolds.
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** Box resting on the ground
+:PROPERTIES:
+:CUSTOM_ID: example-resting
+:END:
+#+begin_src C
+g_autoptr(LrgPhysicsShape) ground = lrg_physics_shape_new_box (5.0f, 0.5f, 5.0f);
+g_autoptr(LrgPhysicsShape) crate = lrg_physics_shape_new_box (0.5f, 0.5f, 0.5f);
+gfloat xg[16];
+gfloat xc[16];
+LrgContactManifold m;
+guint i;
+
+lrg_math3d_identity (xg);
+xg[13] = -0.5f;                 /* top face at y = 0 */
+lrg_math3d_identity (xc);
+xc[13] = 0.49f;                 /* sunk 1 cm */
+
+if (lrg_collide_shapes (ground, xg, crate, xc, &m, 0.02f))
+	for (i = 0; i < m.n_points; i++)
+		g_print ("depth %.3f at (%.2f, %.2f)\n", m.depths[i],
+		         m.points_b[i * 3], m.points_b[i * 3 + 2]);
+/* 4 points at the crate's corners, depth 0.010, normal (0, 1, 0) */
+#+end_src
+
+*** Everything a body touches on a level mesh
+:PROPERTIES:
+:CUSTOM_ID: example-mesh
+:END:
+#+begin_src C
+g_autoptr(GArray) manifolds = g_array_new (FALSE, FALSE, sizeof (LrgContactManifold));
+guint i;
+
+lrg_collide_shapes_all (player_shape, player_xf, level_shape, level_xf, 0.02f, manifolds);
+for (i = 0; i < manifolds->len; i++)
+{
+	const LrgContactManifold *m = &g_array_index (manifolds, LrgContactManifold, i);
+
+	/* m->normal points from the player into the level; m->material_b is the
+	 * surface of the deepest triangle of this group */
+	if (m->normal[1] < -0.7f)
+		on_ground = TRUE;
+}
+#+end_src
+
+*** Penetration depth and separation
+:PROPERTIES:
+:CUSTOM_ID: example-depth
+:END:
+#+begin_src C
+gfloat d;
+gfloat n[3];
+
+if (lrg_collide_closest_points (rock, xf_rock, crate, xf_crate, &d, NULL, NULL, n) && d < 0.0f)
+{
+	/* move the crate out along n by -d */
+	xf_crate[12] += n[0] * -d;
+	xf_crate[13] += n[1] * -d;
+	xf_crate[14] += n[2] * -d;
+}
+#+end_src
+
+*** A bullet against a thin wall (CCD)
+:PROPERTIES:
+:CUSTOM_ID: example-ccd
+:END:
+#+begin_src C
+gfloat toi;
+LrgRayHit hit;
+
+/* the bullet moves 20 m this step; the wall is 10 cm thick */
+if (lrg_collide_cast (bullet_shape, xf_start, xf_end, wall_shape, xf_wall, &toi, &hit))
+	/* place the bullet at toi and respond with hit.normal */
+	g_print ("impact at %.3f of the step\n", toi);
+#+end_src
+
+*** World ray against one body
+:PROPERTIES:
+:CUSTOM_ID: example-ray
+:END:
+#+begin_src C
+gfloat eye[3] = { 0.0f, 1.7f, 0.0f };
+gfloat look[3] = { 0.0f, 0.0f, -100.0f };   /* 100 m reach: fraction 0..1 */
+LrgRayHit hit;
+
+if (lrg_collide_ray (door_shape, door_xf, eye, look, 1.0f, &hit))
+	g_print ("door at %.1f m\n", hit.fraction * 100.0f);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Measured by =tests/test-shape -p /collide/perf -m perf --verbose=: the release build (=-O2=), pinned with =taskset -c 2= to a P-core of an i7-1280P, 200 000 calls per pair, each call slightly perturbed and always touching, speculative distance 2 cm. The machine was shared with parallel builds, so expect up to 2x better on a quiet machine.
+
+| Pair                                    | Calls per microsecond | Time per call |
+|-----------------------------------------+-----------------------+---------------|
+| sphere-sphere                           | 5.8 - 6.0             | ~0.17 us      |
+| capsule (lying) on box                  | 1.2 - 1.3             | ~0.8 us       |
+| box on box, 4-point manifold            | 0.55 - 0.65           | ~1.6 us       |
+| cube hull on cube hull, EPA (no radius) | 0.24 - 0.27           | ~4 us         |
+| box on a 2-triangle mesh (EPA per triangle, merge) | 0.14 - 0.16 | ~6.5 us       |
+
+- Convex-convex calls do not allocate. =lrg_collide_shapes_all()= appends to the caller's array (keep one scratch array per world), and EPA uses one heap block per call.
+- Resting pairs with a convex radius (capsules, spheres, rounded hulls) never reach EPA. Give dynamic hulls a small radius (1-5 cm) when they stack, both for speed and for smoother contacts.
+- Mesh contacts cost one convex-triangle test per triangle under the shape. Keep level triangles larger than the bodies that rest on them, where the art allows.
+- GJK exits early for pairs farther apart than the radii plus the speculative distance, so broadphase false positives cost little.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Normal direction.* It points from A to B. The world's contact solver pushes A along =-normal=. Swapping the arguments flips it.
+- *Use =_all= for compounds and meshes.* =lrg_collide_shapes()= drops every manifold but the deepest.
+- *Speculative depth is negative.* Do not treat a negative depth as "no contact": it is a contact the solver may use to stop a closing velocity.
+- *Deep overlaps.* With a box sunk more than half its size into another, face clipping can report a point up to about 10 % deeper than the EPA depth. Solvers should cap the position correction per step.
+- *Box-box prefers faces.* An edge contact is chosen only when it is clearly shallower than the best face axis. That keeps stacks stable but may report a face contact a few percent deeper than the true minimum.
+- *Static pairs.* Mesh, heightfield and plane never collide with one another, so =_all= returns 0 for them.
+- *Rotating casts* use a conservative bound, so a fast-spinning long shape takes more iterations (up to 64).
+- *Scale.* Transforms with scale give wrong results. Bake scale into the shape.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The next editor wave uses this module directly. A "contacts" debug overlay draws each manifold's points and normal from =lrg_collide_shapes_all()= for the selected body. The collider gizmo validates a placement with =lrg_collide_overlap()= against nearby static geometry and warns about bodies spawned inside walls. "Drop to ground" uses =lrg_collide_cast()= straight down. Picking uses =lrg_collide_ray()= against collider shapes when the user picks "colliders" instead of render meshes.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-shape.c= checks the following:
+
+- *GJK distance* against closed forms: sphere-sphere on a diagonal; box-sphere in the face, edge and corner regions; rotated boxes; capsule-sphere; crossed capsules; capsule over a box; hull corner.
+- *EPA depth and normal* for hull-hull overlaps along X and -Y, a sphere centre inside a hull, a cylinder sunk into a box, and a hull rotated 45 degrees.
+- *3000 random overlapping convex pairs* across box, hull, rounded hull, capsule, cylinder and sphere: unit finite normals, 1-4 points, the deepest point within 10 % of EPA, and box-box SAT agreeing with EPA on the same boxes built as hulls.
+- *Resting box manifolds*: 4 points, exact corners and depths, swapped order, rotated about Y, and speculative gaps.
+- *Edge-edge*: two crossed 45-degree cubes give 1 point at the expected spot.
+- *Capsules and cylinders*: a capsule lying on a box gives 2 points, parallel capsules give 2 points, a sphere gives 1 point, and a cylinder cap reduces to 4.
+- *Feature ids* stay stable across a small slide and rotation, and between exact alignment and an offset.
+- *Meshes*: active-edge bits of a split quad; *no ghost collision* for a rotated box sliding across the split quad and across a flat heightfield (every manifold normal straight up, one merged manifold); an inside corner keeps its wall normal.
+- *Heightfield holes* give no contact.
+- *Planes and compounds*: a box on a plane, a dumbbell on a plane with two child manifolds, and overlap tests.
+- *Shape casts*: a bullet through a thin wall, a miss, a rotating box onto a plane, a sphere onto a mesh, initial overlap, and a rotation-only sweep.
+- *Determinism*: two identical runs are bit-identical.
+- *Performance*: the timings above.
+
+** Third-party notice
+:PROPERTIES:
+:CUSTOM_ID: notice
+:END:
+The closest-point routines, face clipping, the manifold construction and reduction, and the inactive-edge normal fix are translated from Jolt Physics (MIT, Copyright 2021 Jorrit Rouwe): =Geometry/ClosestPoint.h=, =Geometry/ClipPoly.h=, =Physics/Collision/ManifoldBetweenTwoFaces.cpp= and =Physics/Collision/ActiveEdges.h=. The MIT notice is in the header of =src/physics/lrg-collide.c=.
+
+See also: [[file:physics-shape.org][LrgPhysicsShape]], [[file:dynamics.org][LrgDynamicsWorld]], [[file:broadphase.org][LrgBroadphase]].

@@ -892,6 +892,41 @@ lrg_sprite_sheet_remove_frame (LrgSpriteSheet *self,
     return TRUE;
 }
 
+gboolean
+lrg_sprite_sheet_replace_frame (LrgSpriteSheet *self,
+                                guint           index,
+                                LrgAtlasRegion *frame)
+{
+    LrgAtlasRegion *old;
+    const gchar *name;
+
+    g_return_val_if_fail (LRG_IS_SPRITE_SHEET (self), FALSE);
+    g_return_val_if_fail (frame != NULL, FALSE);
+
+    if (index >= self->frames->len)
+    {
+        lrg_atlas_region_free (frame);
+        return FALSE;
+    }
+
+    /* drop the old frame's name entry (only if it still maps to it) */
+    old = g_ptr_array_index (self->frames, index);
+    name = lrg_atlas_region_get_name (old);
+    if (name != NULL && g_hash_table_lookup (self->frames_by_name, name) == old)
+        g_hash_table_remove (self->frames_by_name, name);
+
+    if (self->texture_width > 0 && self->texture_height > 0)
+        lrg_atlas_region_calculate_uv (frame, self->texture_width, self->texture_height);
+
+    /* release the old frame and store the new one in its slot */
+    lrg_atlas_region_free (old);
+    g_ptr_array_index (self->frames, index) = frame;
+    name = lrg_atlas_region_get_name (frame);
+    if (name != NULL)
+        g_hash_table_insert (self->frames_by_name, (gpointer) name, frame);
+    return TRUE;
+}
+
 /*
  * lrg_sprite_sheet_clear_frames:
  * @self: A #LrgSpriteSheet

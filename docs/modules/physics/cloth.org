@@ -1,0 +1,353 @@
+#+title: LrgCloth - Position-Based Cloth
+#+description: XPBD-style cloth for libregnum 0.9: grids and meshes, distance, bend and long-range attachment constraints, pins and bone attachments, sphere/capsule/plane/box colliders and the dynamics world, wind and drag, substeps, self-collision, deterministic stepping and streamed rendering.
+#+authors: Zach Podbielniak
+#+created: 2026-11-07
+#+version: 0.9.0
+
+* LrgCloth - Position-Based Cloth
+:PROPERTIES:
+:CUSTOM_ID: cloth
+:END:
+=LrgCloth= (=src/physics/lrg-cloth.h=, GIR =Libregnum.Cloth=) simulates a piece of cloth as particles joined by constraints: flags, banners, curtains, capes, tablecloths, sails. It is a position-based solver in the style of XPBD ("small steps"): each step is split into substeps; each substep moves the particles by their velocity and the forces, projects the constraints once, resolves collisions and derives the new velocities from how far the particles actually moved. The algorithms (constraint construction, dihedral bending, long-range attachments, skin-style tethers, collision with friction) are ported from Jolt Physics' soft bodies (MIT, Copyright 2021 Jorrit Rouwe; the notice is in =lrg-cloth.c=).
+
+The cloth is headless: everything except =lrg_cloth_create_mesh()= / =lrg_cloth_draw()= runs without a window. It is deterministic: one thread, a fixed constraint order, no randomness, so two cloths fed the same calls stay bit-identical. In a 3D world use [[file:../world3d/components.org::#cloth-component][LrgClothComponent]], which owns a cloth, steps it in =fixed_update=, pins it to its entity and draws it.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Particles, rest shape and space
+:PROPERTIES:
+:CUSTOM_ID: concepts-particles
+:END:
+A cloth is a welded triangle mesh. Each vertex is a particle with a world position, a velocity and a mass: a third of the area of every triangle it belongs to times =density= (kg/m²). The geometry you give (=lrg_cloth_set_grid()=, =lrg_cloth_set_mesh()=) is the *rest shape* in the cloth's *local space*; rest lengths and rest angles are measured on it.
+
+Particles live in *world space*. The cloth's transform (=lrg_cloth_set_transform()=) places its local space in the world: pins, bone matrices, bone-attached colliders and =lrg_cloth_reset()= are expressed locally and follow the transform, the free particles follow through the constraints. Moving the transform between two steps moves the pinned particles smoothly across the substeps of the next step (a flag on a moving ship).
+
+*** Constraints
+:PROPERTIES:
+:CUSTOM_ID: concepts-constraints
+:END:
+Built lazily (the first step or query after the topology, pins or modes changed), after Jolt's =CreateConstraints=:
+
+| Family | Built from | Count (=LrgClothConstraintKind=) |
+|--------+------------+----------------------------------|
+| Edge (stretch) | every mesh edge, compliance =stretch-compliance= | =LRG_CLOTH_CONSTRAINT_EDGE= |
+| Edge (shear) | two triangles that form a flat quad: their shared edge is a quad diagonal and uses =shear-compliance=; with =shear-edges= the other diagonal is added too | =LRG_CLOTH_CONSTRAINT_EDGE= |
+| Bend, distance | the two vertices opposite each shared non-diagonal edge, =bend-compliance= (=LRG_CLOTH_BEND_DISTANCE=, the default) | =LRG_CLOTH_CONSTRAINT_EDGE= |
+| Bend, dihedral | the angle between two triangles sharing an edge, kept at its rest angle (=LRG_CLOTH_BEND_DIHEDRAL=, Bridson / Müller gradients) | =LRG_CLOTH_CONSTRAINT_BEND= |
+| Long-range attachment | one per free vertex to its closest pinned vertex: it may not be further than the rest distance (straight, =LRG_CLOTH_LRA_EUCLIDEAN=, or along the edges, =LRG_CLOTH_LRA_GEODESIC=, the default) times =lra-multiplier= | =LRG_CLOTH_CONSTRAINT_LRA= |
+| Attachment | pins and bone attachments | =LRG_CLOTH_CONSTRAINT_ATTACHMENT= |
+
+Edges and bends are ordered by their distance (along the edges) to the closest pinned vertex, then by vertex index, so corrections flow outward from the pins in one sweep (Jolt's =Optimize= order); long-range attachments run longest first.
+
+*** Compliance
+:PROPERTIES:
+:CUSTOM_ID: concepts-compliance
+:END:
+Compliances are *relative*: a projection removes =1 / (1 + c)= of a constraint's violation. =0= is rigid, =1= removes half per substep, =10= about a tenth. This differs from Jolt's absolute XPBD compliance (m/N divided by the substep squared) on purpose: an absolute value behaves completely differently on a coarse heavy flag and on a fine light scarf, which made defaults impossible and stiff fine meshes unstable. The relative form keeps one set of defaults working from 8x8 to 100x100 vertices. Stiffness still grows with =substeps= (more projections per second).
+
+Defaults: =stretch-compliance= 0 (inextensible), =shear-compliance= 0.5, =bend-compliance= 1 (soft fabric). Raise bend compliance for silk, lower it (or use dihedral bending) for leather or paper.
+
+*** Pins and bone attachments
+:PROPERTIES:
+:CUSTOM_ID: concepts-pins
+:END:
+A vertex is either free or attached to a *target*:
+
+- =lrg_cloth_pin()= / =lrg_cloth_pin_at()=: a point of the cloth's local space (default its rest position),
+- =lrg_cloth_attach_to_bone()=: a point in a bone's space; each substep the target is the cloth transform times the bone matrix (interpolated from the previous to the current pose) times the offset.
+
+With =max_distance= 0 the vertex is *kinematic*: it has no mass, sits exactly on its target and pulls the cloth. With a positive =max_distance= the vertex stays a free particle but cannot get further than that from its target (Jolt's skinned constraint "max distance"): a loose sleeve, a skirt hem that may swing but not leave the leg. Kinematic vertices are the anchors of the long-range attachments.
+
+Bone matrices are set with =lrg_cloth_set_bone_matrices()= (16 floats per bone, column-major, in the cloth's local space) or =lrg_cloth_set_bone_matrices_from_skeleton()= (=lrg_bone_pose_to_matrix()= of every bone's world pose). The previous pose is kept so one step moves targets smoothly; a new bone count drops the history.
+
+*** Collision
+:PROPERTIES:
+:CUSTOM_ID: concepts-collision
+:END:
+Particles are spheres of radius =thickness=. Two kinds of obstacles:
+
+- *Analytic colliders* owned by the cloth: =lrg_cloth_add_sphere()=, =lrg_cloth_add_capsule()=, =lrg_cloth_add_plane()=, =lrg_cloth_add_box()= (oriented). They are in world space, or relative to a bone with =lrg_cloth_set_collider_bone()=, and can be moved with =lrg_cloth_set_collider_transform()=. Tested exactly every substep.
+- *The dynamics world* (=lrg_cloth_set_dynamics_world()=): once per step the bodies whose AABB overlaps the cloth's swept bounds are found (=lrg_dynamics_world_overlap_aabb()=), every particle inside a body's AABB collides its sphere with the body's [[file:physics-shape.org][shape]] (=lrg_collide_shapes_all()=, speculative by how far the particle can move this step) and keeps its deepest contact as a plane =n . x >= d= that the substeps enforce (Jolt's collision planes). Collision is one way: bodies do not feel the cloth. Sensors and infinite plane bodies are skipped (give the cloth a plane collider for a floor).
+
+A particle that penetrates is pushed out along the normal; its tangential velocity loses =friction= times the push depth over the substep (Coulomb, Müller et al. XPBD section 3.6) and its approaching normal velocity is removed (no bounce).
+
+*Self-collision* (=self-collision=, off by default): particles that were not within =self-collision-distance= of each other at rest are kept at least that far apart, with a spatial hash rebuilt every substep.
+
+*** Wind and air
+:PROPERTIES:
+:CUSTOM_ID: concepts-wind
+:END:
+Each triangle feels a drag force along its normal: =F = ½ ρ C A (v_rel · n) |v_rel · n|= with air density ρ = 1.225 kg/m³, =C = drag=, =A= the triangle's current area and =v_rel= the wind (=lrg_cloth_set_wind()=) minus the triangle's mean velocity; a third goes to each corner. With no wind it is air resistance. =damping= is an extra linear velocity damping per second; =max-speed= caps particle speed so one bad frame cannot explode the cloth.
+
+*** One step
+:PROPERTIES:
+:CUSTOM_ID: concepts-step
+:END:
+=lrg_cloth_step (cloth, dt)= (dt clamped to 0.1 s) rebuilds constraints if needed, refreshes collider poses, finds world collision planes, computes the kinematic targets at the start and end of the step, then runs =substeps= times:
+
+1. aerodynamic forces;
+2. integrate: free particles get gravity and force, damping and the speed cap, then move; kinematic ones move to their target interpolated at the end of this substep;
+3. dihedral bends; attachments (kinematic: snap, soft: clamp to =max_distance=); edges; long-range attachments;
+4. self-collision (if on);
+5. velocity = displacement / substep, then colliders and world planes push out and apply friction.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Types, constants and errors
+:PROPERTIES:
+:CUSTOM_ID: api-types
+:END:
+| Symbol | Meaning |
+|--------+---------|
+| =LrgCloth= | final GObject, =LRG_TYPE_CLOTH=, =lrg_cloth_get_type()= |
+| =LRG_CLOTH_MAX_SUBSTEPS= | 64, the clamp of =substeps= |
+| =LRG_CLOTH_NO_BONE= | -1: a pin or collider not tied to a bone |
+| =LRG_CLOTH_ERROR= / =lrg_cloth_error_quark()= | error domain; =LrgClothError= (=lrg_cloth_error_get_type()=): =LRG_CLOTH_ERROR_INVALID= (bad geometry or arguments), =LRG_CLOTH_ERROR_NO_GPU= (mesh creation without a graphics context) |
+| =LrgClothBendMode= (=lrg_cloth_bend_mode_get_type()=) | =LRG_CLOTH_BEND_NONE=, =LRG_CLOTH_BEND_DISTANCE=, =LRG_CLOTH_BEND_DIHEDRAL= |
+| =LrgClothLraMode= (=lrg_cloth_lra_mode_get_type()=) | =LRG_CLOTH_LRA_NONE=, =LRG_CLOTH_LRA_EUCLIDEAN=, =LRG_CLOTH_LRA_GEODESIC= |
+| =LrgClothColliderKind= (=lrg_cloth_collider_kind_get_type()=) | =LRG_CLOTH_COLLIDER_SPHERE=, =LRG_CLOTH_COLLIDER_CAPSULE=, =LRG_CLOTH_COLLIDER_PLANE=, =LRG_CLOTH_COLLIDER_BOX= |
+| =LrgClothConstraintKind= (=lrg_cloth_constraint_kind_get_type()=) | =LRG_CLOTH_CONSTRAINT_EDGE=, =LRG_CLOTH_CONSTRAINT_BEND=, =LRG_CLOTH_CONSTRAINT_LRA=, =LRG_CLOTH_CONSTRAINT_ATTACHMENT= |
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: api-properties
+:END:
+All read-write with =G_PARAM_EXPLICIT_NOTIFY= (=notify= only on real changes) except =vertex-count=.
+
+| Property | Type | Default | Meaning |
+|----------+------+---------+---------|
+| =substeps= | uint 1..64 | 8 | substeps per step |
+| =stretch-compliance= | float >= 0 | 0 | relative compliance of structural edges |
+| =shear-compliance= | float >= 0 | 0.5 | relative compliance of quad diagonals |
+| =bend-compliance= | float >= 0 | 1 | relative compliance of bend constraints |
+| =bend-mode= | =LrgClothBendMode= | distance | bending model |
+| =shear-edges= | boolean | FALSE | also constrain the second quad diagonal (Jolt's shear edges) |
+| =lra-mode= | =LrgClothLraMode= | geodesic | long-range attachments |
+| =lra-multiplier= | float 1..10 | 1 | allowed slack of the attachments |
+| =damping= | float | 0.1 | linear damping per second |
+| =drag= | float | 1 | aerodynamic drag coefficient (0: no wind, no air) |
+| =friction= | float | 0.3 | friction against colliders and bodies |
+| =thickness= | float (m) | 0.01 | particle radius for collision |
+| =density= | float (kg/m²) | 0.25 | surface density |
+| =self-collision= | boolean | FALSE | particle-particle collision |
+| =self-collision-distance= | float (m) | 0.02 | minimum particle spacing |
+| =max-speed= | float (m/s) | 50 | particle speed cap |
+| =vertex-count= | uint, read only | 0 | particles |
+
+*** Construction and geometry
+:PROPERTIES:
+:CUSTOM_ID: api-geometry
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_cloth_new()= | an empty cloth |
+| =lrg_cloth_new_grid (columns, rows, width, height)= | a grid in local XY: vertex (c, r) at (c w/(columns-1), -r h/(rows-1), 0), row 0 on top; NULL for fewer than 2 x 2 or a non-positive size |
+| =lrg_cloth_set_grid (self, columns, rows, origin, u_step, v_step, error)= | any regular grid: vertex =r * columns + c= at =origin + c u + r v=, UV (c/(columns-1), r/(rows-1)), quads split along alternating diagonals; clears pins and velocities, keeps colliders and parameters |
+| =lrg_cloth_set_mesh (self, n_vertices, positions, texcoords, n_indices, indices, error)= | a welded triangle mesh (3 .. 1048576 vertices; degenerate or out-of-range triangles fail with =LRG_CLOTH_ERROR_INVALID= and change nothing) |
+| =lrg_cloth_get_vertex_count()=, =lrg_cloth_get_triangle_count()= | sizes |
+| =lrg_cloth_get_grid_index (self, column, row)= | vertex index of a grid cell, =G_MAXUINT= outside or for a mesh |
+| =lrg_cloth_get_grid_size (self, &columns, &rows)= | TRUE for a grid |
+
+*** Placement
+:PROPERTIES:
+:CUSTOM_ID: api-placement
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_cloth_set_transform (self, matrix)= / =lrg_cloth_get_transform()= | local-to-world, column-major 16 floats (NULL: identity) |
+| =lrg_cloth_reset()= | every particle to its rest position (or its target) under the current transform and bones, velocities zero; forgets transform and bone motion |
+
+*** Pins and bones
+:PROPERTIES:
+:CUSTOM_ID: api-pins
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_cloth_pin (self, index)= | hard pin at the rest position |
+| =lrg_cloth_pin_at (self, index, local_position, max_distance)= | pin to a local point (NULL: rest), 0 hard, more a tether |
+| =lrg_cloth_attach_to_bone (self, index, bone, bone_offset, max_distance)= | attach to a bone; NULL offset keeps the vertex's rest place on the current bone matrix (set the bones first) |
+| =lrg_cloth_unpin()=, =lrg_cloth_unpin_all()= | free vertices again |
+| =lrg_cloth_is_pinned()= | any pin or attachment |
+| =lrg_cloth_get_attachment_bone()= | the bone, or =LRG_CLOTH_NO_BONE= |
+| =lrg_cloth_set_bone_matrices (self, matrices, n_bones)= | current bone matrices (cloth-local, 16 floats each, up to 1024 bones; NULL clears) |
+| =lrg_cloth_set_bone_matrices_from_skeleton (self, skeleton)= | the same from an =LrgSkeleton='s world poses; returns the bone count |
+| =lrg_cloth_get_bone_count()= | bones set |
+
+*** Colliders and the world
+:PROPERTIES:
+:CUSTOM_ID: api-colliders
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_cloth_add_sphere (self, center, radius)= | returns an id (=G_MAXUINT= on bad arguments) |
+| =lrg_cloth_add_capsule (self, a, b, radius)= | segment ends and radius |
+| =lrg_cloth_add_plane (self, normal, offset)= | keeps particles where =dot (n, x) >= offset= |
+| =lrg_cloth_add_box (self, center, half_extents, rotation)= | oriented box (quaternion xyzw, NULL axis aligned) |
+| =lrg_cloth_set_collider_transform (self, id, matrix)= | rigid matrix applied to the collider's geometry |
+| =lrg_cloth_set_collider_bone (self, id, bone)= | geometry relative to a bone (=LRG_CLOTH_NO_BONE= for world) |
+| =lrg_cloth_remove_collider()=, =lrg_cloth_clear_colliders()=, =lrg_cloth_get_collider_count()=, =lrg_cloth_get_collider_kind()= | bookkeeping |
+| =lrg_cloth_set_dynamics_world (self, world, layer_mask)= / =lrg_cloth_get_dynamics_world()= | collide with the bodies of an =LrgDynamicsWorld= (referenced; NULL detaches) |
+
+*** Parameters and simulation
+:PROPERTIES:
+:CUSTOM_ID: api-simulation
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_cloth_set_gravity()= / =lrg_cloth_get_gravity()= | acceleration (default 0, -9.81, 0) |
+| =lrg_cloth_set_wind()= / =lrg_cloth_get_wind()= | air velocity |
+| =lrg_cloth_set_substeps()= / =lrg_cloth_get_substeps()= | substeps (clamped) |
+| =lrg_cloth_set_compliance (self, stretch, shear, bend)= | all three compliances (clamped >= 0) |
+| =lrg_cloth_step (self, dt)= | advance |
+| =lrg_cloth_get_max_stretch()= | largest current/rest length ratio over structural edges (1 unstretched) |
+| =lrg_cloth_get_constraint_count (self, kind)= | constraints of a family |
+| =lrg_cloth_get_kinetic_energy()= | ½ m v² over free particles |
+| =lrg_cloth_get_total_mass()= | mass of the free particles |
+| =lrg_cloth_get_contact_count()= | particles that touched a collider or body in the last step |
+
+*** State
+:PROPERTIES:
+:CUSTOM_ID: api-state
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_cloth_get_positions()=, =lrg_cloth_get_velocities()=, =lrg_cloth_get_normals()= (area-weighted, lazily recomputed), =lrg_cloth_get_texcoords()=, =lrg_cloth_get_rest_positions()=, =lrg_cloth_get_indices()= | borrowed arrays, valid until the geometry changes |
+| =lrg_cloth_get_position()= / =lrg_cloth_set_position (self, index, position, keep_velocity)= | one particle (grabbing cloth with the mouse) |
+| =lrg_cloth_apply_impulse()= | kick a free particle (N·s) |
+| =lrg_cloth_get_bounds()= | world AABB of the particles |
+
+*** Rendering
+:PROPERTIES:
+:CUSTOM_ID: api-rendering
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_cloth_create_mesh (self, error)= | a =GrlMesh= (positions, normals, UVs, colours, triangles) uploaded with dynamic buffers; world space, draw with identity; needs GL and at most 65535 vertices |
+| =lrg_cloth_update_mesh (self, mesh)= | stream positions and normals into it (CPU arrays and =UpdateMeshBuffer()=) |
+| =lrg_cloth_draw (self, color, texture)= | quick draw inside =BeginMode3D()=: the cloth's own mesh, double sided, a fixed key light baked into vertex colours |
+| =lrg_cloth_release_mesh()= | drop that mesh before closing the window |
+| =lrg_cloth_debug_draw (self, draw, draw_colliders)= | structural edges (red past 10 % stretch), pins and colliders into an =LrgDebugDraw= |
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** A flag in the wind
+:PROPERTIES:
+:CUSTOM_ID: example-flag
+:END:
+#+begin_src c
+g_autoptr(LrgCloth) flag = lrg_cloth_new_grid (36, 24, 2.4f, 1.6f);   /* 2.4 x 1.6 m */
+gfloat              pole[16];
+guint               r;
+
+lrg_math3d_identity (pole);
+pole[12] = -3.5f; pole[13] = 3.5f;                 /* top of the pole */
+lrg_cloth_set_transform (flag, pole);
+lrg_cloth_reset (flag);                             /* start flat at the pole */
+for (r = 0; r < 24; r++)                            /* the left column is the hoist */
+	lrg_cloth_pin (flag, lrg_cloth_get_grid_index (flag, 0, r));
+
+while (!WindowShouldClose ())
+{
+	gfloat wind[3] = { 9.0f * (1.0f + 0.4f * sinf (t * 2.1f)), 0.0f, 2.5f * sinf (t * 0.9f) };
+
+	lrg_cloth_set_wind (flag, wind);
+	lrg_cloth_step (flag, 1.0f / 60.0f);
+	BeginDrawing ();
+	BeginMode3D (camera);
+	lrg_cloth_draw (flag, &(GrlColor) { 200, 40, 40, 255 }, NULL);
+	EndMode3D ();
+	EndDrawing ();
+}
+lrg_cloth_release_mesh (flag);
+#+end_src
+
+*** A cape on a character
+:PROPERTIES:
+:CUSTOM_ID: example-cape
+:END:
+#+begin_src c
+/* Cape mesh authored in the character's model space; bone 5 is the upper spine. */
+lrg_cloth_set_mesh (cape, n, positions, uvs, n_idx, indices, &error);
+lrg_skeleton_calculate_world_poses (skeleton);
+lrg_cloth_set_bone_matrices_from_skeleton (cape, skeleton);
+for (i = 0; i < n_shoulder; i++)                      /* shoulder row rides the spine */
+	lrg_cloth_attach_to_bone (cape, shoulder[i], 5, NULL, 0.0f);
+for (i = 0; i < n_hem; i++)                           /* the hem may swing 30 cm */
+	lrg_cloth_attach_to_bone (cape, hem[i], 5, NULL, 0.3f);
+id = lrg_cloth_add_capsule (cape, hip_a, hip_b, 0.18f);   /* in bone space */
+lrg_cloth_set_collider_bone (cape, id, 2);                 /* the pelvis */
+
+/* every fixed step */
+lrg_cloth_set_transform (cape, entity_world_matrix);
+lrg_skeleton_calculate_world_poses (skeleton);
+lrg_cloth_set_bone_matrices_from_skeleton (cape, skeleton);
+lrg_cloth_step (cape, step);
+#+end_src
+
+*** A tablecloth on physics bodies
+:PROPERTIES:
+:CUSTOM_ID: example-tablecloth
+:END:
+#+begin_src c
+gfloat origin[3] = { -1.0f, 1.2f, -0.75f };
+gfloat u[3] = { 2.0f / 39.0f, 0.0f, 0.0f };
+gfloat v[3] = { 0.0f, 0.0f, 1.5f / 29.0f };
+
+lrg_cloth_set_grid (cloth, 40, 30, origin, u, v, NULL);   /* horizontal, nothing pinned */
+lrg_cloth_set_dynamics_world (cloth, physics, LRG_PHYSICS_LAYERS_ALL);   /* falls onto the table body */
+g_object_set (cloth, "friction", 0.6f, "self-collision", TRUE, NULL);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Measured by =tests/test-cloth.c= (=/cloth/perf=, release build, pinned with =taskset -c 3= on a machine with a load average of 22): a 32 x 32 cloth (1024 particles, 2945 mesh edges, 1860 distance bends, 992 long-range attachments, a sphere collider, drag on) runs 3.7 .. 3.9 substeps per millisecond, about 2.0 .. 2.2 ms per 8-substep step (unpinned under the same load: 2.3 .. 3.9 substeps/ms). Cost is linear in particles x substeps; aerodynamics adds one pass over the triangles per substep (=drag= 0 skips it), self-collision one hash build and a 27-cell search per particle per substep, world collision one GJK/EPA per particle near a body per step. Normals are computed lazily only when read or drawn.
+
+Tips: halve the resolution before raising substeps; keep =drag= at 0 for indoor cloth; give characters a handful of capsule colliders rather than world collision.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Weld your mesh.* Vertices duplicated at UV seams are separate particles: the cloth tears along the seam.
+- *Reset after the first transform.* A new cloth's particles sit at the rest shape under the identity transform; set the transform, then =lrg_cloth_reset()=.
+- *Stiff shear on fine meshes oscillates.* Rigid quad diagonals together with rigid edges over-constrain the quad; keep =shear-compliance= above about 0.1 and leave =shear-edges= off unless you need symmetric shear.
+- *Dihedral bending at zero compliance* jitters on fine meshes; prefer distance bending, or a dihedral compliance of 1 or more.
+- *Wind blowing along the cloth does nothing.* Drag acts along the triangle normals; a flag streams out because it is not perfectly flat. A tiny cross wind component makes the motion livelier.
+- *World collision is one way.* Bodies are not pushed by cloth; use colliders for things the cloth should wrap tightly (they are tested every substep, world planes only once per step).
+- *Rendering is in world space.* Draw the mesh of =lrg_cloth_create_mesh()= with an identity model matrix.
+- *Drawing a skinned mesh with cloth vertices* is not supported directly: =LrgSkinnedMesh= has no setter for CPU positions. Build the cloth from the garment's geometry and draw it with =lrg_cloth_draw()= or its =GrlMesh=.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+Cloth is placed through [[file:../world3d/components.org::#cloth-component][LrgClothComponent]]: in a =.rlevel= it is a component on a node (all properties are GObject properties, so the inspector and node param bags can edit them). The collider gizmos and the cloth paint tools (pins, tether distances) arrive with the editor wave of 0.9.0.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-cloth.c=: constraint counts of a grid in every mode; mesh validation; a 32 x 32 cloth released horizontally and pinned along an edge never stretches more than 10 % and settles below 5 %; kinetic energy of a swinging cloth never exceeds the available potential energy and decays; sphere, capsule, plane and rotated-box collision keep every particle outside by the thickness; a static box body of an =LrgDynamicsWorld= holds a dropped cloth; a hard bone attachment follows a moving bone exactly while the rest of the cloth follows and a soft tether stays within its distance; transform-driven pins; wind pushes a flag downwind; two identical runs are bit-identical; mesh creation fails headless; the substep rate; and =LrgClothComponent= (grid, pins, entity following, render item, physics collision).
+
+** Credits
+:PROPERTIES:
+:CUSTOM_ID: credits
+:END:
+Constraint construction, closest-kinematic search, dihedral bend, skinned-constraint clamp, edge and long-range attachment projection and the collision response are translated from Jolt Physics (=Jolt/Physics/SoftBody/SoftBodySharedSettings.cpp=, =SoftBodyMotionProperties.cpp=), MIT, Copyright 2021 Jorrit Rouwe. Bend gradients: Müller et al., "Strain Based Dynamics", appendix A; Bridson et al., "Simulation of Clothing with Folds and Wrinkles". Friction: Müller et al., "Detailed Rigid Body Simulation with Extended Position Based Dynamics", 3.6. Spatial hash: Müller, "Ten Minute Physics".
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:fracture.org][LrgFracture]] (the other soft-ish part of the physics module)
+- [[file:dynamics.org][LrgDynamicsWorld]], [[file:physics-shape.org][LrgPhysicsShape]], [[file:collide.org][collision]]
+- [[file:rope.org][LrgRope]] (a simpler verlet chain)
+- [[file:../../guides/physics.org::#soft][Physics guide: cloth and destruction]]

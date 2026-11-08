@@ -1,0 +1,285 @@
+* Hot reload
+:PROPERTIES:
+:CUSTOM_ID: hot-reload
+:END:
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: hot-reload-overview
+:END:
+
+=LrgScriptReloader= re-executes changed Lua, Python, GJS and Crispy scripts inside contexts that are already running. A =GFileMonitor= watches files and directories. Each successful reload calls the state hand-over hooks =on_before_reload= and =on_reload= (=LRG_SCRIPT_HOOK_BEFORE_RELOAD= and =LRG_SCRIPT_HOOK_RELOAD=). A syntax error, or a failed top-level run on Lua and Python, leaves the previous code in place and reports =file:line=.
+
+The type is created with lrg_script_reloader_new. The process-wide instance is lrg_script_reloader_get_default. There is no =docs/guides/scripting.org=; this page is the guide.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: hot-reload-concepts
+:END:
+
+*** What gets reloaded
+:PROPERTIES:
+:CUSTOM_ID: hot-reload-what
+:END:
+
+lrg_script_reloader_reload_file reloads one path in every live =LrgScripting= for which lrg_scripting_has_loaded_file is true. Zero matching contexts is success. lrg_script_reloader_process_pending returns how many due paths reloaded and increased the reload count.
+
+Lua and Python override =reload_file=. They compile (Lua: =luaL_loadfile=, Python: =Py_CompileString=) before mutating the running state, snapshot globals, run the new chunk in the same state, then call =on_reload=. GJS and Crispy use the base hand-over: the hook return value crosses as a =GValue=, then =load_file= runs the new source. A Crispy compile failure returns before the new unit is added, so the previous unit stays. A later Crispy unit shadows earlier symbols of the same name. A GJS =SyntaxError= fails the whole eval. A GJS runtime error inside the wrapper can already have mutated the scope; that backend does not roll the scope back.
+
+*** State hand-over
+:PROPERTIES:
+:CUSTOM_ID: hot-reload-state
+:END:
+
+Before the new source runs, the context calls =on_before_reload= with no arguments if that function exists. After a successful run it calls =on_reload= with the saved value (nil or =None= when the old code had no hook). Lua and Python keep that value native: a table or dict is the same object. Other backends pass one =GValue=. A failing =on_before_reload= is logged and is not fatal. A failing =on_reload= on Lua and Python restores the snapshot and fails the reload.
+
+Python must assign kept names with =global=. Crispy and native modules keep state in the compilation unit, so the new unit's =on_reload= is what stores the argument. =LrgScriptable= has no separate save/restore vfunc; the hooks are the hand-over.
+
+The Lua and Python snapshot is shallow and is taken after =on_before_reload=. Replacing a global comes back on failure. Mutating fields inside a table or dict that already existed does not.
+
+*** Watches
+:PROPERTIES:
+:CUSTOM_ID: hot-reload-watches
+:END:
+
+lrg_script_reloader_watch_path watches a file or a directory. Directories are walked, including directories created later. =GFileMonitor= itself is not recursive. The first watch captures the thread-default =GMainContext= and creates monitors on that context. A missing path fails with =G_IO_ERROR_NOT_FOUND=. lrg_script_reloader_unwatch_path removes one watch. lrg_script_reloader_get_watched_paths returns the canonical paths, sorted.
+
+lrg_script_reloader_watch_scripting follows one context's loaded files and search paths. lrg_script_reloader_unwatch_scripting stops following that context. lrg_script_reloader_set_watch_all and lrg_script_reloader_get_watch_all attach the same follow to every context created afterwards, and to the ones that already exist. The instance hook is registered only while watch-all is true.
+
+lrg_script_reloader_set_enabled and lrg_script_reloader_get_enabled gate reloads. While disabled, file events still emit =changed= and do not queue a reload.
+
+lrg_script_reloader_set_debounce_ms and lrg_script_reloader_get_debounce_ms set the trailing delay. The default is 100 ms. Zero reloads on the next lrg_script_reloader_process_pending after the monitor callback has run inside that call's main-context iteration.
+
+*** Signals and errors
+:PROPERTIES:
+:CUSTOM_ID: hot-reload-signals
+:END:
+
+=changed= (=filename=) fires for a monitor event even when reloads are disabled. Deletes emit =changed= and do not queue a reload. =reloaded= (=LrgScripting=, =filename=) fires after each context accepts the new code. =reload-failed= (=LrgScripting=, =filename=, =message=) fires when a context keeps the old code. lrg_script_reloader_dup_last_error is =file:line: message= from lrg_scripting_get_error_location, or =NULL= after a reload in which every context succeeded. lrg_script_reloader_get_reload_count and lrg_script_reloader_get_failure_count count those outcomes since the reloader was created.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: hot-reload-api
+:END:
+
+*** lrg_script_reloader_new
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_new
+:END:
+
+Creates a reloader with no watches, enabled, and a 100 ms debounce. Transfer full.
+
+*** lrg_script_reloader_get_default
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_get_default
+:END:
+
+The process-wide reloader. Transfer none. Play-in-editor and tool scripts share it.
+
+*** lrg_script_reloader_watch_path
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_watch_path
+:END:
+
+Watch a file or directory tree. =FALSE= and a =GError= when the path does not exist.
+
+*** lrg_script_reloader_unwatch_path
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_unwatch_path
+:END:
+
+Drop the watch for that path.
+
+*** lrg_script_reloader_watch_scripting
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_watch_scripting
+:END:
+
+Follow one context's loaded files and search paths.
+
+*** lrg_script_reloader_unwatch_scripting
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_unwatch_scripting
+:END:
+
+Stop following that context.
+
+*** lrg_script_reloader_set_watch_all
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_set_watch_all
+:END:
+
+When true, every current and future context is followed. When false, only future automatic follows stop; explicit watches remain.
+
+*** lrg_script_reloader_get_watch_all
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_get_watch_all
+:END:
+
+Whether watch-all is on.
+
+*** lrg_script_reloader_set_enabled
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_set_enabled
+:END:
+
+Turn queued reloads on or off. =changed= still fires while disabled.
+
+*** lrg_script_reloader_get_enabled
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_get_enabled
+:END:
+
+Whether queued reloads run.
+
+*** lrg_script_reloader_set_debounce_ms
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_set_debounce_ms
+:END:
+
+Trailing delay in milliseconds before a queued path is reloaded. Zero means the next lrg_script_reloader_process_pending.
+
+*** lrg_script_reloader_get_debounce_ms
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_get_debounce_ms
+:END:
+
+The current debounce, in milliseconds.
+
+*** lrg_script_reloader_reload_file
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_reload_file
+:END:
+
+Reload =path= now in every live context that loaded it. =TRUE= when every such reload succeeded.
+
+*** lrg_script_reloader_process_pending
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_process_pending
+:END:
+
+Iterate the captured main context when it can be acquired, then reload paths whose debounce has elapsed. Returns the number of paths that reloaded successfully.
+
+*** lrg_script_reloader_get_reload_count
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_get_reload_count
+:END:
+
+Successful context reloads since creation.
+
+*** lrg_script_reloader_get_failure_count
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_get_failure_count
+:END:
+
+Failed context reloads since creation.
+
+*** lrg_script_reloader_dup_last_error
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_dup_last_error
+:END:
+
+=file:line: message= for the latest failure, or =NULL=. Transfer full.
+
+*** lrg_script_reloader_get_watched_paths
+:PROPERTIES:
+:CUSTOM_ID: lrg_script_reloader_get_watched_paths
+:END:
+
+Sorted canonical paths. Transfer full =GStrv=.
+
+** Worked example
+:PROPERTIES:
+:CUSTOM_ID: hot-reload-example
+:END:
+
+The game thread has no =GMainLoop=. It drains the reloader once per frame. The script keeps =kept= across a successful edit and keeps the previous =behavior= when the new file does not parse.
+
+#+begin_src C
+static void
+on_reloaded (LrgScriptReloader *reloader,
+             LrgScripting      *scripting,
+             const gchar       *path,
+             gpointer           user_data)
+{
+	(void) reloader;
+	(void) scripting;
+	(void) user_data;
+	g_message ("reloaded %s", path);
+}
+
+static void
+frame (LrgScriptReloader *reloader)
+{
+	lrg_script_reloader_process_pending (reloader);
+}
+#+end_src
+
+#+begin_src lua
+function on_before_reload()
+    return kept
+end
+
+function on_reload(saved)
+    kept = saved
+end
+#+end_src
+
+#+begin_src python
+def on_before_reload():
+    return kept
+
+def on_reload(saved):
+    global kept
+    kept = saved
+#+end_src
+
+Wire it once:
+
+#+begin_src C
+LrgScriptReloader *reloader;
+GError *error = NULL;
+
+reloader = lrg_script_reloader_get_default ();
+lrg_script_reloader_set_debounce_ms (reloader, 100);
+lrg_script_reloader_watch_scripting (reloader, scripting);
+g_signal_connect (reloader, "reloaded", G_CALLBACK (on_reloaded), NULL);
+if (!lrg_script_reloader_reload_file (reloader, path, &error))
+	g_warning ("%s", error->message);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: hot-reload-performance
+:END:
+
+A reload costs one compile plus one run of the file in each context that loaded it. Lua and Python also copy the top level of the globals table or dict. The copy does not walk into nested tables. Directory watches are one monitor per directory, not one poll of the tree. Debounce collapses a burst of editor writes into one reload. lrg_script_reloader_process_pending does no work when nothing is queued. Call it once per frame from the thread that owns the captured main context.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: hot-reload-pitfalls
+:END:
+
+- In-place mutation of an existing Lua table or Python dict is not restored when the new file fails. Put the values you need to keep in the hook return value.
+- Python =on_reload= that writes =kept= without =global= stores a local and the old global remains. The reload then looks like it dropped state.
+- GJS has no snapshot. A runtime error after a partial assignment can leave a mix of old and new bindings. A syntax error does not.
+- Crispy statics live in the loaded unit. The new unit starts from its own initializers; =on_reload= must copy the saved =GValue= into those statics. =on_before_reload= and =on_reload= use the =LrgNativeFunction= ABI.
+- =g_warning= is fatal under GTest. Hook failures inside the library are =lrg_debug=, not warnings. The =GError= from lrg_script_reloader_reload_file is the caller's to report.
+- Monitors are bound to the main context of the first watch. Creating the first watch on a thread that is not pumped, and never calling lrg_script_reloader_process_pending, drops events on the floor.
+- lrg_script_reloader_dup_last_error is cleared only when a later reload of a path fully succeeds.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: hot-reload-editor
+:END:
+
+Play-in-editor and the code panel do not need a new C hook. On save, call lrg_script_reloader_reload_file on lrg_script_reloader_get_default with the saved path. Connect to =reloaded= for one console line and to =reload-failed= for the diagnostic. lrg_script_reloader_set_watch_all on that default reloader covers tool scripts and contexts created while the game is running. The editor iterates its own main context; a game that is not on that context still calls lrg_script_reloader_process_pending from its frame. No editor source patch is required for this.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: hot-reload-see-also
+:END:
+
+- [[file:scripting.org][LrgScripting]] for =load_file=, =call_function= and =reload_file=
+- [[file:script-debugger.org][Script debugger]] for breakpoints in the same running contexts
+- [[file:scripting-native.org][Native and Crispy]] for the =LrgNativeFunction= hook ABI

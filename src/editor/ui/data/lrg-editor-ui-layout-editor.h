@@ -173,4 +173,24 @@ void lrg_editor_ui_layout_editor_set_pick_mode (LrgEditorUiLayoutEditor *self,
 LRG_AVAILABLE_IN_ALL
 guint lrg_editor_ui_layout_editor_get_n_outline_rows (LrgEditorUiLayoutEditor *self);
 
+/**
+ * lrg_editor_ui_layout_editor_place:
+ * @self: a UI layout editor
+ * @widget: the widget `name:`
+ * @x: new x
+ * @y: new y
+ * @error: (nullable): return location for a #GError
+ *
+ * Rewrites the widget's x and y with lrg_ui_layout_place() and replaces
+ * the document. The preview's mouse-up calls this after a drag.
+ *
+ * Returns: %TRUE when the document changed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_ui_layout_editor_place (LrgEditorUiLayoutEditor  *self,
+                                            const gchar              *widget,
+                                            gfloat                    x,
+                                            gfloat                    y,
+                                            GError                  **error);
+
 G_END_DECLS

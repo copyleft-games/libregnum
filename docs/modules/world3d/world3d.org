@@ -1,0 +1,566 @@
+#+title: LrgWorld3D
+#+description: The runtime 3D world: entity tree, GUID map, frame phases, fixed-step accumulator, render lists, light/camera registries, spatial queries.
+
+* LrgWorld3D
+:PROPERTIES:
+:CUSTOM_ID: lrgworld3d
+:END:
+=LrgWorld3D= (=src/world3d/lrg-world3d.h=, final =GObject=) runs a 3D scene made of [[file:entity3d.org][LrgEntity3D]] nodes and their =LrgComponent= behaviours. The same header defines the *render-list contract* between components and renderers (=LrgRenderList=, =LrgRenderItem=) and the light description renderers consume (=LrgLight3DDesc=).
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+A world owns one *root entity* (named ="root"=, =lrg_world3d_get_root()=). Everything in the root's subtree is "in the world". Design decision: a single root rather than a list of roots, so every hierarchy operation (reparent with keep-world, path lookup, walks) is uniform and "top-level entity" simply means "child of the root". The root itself is never counted, never in the GUID map unless you give it a GUID, never indexed spatially, and must not be removed.
+
+The world maintains, automatically as entities join and leave:
+
+- a GUID to entity map (O(1) =lrg_world3d_find_by_guid()=),
+- an =LrgOctree= of entity world bounds (re-indexed lazily),
+- a coalesced queue of moved entities (=transform-changed=),
+- light and camera registries and the audio listener.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Frame phase order
+:PROPERTIES:
+:CUSTOM_ID: phase-order
+:END:
+#+begin_example
+ lrg_world3d_step (world, dt)           (skipped while :paused)
+ │
+ ├─ 1. fixed_update   accumulator += dt
+ │      while accumulator >= fixed-step and n < max-substeps:
+ │          every enabled component of every active entity: fixed_update(step)
+ │          flush transform-changed
+ │          accumulator -= step ; fixed_time += step
+ │      leftover >= step (hitch)  ->  dropped (accumulator %= step)
+ │
+ ├─ 2. update         update(dt) on every enabled component   -> flush
+ │
+ ├─ 3. late_update    late_update(dt) on every enabled component -> flush
+ │
+ └─ (per camera / per frame, by the game or LrgWorld3DRenderer)
+    4. collect_render(camera, list)  -> flush, clear list, set view,
+       walk active+visible entities in the cull mask, components'
+       collect_render(list), add lights, sort
+    5. renderer replays the list per pass (depth, shadow maps, colour)
+#+end_example
+
+Walk order in every phase: depth first, pre-order (a parent before its children), components in attach order. Inactive entities skip their whole subtree; disabled components are skipped. Children and components are snapshotted (with references) per entity, so a component may spawn or destroy entities during a phase: new entities run next frame; an entity reparented away mid-phase is skipped for the rest of the phase.
+
+The three phases are also public individually (=lrg_world3d_fixed_update()=, =lrg_world3d_update()=, =lrg_world3d_late_update()=) for games that need custom ordering (for example physics between fixed update and update). They run even while =paused=; only =lrg_world3d_step()= honours it.
+
+*** Fixed-step accumulator
+:PROPERTIES:
+:CUSTOM_ID: fixed-step
+:END:
+- =fixed-step= (default 1/60 s) and =max-substeps= (default 8) are properties.
+- The number of fixed updates depends only on accumulated time, not on frame pacing: 60 frames of 1/60 s and 25 frames alternating 30/50 ms both give ~50 substeps at 0.02 s (± one for float rounding). =lrg_world3d_fixed_update()= returns the substep count.
+- =lrg_world3d_get_fixed_alpha()= (= accumulator / step, in [0, 1)) is the blend factor for interpolating rendered transforms between the last two fixed states.
+- =lrg_world3d_get_time()= sums =update= deltas; =lrg_world3d_get_fixed_time()= sums executed substeps.
+
+*** Membership and component world hooks
+:PROPERTIES:
+:CUSTOM_ID: membership
+:END:
+#+begin_example
+ add_child / add_entity (subtree joins, parents first)
+   for each entity:  GUID map += ; spatial record ; components.world_entered(world)
+                     emit LrgWorld3D::entity-added
+ remove_child / remove_entity / clear (subtree leaves, children first)
+   for each entity:  emit LrgWorld3D::entity-removed
+                     components.world_exited(world)  (reverse attach order)
+                     octree -= ; GUID map -= ; audio listener cleared if it was this
+#+end_example
+
+Light, camera and listener components use =world_entered= / =world_exited= to register and unregister themselves. Adding a component to an entity that is already in a world calls =world_entered= immediately.
+
+*** Render lists: the contract for renderer and component authors
+:PROPERTIES:
+:CUSTOM_ID: render-list-contract
+:END:
+An =LrgRenderList= is a flat, by-value array of =LrgRenderItem= records plus four index lists and a light array:
+
+#+begin_example
+ LrgRenderList
+ ├── items[]          LrgRenderItem by value (pointers stable until add/clear)
+ ├── OPAQUE[]         indices, sorted (sort_key, near -> far)
+ ├── CUTOUT[]         indices, sorted (sort_key, near -> far)
+ ├── TRANSPARENT[]    indices, sorted far -> near
+ ├── SHADOW_CASTER[]  indices, sorted sort_key; NOT frustum culled
+ ├── lights[]         LrgLight3DDesc by value (enabled, layer_mask & cull_mask)
+ └── view             eye[3], cull_mask, view_projection[16] (optional)
+#+end_example
+
+*Component side* (inside =collect_render (self, list)=):
+
+1. Start from =lrg_render_item_init_for_entity (&item, entity, self)= (world matrix, layer, entity/component back-pointers, defaults: opaque, casts and receives shadows, white, unknown bounds).
+2. Set =kind= and the handle(s): =PRIMITIVE= (=primitive= + =params=), =MESH= (=mesh=, a =GrlMesh=), =MODEL= (=model=, a =GrlModel=, =mesh_index= -1 for all), =BILLBOARD= (=texture=, =params[0..1]= size), or =CUSTOM= (=draw_func= + =user_data=).
+3. Set =material= (an =LrgMaterial3D= now; =LrgMaterial= from M2), =color=, =flags=, =sort_key=.
+4. Set bounds with =lrg_render_item_set_local_bounds()= (or leave them unknown: never culled).
+5. =if (lrg_render_list_accepts (list, &item)) lrg_render_list_add (list, &item);=
+
+Handles are *borrowed*: the component keeps them alive at least until the list is cleared (normally the next frame's collect). =user_data= is *owned* by the list once added: =user_data_destroy= runs on clear/free.
+
+Categorisation: =TRANSPARENT= flag wins, then =CUTOUT=, else =OPAQUE=. Items with =CAST_SHADOW= are also in =SHADOW_CASTER=. A caster outside the camera frustum is accepted but only lands in =SHADOW_CASTER= (it can still shadow visible geometry). =NO_CULL= skips the frustum test; unknown bounds (=min > max=) are never frustum culled. The layer test always applies.
+
+*Renderer side*: call =lrg_world3d_collect_render (world, camera, list)= once per camera per frame, then replay each category per pass with =lrg_render_list_foreach()= (or index it with =lrg_render_list_get_n_items()= / =lrg_render_list_get_item()=). Read lights with =lrg_render_list_get_n_lights()= / =lrg_render_list_get_light()=, and the view with =lrg_render_list_get_eye()=, =lrg_render_list_get_cull_mask()=, =lrg_render_list_get_view_projection()=. Reuse one list per camera so its arrays stay allocated.
+
+Camera handling in collection: the cull mask comes from =lrg_camera_get_cull_mask()= (any =LrgCamera=); for an =LrgCamera3D= the eye is its position and, when =frustum-culling= is on, the view-projection is built from position/target/up/fovy/aspect with near 0.05 and far 10000 (=LrgCamera3D= has no clip-plane properties); orthographic cameras use =fovy= as the view height. =NULL= camera: eye at the origin, all layers, no frustum.
+
+*** Lights
+:PROPERTIES:
+:CUSTOM_ID: lights
+:END:
+=LrgLight3DDesc= is a plain boxed struct a light component fills from its properties and its entity's world transform (=lrg_entity3d_get_world_position()=, =lrg_entity3d_get_forward()=) and pushes with =lrg_world3d_register_light (world, G_OBJECT (component), &desc)=. Calling it again for the same source updates in place (order is stable). The registry stores a copy and no reference on the source: unregister in =world_exited=. Collection copies enabled lights whose =layer_mask= intersects the camera mask into the list.
+
+| field          | meaning                                                           |
+|----------------+-------------------------------------------------------------------|
+| =kind=         | =LRG_LIGHT3D_DIRECTIONAL=, =LRG_LIGHT3D_POINT=, =LRG_LIGHT3D_SPOT= |
+| =color[3]=     | linear RGB 0..1                                                   |
+| =intensity=    | multiplier                                                        |
+| =range=        | attenuation range (point/spot)                                    |
+| =inner_angle=  | spot full-intensity half-angle, radians                           |
+| =outer_angle=  | spot cutoff half-angle, radians                                   |
+| =cast_shadows= | renderer should render a shadow map                               |
+| =enabled=      | contributes at all                                                |
+| =position[3]=  | world position                                                    |
+| =direction[3]= | unit world direction the light travels (entity forward, -Z)       |
+| =layer_mask=   | layers it lights                                                  |
+| =source=       | registering object (set by the registry)                          |
+
+Defaults from =lrg_light3d_desc_init()= / =lrg_light3d_desc_new()=: enabled white point light, intensity 1, range 10, cone 30°/45°, no shadows, origin, direction (0, 0, -1), all layers. =lrg_light3d_desc_copy()= / =lrg_light3d_desc_free()= manage heap copies (=g_autoptr= supported).
+
+*** Cameras and the audio listener
+:PROPERTIES:
+:CUSTOM_ID: cameras
+:END:
+Camera components register their =LrgCamera= with a priority (=lrg_world3d_register_camera()=, the world holds a reference). =lrg_world3d_get_active_camera()= returns the camera forced with =lrg_world3d_set_active_camera()=, else the highest priority (earliest registered on ties), else =NULL=. The audio listener (=lrg_world3d_set_audio_listener()=) is a weak entity pointer cleared automatically when the entity leaves.
+
+*** The world's look: environment and post stack
+:PROPERTIES:
+:CUSTOM_ID: look
+:END:
+A world carries the look it is rendered with (0.9.0): an [[file:../lighting/environment.org][LrgEnvironment]] (sky, image-based lighting, ambient, fog, volumetric fog, reflection probes) and an [[file:../postprocess/post-stack.org][LrgPostStack]] (the =.rpost= post-processing chain). Both are plain references the world holds; it does nothing with them itself.
+
+- =lrg_world3d_set_environment (world, env)= / =lrg_world3d_get_environment (world)=: =lrg_level_instantiate_3d()= sets a runtime copy of the level's =environment:= block here. #LrgWorld3DRenderer draws the sky, binds the IBL and fog and captures probes from it unless the renderer was given its own (=lrg_world3d_renderer_set_environment()=). [[file:components.org::#reflection-probe][LrgReflectionProbeComponent]] registers its probe with this environment and follows it when it is replaced (on the next =late_update=).
+- =lrg_world3d_set_post_stack (world, stack)= / =lrg_world3d_get_post_stack (world)=: =lrg_level_instantiate_3d()= loads the environment's =post_stack:= reference here. The renderer builds it into its post processor while post-processing is on, unless it has its own stack (=lrg_world3d_renderer_set_post_stack()=).
+
+Swapping either at runtime (entering a cave, a cut-scene grade) is a pointer swap; the renderer re-bakes a new environment lazily before its first frame (or call =lrg_world3d_renderer_bake_environment()= during a loading screen) and rebuilds the post chain on the next render.
+
+#+begin_src C
+/* A darker look for the cave: its own environment and post stack */
+g_autoptr(LrgEnvironment) cave = lrg_environment_new_from_file ("looks/cave.yaml", &error);
+g_autoptr(LrgPostStack)   grade = lrg_post_stack_new_from_file ("looks/cave.rpost", &error);
+
+lrg_world3d_set_environment (world, cave);   /* probes move over on the next late update */
+lrg_world3d_set_post_stack (world, grade);
+lrg_world3d_renderer_bake_environment (renderer, &error);   /* optional: avoid a hitch */
+#+end_src
+
+*** Baked lighting: lightmap and probe grids
+:PROPERTIES:
+:CUSTOM_ID: baked-lighting
+:END:
+A world also holds its baked light (0.9.0 M3): one [[file:../lighting/lightmap3d.org][LrgLightmap3D]] and any number of [[file:../lighting/probe-grid.org][LrgProbeGrid]]s, plain references like the look above. =lrg_level_instantiate_3d()= loads them from the level's =lighting:= block.
+
+- =lrg_world3d_set_lightmap (world, lightmap)= / =lrg_world3d_get_lightmap (world)= (ref held, nullable): #LrgWorld3DRenderer draws every item whose entity GUID has an entry with the lightmap.
+- =lrg_world3d_add_probe_grid()= (ref held; adding twice is a no-op), =lrg_world3d_remove_probe_grid()=, =lrg_world3d_clear_probe_grids()=, =lrg_world3d_get_probe_grids()= (transfer none, added order).
+- =lrg_world3d_find_probe_grid (world, position)=: the smallest-box grid that contains the position and has a valid probe (ties: the first added), =NULL= outside every grid. The renderer asks it with each non-lightmapped item's centre.
+
+#+begin_src C
+g_autoptr(LrgLightmap3D) lm = lrg_lightmap3d_new_from_file ("maps/cave.rlightmap", &error);
+g_autoptr(LrgProbeGrid)  hall = lrg_probe_grid_new_from_file ("maps/cave-hall.rprobes", &error);
+
+lrg_world3d_set_lightmap (world, lm);
+lrg_world3d_add_probe_grid (world, hall);
+#+end_src
+
+The description of a light carries its bake mode: =LrgLight3DDesc.bake_mode= (=LrgLightMode=, realtime by default, taken from a former reserved slot), filled by =lrg_light_component_fill_desc()= from =bake-mode= and applied by =lrg_light_set_add_light_desc()=.
+
+*** Physics (0.9.0 M5)
+:PROPERTIES:
+:CUSTOM_ID: physics
+:END:
+A world can carry an [[file:../physics/dynamics.org][LrgDynamicsWorld]] (=lrg_world3d_set_physics()=, a reference held; =lrg_world3d_ensure_physics()= attaches a new one when there is none, configured from the project physics settings given with =lrg_world3d_set_physics_settings()= / =lrg_world3d_load_physics_project()= or else from the defaults: gravity (0, -9.81, 0) and the default layer table; =lrg_level_instantiate_3d()= first gives the world the =physics:= block of the level's =project.ryaml= and then calls it for levels with a =physics:= block, see [[file:../physics/physics-layers.org::#runtime][The block at runtime]]). Project settings also set =LrgWorld3D:fixed-step= and =LrgWorld3D:max-substeps= from the block's =fixed_dt= and =max_substeps=. The physics components ([[file:components.org::#physics-components][rigid body, collider, joint]]) register with the world as *physics clients* while they are in it, and the world drives them from =lrg_world3d_fixed_update()=:
+
+#+begin_example
+ for every fixed substep:
+     components' fixed_update (step)        game logic: forces, kinematic moves, teleports
+     flush transform-changed
+     physics clients, pre_step              bodies first, colliders, then joints:
+                                            build / rebuild bodies, entity -> body
+                                            (static: teleport if moved, kinematic:
+                                            move_kinematic over the step, dynamic:
+                                            teleport if game code moved it)
+     lrg_dynamics_world_step (step)         one substep: contacts, joints, CCD, sleep
+     physics clients, post_step             body -> entity (dynamic), trigger enter/exit,
+                                            collision enter/exit, joint broken signals
+     flush transform-changed
+ after the substeps (every call, even with 0 substeps):
+     physics clients, interpolate (alpha)   dynamic entities = blend (previous, current,
+                                            lrg_world3d_get_fixed_alpha ())
+#+end_example
+
+Ordering is client priority (bodies, stand-alone colliders, joints), then registration order, so a world built in the same order steps bit-identically. The physics world's step limits are set to one substep of =fixed-step= (and follow changes of =fixed-step=): do not step it yourself while it is attached, and do not call =lrg_world3d_fixed_update()= and the physics world's step for the same time.
+
+*Game code moving an entity* is detected by the entity's world version: every write the components make is followed by remembering the new version, so any other change (=lrg_entity3d_set_position()= from a script, the editor gizmo) is a teleport for dynamic and static bodies. Kinematic bodies are moved every step with the velocity that reaches the entity's pose, so they push dynamic bodies; an unmoved kinematic entity stops its body.
+
+*Interpolation:* with =physics-interpolation= (default =TRUE=) and a component's =interpolate= (default =TRUE=), the entity of a dynamic body is drawn between the last two physics states; game logic in the next =fixed_update= sees the blended pose, the body keeps its own. Turn it off to render the physics pose exactly (fixed-rate games, replays).
+
+*Mapping bodies back:* =lrg_world3d_find_body_entity (world, body_id)= returns the entity a component's body belongs to (raycast hits, contact listings), =NULL= for bodies made outside the components.
+
+*Debug draw:* =lrg_world3d_debug_draw_physics (world, draw, flags)= records the attached physics world into an #LrgDebugDraw (=lrg_dynamics_world_debug_draw()=; =LrgDynamicsDebugFlags=: shapes, AABBs, contacts, constraints, sleeping, centres of mass, velocities, broadphase), on =LRG_DEBUG_CATEGORY_PHYSICS=. Give the draw to #LrgWorld3DRenderer (=lrg_world3d_renderer_set_debug_draw()= with =LRG_WORLD3D_RENDER_FLAG_DEBUG_DRAW=) and toggle the category with =lrg_debug_draw_set_category_enabled()=.
+
+#+begin_src C
+g_autoptr(LrgWorld3D) world = lrg_world3d_new ();
+LrgDynamicsWorld     *physics = lrg_world3d_ensure_physics (world);
+
+lrg_dynamics_world_set_layers (physics, project_layers);   /* the project's layer matrix */
+/* ... add entities with LrgRigidBodyComponent / LrgColliderComponent3D ... */
+
+while (running)
+{
+	lrg_world3d_step (world, GetFrameTime ());   /* physics runs in the fixed updates */
+	lrg_world3d_debug_draw_physics (world, dd, show_shapes ? LRG_DYNAMICS_DEBUG_SHAPES : 0);
+	/* render */
+}
+#+end_src
+
+*** Navigation (0.9.0 M6)
+:PROPERTIES:
+:CUSTOM_ID: navigation
+:END:
+A world can carry a navigation mesh, an [[file:../pathfinding/nav-poly-mesh.org][LrgNavPolyMesh]] (=lrg_world3d_set_navigation()=, a reference held; =lrg_level_instantiate_3d()= sets it from the level's =navigation:= block, see [[file:../pathfinding/nav-bake.org][nav-bake]]), and a crowd of agents walking it, an [[file:../pathfinding/nav-agent.org][LrgNavCrowd]] made on first use by =lrg_world3d_get_nav_crowd()= (every =LrgNavAgentComponent= joins it while its entity is in the world). Setting another mesh moves the crowd to it; its agents plan again.
+
+While the crowd exists, each fixed substep of =lrg_world3d_fixed_update()= steps it right after the components' =fixed_update()= and before the transform flush and physics:
+
+#+begin_example
+ for every fixed substep:
+     components' fixed_update (step)      game logic sets destinations; agent components
+                                          sync teleports / dynamic bodies into their agents
+     lrg_nav_crowd_step (crowd, step)     plan, steer, ORCA, integrate; agent components
+                                          write entities back from LrgNavCrowd::stepped
+     flush transform-changed
+     physics ...                          kinematic bodies follow the moved entities
+#+end_example
+
+*Debug draw:* =lrg_world3d_debug_draw_navigation (world, draw, flags)= records the mesh and the crowd (=LrgNavDebugFlags=: polygons, edges, boundaries, portals, links, areas, agents, paths, velocities, ORCA half-planes, neighbours) for one frame on =LRG_DEBUG_CATEGORY_NAVIGATION=; without a crowd only the mesh.
+
+#+begin_src C
+lrg_world3d_set_navigation (world, mesh);
+/* ... entities with LrgNavAgentComponent, destinations ... */
+while (running)
+{
+	lrg_world3d_step (world, GetFrameTime ());   /* the crowd runs in the fixed updates */
+	lrg_world3d_debug_draw_navigation (world, dd, LRG_NAV_DEBUG_DEFAULT);
+	/* render */
+}
+#+end_src
+
+*** Spatial index
+:PROPERTIES:
+:CUSTOM_ID: spatial-index
+:END:
+Each entity (not the root) has a spatial record with its world AABB (=lrg_entity3d_get_world_bounds()=). Records are refreshed lazily before =lrg_world3d_query_box()=, =lrg_world3d_query_sphere()= and =lrg_world3d_get_octree()= for every subtree marked dirty by a transform write, a join, a component add/remove, or =lrg_world3d_invalidate_bounds()= (call it when a component's =get_bounds()= result changes for another reason, for example a new mesh). The octree covers ±4096; =LrgOctree= keeps out-of-bounds objects in its root node and anything it rejects is kept in an overflow list scanned linearly. Queries return only entities active in the hierarchy.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+*** Enumerations and flags
+:PROPERTIES:
+:CUSTOM_ID: api-enums
+:END:
+| type                 | GType getter                         | values                                                                        |
+|----------------------+--------------------------------------+-------------------------------------------------------------------------------|
+| =LrgRenderItemKind=  | =lrg_render_item_kind_get_type()=    | =PRIMITIVE=, =MESH=, =MODEL=, =BILLBOARD=, =CUSTOM=                          |
+| =LrgRenderItemFlags= | =lrg_render_item_flags_get_type()=   | =NONE=, =CAST_SHADOW=, =RECEIVE_SHADOW=, =TRANSPARENT=, =CUTOUT=, =DOUBLE_SIDED=, =UNLIT=, =NO_CULL= |
+| =LrgRenderCategory=  | =lrg_render_category_get_type()=     | =OPAQUE=, =CUTOUT=, =TRANSPARENT=, =SHADOW_CASTER= (=LRG_RENDER_CATEGORY_COUNT= = 4) |
+| =LrgLight3DKind=     | =lrg_light3d_kind_get_type()=        | =DIRECTIONAL=, =POINT=, =SPOT=                                                |
+
+*** LrgLight3DDesc
+:PROPERTIES:
+:CUSTOM_ID: api-light-desc
+:END:
+| function                         | notes                       |
+|----------------------------------+-----------------------------|
+| =lrg_light3d_desc_get_type()=    | boxed                       |
+| =lrg_light3d_desc_init (desc)=   | fills defaults in place     |
+| =lrg_light3d_desc_new()=         | transfer full, initialised  |
+| =lrg_light3d_desc_copy (desc)=   | transfer full               |
+| =lrg_light3d_desc_free (desc)=   | nullable                    |
+
+*** LrgRenderItem
+:PROPERTIES:
+:CUSTOM_ID: api-render-item
+:END:
+Plain struct (no GType). Fields: =kind=, =flags=, =layer=, =primitive=, =params[4]=, =mesh=, =model=, =texture=, =material=, =mesh_index=, =color[4]=, =world_matrix[16]=, =bounds=, =sort_key=, =view_depth=, =entity=, =component=, =draw_func=, =user_data=, =user_data_destroy=.
+
+| function                                                   | notes                                            |
+|------------------------------------------------------------+--------------------------------------------------|
+| =lrg_render_item_init (item)=                              | defaults (opaque white unit cube, shadows on)    |
+| =lrg_render_item_init_for_entity (item, entity, component)= | defaults + entity world matrix, layer, back-pointers |
+| =lrg_render_item_set_local_bounds (item, local)=           | world AABB through =world_matrix=                |
+| =lrg_render_item_get_category (item)=                      | OPAQUE / CUTOUT / TRANSPARENT                    |
+| =LrgRenderItemDrawFunc (item, category, pass_data)=        | callback type for =CUSTOM= items                 |
+
+*** LrgRenderList
+:PROPERTIES:
+:CUSTOM_ID: api-render-list
+:END:
+| function                                                    | notes                                                  |
+|-------------------------------------------------------------+--------------------------------------------------------|
+| =lrg_render_list_get_type()=                                | boxed, refcounted (copy = ref)                         |
+| =lrg_render_list_new()=                                     | transfer full                                          |
+| =lrg_render_list_ref()= / =lrg_render_list_unref()=         | =g_autoptr= supported                                  |
+| =lrg_render_list_clear (list)=                              | runs =user_data_destroy=, resets the view              |
+| =lrg_render_list_add (list, item)=                          | copies, categorises; returns the flat index            |
+| =lrg_render_list_accepts (list, item)=                      | layer + frustum test (casters exempt from frustum)     |
+| =lrg_render_list_get_n_items (list, category)=              |                                                        |
+| =lrg_render_list_get_item (list, category, index)=          | transfer none                                          |
+| =lrg_render_list_get_total_items (list)=                    | distinct items                                         |
+| =lrg_render_list_foreach (list, category, func, data)=      | =LrgRenderItemFunc (item, category, data)=; replayable |
+| =lrg_render_list_sort (list)=                               | fills =view_depth=, sorts all categories (stable)      |
+| =lrg_render_list_set_view (list, eye, mask, vp)=            | =vp= nullable = no frustum                             |
+| =lrg_render_list_get_eye (list, out)=                       |                                                        |
+| =lrg_render_list_get_cull_mask (list)=                      |                                                        |
+| =lrg_render_list_get_view_projection (list, out)=           | =FALSE= when no frustum                                |
+| =lrg_render_list_add_light (list, light)=                   | copies                                                 |
+| =lrg_render_list_get_n_lights()= / =lrg_render_list_get_light()= |                                                   |
+
+*** LrgWorld3D
+:PROPERTIES:
+:CUSTOM_ID: api-world
+:END:
+| function                                                   | notes                                               |
+|------------------------------------------------------------+-----------------------------------------------------|
+| =lrg_world3d_new()=                                        | transfer full                                       |
+| =lrg_world3d_get_root()=                                   | transfer none                                       |
+| =lrg_world3d_add_entity (world, entity)=                   | appends under the root (takes a ref)                |
+| =lrg_world3d_remove_entity (world, entity)=                | detaches from its parent wherever it is             |
+| =lrg_world3d_clear()=                                      | removes every top-level entity                      |
+| =lrg_world3d_get_entity_count()=                           | excludes the root                                   |
+| =lrg_world3d_find_by_guid()=                               | O(1)                                                |
+| =lrg_world3d_find_by_name()=                               | first, depth first                                  |
+| =lrg_world3d_find_by_path()=                               | relative to the root                                |
+| =lrg_world3d_find_by_tag()=                                | transfer container, hierarchy order                 |
+| =lrg_world3d_find_with_component (world, type)=            | entities, transfer container                        |
+| =lrg_world3d_get_components_of_type (world, type)=         | components, transfer container                      |
+| =lrg_world3d_update (world, dt)=                           | phase 2                                             |
+| =lrg_world3d_fixed_update (world, dt)=                     | phase 1; returns substeps run                       |
+| =lrg_world3d_late_update (world, dt)=                      | phase 3                                             |
+| =lrg_world3d_step (world, dt)=                             | 1 + 2 + 3 unless paused                             |
+| =lrg_world3d_get_fixed_step()= / =lrg_world3d_set_fixed_step()= | seconds (> 0)                                  |
+| =lrg_world3d_get_max_substeps()= / =lrg_world3d_set_max_substeps()= | >= 1                                       |
+| =lrg_world3d_get_fixed_alpha()=                            | [0, 1)                                              |
+| =lrg_world3d_get_time()= / =lrg_world3d_get_fixed_time()=  | seconds (double)                                    |
+| =lrg_world3d_get_paused()= / =lrg_world3d_set_paused()=    |                                                     |
+| =lrg_world3d_collect_render (world, camera, list)=         | camera nullable                                     |
+| =lrg_world3d_get_frustum_culling()= / =lrg_world3d_set_frustum_culling()= | default on                           |
+| =lrg_world3d_query_box (world, box)=                       | transfer container                                  |
+| =lrg_world3d_query_sphere (world, center, radius)=         | transfer container                                  |
+| =lrg_world3d_invalidate_bounds (world, entity)=            | re-index a subtree on the next query                |
+| =lrg_world3d_get_octree()=                                 | refreshed; objects are =LrgEntity3D *=              |
+| =lrg_world3d_register_light (world, source, desc)=         | add or update                                       |
+| =lrg_world3d_unregister_light (world, source)=             |                                                     |
+| =lrg_world3d_get_lights()=                                 | transfer container of world-owned descs             |
+| =lrg_world3d_get_n_lights()=                               |                                                     |
+| =lrg_world3d_register_camera (world, camera, priority)=    | add or re-prioritise (ref held)                     |
+| =lrg_world3d_unregister_camera (world, camera)=            | also clears it as forced camera                     |
+| =lrg_world3d_get_cameras()=                                | transfer container                                  |
+| =lrg_world3d_set_active_camera()= / =lrg_world3d_get_active_camera()= | forced vs priority                       |
+| =lrg_world3d_set_audio_listener()= / =lrg_world3d_get_audio_listener()= | weak                                   |
+| =lrg_world3d_set_environment()= / =lrg_world3d_get_environment()= | the world's look (ref held, nullable), see [[#look][The world's look]] |
+| =lrg_world3d_set_post_stack()= / =lrg_world3d_get_post_stack()= | the world's post stack (ref held, nullable) |
+| =lrg_world3d_set_lightmap()= / =lrg_world3d_get_lightmap()= | the baked lightmap (ref held, nullable), see [[#baked-lighting][Baked lighting]] (0.9.0) |
+| =lrg_world3d_add_probe_grid()= / =lrg_world3d_remove_probe_grid()= / =lrg_world3d_clear_probe_grids()= / =lrg_world3d_get_probe_grids()= | the probe grids (refs held) (0.9.0) |
+| =lrg_world3d_find_probe_grid()= | the grid lighting a point (transfer none, nullable) (0.9.0) |
+| =lrg_world3d_set_physics()= / =lrg_world3d_get_physics()= | the attached #LrgDynamicsWorld (ref held, nullable), see [[#physics][Physics]] (0.9.0) |
+| =lrg_world3d_ensure_physics()= | attach a physics world if none (project settings or defaults); transfer none |
+| =lrg_world3d_set_physics_settings (world, settings, layers, &error)= | the project's =physics:= block for this world (copied / ref held; applied to an attached physics world at once); =NULL=, =NULL= forgets it |
+| =lrg_world3d_get_physics_settings()= / =lrg_world3d_get_physics_layers()= | what was given (transfer none, nullable) |
+| =lrg_world3d_load_physics_project (world, path, &error)= | read a =project.ryaml='s block and set it |
+| =lrg_world3d_set_physics_interpolation()= / =lrg_world3d_get_physics_interpolation()= | render blend of dynamic bodies |
+| =lrg_world3d_find_body_entity (world, body_id)= | the entity owning a body (transfer none, nullable) |
+| =lrg_world3d_debug_draw_physics (world, draw, flags)= | physics debug draw for one frame |
+| =lrg_world3d_set_navigation()= / =lrg_world3d_get_navigation()= | the world's #LrgNavPolyMesh (ref held, nullable), see [[#navigation][Navigation]] (0.9.0) |
+| =lrg_world3d_get_nav_crowd()= | the world's #LrgNavCrowd, made on first use and stepped every fixed substep; transfer none |
+| =lrg_world3d_debug_draw_navigation (world, draw, flags)= | navigation debug draw for one frame |
+
+*** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: properties-signals
+:END:
+| property          | type          | access | default |
+|-------------------+---------------+--------+---------|
+| =root=            | =LrgEntity3D= | r      |         |
+| =fixed-step=      | float         | rw     | 1/60    |
+| =max-substeps=    | uint          | rw     | 8       |
+| =paused=          | boolean       | rw     | =FALSE= |
+| =frustum-culling= | boolean       | rw     | =TRUE=  |
+| =active-camera=   | =LrgCamera=   | rw     | =NULL=  |
+| =audio-listener=  | =LrgEntity3D= | rw     | =NULL=  |
+| =physics=         | =LrgDynamicsWorld= | rw | =NULL=  |
+| =physics-interpolation= | boolean | rw     | =TRUE=  |
+
+| signal           | arguments       | when                                                        |
+|------------------+-----------------+-------------------------------------------------------------|
+| =entity-added=   | =LrgEntity3D *= | each entity joining (parents first), after =world_entered= |
+| =entity-removed= | =LrgEntity3D *= | each entity leaving (children first), before =world_exited= |
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** A game loop
+:PROPERTIES:
+:CUSTOM_ID: example-game-loop
+:END:
+#+begin_src c
+g_autoptr(LrgWorld3D) world = lrg_world3d_new ();
+g_autoptr(LrgRenderList) list = lrg_render_list_new ();
+
+/* ... fill the world (lrg_level_instantiate_3d() or by hand) ... */
+
+while (!grl_window_should_close (window))
+{
+	gfloat dt = grl_window_get_frame_time (window);
+	LrgCamera *camera;
+
+	lrg_world3d_step (world, dt);
+
+	camera = lrg_world3d_get_active_camera (world);
+	lrg_world3d_collect_render (world, camera, list);
+	/* hand the list to LrgWorld3DRenderer (or replay it yourself) */
+}
+#+end_src
+
+*** A component that draws a cube
+:PROPERTIES:
+:CUSTOM_ID: example-collect-render
+:END:
+#+begin_src c
+static void
+my_cube_collect_render (LrgComponent  *component,
+                        LrgRenderList *list)
+{
+	MyCube *self = MY_CUBE (component);
+	LrgRenderItem item;
+	LrgBoundingBox3D local = { { -0.5f, -0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f } };
+
+	lrg_render_item_init_for_entity (&item, lrg_component_get_entity (component),
+	                                 component);
+	item.kind = LRG_RENDER_ITEM_PRIMITIVE;
+	item.primitive = LRG_PRIMITIVE_CUBE;
+	item.material = self->material;                  /* borrowed */
+	item.sort_key = GPOINTER_TO_SIZE (self->material);
+	lrg_render_item_set_local_bounds (&item, &local);
+
+	if (lrg_render_list_accepts (list, &item))
+		lrg_render_list_add (list, &item);
+}
+
+static gboolean
+my_cube_get_bounds (LrgComponent     *component,
+                    LrgBoundingBox3D *out)
+{
+	out->min.x = out->min.y = out->min.z = -0.5f;
+	out->max.x = out->max.y = out->max.z = 0.5f;
+	return TRUE;
+}
+#+end_src
+
+*** A light component registering itself
+:PROPERTIES:
+:CUSTOM_ID: example-light
+:END:
+#+begin_src c
+static void
+my_light_push (MyLight *self, LrgWorld3D *world)
+{
+	LrgEntity3D *e = lrg_component_get_entity (LRG_COMPONENT (self));
+	LrgLight3DDesc d;
+
+	lrg_light3d_desc_init (&d);
+	d.kind = LRG_LIGHT3D_SPOT;
+	d.intensity = self->intensity;
+	lrg_entity3d_get_world_position (e, d.position);
+	lrg_entity3d_get_forward (e, d.direction);
+	lrg_world3d_register_light (world, G_OBJECT (self), &d);
+}
+
+static void
+my_light_world_entered (LrgComponent *c, LrgWorld3D *world)
+{
+	my_light_push (MY_LIGHT (c), world);
+}
+
+static void
+my_light_late_update (LrgComponent *c, gfloat dt)
+{
+	my_light_push (MY_LIGHT (c), lrg_component_get_world3d (c));
+}
+
+static void
+my_light_world_exited (LrgComponent *c, LrgWorld3D *world)
+{
+	lrg_world3d_unregister_light (world, G_OBJECT (c));
+}
+#+end_src
+
+*** Trigger and spawn queries
+:PROPERTIES:
+:CUSTOM_ID: example-queries
+:END:
+#+begin_src c
+g_autoptr(GPtrArray) spawns = lrg_world3d_find_by_tag (world, "player_spawn");
+g_autoptr(GPtrArray) near = NULL;
+gfloat at[3];
+
+lrg_entity3d_get_world_position (player, at);
+near = lrg_world3d_query_sphere (world, at, 5.0f);
+#+end_src
+
+** Performance notes
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- Phases allocate two small snapshot arrays per visited entity; for very large worlds prefer fewer, fatter components over many tiny entities.
+- =collect_render= is O(visible entities); frustum culling is per item against six planes. Reusing a list keeps its arrays allocated; items are stored by value (no per-item allocation).
+- Spatial refresh cost is proportional to the size of dirty subtrees, not the world; static entities never re-index after their first query.
+- GUID lookups are hash lookups; name and tag lookups walk the tree.
+- Physics adds three client hook calls per physics component per fixed substep plus one interpolation call per frame; the physics step itself dominates (see [[file:../physics/dynamics.org][LrgDynamicsWorld]]).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Do not remove or reparent the root; add top-level content under it.
+- Handles in render items are borrowed: freeing a mesh between collect and draw is a use-after-free.
+- Register lights from =world_entered= and refresh them in =late_update=; a light registered in =update= may lag one frame behind a parent moved later in the same =update=.
+- =lrg_world3d_get_lights()= returns pointers into the registry: do not keep them across register/unregister calls.
+- Signal handlers on =transform-changed= that move other entities are handled in the same flush (bounded to 16 rounds).
+- The world's environment is shared by reference: changing it (exposure, fog) changes every renderer drawing the world; give a renderer its own environment for a different look in one view.
+- A dynamic body's entity should be top-level or under static parents: a moving parent changes its world transform, which the world takes for a teleport.
+- Do not step an attached physics world yourself; the world steps it once per fixed update.
+- =LrgCamera3D= exposes no clip planes, so frustum culling uses near 0.05 / far 10000; disable =frustum-culling= for unusual cameras.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+When you press Play on a 3D level, the editor's play session instantiates the level into an =LrgWorld3D=, steps it every frame, and the viewport draws the runtime world through =LrgWorld3DRenderer= consuming the same render lists described above, so editor and game render identically. The play world carries the level's look (a copy of the level's environment, sharing the sky images the editor loaded, and its post stack), so playing looks like the level. The hierarchy panel shows the live entity tree; on Stop, changed TRS values sync back to the authored nodes. See [[file:../../editor/editor-runtime.org][Editor runtime (play mode)]].
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:entity3d.org][LrgEntity3D]]
+- [[file:../ecs/component.org::#component-hooks-3d][LrgComponent 3D hooks]]
+- [[file:octree.org][LrgOctree]], [[file:bounding-box3d.org][LrgBoundingBox3D]]
+- [[file:../graphics/render-layers.org][Render layers]]
+- [[file:../lighting/environment.org][LrgEnvironment]], [[file:../postprocess/post-stack.org][LrgPostStack]], [[file:components.org::#reflection-probe][LrgReflectionProbeComponent]]

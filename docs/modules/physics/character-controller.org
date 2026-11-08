@@ -2,7 +2,7 @@
 :PROPERTIES:
 :CUSTOM_ID: lrgcharactercontroller---capsule-move-and-slide
 :END:
-An upright capsule that moves through an [[file:collision-mesh.org][LrgCollisionMesh]] and an optional terrain height field: it slides along walls, climbs steps, refuses slopes steeper than a limit, snaps to the ground while walking down stairs and ramps, and reports what it stands on. The semantics follow Unity's =CharacterController.Move()=, which first-person game code (for example Daggerfall Unity's =PlayerMotor=) is written against. Gravity, jumping, speeds and input are the caller's business: the controller only resolves a desired displacement against geometry.
+An upright capsule that moves through an [[file:collision-mesh.org][LrgCollisionMesh]], the bodies of an [[file:dynamics.org][LrgDynamicsWorld]] (0.9.0) and an optional terrain height field: it slides along walls, climbs steps, refuses slopes steeper than a limit, snaps to the ground while walking down stairs and ramps, and reports what it stands on. The semantics follow Unity's =CharacterController.Move()=, which first-person game code (for example Daggerfall Unity's =PlayerMotor=) is written against. Gravity, jumping, speeds and input are the caller's business: the controller only resolves a desired displacement against geometry.
 
 ** Types
 :PROPERTIES:
@@ -22,6 +22,8 @@ typedef struct {
     gboolean hit_wall;
     gboolean hit_ceiling;
     gboolean stepped;
+    guint    ground_body;          /* LrgDynamicsWorld body stood on (0.9.0),
+                                      LRG_PHYSICS_NO_BODY otherwise */
 } LrgCharacterMove;
 #+end_src
 
@@ -42,12 +44,16 @@ typedef struct {
 | Function | Purpose |
 |----------+---------|
 | =lrg_character_controller_new(radius, height)= | capsule with default step, slope and skin, no world |
-| =set/get_radius=, =set/get_height= | capsule shape; the height never drops below the sphere (2 x radius); crouching changes the height |
-| =set/get_step_height= | 0 disables stepping and snapping |
-| =set/get_max_slope= | degrees, clamped to 0..89.9 |
-| =set/get_skin_width= | clamped to 0.0001..radius/2 |
-| =set/get_world= | the =LrgCollisionMesh= (nullable) |
-| =set_height_func(func, data, destroy)= | terrain floor; =destroy= runs when replaced or on dispose |
+| =lrg_character_controller_set_radius()=, =lrg_character_controller_get_radius()=, =lrg_character_controller_set_height()=, =lrg_character_controller_get_height()= | capsule shape; the height never drops below the sphere (2 x radius); crouching changes the height |
+| =lrg_character_controller_set_step_height()=, =lrg_character_controller_get_step_height()= | 0 disables stepping and snapping |
+| =lrg_character_controller_set_max_slope()=, =lrg_character_controller_get_max_slope()= | degrees, clamped to 0..89.9 |
+| =lrg_character_controller_set_skin_width()=, =lrg_character_controller_get_skin_width()= | clamped to 0.0001..radius/2 |
+| =lrg_character_controller_set_world()=, =lrg_character_controller_get_world()= | the =LrgCollisionMesh= (nullable) |
+| =lrg_character_controller_set_physics(self, physics, layer_mask)=, =lrg_character_controller_get_physics()= | collide with the bodies of an =LrgDynamicsWorld= in the given object layers (0.9.0; nullable) |
+| =lrg_character_controller_get_layer_mask= | the layer mask given with the physics world |
+| =lrg_character_controller_set_ignore_body()=, =lrg_character_controller_get_ignore_body()= | a body never collided with (the character's own), =LRG_PHYSICS_NO_BODY= for none |
+| =lrg_character_controller_debug_draw(self, draw, feet, grounded)= | the capsule and its skin for one frame (green grounded, orange airborne) |
+| =lrg_character_controller_set_height_func(func, data, destroy)= | terrain floor; =destroy= runs when replaced or on dispose |
 | =lrg_character_controller_move(self, feet, motion, snap_to_ground, out_move)= | resolve one displacement |
 | =lrg_character_controller_can_stand(self, feet, height)= | room for a taller capsule (standing up from a crouch) |
 
@@ -67,6 +73,35 @@ typedef struct {
 *Grounded* uses the *face normal* of the triangle touched, not the contact normal: the rounded bottom resting on a step's edge stands on the tread. The mesh resolves simultaneous contacts in favour of the most upward face for the same reason.
 
 Without a world and without a height function the capsule moves by exactly =motion= and is never grounded. Non-finite input returns =FALSE= and leaves =out_move= at =feet=.
+
+** Against a physics world (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: physics-world
+:END:
+=lrg_character_controller_set_physics (cc, physics, mask)= makes the capsule collide with the bodies of an =LrgDynamicsWorld= (static level geometry as triangle meshes, boxes and hulls, kinematic platforms, dynamic crates) through the world queries: sweeps are =lrg_dynamics_world_shape_cast()= of the capsule, depenetration collides the capsule with every body =lrg_dynamics_world_overlap_shape()= reports (=lrg_collide_shapes_all()=, so triangle meshes work), =can_stand()= is an overlap test. It combines with =set_world()=: each sweep takes the nearer hit of the mesh and the bodies, depenetration pushes out of both. Sensors never block; the layer mask selects which object layers do. The move algorithm and its guarantees are the ones above.
+
+Three details make the shape cast behave like the mesh's contact rule:
+
+- *Half the skin.* Sweeps use the capsule inflated by half the skin (the mesh path uses the whole skin). A cast reports only its first hit: a capsule resting at the full skin from the floor would touch it at t = 0 and hide the wall ahead. Depenetration still keeps the full skin.
+- *Touching starts.* A t = 0 hit that the motion does not go into (within a 1e-4 relative tolerance, for slide directions projected onto the contact plane) is skipped by lifting the cast start a quarter skin off that surface and casting again (up to three times).
+- *Edges when landing.* For pure drops (landing, stepping down, ground probes) the face normal of an edge hit is the most upward face found by two short ray probes on either side of the contact, so the rounded bottom resting on a step's nosing stands on the tread. Sideways the nosing stays a wall, so the step logic runs.
+
+=LrgCharacterMove.ground_body= is the body stood on (a moving platform body, a crate), =LRG_PHYSICS_NO_BODY= for the mesh, terrain or air; =ground_instance_id= stays the mesh instance. The controller does not push bodies: give the character a kinematic body of its own (an =LrgRigidBodyComponent= with a capsule =LrgColliderComponent3D= on its entity), pass its id to =set_ignore_body()= and move the entity to the controller's result; the kinematic body then pushes dynamic bodies.
+
+#+begin_src C
+/* a character component's fixed_update, the world has physics */
+LrgDynamicsWorld *physics = lrg_world3d_get_physics (lrg_entity3d_get_world (entity));
+
+lrg_character_controller_set_physics (self->cc, physics, LRG_PHYSICS_LAYERS_ALL);
+lrg_character_controller_set_ignore_body (self->cc, lrg_rigid_body_component_get_body_id (self->body));
+lrg_entity3d_get_world_position (entity, feet);
+lrg_character_controller_move (self->cc, feet, motion, TRUE, &move);
+lrg_entity3d_set_world_position (entity, move.position);   /* the kinematic body follows */
+#+end_src
+
+*Performance:* a move is a handful of shape casts (two to eight with stepping) and one overlap query per depenetration pass, each a broadphase query plus narrow-phase tests against the few bodies nearby. The query capsule is cached and rebuilt only when the size changes.
+
+*Pitfalls:* the controller's own body must be ignored or it blocks itself at t = 0; triangle-mesh level geometry with open edges lets the capsule catch internal edges less than the collision mesh does when the mesh has active-edge flags (the default); a dynamic body under the capsule is stood on but not pushed down.
 
 ** Moving platforms
 :PROPERTIES:
@@ -105,8 +140,12 @@ if (move.grounded)
 :END:
 =tests/test-character-controller.c=: property clamping, free motion and non-finite input, a floor of 800 triangles (no snagging on seams), walls (stop at the skin, slide diagonally), corners, eight 0.3 high stairs up (stepping) and down (snapping), stairs 0.6 high (refused), a 30 degree ramp (climbed, grounded, no creeping when idle, contact while walking down), a 60 degree ramp (refused; dropped onto it the capsule slides down), a ledge with and without snapping, a 500 unit fall onto a single quad (no tunnelling), ceilings and crouch clearance, a platform instance (ground id, rising into the capsule, stepping off), a terrain height function (and its destroy notify), depenetration out of a wall, and a seeded random walk through a room of boxes, stairs and ramps that never ends inside geometry.
 
+Physics-world integration: =tests/test-physics-bodies.c= (=/physics-bodies/character-controller=) stands on a triangle-mesh floor body (ground body reported), walks onto a 0.2 step, climbs a 30 degree ramp, is stopped by a 60 degree slope and checks =can_stand()= against the bodies.
+
 ** See also
 :PROPERTIES:
 :CUSTOM_ID: see-also
 :END:
 - [[file:collision-mesh.org][LrgCollisionMesh]] - the geometry queries underneath
+- [[file:dynamics.org][LrgDynamicsWorld]] - the physics world and its queries
+- [[file:../world3d/components.org::#physics-character][Character controllers in a 3D world]]

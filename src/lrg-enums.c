@@ -4815,6 +4815,11 @@ lrg_node_visual_kind_get_type (void)
             { LRG_NODE_VISUAL_AUDIO_EMITTER, "LRG_NODE_VISUAL_AUDIO_EMITTER", "audio-emitter" },
             { LRG_NODE_VISUAL_PREFAB_INSTANCE, "LRG_NODE_VISUAL_PREFAB_INSTANCE", "prefab-instance" },
             { LRG_NODE_VISUAL_CAD_PART, "LRG_NODE_VISUAL_CAD_PART", "cad-part" },
+            { LRG_NODE_VISUAL_DECAL, "LRG_NODE_VISUAL_DECAL", "decal" },
+            { LRG_NODE_VISUAL_REFLECTION_PROBE, "LRG_NODE_VISUAL_REFLECTION_PROBE", "reflection-probe" },
+            { LRG_NODE_VISUAL_PROBE_VOLUME, "LRG_NODE_VISUAL_PROBE_VOLUME", "probe-volume" },
+            { LRG_NODE_VISUAL_TERRAIN, "LRG_NODE_VISUAL_TERRAIN", "terrain" },
+            { LRG_NODE_VISUAL_WATER, "LRG_NODE_VISUAL_WATER", "water" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =

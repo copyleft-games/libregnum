@@ -21,6 +21,7 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "../physics/lrg-physics-layers.h"
 
 G_BEGIN_DECLS
 
@@ -190,5 +191,85 @@ gchar * lrg_project_resolve (LrgProject  *self,
 LRG_AVAILABLE_IN_ALL
 gchar * lrg_project_relativize (LrgProject  *self,
                                 const gchar *path);
+
+/**
+ * lrg_project_get_physics_layers:
+ * @self: an #LrgProject
+ *
+ * The project's collision layers and collide matrix, read from the
+ * root `physics:` block of project.ryaml (a `physics:` inside
+ * `project:` is read too). A new project starts with the default layer
+ * set (lrg_physics_layers_reset_default()); an opened project without a
+ * block has no named layers and everything collides. Edit the returned
+ * object in place; lrg_project_save() writes it back, keeping any other
+ * keys of the block.
+ *
+ * Returns: (transfer none): the layer table
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPhysicsLayers * lrg_project_get_physics_layers (LrgProject *self);
+
+/**
+ * lrg_project_get_physics_settings:
+ * @self: an #LrgProject
+ *
+ * The project's physics world settings (gravity, fixed substep and cap,
+ * solver iterations, sleep), read from the same `physics:` block as
+ * lrg_project_get_physics_layers(). Missing keys, a missing block and a
+ * new project give the defaults (lrg_physics_settings_init_default()); a
+ * broken block is reported with g_warning() and reads as the defaults.
+ * Edit the fields in place (or use lrg_project_set_physics_settings());
+ * lrg_project_save() writes them back next to the layers, keeping every
+ * other key of the block. Hand both to lrg_world3d_set_physics_settings()
+ * or lrg_dynamics_world_apply_settings() to run a world with them.
+ *
+ * Returns: (transfer none): the settings, owned by @self
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPhysicsSettings * lrg_project_get_physics_settings (LrgProject *self);
+
+/**
+ * lrg_project_set_physics_settings:
+ * @self: an #LrgProject
+ * @settings: the new settings (copied)
+ * @error: return location for a #GError
+ *
+ * Validates @settings (lrg_physics_settings_validate()) and copies them
+ * into the project. Call lrg_project_save() to write them.
+ *
+ * Returns: %TRUE on success; on error the project is unchanged
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_project_set_physics_settings (LrgProject                *self,
+                                           const LrgPhysicsSettings  *settings,
+                                           GError                   **error);
+
+/**
+ * lrg_project_get_audio_mixer:
+ * @self: an #LrgProject
+ *
+ * The project's default mixer layout, `audio: { mixer: <path> }` in
+ * project.ryaml (read at the root or inside `project:`): a `.rmixer`
+ * path relative to the project root.  Games load it with
+ * lrg_audio_manager_load_project_mixer(); play-in-editor does the same.
+ *
+ * Returns: (transfer none) (nullable) (type filename): the path, %NULL
+ *   for none
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_project_get_audio_mixer (LrgProject *self);
+
+/**
+ * lrg_project_set_audio_mixer:
+ * @self: an #LrgProject
+ * @path: (nullable) (type filename): a `.rmixer` path relative to the
+ *   project root, %NULL (or empty) for none
+ *
+ * Sets the default mixer; lrg_project_save() writes it to the root
+ * `audio:` block, keeping the block's other keys.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_project_set_audio_mixer (LrgProject  *self,
+                                  const gchar *path);
 
 G_END_DECLS

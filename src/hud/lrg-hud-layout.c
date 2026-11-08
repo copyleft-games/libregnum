@@ -18,6 +18,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "hud/lrg-hud-layout.h"
+#include "core/lrg-data-loader.h"
 
 #include <errno.h>
 #include <gio/gio.h>
@@ -937,42 +938,32 @@ stage_yaml_piece (GPtrArray    *staged,
     return stage (staged, id, placed, anchor, x, y, locked, hidden, path, error);
 }
 
-gboolean
-lrg_hud_layout_load_from_file (LrgHudLayout  *self,
-                               const gchar   *path,
-                               GError       **error)
+/*
+ * Replaces the state with the document @text (@path names it in
+ * messages). Everything is staged first: on error nothing changes.
+ */
+static gboolean
+load_text (LrgHudLayout  *self,
+           const gchar   *text,
+           gssize         length,
+           const gchar   *path,
+           GError       **error)
 {
     g_autoptr(YamlParser) parser = NULL;
     g_autoptr(GPtrArray) staged = NULL;
     g_autoptr(GError) local = NULL;
-    g_autofree gchar *text = NULL;
     YamlMapping *root;
     YamlMapping *pieces;
     YamlNode *node;
     GList *keys;
     GList *l;
-    gsize length;
     gdouble version;
 
-    g_return_val_if_fail (LRG_IS_HUD_LAYOUT (self), FALSE);
-    g_return_val_if_fail (path != NULL, FALSE);
-    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
-
     staged = g_ptr_array_new_with_free_func (staged_free);
-    if (!g_file_get_contents (path, &text, &length, &local))
-    {
-        if (g_error_matches (local, G_FILE_ERROR, G_FILE_ERROR_NOENT))
-        {
-            apply_staged (self, staged);
-            return TRUE;
-        }
-        g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "%s: %s", path, local->message);
-        return FALSE;
-    }
 
     /* --- the document --- */
     parser = yaml_parser_new ();
-    if (!yaml_parser_load_from_data (parser, text, (gssize) length, &local))
+    if (!yaml_parser_load_from_data (parser, text, length, &local))
     {
         g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "%s: %s", path, local->message);
         return FALSE;
@@ -1042,23 +1033,57 @@ lrg_hud_layout_load_from_file (LrgHudLayout  *self,
 }
 
 gboolean
-lrg_hud_layout_save_to_file (LrgHudLayout  *self,
-                             const gchar   *path,
-                             GError       **error)
+lrg_hud_layout_load_from_file (LrgHudLayout  *self,
+                               const gchar   *path,
+                               GError       **error)
 {
-    g_autoptr(YamlGenerator) generator = NULL;
-    g_autoptr(YamlNode) root_node = NULL;
-    g_autofree gchar *data = NULL;
-    g_autofree gchar *dir = NULL;
-    YamlMapping *root;
-    YamlMapping *pieces;
-    GList *ids;
-    GList *l;
+    g_autoptr(GError) local = NULL;
+    g_autofree gchar *text = NULL;
     gsize length;
 
     g_return_val_if_fail (LRG_IS_HUD_LAYOUT (self), FALSE);
     g_return_val_if_fail (path != NULL, FALSE);
     g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    if (!g_file_get_contents (path, &text, &length, &local))
+    {
+        if (g_error_matches (local, G_FILE_ERROR, G_FILE_ERROR_NOENT))
+        {
+            g_autoptr(GPtrArray) none = g_ptr_array_new_with_free_func (staged_free);
+
+            apply_staged (self, none);
+            return TRUE;
+        }
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "%s: %s", path, local->message);
+        return FALSE;
+    }
+    return load_text (self, text, (gssize) length, path, error);
+}
+
+gboolean
+lrg_hud_layout_load_from_data (LrgHudLayout  *self,
+                               const gchar   *data,
+                               gssize         length,
+                               GError       **error)
+{
+    g_return_val_if_fail (LRG_IS_HUD_LAYOUT (self), FALSE);
+    g_return_val_if_fail (data != NULL || length == 0, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    if (length < 0)
+        length = (gssize) strlen (data);
+    return load_text (self, data != NULL ? data : "", length, "<data>", error);
+}
+
+/* the player's state as a document tree */
+static YamlNode *
+layout_to_yaml (LrgHudLayout *self)
+{
+    g_autoptr(YamlNode) root_node = NULL;
+    YamlMapping *root;
+    YamlMapping *pieces;
+    GList *ids;
+    GList *l;
 
     pieces = yaml_mapping_new ();
     ids = state_ids (self);
@@ -1070,9 +1095,13 @@ lrg_hud_layout_save_to_file (LrgHudLayout  *self,
         piece = yaml_mapping_new ();
         if (entry->placed)
         {
+            g_autoptr(YamlNode) x = lrg_data_yaml_float (entry->x);
+            g_autoptr(YamlNode) y = lrg_data_yaml_float (entry->y);
+
+            /* shortest exact text: yaml-glib's own doubles drop digits */
             yaml_mapping_set_string_member (piece, "anchor", anchor_nick (entry->anchor));
-            yaml_mapping_set_double_member (piece, "x", (gdouble) entry->x);
-            yaml_mapping_set_double_member (piece, "y", (gdouble) entry->y);
+            yaml_mapping_set_member (piece, "x", x);
+            yaml_mapping_set_member (piece, "y", y);
         }
         if (entry->locked)
             yaml_mapping_set_boolean_member (piece, "locked", TRUE);
@@ -1089,10 +1118,37 @@ lrg_hud_layout_save_to_file (LrgHudLayout  *self,
     yaml_mapping_unref (pieces);
     root_node = yaml_node_new_mapping (root);
     yaml_mapping_unref (root);
+    return g_steal_pointer (&root_node);
+}
 
-    generator = yaml_generator_new ();
-    yaml_generator_set_root (generator, root_node);
-    data = yaml_generator_to_data (generator, &length, error);
+gchar *
+lrg_hud_layout_save_to_data (LrgHudLayout  *self,
+                             gsize         *length,
+                             GError       **error)
+{
+    g_autoptr(YamlNode) root = NULL;
+
+    g_return_val_if_fail (LRG_IS_HUD_LAYOUT (self), NULL);
+    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+    root = layout_to_yaml (self);
+    return lrg_data_yaml_to_data (root, length, error);
+}
+
+gboolean
+lrg_hud_layout_save_to_file (LrgHudLayout  *self,
+                             const gchar   *path,
+                             GError       **error)
+{
+    g_autofree gchar *data = NULL;
+    g_autofree gchar *dir = NULL;
+    gsize length;
+
+    g_return_val_if_fail (LRG_IS_HUD_LAYOUT (self), FALSE);
+    g_return_val_if_fail (path != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    data = lrg_hud_layout_save_to_data (self, &length, error);
     if (data == NULL)
         return FALSE;
     dir = g_path_get_dirname (path);

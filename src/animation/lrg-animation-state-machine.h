@@ -22,6 +22,28 @@
 
 G_BEGIN_DECLS
 
+/**
+ * LrgAnimParameterType:
+ * @LRG_ANIM_PARAMETER_FLOAT: a float (stored as a double #GVariant)
+ * @LRG_ANIM_PARAMETER_INT: an integer (int32 #GVariant)
+ * @LRG_ANIM_PARAMETER_BOOL: a boolean
+ * @LRG_ANIM_PARAMETER_TRIGGER: a boolean that the first transition firing
+ *   because of it resets (jump, attack, hit reactions)
+ *
+ * The declared type of a state machine parameter.
+ */
+typedef enum
+{
+    LRG_ANIM_PARAMETER_FLOAT,
+    LRG_ANIM_PARAMETER_INT,
+    LRG_ANIM_PARAMETER_BOOL,
+    LRG_ANIM_PARAMETER_TRIGGER
+} LrgAnimParameterType;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_anim_parameter_type_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ANIM_PARAMETER_TYPE (lrg_anim_parameter_type_get_type ())
+
 #define LRG_TYPE_ANIMATION_STATE_MACHINE (lrg_animation_state_machine_get_type ())
 
 LRG_AVAILABLE_IN_ALL
@@ -360,5 +382,212 @@ gboolean        lrg_animation_state_machine_is_running      (LrgAnimationStateMa
  */
 LRG_AVAILABLE_IN_ALL
 gboolean        lrg_animation_state_machine_is_transitioning (LrgAnimationStateMachine *self);
+
+/* ==========================================================================
+ * 0.9.0: typed parameters, any-state transitions, interruption, whole
+ * skeleton evaluation, events and root motion
+ * ========================================================================== */
+
+/**
+ * lrg_animation_state_machine_add_parameter:
+ * @self: A #LrgAnimationStateMachine
+ * @name: the parameter name
+ * @type: its type
+ * @default_value: (nullable): the default (double, int32 or boolean
+ *   #GVariant), %NULL for 0 / %FALSE; floating references are sunk
+ *
+ * Declares a typed parameter and sets it to its default. Undeclared
+ * parameters still work (the type is taken from the value), but only
+ * declared triggers are consumed by the transitions they fire.
+ */
+LRG_AVAILABLE_IN_ALL
+void            lrg_animation_state_machine_add_parameter   (LrgAnimationStateMachine *self,
+                                                              const gchar              *name,
+                                                              LrgAnimParameterType      type,
+                                                              GVariant                 *default_value);
+
+/**
+ * lrg_animation_state_machine_remove_parameter:
+ * @self: A #LrgAnimationStateMachine
+ * @name: the parameter name
+ *
+ * Removes a parameter's declaration and value.
+ *
+ * Returns: %TRUE if it was declared
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean        lrg_animation_state_machine_remove_parameter (LrgAnimationStateMachine *self,
+                                                               const gchar              *name);
+
+/**
+ * lrg_animation_state_machine_has_parameter:
+ * @self: A #LrgAnimationStateMachine
+ * @name: the parameter name
+ *
+ * Returns: whether @name is declared
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean        lrg_animation_state_machine_has_parameter   (LrgAnimationStateMachine *self,
+                                                              const gchar              *name);
+
+/**
+ * lrg_animation_state_machine_get_parameter_type:
+ * @self: A #LrgAnimationStateMachine
+ * @name: the parameter name
+ *
+ * Returns: the declared type (%LRG_ANIM_PARAMETER_FLOAT when undeclared)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAnimParameterType lrg_animation_state_machine_get_parameter_type (LrgAnimationStateMachine *self,
+                                                                     const gchar              *name);
+
+/**
+ * lrg_animation_state_machine_get_parameter_names:
+ * @self: A #LrgAnimationStateMachine
+ *
+ * Returns: (transfer full) (array zero-terminated=1): the declared
+ *   parameter names in declaration order
+ */
+LRG_AVAILABLE_IN_ALL
+gchar **        lrg_animation_state_machine_get_parameter_names (LrgAnimationStateMachine *self);
+
+/**
+ * lrg_animation_state_machine_reset_parameters:
+ * @self: A #LrgAnimationStateMachine
+ *
+ * Sets every declared parameter back to its default.
+ */
+LRG_AVAILABLE_IN_ALL
+void            lrg_animation_state_machine_reset_parameters (LrgAnimationStateMachine *self);
+
+/**
+ * lrg_animation_state_machine_share_parameters:
+ * @self: A #LrgAnimationStateMachine
+ * @owner: (nullable): the machine whose parameters @self should use, or
+ *   %NULL to give @self its own again
+ *
+ * Makes @self read and write @owner's parameter table (declarations and
+ * values): the layers of an #LrgAnimGraph and nested sub-machines share
+ * one set of parameters this way.
+ */
+LRG_AVAILABLE_IN_ALL
+void            lrg_animation_state_machine_share_parameters (LrgAnimationStateMachine *self,
+                                                               LrgAnimationStateMachine *owner);
+
+/**
+ * lrg_animation_state_machine_set_int:
+ * @self: A #LrgAnimationStateMachine
+ * @name: Parameter name
+ * @value: Value
+ *
+ * Sets an integer parameter.
+ */
+LRG_AVAILABLE_IN_ALL
+void            lrg_animation_state_machine_set_int         (LrgAnimationStateMachine *self,
+                                                              const gchar              *name,
+                                                              gint                      value);
+
+/**
+ * lrg_animation_state_machine_get_int:
+ * @self: A #LrgAnimationStateMachine
+ * @name: Parameter name
+ *
+ * Returns: the value (a float parameter is truncated; 0 when unset)
+ */
+LRG_AVAILABLE_IN_ALL
+gint            lrg_animation_state_machine_get_int         (LrgAnimationStateMachine *self,
+                                                              const gchar              *name);
+
+/**
+ * lrg_animation_state_machine_get_states_ordered:
+ * @self: A #LrgAnimationStateMachine
+ *
+ * Gets the states in the order they were added (the order a .ranim
+ * file lists them in).
+ *
+ * Returns: (transfer container) (element-type LrgAnimationState): the
+ *   states
+ */
+LRG_AVAILABLE_IN_ALL
+GList *         lrg_animation_state_machine_get_states_ordered (LrgAnimationStateMachine *self);
+
+/**
+ * lrg_animation_state_machine_remove_transition:
+ * @self: A #LrgAnimationStateMachine
+ * @transition: a transition of @self
+ *
+ * Removes a transition.
+ *
+ * Returns: %TRUE if it was found
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean        lrg_animation_state_machine_remove_transition (LrgAnimationStateMachine *self,
+                                                                LrgAnimationTransition   *transition);
+
+/**
+ * lrg_animation_state_machine_get_next_state:
+ * @self: A #LrgAnimationStateMachine
+ *
+ * Returns: (transfer none) (nullable): the state being blended in during
+ *   a transition
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAnimationState *lrg_animation_state_machine_get_next_state (LrgAnimationStateMachine *self);
+
+/**
+ * lrg_animation_state_machine_get_transition_progress:
+ * @self: A #LrgAnimationStateMachine
+ *
+ * Returns: the blend weight of the next state, 0..1 (0 when not
+ *   transitioning)
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat          lrg_animation_state_machine_get_transition_progress (LrgAnimationStateMachine *self);
+
+/**
+ * lrg_animation_state_machine_get_active_transition:
+ * @self: A #LrgAnimationStateMachine
+ *
+ * Returns: (transfer none) (nullable): the transition in progress (the
+ *   editor highlights it)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAnimationTransition *lrg_animation_state_machine_get_active_transition (LrgAnimationStateMachine *self);
+
+/**
+ * lrg_animation_state_machine_sample_pose:
+ * @self: A #LrgAnimationStateMachine
+ * @skeleton: the skeleton the pose is for
+ * @poses: (array length=n_poses) (out caller-allocates): local poses by
+ *   bone index
+ * @n_poses: number of entries
+ *
+ * Samples the current state (blended with the next state during a
+ * transition; after an interruption the blend starts from the pose the
+ * machine had when it was interrupted) without touching the skeleton.
+ */
+LRG_AVAILABLE_IN_ALL
+void            lrg_animation_state_machine_sample_pose     (LrgAnimationStateMachine *self,
+                                                              LrgSkeleton              *skeleton,
+                                                              LrgBonePose              *poses,
+                                                              guint                     n_poses);
+
+/**
+ * lrg_animation_state_machine_get_root_motion:
+ * @self: A #LrgAnimationStateMachine
+ * @bone_name: the root motion bone
+ * @out_translation: (out caller-allocates) (array fixed-size=3): local
+ *   translation change over the last update
+ * @out_yaw: (out) (optional): turn about +Y over the last update
+ *
+ * The root motion of the last update: the current state's (see
+ * lrg_animation_state_get_root_motion()), blended with the next state's
+ * by the transition weight.
+ */
+LRG_AVAILABLE_IN_ALL
+void            lrg_animation_state_machine_get_root_motion (LrgAnimationStateMachine *self,
+                                                              const gchar              *bone_name,
+                                                              gfloat                   *out_translation,
+                                                              gfloat                   *out_yaw);
 
 G_END_DECLS

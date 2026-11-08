@@ -839,6 +839,196 @@ test_lighting_manager_lightmap_bounds (void)
     g_assert_null (lrg_lighting_manager_get_light_target (manager));
 }
 
+/* ==========================================================================
+ * 2D shadow geometry (0.9.0)
+ * ========================================================================== */
+
+/* a point light at the origin, reach 200, and a 20x20 box at x 50..70 */
+static LrgPointLight2D *
+shadow_light (void)
+{
+    LrgPointLight2D *light = lrg_point_light2d_new ();
+
+    lrg_light2d_set_position (LRG_LIGHT2D (light), 0.0f, 0.0f);
+    lrg_point_light2d_set_radius (light, 200.0f);
+    return light;
+}
+
+static void
+test_shadow_hard (void)
+{
+    g_autoptr(LrgPointLight2D) light = shadow_light ();
+    g_autoptr(LrgShadowOccluder2D) box = lrg_shadow_occluder2d_new ();
+    g_autoptr(GPtrArray) casters = g_ptr_array_new ();
+    const gfloat *tris;
+    guint n = 0;
+
+    lrg_shadow_occluder2d_add_rect (box, 50.0f, -10.0f, 20.0f, 20.0f);
+    g_assert_cmpuint (lrg_shadow_occluder2d_get_edge_count (box), ==, 4);
+    g_ptr_array_add (casters, box);
+
+    lrg_light2d_calculate_shadows (LRG_LIGHT2D (light), casters);
+    g_assert_cmpuint (lrg_light2d_get_shadow_sample_count (LRG_LIGHT2D (light)), ==, 1);
+    tris = lrg_light2d_get_shadow_triangles (LRG_LIGHT2D (light), 0, &n);
+    g_assert_nonnull (tris);
+    /* the three edges facing away from the light, two triangles each */
+    g_assert_cmpuint (n, ==, 3 * 2 * 6);
+
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (light), 120.0f, 0.0f), ==, 1.0f);
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (light), -60.0f, 0.0f), ==, 0.0f);
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (light), 120.0f, 60.0f), ==, 0.0f);
+    /* the occluder itself stays lit */
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (light), 60.0f, 0.0f), ==, 0.0f);
+
+    /* self-shadowing projects the front edge too */
+    lrg_shadow_occluder2d_set_self_shadow (box, TRUE);
+    lrg_light2d_calculate_shadows (LRG_LIGHT2D (light), casters);
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (light), 60.0f, 0.0f), ==, 1.0f);
+
+    /* opacity scales the shadow; a disabled occluder casts nothing */
+    lrg_shadow_occluder2d_set_opacity (box, 0.5f);
+    lrg_light2d_calculate_shadows (LRG_LIGHT2D (light), casters);
+    g_assert_cmpfloat_with_epsilon (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (light), 120.0f, 0.0f), 0.5f, 1e-6);
+    lrg_shadow_occluder2d_set_enabled (box, FALSE);
+    lrg_light2d_calculate_shadows (LRG_LIGHT2D (light), casters);
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (light), 120.0f, 0.0f), ==, 0.0f);
+
+    /* moving the occluder moves its shadow */
+    lrg_shadow_occluder2d_set_enabled (box, TRUE);
+    lrg_shadow_occluder2d_set_opacity (box, 1.0f);
+    lrg_shadow_occluder2d_set_position (box, 0.0f, 100.0f);
+    lrg_light2d_calculate_shadows (LRG_LIGHT2D (light), casters);
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (light), 120.0f, 0.0f), ==, 0.0f);
+
+    /* out of reach: no geometry */
+    lrg_point_light2d_set_radius (light, 20.0f);
+    lrg_light2d_calculate_shadows (LRG_LIGHT2D (light), casters);
+    lrg_light2d_get_shadow_triangles (LRG_LIGHT2D (light), 0, &n);
+    g_assert_cmpuint (n, ==, 0);
+}
+
+static void
+test_shadow_soft (void)
+{
+    g_autoptr(LrgPointLight2D) light = shadow_light ();
+    g_autoptr(LrgShadowOccluder2D) box = lrg_shadow_occluder2d_new ();
+    g_autoptr(GPtrArray) casters = g_ptr_array_new ();
+    gfloat penumbra;
+
+    lrg_shadow_occluder2d_add_rect (box, 50.0f, -10.0f, 20.0f, 20.0f);
+    g_ptr_array_add (casters, box);
+    /* softness 0.5: the samples spread over a disc of radius 15 (7.5 % of
+     * the 200 reach), smaller than the box, so an umbra remains */
+    lrg_light2d_set_shadow_softness (LRG_LIGHT2D (light), 0.5f);
+    lrg_light2d_set_shadow_samples (LRG_LIGHT2D (light), 16);
+    lrg_light2d_calculate_shadows (LRG_LIGHT2D (light), casters);
+    g_assert_cmpuint (lrg_light2d_get_shadow_sample_count (LRG_LIGHT2D (light)), ==, 16);
+
+    /* deep in the umbra: dark; on the hard shadow's edge: partly lit */
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (light), 75.0f, 0.0f), ==, 1.0f);
+    penumbra = lrg_light2d_get_shadow_factor (LRG_LIGHT2D (light), 150.0f, -30.0f);
+    g_assert_cmpfloat (penumbra, >, 0.1f);
+    g_assert_cmpfloat (penumbra, <, 0.9f);
+
+    /* clearing drops the geometry */
+    lrg_light2d_clear_shadows (LRG_LIGHT2D (light));
+    g_assert_cmpuint (lrg_light2d_get_shadow_sample_count (LRG_LIGHT2D (light)), ==, 0);
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (light), 75.0f, 0.0f), ==, 0.0f);
+}
+
+static void
+test_shadow_directional (void)
+{
+    g_autoptr(LrgDirectionalLight2D) sun = lrg_directional_light2d_new ();
+    g_autoptr(LrgShadowOccluder2D) box = lrg_shadow_occluder2d_new ();
+    g_autoptr(GPtrArray) casters = g_ptr_array_new ();
+
+    /* light travelling along +x, shadows 100 long */
+    lrg_directional_light2d_set_direction (sun, 0.0f);
+    lrg_directional_light2d_set_shadow_length (sun, 100.0f);
+    lrg_shadow_occluder2d_add_rect (box, 0.0f, 0.0f, 10.0f, 10.0f);
+    g_ptr_array_add (casters, box);
+    lrg_light2d_calculate_shadows (LRG_LIGHT2D (sun), casters);
+
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (sun), 50.0f, 5.0f), ==, 1.0f);
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (sun), 50.0f, 20.0f), ==, 0.0f);
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (sun), -20.0f, 5.0f), ==, 0.0f);
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (sun), 150.0f, 5.0f), ==, 0.0f);
+}
+
+static void
+test_shadow_manager_headless (void)
+{
+    g_autoptr(LrgLightingManager) manager = lrg_lighting_manager_new ();
+    g_autoptr(LrgPointLight2D) light = shadow_light ();
+    g_autoptr(LrgShadowOccluder2D) box = lrg_shadow_occluder2d_new ();
+
+    lrg_lighting_manager_set_viewport (manager, -200.0f, -200.0f, 400.0f, 400.0f);
+    lrg_shadow_occluder2d_add_rect (box, 50.0f, -10.0f, 20.0f, 20.0f);
+    lrg_lighting_manager_add_light (manager, LRG_LIGHT2D (light));
+    lrg_lighting_manager_add_shadow_caster (manager, LRG_SHADOW_CASTER (box));
+
+    /* without a window the geometry is still built */
+    lrg_lighting_manager_render (manager);
+    g_assert_cmpuint (lrg_lighting_manager_get_shadowed_light_count (manager), ==, 1);
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (light), 120.0f, 0.0f), ==, 1.0f);
+
+    /* shadows off: the light drops its geometry */
+    lrg_lighting_manager_set_shadows_enabled (manager, FALSE);
+    lrg_lighting_manager_render (manager);
+    g_assert_cmpuint (lrg_lighting_manager_get_shadowed_light_count (manager), ==, 0);
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (light), 120.0f, 0.0f), ==, 0.0f);
+}
+
+static void
+test_shadow_alpha_outline (void)
+{
+    g_autoptr(LrgShadowOccluder2D) ring = lrg_shadow_occluder2d_new ();
+    g_autoptr(LrgShadowOccluder2D) simple = lrg_shadow_occluder2d_new ();
+    g_autoptr(LrgPointLight2D) light = shadow_light ();
+    g_autoptr(GPtrArray) casters = g_ptr_array_new ();
+    guint8 rgba[32 * 32 * 4];
+    gint x;
+    gint y;
+
+    /* a ring: radius 12 disc minus radius 5 hole, centred at (16, 16) */
+    memset (rgba, 0, sizeof rgba);
+    for (y = 0; y < 32; y++)
+    {
+        for (x = 0; x < 32; x++)
+        {
+            gfloat dx = (gfloat) x + 0.5f - 16.0f;
+            gfloat dy = (gfloat) y + 0.5f - 16.0f;
+            gfloat d = sqrtf (dx * dx + dy * dy);
+
+            if (d < 12.0f && d > 5.0f)
+                rgba[(y * 32 + x) * 4 + 3] = 255;
+        }
+    }
+
+    /* outer boundary and hole: two loops */
+    g_assert_cmpuint (lrg_shadow_occluder2d_add_alpha_outline (ring, rgba, sizeof rgba, 32, 32, 0, 128,
+                                                               0.0f, 0.0f, 0.0f, 1.0f), ==, 2);
+    g_assert_cmpuint (lrg_shadow_occluder2d_add_alpha_outline (simple, rgba, sizeof rgba, 32, 32, 0, 128,
+                                                               1.0f, 0.0f, 0.0f, 1.0f), ==, 2);
+    /* simplification removes most pixel corners */
+    g_assert_cmpuint (lrg_shadow_occluder2d_get_edge_count (simple), <,
+                      lrg_shadow_occluder2d_get_edge_count (ring) / 2);
+    g_assert_cmpuint (lrg_shadow_occluder2d_get_edge_count (simple), >=, 8);
+
+    /* placed at x 60 with scale 2 (64 px wide), it shadows what is behind */
+    lrg_shadow_occluder2d_clear (simple);
+    lrg_shadow_occluder2d_add_alpha_outline (simple, rgba, sizeof rgba, 32, 32, 0, 128, 1.0f, 60.0f, -32.0f, 2.0f);
+    g_ptr_array_add (casters, simple);
+    lrg_light2d_calculate_shadows (LRG_LIGHT2D (light), casters);
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (light), 160.0f, 0.0f), ==, 1.0f);
+    g_assert_cmpfloat (lrg_light2d_get_shadow_factor (LRG_LIGHT2D (light), -60.0f, 0.0f), ==, 0.0f);
+}
+
+/* ==========================================================================
+ * Main
+ * ========================================================================== */
+
 int
 main (int argc, char *argv[])
 {
@@ -903,6 +1093,13 @@ main (int argc, char *argv[])
 
     /* Shadow Method Tests */
     g_test_add_func ("/lighting/light/shadow-method", test_shadow_method);
+
+    /* 2D shadow geometry */
+    g_test_add_func ("/lighting/shadow/hard", test_shadow_hard);
+    g_test_add_func ("/lighting/shadow/soft", test_shadow_soft);
+    g_test_add_func ("/lighting/shadow/directional", test_shadow_directional);
+    g_test_add_func ("/lighting/shadow/manager-headless", test_shadow_manager_headless);
+    g_test_add_func ("/lighting/shadow/alpha-outline", test_shadow_alpha_outline);
 
     return g_test_run ();
 }

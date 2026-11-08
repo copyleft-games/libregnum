@@ -31,14 +31,45 @@
  * object data "lrg-editor-dialog" on the app and its id goes into
  * LrgEditorViewState:dialog, which disables the editor's shortcuts and
  * lets editor_dialog_close_all() close it.
+ *
+ * Shaders (0.9.0). `.rshader` documents (and the engine's other YAML
+ * assets: .rmat, .rshadergraph, .rpost) open with YAML highlighting,
+ * GLSL stages (.glsl .vert .frag .vs .fs) with GLSL. Saving a shader
+ * document or a stage compiles every `.rshader` of the folder that uses
+ * it (LrgShaderAsset: GL when a window exists, otherwise only the
+ * document is checked) and keeps the diagnostics, mapped to the stage
+ * file and line (an inline stage maps into the .rshader below its key):
+ *
+ *  - a diagnostics strip under the editor lists the active file's
+ *    messages; clicking one jumps to its line;
+ *  - the problems panel shows them as "shader-error" / "shader-warning"
+ *    problems (re-added from step() whenever the app replaces its
+ *    problem array after a level validation);
+ *  - opening a file at line 0 or 1 jumps to its first error.
+ *
+ * After a save the material preview's cached shader assets reload
+ * (editor_mat_preview_file_changed), so open material editors, the
+ * shader graph preview and thumbnails show the new code at once; a
+ * failing compile keeps the last good program there. The shader.* IPC
+ * methods drive the same machinery.
  */
 
 #include "config.h"
 
 #include "lrg-editor-app-private.h"
 #include "lrg-editor-code-panel.h"
+#include "../lrg-lsp-client.h"
+#include "../../scripting/lrg-script-debugger.h"
+#include "../../scripting/lrg-script-reloader.h"
 #include "lrg-editor-palette.h"
 #include "lrg-editor-preferences.h"
+#define LRG_EDITOR_PANEL_INTERNAL
+#include "data/lrg-editor-material-editor.h"
+#include "../../ui/lrg-custom-widget.h"
+#include "../../paint/lrg-paint-list.h"
+#include "../../paint/lrg-paint-icons.h"
+#include "../../graphics/lrg-shader-asset.h"
+#include <raylib.h>
 #include "../../ui/lrg-tab-view.h"
 #include "../../ui/lrg-text-editor.h"
 #include "../../ui/lrg-text-input.h"
@@ -55,6 +86,10 @@
 #define PANEL_KEY         "lrg-editor-code-panel"
 #define PALETTE_KEY       "lrg-editor-palette"
 #define MAX_FILE_SIZE     (8 * 1024 * 1024)
+#define DIAG_ROW_H        (20.0f)
+#define DIAG_MAX_ROWS     (6)
+#define SHADER_CODE_ERROR "shader-error"
+#define SHADER_CODE_WARN  "shader-warning"
 #define DIRTY_MARK        " \xe2\x80\xa2"        /* " •" */
 #define MOD_MASK          (LRG_INPUT_MODIFIER_SHIFT | LRG_INPUT_MODIFIER_CTRL | \
                            LRG_INPUT_MODIFIER_ALT | LRG_INPUT_MODIFIER_SUPER)
@@ -70,6 +105,28 @@ enum
 
 typedef struct _CodeDoc CodeDoc;
 
+/* One shader diagnostic, mapped to a file of the project. */
+typedef struct
+{
+	gchar    *file;      /* absolute */
+	guint     line;      /* 1-based, 0 unknown */
+	guint     column;
+	gboolean  error;
+	gchar    *message;
+	gchar    *text;      /* "file:line:col: error: message" */
+} CodeDiag;
+
+static void
+code_diag_free (gpointer data)
+{
+	CodeDiag *d = data;
+
+	g_free (d->file);
+	g_free (d->message);
+	g_free (d->text);
+	g_free (d);
+}
+
 struct _CodeDoc
 {
 	LrgEditorCodePanel *panel;     /* borrowed */
@@ -79,6 +136,10 @@ struct _CodeDoc
 	gboolean            dirty;
 	gboolean            asking;    /* the "changed on disk" prompt is up */
 	GFileMonitor       *monitor;
+	gboolean            lsp_dirty;
+	gint64              lsp_dirty_at;
+	gboolean            hover_sent;
+	gint64              hover_at;
 };
 
 struct _LrgEditorCodePanel
@@ -93,12 +154,36 @@ struct _LrgEditorCodePanel
 	GPtrArray          *docs;      /* CodeDoc*, same order as the tabs */
 	GSimpleActionGroup *group;     /* "code" on the canvas */
 	gboolean            syncing;   /* updating labels: ignore change signals */
+
+	/* shaders */
+	GHashTable         *diags;     /* .rshader abs path -> GPtrArray of CodeDiag */
+	LrgWidget          *diag_view; /* the strip under the editor */
+	gpointer            problems_seen;
+	guint               problems_len;
+
+	/* One language server per language id. Missing binaries stay absent. */
+	GHashTable         *lsp;         /* gchar* -> LrgLspClient */
+	GCancellable       *lsp_cancel;
+	gboolean            closing;
+	guint               complete_gen;
+	guint               hover_gen;
+	gint64              debug_poll_at;
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorCodePanel, lrg_editor_code_panel, LRG_TYPE_CONTAINER)
 
 static void doc_update_title (CodeDoc *doc);
 static void update_status (LrgEditorCodePanel *self);
+static void lsp_on_opened (LrgEditorCodePanel *self, CodeDoc *doc);
+static void lsp_on_closed (LrgEditorCodePanel *self, CodeDoc *doc);
+static void lsp_on_saved (CodeDoc *doc);
+static void lsp_flush_pending (LrgEditorCodePanel *self);
+static void debug_sync_marks (LrgEditorCodePanel *self);
+static void on_gutter_clicked (LrgTextEditor *editor, guint line, gpointer user_data);
+static void on_goto_definition (LrgTextEditor *editor, guint line, guint column, gpointer user_data);
+static void install_lsp_methods (LrgEditorCodePanel *self, LrgEditorApp *app);
+static void on_lsp_diagnostics (LrgLspClient *client, const gchar *path, gpointer user_data);
+static void lsp_flush_one (CodeDoc *doc);
 
 /* ==========================================================================
  * Documents
@@ -249,6 +334,15 @@ doc_save (CodeDoc  *doc,
 	doc->saved = g_steal_pointer (&text);
 	doc->dirty = FALSE;
 	doc_update_title (doc);
+	lsp_on_saved (doc);
+	{
+		g_autoptr(GError) reload_error = NULL;
+
+		if (!lrg_script_reloader_reload_file (lrg_script_reloader_get_default (), doc->path, &reload_error) &&
+		    doc->panel->app != NULL && reload_error != NULL)
+			editor_app_notify (doc->panel->app, EDITOR_NOTIFY_ERROR, "Script reload failed: %s",
+			                   reload_error->message);
+	}
 	return TRUE;
 }
 
@@ -497,6 +591,391 @@ lrg_editor_code_panel_check_disk (LrgEditorCodePanel *self)
 }
 
 /* ==========================================================================
+ * Shaders: compile on save, diagnostics, problems
+ * ========================================================================== */
+
+static gboolean
+is_shader_document (const gchar *path)
+{
+	g_autofree gchar *lower = g_ascii_strdown (path, -1);
+
+	return g_str_has_suffix (lower, ".rshader");
+}
+
+static gboolean
+is_shader_stage (const gchar *path)
+{
+	g_autofree gchar *lower = g_ascii_strdown (path, -1);
+
+	return g_str_has_suffix (lower, ".glsl") || g_str_has_suffix (lower, ".vert") ||
+	       g_str_has_suffix (lower, ".frag") || g_str_has_suffix (lower, ".vs") || g_str_has_suffix (lower, ".fs");
+}
+
+/* YAML highlighting for the engine's YAML assets without a .yaml name. */
+static LrgSyntax *
+syntax_for (const gchar *path)
+{
+	g_autofree gchar *lower = g_ascii_strdown (path, -1);
+
+	if (g_str_has_suffix (lower, ".rshader") || g_str_has_suffix (lower, ".rmat") ||
+	    g_str_has_suffix (lower, ".rshadergraph") || g_str_has_suffix (lower, ".rpost"))
+		return lrg_syntax_get_for_name ("yaml");
+	return lrg_syntax_get_for_filename (path);
+}
+
+/* The 1-based line of "<key>:" at the start of a line of @path, 0 when
+ * absent (inline stages start on the next line). */
+static guint
+key_line (const gchar *path,
+          const gchar *key)
+{
+	g_autofree gchar *text = NULL;
+	g_auto(GStrv)     lines = NULL;
+	g_autofree gchar *prefix = g_strconcat (key, ":", NULL);
+	guint             i;
+
+	if (!g_file_get_contents (path, &text, NULL, NULL))
+		return 0;
+	lines = g_strsplit (text, "\n", -1);
+	for (i = 0; lines[i] != NULL; i++)
+		if (g_str_has_prefix (lines[i], prefix))
+			return i + 1;
+	return 0;
+}
+
+/* A driver diagnostic of @rshader mapped to a project file and line. */
+static CodeDiag *
+map_diagnostic (const gchar               *rshader,
+                const LrgShaderDiagnostic *d)
+{
+	CodeDiag         *c = g_new0 (CodeDiag, 1);
+	const gchar      *src = lrg_shader_diagnostic_get_source (d);
+	g_autofree gchar *dir = g_path_get_dirname (rshader);
+	g_autofree gchar *rel = NULL;
+
+	c->line = lrg_shader_diagnostic_get_line (d);
+	c->column = lrg_shader_diagnostic_get_column (d);
+	c->error = lrg_shader_diagnostic_is_error (d);
+	c->message = g_strdup (lrg_shader_diagnostic_get_message (d));
+	if (src == NULL || lrg_shader_diagnostic_is_in_preamble (d))
+		c->file = g_strdup (rshader);
+	else if (g_str_has_suffix (src, "#fragment") || g_str_has_suffix (src, "#vertex"))
+	{
+		/* inline stage: lines count from the line after its key */
+		guint base = key_line (rshader, g_str_has_suffix (src, "#fragment") ? "fragment" : "vertex");
+
+		c->file = g_strdup (rshader);
+		if (c->line > 0)
+			c->line += base;
+	}
+	else
+		c->file = g_canonicalize_filename (src, dir);
+	rel = g_path_get_basename (c->file);
+	if (c->line > 0 && c->column > 0)
+		c->text = g_strdup_printf ("%s:%u:%u: %s: %s", rel, c->line, c->column, c->error ? "error" : "warning",
+		                           c->message);
+	else if (c->line > 0)
+		c->text = g_strdup_printf ("%s:%u: %s: %s", rel, c->line, c->error ? "error" : "warning", c->message);
+	else
+		c->text = g_strdup_printf ("%s: %s: %s", rel, c->error ? "error" : "warning", c->message);
+	return c;
+}
+
+/*
+ * compile_document:
+ *
+ * Loads and (with a window) compiles one .rshader; returns its mapped
+ * diagnostics (empty when it is fine). Without a window only loading is
+ * checked: a YAML or stage-file problem is still an error.
+ */
+static GPtrArray *
+compile_document (const gchar *rshader)
+{
+	GPtrArray                *out = g_ptr_array_new_with_free_func (code_diag_free);
+	g_autoptr(LrgShaderAsset) asset = NULL;
+	g_autoptr(GError)         error = NULL;
+	GPtrArray                *diags;
+	guint                     i;
+
+	asset = lrg_shader_asset_new_from_file (rshader, &error);
+	if (asset == NULL)
+	{
+		CodeDiag *c = g_new0 (CodeDiag, 1);
+		g_autofree gchar *base = g_path_get_basename (rshader);
+		const gchar *stage = NULL;
+
+		c->file = g_strdup (rshader);
+		c->error = TRUE;
+		c->message = g_strdup (error->message);
+		/* A missing stage file fails before the driver reports a line.
+		 * Point at the stage key in the document. */
+		if (strstr (error->message, "fragment stage") != NULL ||
+		    strstr (error->message, "/fragment") != NULL)
+			stage = "fragment";
+		else if (strstr (error->message, "vertex stage") != NULL ||
+		         strstr (error->message, "/vertex") != NULL)
+			stage = "vertex";
+		if (stage != NULL)
+			c->line = key_line (rshader, stage);
+		if (c->line > 0)
+			c->text = g_strdup_printf ("%s:%u: error: %s", base, c->line, error->message);
+		else
+			c->text = g_strdup_printf ("%s: error: %s", base, error->message);
+		g_ptr_array_add (out, c);
+		return out;
+	}
+	if (!IsWindowReady ())
+		return out;
+	lrg_shader_asset_compile (asset, NULL);
+	diags = lrg_shader_asset_get_diagnostics (asset);
+	for (i = 0; diags != NULL && i < diags->len; i++)
+		g_ptr_array_add (out, map_diagnostic (rshader, g_ptr_array_index (diags, i)));
+	lrg_shader_asset_release (asset);
+	return out;
+}
+
+/* The .rshader documents a save of @path concerns: itself, or the
+ * documents of its folder whose stages are @path. */
+static GPtrArray *
+documents_for (const gchar *path)
+{
+	GPtrArray        *out = g_ptr_array_new_with_free_func (g_free);
+	g_autofree gchar *dir = NULL;
+	g_autoptr(GDir)   d = NULL;
+	const gchar      *name;
+
+	if (is_shader_document (path))
+	{
+		g_ptr_array_add (out, g_strdup (path));
+		return out;
+	}
+	if (!is_shader_stage (path))
+		return out;
+	dir = g_path_get_dirname (path);
+	d = g_dir_open (dir, 0, NULL);
+	while (d != NULL && (name = g_dir_read_name (d)) != NULL)
+	{
+		g_autofree gchar         *doc = NULL;
+		g_autoptr(LrgShaderAsset) asset = NULL;
+		guint                     s;
+
+		if (!is_shader_document (name))
+			continue;
+		doc = g_build_filename (dir, name, NULL);
+		asset = lrg_shader_asset_new_from_file (doc, NULL);
+		for (s = 0; asset != NULL && s < 2; s++)
+		{
+			const gchar      *sp = lrg_shader_asset_get_source_path (asset, (LrgShaderStage) s);
+			g_autofree gchar *abs = sp != NULL ? g_canonicalize_filename (sp, dir) : NULL;
+
+			if (g_strcmp0 (abs, path) == 0)
+			{
+				g_ptr_array_add (out, g_strdup (doc));
+				break;
+			}
+		}
+	}
+	return out;
+}
+
+/* Diagnostics of the active file (borrowed CodeDiag pointers). */
+static GPtrArray *
+active_diags (LrgEditorCodePanel *self)
+{
+	GPtrArray     *out = g_ptr_array_new ();
+	CodeDoc       *doc = find_doc (self, NULL, NULL);
+	GHashTableIter iter;
+	gpointer       value;
+
+	if (doc == NULL || self->diags == NULL)
+		return out;
+	g_hash_table_iter_init (&iter, self->diags);
+	while (g_hash_table_iter_next (&iter, NULL, &value))
+	{
+		GPtrArray *list = value;
+		guint      i;
+
+		for (i = 0; i < list->len; i++)
+			if (g_strcmp0 (((CodeDiag *) g_ptr_array_index (list, i))->file, doc->path) == 0)
+				g_ptr_array_add (out, g_ptr_array_index (list, i));
+	}
+	return out;
+}
+
+static guint
+active_diag_count (LrgEditorCodePanel *self)
+{
+	g_autoptr(GPtrArray) list = active_diags (self);
+
+	return list->len;
+}
+
+/* Puts the shader diagnostics into the app's problem list (a new array,
+ * so the problems panel notices). */
+static void
+sync_problems (LrgEditorCodePanel *self)
+{
+	LrgEditorApp  *app = self->app;
+	GPtrArray     *fresh;
+	GHashTableIter iter;
+	gpointer       value;
+	guint          i;
+
+	if (app == NULL || app->problems == NULL)
+		return;
+	fresh = g_ptr_array_new_with_free_func ((GDestroyNotify) lrg_editor_problem_free);
+	for (i = 0; i < app->problems->len; i++)
+	{
+		LrgEditorProblem *p = g_ptr_array_index (app->problems, i);
+
+		if (p->code == NULL || !g_str_has_prefix (p->code, "shader-"))
+			g_ptr_array_add (fresh, lrg_editor_problem_copy (p));
+	}
+	g_hash_table_iter_init (&iter, self->diags);
+	while (g_hash_table_iter_next (&iter, NULL, &value))
+	{
+		GPtrArray *list = value;
+		guint      k;
+
+		for (k = 0; k < list->len; k++)
+		{
+			CodeDiag         *d = g_ptr_array_index (list, k);
+			LrgEditorProblem *p = g_new0 (LrgEditorProblem, 1);
+
+			p->severity = d->error ? LRG_EDITOR_PROBLEM_ERROR : LRG_EDITOR_PROBLEM_WARNING;
+			p->code = g_strdup (d->error ? SHADER_CODE_ERROR : SHADER_CODE_WARN);
+			p->message = g_strdup (d->text);
+			p->file = editor_app_relative_path (app, d->file);
+			p->line = (gint) d->line;
+			p->column = (gint) d->column;
+			g_ptr_array_add (fresh, p);
+		}
+	}
+	g_ptr_array_unref (app->problems);
+	app->problems = fresh;
+	self->problems_seen = fresh;
+	self->problems_len = fresh->len;
+}
+
+/* Whether the app's problem array is the one we last filled. */
+static void
+check_problems (LrgEditorCodePanel *self)
+{
+	if (self->app == NULL || self->app->problems == NULL || g_hash_table_size (self->diags) == 0)
+		return;
+	if (self->app->problems != self->problems_seen || self->app->problems->len != self->problems_len)
+		sync_problems (self);
+}
+
+/*
+ * shader_check:
+ *
+ * After a save (or shader.compile): compiles the documents @path
+ * concerns, stores their diagnostics, reloads the preview's copies and
+ * updates the strip and the problems. Returns the number of errors.
+ */
+static guint
+shader_check (LrgEditorCodePanel *self,
+              const gchar        *path)
+{
+	g_autoptr(GPtrArray) docs = documents_for (path);
+	guint                i, errors = 0, k;
+
+	if (self->app != NULL)
+		editor_mat_preview_file_changed (self->app, path);
+	for (i = 0; i < docs->len; i++)
+	{
+		const gchar *doc = g_ptr_array_index (docs, i);
+		GPtrArray   *diags = compile_document (doc);
+
+		for (k = 0; k < diags->len; k++)
+			if (((CodeDiag *) g_ptr_array_index (diags, k))->error)
+				errors++;
+		if (diags->len == 0)
+		{
+			g_ptr_array_unref (diags);
+			g_hash_table_remove (self->diags, doc);
+		}
+		else
+			g_hash_table_replace (self->diags, g_strdup (doc), diags);
+		if (self->app != NULL && g_strcmp0 (doc, path) != 0)
+			editor_mat_preview_file_changed (self->app, doc);
+	}
+	sync_problems (self);
+	lrg_widget_queue_layout (LRG_WIDGET (self));
+	if (self->app != NULL && docs->len > 0)
+	{
+		if (errors > 0)
+			editor_app_notify (self->app, EDITOR_NOTIFY_ERROR, "Shader: %u error(s)", errors);
+		else
+			editor_app_set_status (self->app, IsWindowReady () ? "Shader compiled" : "Shader checked");
+	}
+	return errors;
+}
+
+/* --- the diagnostics strip ------------------------------------------------ */
+
+static void
+diag_paint (LrgCustomWidget *widget,
+            LrgPaintList    *list,
+            gfloat           x,
+            gfloat           y,
+            gfloat           width,
+            gfloat           height,
+            gpointer         user_data)
+{
+	LrgEditorCodePanel   *self = LRG_EDITOR_CODE_PANEL (user_data);
+	LrgTheme             *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	GrlFont              *font = lrg_theme_get_ui_font (theme);
+	gfloat                fs = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE_SMALL);
+	g_autoptr(GPtrArray)  rows = active_diags (self);
+	GrlColor              wash;
+	guint                 i;
+
+	lrg_paint_list_rect (list, x, y, width, height, 0.0f, lrg_theme_get_color (theme, LRG_THEME_COLOR_SURFACE));
+	lrg_paint_list_rect (list, x, y, width, 1.0f, 0.0f, lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER));
+	lrg_paint_list_push_clip (list, x, y, width, height);
+	for (i = 0; i < rows->len && i < DIAG_MAX_ROWS; i++)
+	{
+		CodeDiag       *d = g_ptr_array_index (rows, i);
+		const GrlColor *c = lrg_theme_get_color (theme, d->error ? LRG_THEME_COLOR_DANGER : LRG_THEME_COLOR_WARNING);
+		gfloat          ry = y + 3.0f + (gfloat) i * DIAG_ROW_H;
+		gfloat          icon = fs + 2.0f;
+
+		if (i % 2 == 1)
+		{
+			lrg_paint_color_with_alpha (c, 0.06f, &wash);
+			lrg_paint_list_rect (list, x, ry, width, DIAG_ROW_H, 0.0f, &wash);
+		}
+		lrg_paint_list_rect (list, x, ry + 2.0f, 3.0f, DIAG_ROW_H - 4.0f, 1.5f, c);
+		lrg_paint_list_icon (list, d->error ? LRG_ICON_CROSS : LRG_ICON_WARNING, x + 10.0f,
+		                     ry + (DIAG_ROW_H - icon) * 0.5f, icon, 0.0f, c);
+		lrg_paint_list_text (list, font, d->text, x + 16.0f + icon, ry + (DIAG_ROW_H - fs) * 0.5f, fs, 0.0f,
+		                     lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
+	}
+	lrg_paint_list_pop_clip (list);
+}
+
+static void code_panel_goto_diag (LrgEditorCodePanel *self, guint index);
+
+static gboolean
+diag_event (LrgCustomWidget  *widget,
+            const LrgUIEvent *event,
+            gpointer          user_data)
+{
+	LrgEditorCodePanel *self = LRG_EDITOR_CODE_PANEL (user_data);
+	gfloat              y;
+
+	if (lrg_ui_event_get_event_type (event) != LRG_UI_EVENT_MOUSE_BUTTON_DOWN)
+		return FALSE;
+	y = lrg_ui_event_get_y (event) - lrg_widget_get_world_y (LRG_WIDGET (widget)) - 3.0f;
+	if (y < 0.0f)
+		return TRUE;
+	code_panel_goto_diag (self, (guint) (y / DIAG_ROW_H));
+	return TRUE;
+}
+
+/* ==========================================================================
  * Status and layout
  * ========================================================================== */
 
@@ -542,7 +1021,20 @@ lrg_editor_code_panel_layout_children (LrgContainer *container)
 		return;
 	lrg_widget_get_preferred_size (LRG_WIDGET (self->toolbar), &tw, &th);
 	lrg_widget_place_in_slot (LRG_WIDGET (self->toolbar), 0.0f, 0.0f, w, th);
-	lrg_widget_place_in_slot (LRG_WIDGET (self->tabs), 0.0f, th, w, MAX (h - th, 0.0f));
+	{
+		/* the diagnostics strip of the active file at the bottom */
+		guint  rows = self->diag_view != NULL ? MIN (active_diag_count (self), (guint) DIAG_MAX_ROWS) : 0;
+		gfloat dh = rows > 0 ? (gfloat) rows * DIAG_ROW_H + 6.0f : 0.0f;
+
+		dh = MIN (dh, MAX (h - th, 0.0f) * 0.45f);
+		if (self->diag_view != NULL)
+		{
+			lrg_widget_set_visible (self->diag_view, rows > 0);
+			if (rows > 0)
+				lrg_widget_place_in_slot (self->diag_view, 0.0f, h - dh, w, dh);
+		}
+		lrg_widget_place_in_slot (LRG_WIDGET (self->tabs), 0.0f, th, w, MAX (h - th - dh, 0.0f));
+	}
 	lrg_widget_place_in_slot (LRG_WIDGET (self->empty), 0.0f, th, w, MAX (h - th, 0.0f));
 }
 
@@ -636,7 +1128,11 @@ on_editor_changed (LrgTextEditor *editor,
 	CodeDoc *doc = user_data;
 
 	if (!doc->panel->syncing)
+	{
 		doc_refresh_dirty (doc);
+		doc->lsp_dirty = TRUE;
+		doc->lsp_dirty_at = g_get_monotonic_time ();
+	}
 }
 
 static void
@@ -649,6 +1145,10 @@ on_cursor_moved (LrgTextEditor *editor,
 
 	if (find_doc (doc->panel, NULL, NULL) == doc)
 		update_status (doc->panel);
+	doc->hover_at = g_get_monotonic_time ();
+	doc->hover_sent = FALSE;
+	if (doc->editor != NULL)
+		lrg_text_editor_hide_hover (doc->editor);
 }
 
 static void
@@ -702,6 +1202,60 @@ on_toolbar_goto (LrgButton *button,
                  gpointer   user_data)
 {
 	ask_goto_line (LRG_EDITOR_CODE_PANEL (user_data));
+}
+
+static void
+on_debug_continue (LrgButton *button,
+                   gpointer   user_data)
+{
+	(void) button;
+	(void) user_data;
+	lrg_script_debugger_resume (lrg_script_debugger_get_default ());
+}
+
+static void
+on_debug_over (LrgButton *button,
+               gpointer   user_data)
+{
+	LrgScriptDebugger *debugger = lrg_script_debugger_get_default ();
+
+	(void) button;
+	(void) user_data;
+	if (lrg_script_debugger_is_paused (debugger))
+		lrg_script_debugger_step_over (debugger);
+}
+
+static void
+on_debug_in (LrgButton *button,
+             gpointer   user_data)
+{
+	LrgScriptDebugger *debugger = lrg_script_debugger_get_default ();
+
+	(void) button;
+	(void) user_data;
+	if (lrg_script_debugger_is_paused (debugger))
+		lrg_script_debugger_step_in (debugger);
+}
+
+static void
+on_debug_out (LrgButton *button,
+              gpointer   user_data)
+{
+	LrgScriptDebugger *debugger = lrg_script_debugger_get_default ();
+
+	(void) button;
+	(void) user_data;
+	if (lrg_script_debugger_is_paused (debugger))
+		lrg_script_debugger_step_out (debugger);
+}
+
+static void
+on_debug_stop (LrgButton *button,
+               gpointer   user_data)
+{
+	(void) button;
+	(void) user_data;
+	lrg_script_debugger_detach_all (lrg_script_debugger_get_default ());
 }
 
 /* ==========================================================================
@@ -1093,6 +1647,253 @@ m_palette_open (LrgEditorServer  *server,
 	return n;
 }
 
+/* --- shader.* ------------------------------------------------------------- */
+
+static void
+code_panel_goto_diag (LrgEditorCodePanel *self,
+                      guint               index)
+{
+	g_autoptr(GPtrArray) rows = active_diags (self);
+	CodeDiag            *d;
+	LrgTextEditor       *editor;
+	g_autofree gchar    *file = NULL;
+
+	if (index >= rows->len)
+		return;
+	d = g_ptr_array_index (rows, index);
+	file = g_strdup (d->file);
+	if (!lrg_editor_code_panel_open (self, file, (gint) MAX (d->line, 1u), NULL))
+		return;
+	editor = lrg_editor_code_panel_get_editor (self, file);
+	if (editor != NULL && d->line > 0)
+		lrg_text_editor_set_cursor (editor, d->line - 1, d->column > 0 ? d->column - 1 : 0);
+}
+
+/* Diagnostics of the documents @path concerns, as JSON. */
+static JsonNode *
+diags_json (LrgEditorCodePanel *self,
+            const gchar        *path,
+            gboolean            ok)
+{
+	g_autoptr(GPtrArray) docs = documents_for (path);
+	JsonObject          *o = json_object_new ();
+	JsonArray           *a = json_array_new ();
+	JsonNode            *n = json_node_new (JSON_NODE_OBJECT);
+	guint                i, k;
+
+	for (i = 0; i < docs->len; i++)
+	{
+		GPtrArray *list = g_hash_table_lookup (self->diags, g_ptr_array_index (docs, i));
+
+		for (k = 0; list != NULL && k < list->len; k++)
+		{
+			CodeDiag   *d = g_ptr_array_index (list, k);
+			JsonObject *e = json_object_new ();
+
+			json_object_set_string_member (e, "document", g_ptr_array_index (docs, i));
+			json_object_set_string_member (e, "file", d->file);
+			json_object_set_int_member (e, "line", d->line);
+			json_object_set_int_member (e, "column", d->column);
+			json_object_set_boolean_member (e, "error", d->error);
+			json_object_set_string_member (e, "message", d->message);
+			json_array_add_object_element (a, e);
+		}
+	}
+	json_object_set_boolean_member (o, "ok", ok);
+	json_object_set_boolean_member (o, "compiled", IsWindowReady ());
+	json_object_set_array_member (o, "diagnostics", a);
+	json_node_take_object (n, o);
+	return n;
+}
+
+static gchar *
+ipc_shader_path (LrgEditorApp  *app,
+                 JsonObject    *params,
+                 GError       **error)
+{
+	const gchar      *path = param_string (params, "path");
+	g_autofree gchar *abs = NULL;
+
+	if (path == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		                     "Missing string parameter 'path'");
+		return NULL;
+	}
+	abs = editor_app_project_path (app, path);
+	if (!g_file_test (abs, G_FILE_TEST_IS_REGULAR))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND, "%s does not exist", abs);
+		return NULL;
+	}
+	return g_canonicalize_filename (abs, NULL);
+}
+
+static JsonNode *
+m_shader_create (LrgEditorServer  *server,
+                 JsonObject       *params,
+                 gpointer          user_data,
+                 GError          **error)
+{
+	LrgEditorApp      *app = LRG_EDITOR_APP (user_data);
+	const gchar       *path = param_string (params, "path");
+	gboolean           lit = TRUE;
+	g_autofree gchar  *abs = NULL;
+	g_autofree gchar  *frag = NULL;
+	g_autoptr(GError)  err = NULL;
+	JsonObject        *o;
+	JsonNode          *n;
+
+	if (path == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		                     "Missing string parameter 'path'");
+		return NULL;
+	}
+	if (json_object_has_member (params, "lit"))
+		lit = json_object_get_boolean_member (params, "lit");
+	if (!lrg_editor_material_editor_create_shader (app, path, lit, &err))
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED, err->message);
+		return NULL;
+	}
+	abs = editor_app_project_path (app, path);
+	{
+		g_autofree gchar *dir = g_path_get_dirname (abs);
+		g_autofree gchar *base = g_path_get_basename (abs);
+		gchar            *dot = strrchr (base, '.');
+
+		if (dot != NULL)
+			*dot = '\0';
+		frag = g_strdup_printf ("%s" G_DIR_SEPARATOR_S "%s.frag", dir, base);
+	}
+	o = json_object_new ();
+	json_object_set_string_member (o, "path", abs);
+	json_object_set_string_member (o, "fragment", frag);
+	n = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (n, o);
+	return n;
+}
+
+static JsonNode *
+m_shader_compile (LrgEditorServer  *server,
+                  JsonObject       *params,
+                  gpointer          user_data,
+                  GError          **error)
+{
+	LrgEditorApp       *app = LRG_EDITOR_APP (user_data);
+	LrgEditorCodePanel *self = ipc_panel (user_data, error);
+	g_autofree gchar   *abs = NULL;
+	guint               errors;
+
+	if (self == NULL || (abs = ipc_shader_path (app, params, error)) == NULL)
+		return NULL;
+	errors = shader_check (self, abs);
+	return diags_json (self, abs, errors == 0);
+}
+
+static JsonNode *
+m_shader_diagnostics (LrgEditorServer  *server,
+                      JsonObject       *params,
+                      gpointer          user_data,
+                      GError          **error)
+{
+	LrgEditorApp       *app = LRG_EDITOR_APP (user_data);
+	LrgEditorCodePanel *self = ipc_panel (user_data, error);
+	g_autofree gchar   *abs = NULL;
+	g_autoptr(GPtrArray) docs = NULL;
+	gboolean            ok = TRUE;
+	guint               i, k;
+
+	if (self == NULL || (abs = ipc_shader_path (app, params, error)) == NULL)
+		return NULL;
+	docs = documents_for (abs);
+	for (i = 0; i < docs->len; i++)
+	{
+		GPtrArray *list = g_hash_table_lookup (self->diags, g_ptr_array_index (docs, i));
+
+		for (k = 0; list != NULL && k < list->len; k++)
+			if (((CodeDiag *) g_ptr_array_index (list, k))->error)
+				ok = FALSE;
+	}
+	return diags_json (self, abs, ok);
+}
+
+static JsonNode *
+m_shader_uniforms (LrgEditorServer  *server,
+                   JsonObject       *params,
+                   gpointer          user_data,
+                   GError          **error)
+{
+	LrgEditorApp              *app = LRG_EDITOR_APP (user_data);
+	g_autofree gchar          *abs = NULL;
+	g_autoptr(LrgShaderAsset)  asset = NULL;
+	g_autoptr(GError)          err = NULL;
+	GEnumClass                *klass;
+	JsonObject                *o;
+	JsonArray                 *a;
+	JsonNode                  *n;
+	guint                      i;
+
+	if ((abs = ipc_shader_path (app, params, error)) == NULL)
+		return NULL;
+	asset = lrg_shader_asset_new_from_file (abs, &err);
+	if (asset == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED, err->message);
+		return NULL;
+	}
+	klass = g_type_class_ref (LRG_TYPE_SHADER_UNIFORM_TYPE);
+	a = json_array_new ();
+	for (i = 0; i < lrg_shader_asset_get_n_uniforms (asset); i++)
+	{
+		const LrgShaderUniform *u = lrg_shader_asset_get_uniform_at (asset, i);
+		LrgShaderUniformType    type = lrg_shader_uniform_get_uniform_type (u);
+		GEnumValue             *ev = g_enum_get_value (klass, (gint) type);
+		JsonObject             *e = json_object_new ();
+		gfloat                  def[4], lo, hi;
+		guint                   c, nc = lrg_shader_uniform_type_get_components (type);
+
+		json_object_set_string_member (e, "name", lrg_shader_uniform_get_name (u));
+		json_object_set_string_member (e, "type", ev != NULL ? ev->value_nick : "float");
+		if (type == LRG_SHADER_UNIFORM_SAMPLER2D)
+			json_object_set_string_member (e, "default", lrg_shader_uniform_get_default_texture (u));
+		else
+		{
+			JsonArray *d = json_array_new ();
+
+			lrg_shader_uniform_get_default (u, def);
+			for (c = 0; c < MAX (nc, 1u) && c < 4; c++)
+				json_array_add_double_element (d, def[c]);
+			json_object_set_array_member (e, "default", d);
+		}
+		if (lrg_shader_uniform_get_range (u, &lo, &hi))
+		{
+			json_object_set_double_member (e, "min", lo);
+			json_object_set_double_member (e, "max", hi);
+		}
+		if (lrg_shader_uniform_get_hint (u) != NULL)
+			json_object_set_string_member (e, "hint", lrg_shader_uniform_get_hint (u));
+		json_array_add_object_element (a, e);
+	}
+	g_type_class_unref (klass);
+	o = json_object_new ();
+	json_object_set_array_member (o, "uniforms", a);
+	n = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (n, o);
+	return n;
+}
+
+static JsonNode *
+m_shader_reload (LrgEditorServer  *server,
+                 JsonObject       *params,
+                 gpointer          user_data,
+                 GError          **error)
+{
+	/* the same as a save: reload the preview's copies, recompile, report */
+	return m_shader_compile (server, params, user_data, error);
+}
+
 /* ==========================================================================
  * GObject
  * ========================================================================== */
@@ -1111,8 +1912,30 @@ lrg_editor_code_panel_dispose (GObject *object)
 			lrg_widget_insert_action_group (LRG_WIDGET (self->app->canvas), "code", NULL);
 	}
 	g_clear_weak_pointer (&self->app);
+	self->closing = TRUE;
+	self->complete_gen++;
+	self->hover_gen++;
+	if (self->lsp_cancel != NULL)
+		g_cancellable_cancel (self->lsp_cancel);
+	if (self->lsp != NULL)
+	{
+		GHashTableIter  iter;
+		gpointer        value;
+
+		g_hash_table_iter_init (&iter, self->lsp);
+		while (g_hash_table_iter_next (&iter, NULL, &value))
+		{
+			LrgLspClient *client = value;
+
+			g_signal_handlers_disconnect_by_data (client, self);
+			lrg_lsp_client_stop (client);
+		}
+	}
+	g_clear_object (&self->lsp_cancel);
 	if (self->docs != NULL)
 		g_ptr_array_set_size (self->docs, 0);
+	if (self->diag_view != NULL)
+		lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (self->diag_view), NULL, NULL, NULL);
 	g_clear_object (&self->group);
 	G_OBJECT_CLASS (lrg_editor_code_panel_parent_class)->dispose (object);
 }
@@ -1123,7 +1946,25 @@ lrg_editor_code_panel_finalize (GObject *object)
 	LrgEditorCodePanel *self = LRG_EDITOR_CODE_PANEL (object);
 
 	g_clear_pointer (&self->docs, g_ptr_array_unref);
+	g_clear_pointer (&self->diags, g_hash_table_unref);
+	g_clear_pointer (&self->lsp, g_hash_table_unref);
 	G_OBJECT_CLASS (lrg_editor_code_panel_parent_class)->finalize (object);
+}
+
+/* Keeps the shader problems in the app's list after level validations
+ * replaced it. */
+static gboolean
+lrg_editor_code_panel_step (LrgWidget *widget,
+                            gfloat     delta_time)
+{
+	LrgEditorCodePanel *self = LRG_EDITOR_CODE_PANEL (widget);
+	LrgWidgetClass     *parent = LRG_WIDGET_CLASS (lrg_editor_code_panel_parent_class);
+	gboolean            busy = parent->step != NULL ? parent->step (widget, delta_time) : FALSE;
+
+	check_problems (self);
+	lsp_flush_pending (self);
+	debug_sync_marks (self);
+	return busy;
 }
 
 static void
@@ -1136,6 +1977,7 @@ lrg_editor_code_panel_class_init (LrgEditorCodePanelClass *klass)
 	object_class->finalize = lrg_editor_code_panel_finalize;
 	widget_class->measure = lrg_editor_code_panel_measure;
 	widget_class->handle_event = lrg_editor_code_panel_handle_event;
+	widget_class->step = lrg_editor_code_panel_step;
 	LRG_CONTAINER_CLASS (klass)->layout_children = lrg_editor_code_panel_layout_children;
 }
 
@@ -1163,6 +2005,8 @@ lrg_editor_code_panel_init (LrgEditorCodePanel *self)
 	                                           "\"internal\".");
 
 	self->docs = g_ptr_array_new_with_free_func (code_doc_free);
+	self->lsp = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_object_unref);
+	self->lsp_cancel = g_cancellable_new ();
 
 	/* Toolbar */
 	self->toolbar = lrg_hbox_new ();
@@ -1175,6 +2019,11 @@ lrg_editor_code_panel_init (LrgEditorCodePanel *self)
 	toolbar_button (self, "Reload", "code-reload", G_CALLBACK (on_toolbar_reload));
 	toolbar_button (self, "Close", "code-close", G_CALLBACK (on_toolbar_close));
 	toolbar_button (self, "Go to Line", "code-goto", G_CALLBACK (on_toolbar_goto));
+	toolbar_button (self, "Continue", "code-debug-continue", G_CALLBACK (on_debug_continue));
+	toolbar_button (self, "Over", "code-debug-over", G_CALLBACK (on_debug_over));
+	toolbar_button (self, "In", "code-debug-in", G_CALLBACK (on_debug_in));
+	toolbar_button (self, "Out", "code-debug-out", G_CALLBACK (on_debug_out));
+	toolbar_button (self, "Stop", "code-debug-stop", G_CALLBACK (on_debug_stop));
 	self->status = lrg_label_new ("No file open");
 	lrg_widget_set_name (LRG_WIDGET (self->status), "code-status");
 	lrg_widget_add_class (LRG_WIDGET (self->status), "dim-label");
@@ -1199,6 +2048,19 @@ lrg_editor_code_panel_init (LrgEditorCodePanel *self)
 	lrg_container_add_child (LRG_CONTAINER (self), LRG_WIDGET (self->empty));
 	g_object_unref (self->empty);
 	lrg_widget_set_visible (LRG_WIDGET (self->tabs), FALSE);
+
+	/* Shader diagnostics of the active file */
+	self->diags = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, (GDestroyNotify) g_ptr_array_unref);
+	{
+		static const LrgCustomWidgetFuncs funcs = { NULL, diag_paint, NULL, diag_event, { NULL } };
+
+		self->diag_view = LRG_WIDGET (lrg_custom_widget_new ());
+		lrg_widget_set_name (self->diag_view, "code-diagnostics");
+		lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (self->diag_view), &funcs, self, NULL);
+		lrg_widget_set_visible (self->diag_view, FALSE);
+		lrg_container_add_child (LRG_CONTAINER (self), self->diag_view);
+		g_object_unref (self->diag_view);
+	}
 }
 
 /* Registers the panel's actions and methods, plus the palette and the
@@ -1242,6 +2104,12 @@ install (LrgEditorCodePanel *self,
 	lrg_editor_server_register_method (app->server, "code.save", m_code_save, app, NULL);
 	lrg_editor_server_register_method (app->server, "preferences.open", m_preferences_open, app, NULL);
 	lrg_editor_server_register_method (app->server, "palette.open", m_palette_open, app, NULL);
+	lrg_editor_server_register_method (app->server, "shader.create", m_shader_create, app, NULL);
+	lrg_editor_server_register_method (app->server, "shader.compile", m_shader_compile, app, NULL);
+	lrg_editor_server_register_method (app->server, "shader.diagnostics", m_shader_diagnostics, app, NULL);
+	lrg_editor_server_register_method (app->server, "shader.uniforms", m_shader_uniforms, app, NULL);
+	lrg_editor_server_register_method (app->server, "shader.reload", m_shader_reload, app, NULL);
+	install_lsp_methods (self, app);
 
 	/* The command palette lives on the canvas popup layer; one per app */
 	if (g_object_get_data (G_OBJECT (app), PALETTE_KEY) == NULL)
@@ -1325,9 +2193,10 @@ lrg_editor_code_panel_open (LrgEditorCodePanel  *self,
 	editor = lrg_text_editor_new ();
 	lrg_widget_set_name (LRG_WIDGET (editor), "code-editor");
 	lrg_text_editor_set_show_line_numbers (editor, TRUE);
+	lrg_text_editor_set_show_gutter_marks (editor, TRUE);
 	lrg_text_editor_set_highlight_current_line (editor, TRUE);
 	lrg_text_editor_set_auto_indent (editor, TRUE);
-	syntax = lrg_syntax_get_for_filename (abs);
+	syntax = syntax_for (abs);
 	if (syntax != NULL)
 		lrg_text_editor_set_syntax (editor, syntax);
 
@@ -1343,6 +2212,8 @@ lrg_editor_code_panel_open (LrgEditorCodePanel  *self,
 	self->syncing = FALSE;
 	g_signal_connect (editor, "changed", G_CALLBACK (on_editor_changed), doc);
 	g_signal_connect (editor, "cursor-moved", G_CALLBACK (on_cursor_moved), doc);
+	g_signal_connect (editor, "gutter-clicked", G_CALLBACK (on_gutter_clicked), doc);
+	g_signal_connect (editor, "goto-definition", G_CALLBACK (on_goto_definition), doc);
 
 	/* Reload when the file changes on disk */
 	file = g_file_new_for_path (doc->path);
@@ -1358,10 +2229,24 @@ lrg_editor_code_panel_open (LrgEditorCodePanel  *self,
 	lrg_text_editor_set_cursor (editor, (guint) MAX (line - 1, 0), 0);
 	if (line > 1)
 		lrg_text_editor_scroll_to_line (editor, (guint) MAX (line - 4, 0), FALSE);
+	else
+	{
+		/* a shader file with errors opens at the first one */
+		g_autoptr(GPtrArray) diags = active_diags (self);
+
+		if (diags->len > 0 && ((CodeDiag *) g_ptr_array_index (diags, 0))->line > 0)
+		{
+			CodeDiag *d = g_ptr_array_index (diags, 0);
+
+			lrg_text_editor_set_cursor (editor, d->line - 1, d->column > 0 ? d->column - 1 : 0);
+			lrg_text_editor_scroll_to_line (editor, d->line > 4 ? d->line - 4 : 0, FALSE);
+		}
+	}
 	update_status (self);
 	present (self);
 	if (self->app != NULL)
 		editor_app_set_status (self->app, "Opened %s", doc->path);
+	lsp_on_opened (self, doc);
 	return TRUE;
 }
 
@@ -1384,6 +2269,8 @@ lrg_editor_code_panel_save (LrgEditorCodePanel  *self,
 		return FALSE;
 	if (self->app != NULL)
 		editor_app_set_status (self->app, "Saved %s", doc->path);
+	if (is_shader_document (doc->path) || is_shader_stage (doc->path))
+		shader_check (self, doc->path);
 	return TRUE;
 }
 
@@ -1400,8 +2287,12 @@ lrg_editor_code_panel_save_all (LrgEditorCodePanel  *self,
 	{
 		CodeDoc *doc = g_ptr_array_index (self->docs, i);
 
-		if (doc->dirty && !doc_save (doc, ok ? error : NULL))
+		if (!doc->dirty)
+			continue;
+		if (!doc_save (doc, ok ? error : NULL))
 			ok = FALSE;
+		else if (is_shader_document (doc->path) || is_shader_stage (doc->path))
+			shader_check (self, doc->path);
 	}
 	return ok;
 }
@@ -1427,6 +2318,7 @@ lrg_editor_code_panel_close (LrgEditorCodePanel *self,
 	}
 
 	/* The tab view drops the editor; the doc goes with it */
+	lsp_on_closed (self, doc);
 	g_signal_handlers_disconnect_by_data (doc->editor, doc);
 	doc->editor = NULL;
 	g_ptr_array_remove_index (self->docs, index);
@@ -1523,4 +2415,1178 @@ lrg_editor_code_panel_is_dirty (LrgEditorCodePanel *self,
 			return TRUE;
 	}
 	return FALSE;
+}
+
+/* ==========================================================================
+ * Language servers and the debugger gutter
+ *
+ * One LrgLspClient per language. A missing binary is not an error: the
+ * editor keeps working and lsp.* reports "no language server". Lines in
+ * the text editor are 0-based; IPC lines are 1-based.
+ * ========================================================================== */
+
+typedef struct
+{
+	LrgEditorCodePanel *panel;
+	gchar              *path;
+	guint               line;
+	guint               column;
+	guint               gen;
+} LspReq;
+
+static const gchar * const lsp_languages[] = {
+	"c", "lua", "python", "javascript", "typescript", NULL
+};
+
+static void
+lsp_req_free (LspReq *req)
+{
+	g_free (req->path);
+	g_object_unref (req->panel);
+	g_free (req);
+}
+
+static LrgLspClient *
+lsp_client (LrgEditorCodePanel *self,
+            const gchar        *language,
+            gboolean            start,
+            GError            **error)
+{
+	LrgLspClient     *client;
+	g_auto(GStrv)     argv = NULL;
+	g_autoptr(GError) start_error = NULL;
+
+	if (language == NULL || self->lsp == NULL)
+		return NULL;
+	client = g_hash_table_lookup (self->lsp, language);
+	if (client != NULL || !start || self->closing)
+		return client;
+	argv = lrg_lsp_find_server (language);
+	if (argv == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		             "no language server for %s", language);
+		return NULL;
+	}
+	client = lrg_lsp_client_new (language, (const gchar * const *) argv);
+	if (self->app != NULL)
+		lrg_lsp_client_set_root_path (client, editor_app_base_dir (self->app));
+	if (!lrg_lsp_client_start (client, &start_error))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		             "%s", start_error != NULL ? start_error->message : "could not start the language server");
+		g_object_unref (client);
+		return NULL;
+	}
+	g_signal_connect (client, "diagnostics-changed", G_CALLBACK (on_lsp_diagnostics), self);
+	g_hash_table_insert (self->lsp, g_strdup (language), client);
+	return client;
+}
+
+static void
+on_lsp_diagnostics (LrgLspClient *client,
+                    const gchar  *path,
+                    gpointer      user_data)
+{
+	LrgEditorCodePanel   *self = user_data;
+	CodeDoc              *doc;
+	g_autoptr(GPtrArray)  diags = NULL;
+	g_autoptr(GPtrArray)  paint = NULL;
+	guint                 i;
+
+	if (self->closing)
+		return;
+	doc = find_doc (self, path, NULL);
+	if (doc == NULL || doc->editor == NULL)
+		return;
+	diags = lrg_lsp_client_get_diagnostics (client, path);
+	paint = g_ptr_array_new_with_free_func ((GDestroyNotify) lrg_text_diagnostic_free);
+	for (i = 0; diags != NULL && i < diags->len; i++)
+	{
+		LrgLspDiagnostic  *d = g_ptr_array_index (diags, i);
+		LrgTextDiagnostic *t = g_new0 (LrgTextDiagnostic, 1);
+
+		t->line = d->line;
+		t->column = d->column;
+		t->end_line = d->end_line;
+		t->end_column = d->end_column;
+		t->severity = (LrgTextDiagnosticSeverity) d->severity;
+		t->message = g_strdup (d->message);
+		g_ptr_array_add (paint, t);
+	}
+	lrg_text_editor_set_diagnostics (doc->editor, paint);
+}
+
+static void
+on_lsp_completion (GObject      *source,
+                   GAsyncResult *result,
+                   gpointer      user_data)
+{
+	LspReq               *req = user_data;
+	LrgLspClient         *client = LRG_LSP_CLIENT (source);
+	g_autoptr(GPtrArray)  items = NULL;
+	g_autoptr(GError)     error = NULL;
+	CodeDoc              *doc;
+	guint                 line = 0;
+	guint                 column = 0;
+	guint                 i;
+
+	items = lrg_lsp_client_completion_finish (client, result, &error);
+	if (req->panel->closing || req->gen != req->panel->complete_gen)
+	{
+		lsp_req_free (req);
+		return;
+	}
+	doc = find_doc (req->panel, req->path, NULL);
+	if (doc != NULL && doc->editor != NULL && items != NULL)
+	{
+		g_autoptr(GPtrArray) show = g_ptr_array_new_with_free_func ((GDestroyNotify) lrg_text_completion_free);
+
+		lrg_text_editor_get_cursor (doc->editor, &line, &column);
+		if (line == req->line && column == req->column)
+		{
+			for (i = 0; i < items->len && i < 32; i++)
+			{
+				LrgLspCompletionItem *item = g_ptr_array_index (items, i);
+				LrgTextCompletion    *row = g_new0 (LrgTextCompletion, 1);
+
+				row->label = g_strdup (item->label);
+				row->detail = g_strdup (item->detail);
+				row->insert_text = g_strdup (item->insert_text);
+				g_ptr_array_add (show, row);
+			}
+			lrg_text_editor_show_completion (doc->editor, show);
+		}
+	}
+	lsp_req_free (req);
+}
+
+static void
+on_lsp_hover (GObject      *source,
+              GAsyncResult *result,
+              gpointer      user_data)
+{
+	LspReq           *req = user_data;
+	LrgLspClient     *client = LRG_LSP_CLIENT (source);
+	g_autofree gchar *text = NULL;
+	g_autoptr(GError) error = NULL;
+	CodeDoc          *doc;
+	guint             line = 0;
+	guint             column = 0;
+
+	text = lrg_lsp_client_hover_finish (client, result, &error);
+	if (req->panel->closing || req->gen != req->panel->hover_gen)
+	{
+		lsp_req_free (req);
+		return;
+	}
+	doc = find_doc (req->panel, req->path, NULL);
+	if (doc != NULL && doc->editor != NULL)
+	{
+		lrg_text_editor_get_cursor (doc->editor, &line, &column);
+		if (line == req->line && column == req->column)
+			lrg_text_editor_show_hover (doc->editor, text);
+	}
+	lsp_req_free (req);
+}
+
+static void
+lsp_ask (LrgEditorCodePanel *self,
+         CodeDoc            *doc,
+         guint               line,
+         guint               column,
+         gboolean            hover)
+{
+	LrgLspClient *client;
+	LspReq       *req;
+	const gchar  *lang = lrg_lsp_language_for_path (doc->path);
+
+	client = lsp_client (self, lang, TRUE, NULL);
+	if (client == NULL || doc->editor == NULL)
+		return;
+	req = g_new0 (LspReq, 1);
+	req->panel = g_object_ref (self);
+	req->path = g_strdup (doc->path);
+	req->line = line;
+	req->column = column;
+	if (hover)
+	{
+		self->hover_gen++;
+		req->gen = self->hover_gen;
+		lrg_lsp_client_hover_async (client, doc->path, line, column, self->lsp_cancel,
+		                            on_lsp_hover, req);
+	}
+	else
+	{
+		self->complete_gen++;
+		req->gen = self->complete_gen;
+		lrg_lsp_client_completion_async (client, doc->path, line, column, self->lsp_cancel,
+		                                 on_lsp_completion, req);
+	}
+}
+
+static void
+lsp_on_opened (LrgEditorCodePanel *self,
+               CodeDoc            *doc)
+{
+	LrgLspClient     *client;
+	g_autofree gchar *text = NULL;
+	const gchar      *lang = lrg_lsp_language_for_path (doc->path);
+
+	client = lsp_client (self, lang, TRUE, NULL);
+	if (client == NULL)
+		return;
+	text = lrg_text_editor_get_text (doc->editor);
+	lrg_lsp_client_did_open (client, doc->path, text);
+}
+
+static void
+lsp_on_closed (LrgEditorCodePanel *self,
+               CodeDoc            *doc)
+{
+	const gchar  *lang = lrg_lsp_language_for_path (doc->path);
+	LrgLspClient *client = lsp_client (self, lang, FALSE, NULL);
+
+	if (client != NULL && lrg_lsp_client_is_open (client, doc->path))
+		lrg_lsp_client_did_close (client, doc->path);
+}
+
+static void
+lsp_on_saved (CodeDoc *doc)
+{
+	const gchar      *lang = lrg_lsp_language_for_path (doc->path);
+	LrgLspClient     *client = lsp_client (doc->panel, lang, FALSE, NULL);
+	g_autofree gchar *text = NULL;
+
+	if (client == NULL || !lrg_lsp_client_is_open (client, doc->path))
+		return;
+	text = lrg_text_editor_get_text (doc->editor);
+	lrg_lsp_client_did_save (client, doc->path, text);
+}
+
+static void
+lsp_flush_pending (LrgEditorCodePanel *self)
+{
+	gint64 now = g_get_monotonic_time ();
+	guint  i;
+
+	if (self->closing || self->docs == NULL)
+		return;
+	for (i = 0; i < self->docs->len; i++)
+	{
+		CodeDoc          *doc = g_ptr_array_index (self->docs, i);
+		const gchar      *lang = lrg_lsp_language_for_path (doc->path);
+		LrgLspClient     *client;
+		guint             line = 0;
+		guint             column = 0;
+
+		if (doc->editor == NULL)
+			continue;
+		if (doc->lsp_dirty && now - doc->lsp_dirty_at >= 200000)
+		{
+			g_autofree gchar *text = lrg_text_editor_get_text (doc->editor);
+
+			doc->lsp_dirty = FALSE;
+			client = lsp_client (self, lang, TRUE, NULL);
+			if (client != NULL)
+			{
+				if (lrg_lsp_client_is_open (client, doc->path))
+					lrg_lsp_client_did_change (client, doc->path, text);
+				else
+					lrg_lsp_client_did_open (client, doc->path, text);
+				lrg_text_editor_get_cursor (doc->editor, &line, &column);
+				lsp_ask (self, doc, line, column, FALSE);
+			}
+		}
+		if (!doc->hover_sent && doc->hover_at != 0 && now - doc->hover_at >= 400000)
+		{
+			doc->hover_sent = TRUE;
+			lrg_text_editor_get_cursor (doc->editor, &line, &column);
+			lsp_ask (self, doc, line, column, TRUE);
+		}
+	}
+}
+
+static gboolean
+files_match (const gchar *a,
+             const gchar *b)
+{
+	g_autofree gchar *na = lrg_script_debugger_normalize_path (a);
+	g_autofree gchar *nb = lrg_script_debugger_normalize_path (b);
+
+	return g_strcmp0 (na, nb) == 0;
+}
+
+static void
+on_gutter_clicked (LrgTextEditor *editor,
+                   guint          line,
+                   gpointer       user_data)
+{
+	CodeDoc              *doc = user_data;
+	LrgScriptDebugger    *debugger = lrg_script_debugger_get_default ();
+	g_autoptr(GPtrArray)  all = NULL;
+	gint                  file_line = (gint) line + 1;
+	guint                 i;
+
+	(void) editor;
+	all = lrg_script_debugger_get_breakpoints (debugger);
+	for (i = 0; all != NULL && i < all->len; i++)
+	{
+		LrgScriptBreakpoint *bp = g_ptr_array_index (all, i);
+
+		if (lrg_script_breakpoint_get_line (bp) == file_line &&
+		    files_match (lrg_script_breakpoint_get_file (bp), doc->path))
+		{
+			lrg_script_debugger_remove_breakpoint (debugger, bp);
+			doc->panel->debug_poll_at = 0;
+			debug_sync_marks (doc->panel);
+			return;
+		}
+	}
+	lrg_script_debugger_add_breakpoint (debugger, doc->path, file_line);
+	doc->panel->debug_poll_at = 0;
+	debug_sync_marks (doc->panel);
+}
+
+static void
+on_goto_definition (LrgTextEditor *editor,
+                    guint          line,
+                    guint          column,
+                    gpointer       user_data)
+{
+	CodeDoc              *doc = user_data;
+	const gchar          *lang = lrg_lsp_language_for_path (doc->path);
+	LrgLspClient         *client;
+	g_autoptr(GPtrArray)  locs = NULL;
+	g_autoptr(GError)     error = NULL;
+	LrgLspLocation       *loc;
+	LrgTextEditor        *dest;
+
+	(void) editor;
+	client = lsp_client (doc->panel, lang, TRUE, NULL);
+	if (client == NULL)
+		return;
+	if (lrg_lsp_client_get_state (client) != LRG_LSP_CLIENT_STATE_READY &&
+	    !lrg_lsp_client_wait_ready (client, 2000, NULL))
+		return;
+	locs = lrg_lsp_client_definition_sync (client, doc->path, line, column, 2000, &error);
+	if (locs == NULL || locs->len == 0)
+		return;
+	loc = g_ptr_array_index (locs, 0);
+	if (!lrg_editor_code_panel_open (doc->panel, loc->path, (gint) loc->line + 1, NULL))
+		return;
+	dest = lrg_editor_code_panel_get_editor (doc->panel, loc->path);
+	if (dest != NULL)
+		lrg_text_editor_set_cursor (dest, loc->line, loc->column);
+}
+
+static void
+debug_sync_marks (LrgEditorCodePanel *self)
+{
+	LrgScriptDebugger    *debugger = lrg_script_debugger_get_default ();
+	g_autoptr(GPtrArray)  all = NULL;
+	g_autoptr(GPtrArray)  frames = NULL;
+	const gchar          *stop_file = NULL;
+	gint                  stop_line = 0;
+	gint64                now = g_get_monotonic_time ();
+	guint                 i;
+	guint                 d;
+
+	if (self->closing || now - self->debug_poll_at < 100000)
+		return;
+	self->debug_poll_at = now;
+	if (lrg_script_debugger_is_paused (debugger))
+	{
+		frames = lrg_script_debugger_get_stack_frames (debugger, NULL);
+		if (frames != NULL && frames->len > 0)
+		{
+			LrgScriptStackFrame *frame = g_ptr_array_index (frames, 0);
+
+			stop_file = lrg_script_stack_frame_get_file (frame);
+			stop_line = lrg_script_stack_frame_get_line (frame);
+		}
+	}
+	all = lrg_script_debugger_get_breakpoints (debugger);
+	for (d = 0; d < self->docs->len; d++)
+	{
+		CodeDoc *doc = g_ptr_array_index (self->docs, d);
+		gboolean stopped_here = stop_file != NULL && files_match (stop_file, doc->path);
+
+		if (doc->editor == NULL)
+			continue;
+		lrg_text_editor_clear_gutter_marks (doc->editor);
+		for (i = 0; all != NULL && i < all->len; i++)
+		{
+			LrgScriptBreakpoint *bp = g_ptr_array_index (all, i);
+			LrgTextGutterMark    mark;
+			gint                 line;
+
+			if (!files_match (lrg_script_breakpoint_get_file (bp), doc->path))
+				continue;
+			line = lrg_script_breakpoint_get_line (bp);
+			if (line < 1)
+				continue;
+			mark = lrg_script_breakpoint_get_enabled (bp) ? LRG_TEXT_GUTTER_MARK_BREAKPOINT
+			                                              : LRG_TEXT_GUTTER_MARK_BREAKPOINT_DISABLED;
+			if (stopped_here && line == stop_line)
+				mark |= LRG_TEXT_GUTTER_MARK_CURRENT;
+			lrg_text_editor_set_gutter_mark (doc->editor, (guint) line - 1, mark);
+		}
+		if (stopped_here && stop_line > 0)
+			lrg_text_editor_set_execution_line (doc->editor, stop_line - 1);
+		else
+			lrg_text_editor_set_execution_line (doc->editor, -1);
+	}
+}
+
+/* --- lsp.* -------------------------------------------------------------- */
+
+static gboolean
+lsp_param_int (JsonObject  *params,
+               const gchar *name,
+               gint64      *out)
+{
+	JsonNode *n;
+	GType     type;
+
+	if (params == NULL || !json_object_has_member (params, name))
+		return FALSE;
+	n = json_object_get_member (params, name);
+	if (!JSON_NODE_HOLDS_VALUE (n))
+		return FALSE;
+	type = json_node_get_value_type (n);
+	if (type == G_TYPE_INT64)
+	{
+		*out = json_node_get_int (n);
+		return TRUE;
+	}
+	if (type == G_TYPE_DOUBLE)
+	{
+		*out = (gint64) json_node_get_double (n);
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static CodeDoc *
+lsp_doc (LrgEditorCodePanel *self,
+         JsonObject         *params,
+         GError            **error)
+{
+	const gchar *path = param_string (params, "path");
+	CodeDoc     *doc;
+
+	if (path != NULL && path[0] != '\0')
+	{
+		doc = find_doc (self, path, NULL);
+		if (doc == NULL)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+			             "%s is not open", path);
+			return NULL;
+		}
+		return doc;
+	}
+	doc = find_doc (self, NULL, NULL);
+	if (doc == NULL)
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		                     "no file open");
+	return doc;
+}
+
+static gboolean
+lsp_position (CodeDoc     *doc,
+              JsonObject  *params,
+              guint       *line,
+              guint       *column,
+              GError     **error)
+{
+	gint64 have_line = 0;
+	gint64 have_col = 0;
+	guint  caret_line = 0;
+	guint  caret_col = 0;
+	gboolean got_line;
+	gboolean got_col;
+
+	lrg_text_editor_get_cursor (doc->editor, &caret_line, &caret_col);
+	got_line = lsp_param_int (params, "line", &have_line);
+	got_col = lsp_param_int (params, "column", &have_col);
+	if ((got_line && have_line < 1) || (got_col && have_col < 1))
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		                     "line and column are 1-based");
+		return FALSE;
+	}
+	*line = got_line ? (guint) have_line - 1 : caret_line;
+	*column = got_col ? (guint) have_col - 1 : caret_col;
+	return TRUE;
+}
+
+static gboolean
+lsp_ensure (LrgEditorCodePanel *self,
+            CodeDoc            *doc,
+            LrgLspClient      **client_out,
+            GError            **error)
+{
+	const gchar      *lang = lrg_lsp_language_for_path (doc->path);
+	LrgLspClient     *client;
+	g_autoptr(GError) wait_error = NULL;
+
+	if (lang == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		                     "no language server for this file");
+		return FALSE;
+	}
+	client = lsp_client (self, lang, TRUE, error);
+	if (client == NULL)
+		return FALSE;
+	if (lrg_lsp_client_get_state (client) != LRG_LSP_CLIENT_STATE_READY &&
+	    !lrg_lsp_client_wait_ready (client, 3000, &wait_error))
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		                     wait_error != NULL ? wait_error->message : "language server is not running");
+		return FALSE;
+	}
+	lsp_flush_one (doc);
+	*client_out = client;
+	return TRUE;
+}
+
+static void
+lsp_flush_one (CodeDoc *doc)
+{
+	const gchar      *lang;
+	LrgLspClient     *client;
+	g_autofree gchar *text = NULL;
+
+	if (!doc->lsp_dirty || doc->editor == NULL)
+		return;
+	doc->lsp_dirty = FALSE;
+	lang = lrg_lsp_language_for_path (doc->path);
+	client = lsp_client (doc->panel, lang, FALSE, NULL);
+	if (client == NULL)
+		return;
+	text = lrg_text_editor_get_text (doc->editor);
+	if (lrg_lsp_client_is_open (client, doc->path))
+		lrg_lsp_client_did_change (client, doc->path, text);
+	else
+		lrg_lsp_client_did_open (client, doc->path, text);
+}
+
+static const gchar *
+severity_name (LrgLspSeverity severity)
+{
+	switch (severity)
+	{
+	case LRG_LSP_SEVERITY_WARNING:
+		return "warning";
+	case LRG_LSP_SEVERITY_INFORMATION:
+		return "info";
+	case LRG_LSP_SEVERITY_HINT:
+		return "hint";
+	case LRG_LSP_SEVERITY_ERROR:
+	default:
+		return "error";
+	}
+}
+
+static JsonNode *
+lsp_servers_node (LrgEditorCodePanel *self)
+{
+	JsonArray *a = json_array_new ();
+	guint      i;
+
+	for (i = 0; lsp_languages[i] != NULL; i++)
+	{
+		const gchar      *lang = lsp_languages[i];
+		LrgLspClient     *client = g_hash_table_lookup (self->lsp, lang);
+		g_auto(GStrv)     found = lrg_lsp_find_server (lang);
+		const gchar * const *argv = NULL;
+		g_autofree gchar *command = NULL;
+		JsonObject       *o = json_object_new ();
+		LrgLspClientState state = client != NULL ? lrg_lsp_client_get_state (client)
+		                                         : LRG_LSP_CLIENT_STATE_STOPPED;
+
+		if (client != NULL)
+			argv = lrg_lsp_client_get_argv (client);
+		else if (found != NULL)
+			argv = (const gchar * const *) found;
+		if (argv != NULL)
+			command = g_strjoinv (" ", (gchar **) argv);
+		json_object_set_string_member (o, "language", lang);
+		if (command != NULL)
+			json_object_set_string_member (o, "command", command);
+		else
+			json_object_set_null_member (o, "command");
+		json_object_set_boolean_member (o, "available", found != NULL || client != NULL);
+		json_object_set_boolean_member (o, "running",
+		                                state == LRG_LSP_CLIENT_STATE_STARTING ||
+		                                state == LRG_LSP_CLIENT_STATE_READY);
+		json_object_set_boolean_member (o, "initialized", state == LRG_LSP_CLIENT_STATE_READY);
+		if (argv != NULL && argv[0] != NULL)
+			json_object_set_string_member (o, "binary", argv[0]);
+		else
+			json_object_set_null_member (o, "binary");
+		json_array_add_object_element (a, o);
+	}
+	{
+		JsonNode *n = json_node_new (JSON_NODE_ARRAY);
+
+		json_node_take_array (n, a);
+		return n;
+	}
+}
+
+static JsonNode *
+m_lsp_servers (LrgEditorServer *server,
+               JsonObject      *params,
+               gpointer         user_data,
+               GError         **error)
+{
+	LrgEditorCodePanel *self = ipc_panel (user_data, error);
+
+	(void) server;
+	(void) params;
+	if (self == NULL)
+		return NULL;
+	return lsp_servers_node (self);
+}
+
+static JsonNode *
+m_lsp_status (LrgEditorServer *server,
+              JsonObject      *params,
+              gpointer         user_data,
+              GError         **error)
+{
+	LrgEditorCodePanel *self = ipc_panel (user_data, error);
+	CodeDoc            *doc;
+	const gchar        *lang;
+	LrgLspClient       *client;
+	JsonObject         *o;
+	JsonNode           *n;
+	g_autoptr(GPtrArray) diags = NULL;
+
+	(void) server;
+	if (self == NULL)
+		return NULL;
+	doc = lsp_doc (self, params, error);
+	if (doc == NULL)
+		return NULL;
+	lang = lrg_lsp_language_for_path (doc->path);
+	client = lang != NULL ? g_hash_table_lookup (self->lsp, lang) : NULL;
+	o = json_object_new ();
+	json_object_set_string_member (o, "path", doc->path);
+	if (lang != NULL)
+		json_object_set_string_member (o, "language", lang);
+	else
+		json_object_set_null_member (o, "language");
+	if (client != NULL && lrg_lsp_client_get_server_name (client) != NULL)
+		json_object_set_string_member (o, "server", lrg_lsp_client_get_server_name (client));
+	else
+		json_object_set_null_member (o, "server");
+	json_object_set_boolean_member (o, "running",
+	                                client != NULL &&
+	                                (lrg_lsp_client_get_state (client) == LRG_LSP_CLIENT_STATE_STARTING ||
+	                                 lrg_lsp_client_get_state (client) == LRG_LSP_CLIENT_STATE_READY));
+	json_object_set_boolean_member (o, "initialized",
+	                                client != NULL &&
+	                                lrg_lsp_client_get_state (client) == LRG_LSP_CLIENT_STATE_READY);
+	json_object_set_int_member (o, "version",
+	                            client != NULL ? lrg_lsp_client_get_version (client, doc->path) : 0);
+	if (client != NULL)
+		diags = lrg_lsp_client_get_diagnostics (client, doc->path);
+	json_object_set_int_member (o, "diagnostics", diags != NULL ? (gint64) diags->len : 0);
+	n = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (n, o);
+	return n;
+}
+
+static JsonNode *
+m_lsp_diagnostics (LrgEditorServer *server,
+                   JsonObject      *params,
+                   gpointer         user_data,
+                   GError         **error)
+{
+	LrgEditorCodePanel   *self = ipc_panel (user_data, error);
+	CodeDoc              *doc;
+	const gchar          *lang;
+	LrgLspClient         *client;
+	g_autoptr(GPtrArray)  diags = NULL;
+	JsonArray            *a;
+	JsonNode             *n;
+	guint                 i;
+
+	(void) server;
+	if (self == NULL)
+		return NULL;
+	doc = lsp_doc (self, params, error);
+	if (doc == NULL)
+		return NULL;
+	lang = lrg_lsp_language_for_path (doc->path);
+	client = lang != NULL ? g_hash_table_lookup (self->lsp, lang) : NULL;
+	a = json_array_new ();
+	if (client != NULL)
+	{
+		diags = lrg_lsp_client_get_diagnostics (client, doc->path);
+		for (i = 0; diags != NULL && i < diags->len; i++)
+		{
+			LrgLspDiagnostic *d = g_ptr_array_index (diags, i);
+			JsonObject       *o = json_object_new ();
+
+			json_object_set_int_member (o, "line", (gint64) d->line + 1);
+			json_object_set_int_member (o, "column", (gint64) d->column + 1);
+			json_object_set_int_member (o, "end_line", (gint64) d->end_line + 1);
+			json_object_set_int_member (o, "end_column", (gint64) d->end_column + 1);
+			json_object_set_string_member (o, "severity", severity_name (d->severity));
+			json_object_set_string_member (o, "message", d->message != NULL ? d->message : "");
+			if (d->source != NULL)
+				json_object_set_string_member (o, "source", d->source);
+			else
+				json_object_set_null_member (o, "source");
+			if (d->code != NULL)
+				json_object_set_string_member (o, "code", d->code);
+			else
+				json_object_set_null_member (o, "code");
+			json_array_add_object_element (a, o);
+		}
+	}
+	n = json_node_new (JSON_NODE_ARRAY);
+	json_node_take_array (n, a);
+	return n;
+}
+
+static JsonNode *
+m_lsp_complete (LrgEditorServer *server,
+                JsonObject      *params,
+                gpointer         user_data,
+                GError         **error)
+{
+	LrgEditorCodePanel   *self = ipc_panel (user_data, error);
+	CodeDoc              *doc;
+	LrgLspClient         *client = NULL;
+	g_autoptr(GPtrArray)  items = NULL;
+	g_autoptr(GError)     req_error = NULL;
+	JsonArray            *a;
+	JsonNode             *n;
+	guint                 line = 0;
+	guint                 column = 0;
+	guint                 i;
+
+	(void) server;
+	if (self == NULL)
+		return NULL;
+	doc = lsp_doc (self, params, error);
+	if (doc == NULL || !lsp_position (doc, params, &line, &column, error))
+		return NULL;
+	if (!lsp_ensure (self, doc, &client, error))
+		return NULL;
+	items = lrg_lsp_client_completion_sync (client, doc->path, line, column, 3000, &req_error);
+	if (items == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		                     req_error != NULL ? req_error->message : "completion failed");
+		return NULL;
+	}
+	a = json_array_new ();
+	for (i = 0; i < items->len; i++)
+	{
+		LrgLspCompletionItem *item = g_ptr_array_index (items, i);
+		JsonObject           *o = json_object_new ();
+
+		json_object_set_string_member (o, "label", item->label != NULL ? item->label : "");
+		json_object_set_int_member (o, "kind", item->kind);
+		if (item->detail != NULL)
+			json_object_set_string_member (o, "detail", item->detail);
+		else
+			json_object_set_null_member (o, "detail");
+		json_object_set_string_member (o, "insert_text",
+		                               item->insert_text != NULL ? item->insert_text
+		                                                         : (item->label != NULL ? item->label : ""));
+		json_array_add_object_element (a, o);
+	}
+	n = json_node_new (JSON_NODE_ARRAY);
+	json_node_take_array (n, a);
+	return n;
+}
+
+static JsonNode *
+m_lsp_hover (LrgEditorServer *server,
+             JsonObject      *params,
+             gpointer         user_data,
+             GError         **error)
+{
+	LrgEditorCodePanel *self = ipc_panel (user_data, error);
+	CodeDoc            *doc;
+	LrgLspClient       *client = NULL;
+	g_autofree gchar   *text = NULL;
+	g_autoptr(GError)   req_error = NULL;
+	JsonObject         *o;
+	JsonNode           *n;
+	guint               line = 0;
+	guint               column = 0;
+
+	(void) server;
+	if (self == NULL)
+		return NULL;
+	doc = lsp_doc (self, params, error);
+	if (doc == NULL || !lsp_position (doc, params, &line, &column, error))
+		return NULL;
+	if (!lsp_ensure (self, doc, &client, error))
+		return NULL;
+	text = lrg_lsp_client_hover_sync (client, doc->path, line, column, 3000, &req_error);
+	if (text == NULL && req_error != NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		                     req_error->message);
+		return NULL;
+	}
+	o = json_object_new ();
+	if (text != NULL)
+		json_object_set_string_member (o, "contents", text);
+	else
+		json_object_set_null_member (o, "contents");
+	n = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (n, o);
+	return n;
+}
+
+static JsonNode *
+locations_node (GPtrArray *locs)
+{
+	JsonArray *a = json_array_new ();
+	JsonNode  *n;
+	guint      i;
+
+	for (i = 0; locs != NULL && i < locs->len; i++)
+	{
+		LrgLspLocation *loc = g_ptr_array_index (locs, i);
+		JsonObject     *o = json_object_new ();
+
+		json_object_set_string_member (o, "path", loc->path != NULL ? loc->path : "");
+		json_object_set_int_member (o, "line", (gint64) loc->line + 1);
+		json_object_set_int_member (o, "column", (gint64) loc->column + 1);
+		json_array_add_object_element (a, o);
+	}
+	n = json_node_new (JSON_NODE_ARRAY);
+	json_node_take_array (n, a);
+	return n;
+}
+
+static JsonNode *
+m_lsp_definition (LrgEditorServer *server,
+                  JsonObject      *params,
+                  gpointer         user_data,
+                  GError         **error)
+{
+	LrgEditorCodePanel   *self = ipc_panel (user_data, error);
+	CodeDoc              *doc;
+	LrgLspClient         *client = NULL;
+	g_autoptr(GPtrArray)  locs = NULL;
+	g_autoptr(GError)     req_error = NULL;
+	gboolean              jump = FALSE;
+	guint                 line = 0;
+	guint                 column = 0;
+	JsonNode             *member;
+
+	(void) server;
+	if (self == NULL)
+		return NULL;
+	doc = lsp_doc (self, params, error);
+	if (doc == NULL || !lsp_position (doc, params, &line, &column, error))
+		return NULL;
+	if (!lsp_ensure (self, doc, &client, error))
+		return NULL;
+	if (params != NULL && json_object_has_member (params, "jump"))
+	{
+		member = json_object_get_member (params, "jump");
+		if (JSON_NODE_HOLDS_VALUE (member) && json_node_get_value_type (member) == G_TYPE_BOOLEAN)
+			jump = json_node_get_boolean (member);
+	}
+	locs = lrg_lsp_client_definition_sync (client, doc->path, line, column, 3000, &req_error);
+	if (locs == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		                     req_error != NULL ? req_error->message : "definition failed");
+		return NULL;
+	}
+	if (jump && locs->len > 0)
+	{
+		LrgLspLocation *loc = g_ptr_array_index (locs, 0);
+		LrgTextEditor  *dest;
+
+		lrg_editor_code_panel_open (self, loc->path, (gint) loc->line + 1, NULL);
+		dest = lrg_editor_code_panel_get_editor (self, loc->path);
+		if (dest != NULL)
+			lrg_text_editor_set_cursor (dest, loc->line, loc->column);
+	}
+	return locations_node (locs);
+}
+
+static JsonNode *
+m_lsp_references (LrgEditorServer *server,
+                  JsonObject      *params,
+                  gpointer         user_data,
+                  GError         **error)
+{
+	LrgEditorCodePanel   *self = ipc_panel (user_data, error);
+	CodeDoc              *doc;
+	LrgLspClient         *client = NULL;
+	g_autoptr(GPtrArray)  locs = NULL;
+	g_autoptr(GError)     req_error = NULL;
+	guint                 line = 0;
+	guint                 column = 0;
+
+	(void) server;
+	if (self == NULL)
+		return NULL;
+	doc = lsp_doc (self, params, error);
+	if (doc == NULL || !lsp_position (doc, params, &line, &column, error))
+		return NULL;
+	if (!lsp_ensure (self, doc, &client, error))
+		return NULL;
+	locs = lrg_lsp_client_references_sync (client, doc->path, line, column, TRUE, 3000, &req_error);
+	if (locs == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		                     req_error != NULL ? req_error->message : "references failed");
+		return NULL;
+	}
+	return locations_node (locs);
+}
+
+static GPtrArray *
+edits_for_path (GPtrArray   *edits,
+                const gchar *path)
+{
+	GPtrArray *sub = g_ptr_array_new ();
+	guint      i;
+
+	for (i = 0; edits != NULL && i < edits->len; i++)
+	{
+		LrgLspTextEdit *edit = g_ptr_array_index (edits, i);
+
+		if (files_match (edit->path, path))
+			g_ptr_array_add (sub, edit);
+	}
+	return sub;
+}
+
+static gboolean
+apply_to_buffer (LrgEditorCodePanel *self,
+                 const gchar        *path,
+                 GPtrArray          *edits)
+{
+	CodeDoc          *doc = find_doc (self, path, NULL);
+	g_autofree gchar *text = NULL;
+	g_autofree gchar *next = NULL;
+
+	if (edits == NULL || edits->len == 0)
+		return TRUE;
+	if (doc != NULL && doc->editor != NULL)
+	{
+		text = lrg_text_editor_get_text (doc->editor);
+		next = lrg_lsp_apply_edits (text, edits);
+		self->syncing = TRUE;
+		lrg_text_editor_select_all (doc->editor);
+		lrg_text_editor_insert_text (doc->editor, next);
+		self->syncing = FALSE;
+		doc_refresh_dirty (doc);
+		return TRUE;
+	}
+	text = read_text (path, NULL);
+	if (text == NULL)
+		return FALSE;
+	next = lrg_lsp_apply_edits (text, edits);
+	return g_file_set_contents (path, next, -1, NULL);
+}
+
+static JsonNode *
+m_lsp_rename (LrgEditorServer *server,
+              JsonObject      *params,
+              gpointer         user_data,
+              GError         **error)
+{
+	LrgEditorCodePanel   *self = ipc_panel (user_data, error);
+	CodeDoc              *doc;
+	LrgLspClient         *client = NULL;
+	const gchar          *new_name;
+	g_autoptr(GPtrArray)  edits = NULL;
+	g_autoptr(GError)     req_error = NULL;
+	g_autoptr(GHashTable) seen = NULL;
+	JsonObject           *o;
+	JsonNode             *n;
+	guint                 line = 0;
+	guint                 column = 0;
+	guint                 i;
+	gint                  files = 0;
+	gint                  count = 0;
+
+	(void) server;
+	if (self == NULL)
+		return NULL;
+	new_name = param_string (params, "new_name");
+	if (new_name == NULL || new_name[0] == '\0')
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		                     "new_name is required");
+		return NULL;
+	}
+	doc = lsp_doc (self, params, error);
+	if (doc == NULL || !lsp_position (doc, params, &line, &column, error))
+		return NULL;
+	if (!lsp_ensure (self, doc, &client, error))
+		return NULL;
+	edits = lrg_lsp_client_rename_sync (client, doc->path, line, column, new_name, 3000, &req_error);
+	if (edits == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		                     req_error != NULL ? req_error->message : "rename failed");
+		return NULL;
+	}
+	seen = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+	for (i = 0; i < edits->len; i++)
+	{
+		LrgLspTextEdit   *edit = g_ptr_array_index (edits, i);
+		g_autoptr(GPtrArray) sub = NULL;
+
+		if (edit->path == NULL || g_hash_table_contains (seen, edit->path))
+			continue;
+		g_hash_table_add (seen, g_strdup (edit->path));
+		sub = edits_for_path (edits, edit->path);
+		if (apply_to_buffer (self, edit->path, sub))
+		{
+			files++;
+			count += (gint) sub->len;
+		}
+	}
+	o = json_object_new ();
+	json_object_set_int_member (o, "files", files);
+	json_object_set_int_member (o, "edits", count);
+	n = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (n, o);
+	return n;
+}
+
+static JsonNode *
+m_lsp_format (LrgEditorServer *server,
+              JsonObject      *params,
+              gpointer         user_data,
+              GError         **error)
+{
+	LrgEditorCodePanel   *self = ipc_panel (user_data, error);
+	CodeDoc              *doc;
+	LrgLspClient         *client = NULL;
+	g_autoptr(GPtrArray)  edits = NULL;
+	g_autoptr(GError)     req_error = NULL;
+	JsonObject           *o;
+	JsonNode             *n;
+
+	(void) server;
+	if (self == NULL)
+		return NULL;
+	doc = lsp_doc (self, params, error);
+	if (doc == NULL)
+		return NULL;
+	if (!lsp_ensure (self, doc, &client, error))
+		return NULL;
+	edits = lrg_lsp_client_formatting_sync (client, doc->path,
+	                                        lrg_text_editor_get_tab_width (doc->editor),
+	                                        lrg_text_editor_get_insert_spaces (doc->editor),
+	                                        3000, &req_error);
+	if (edits == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		                     req_error != NULL ? req_error->message : "format failed");
+		return NULL;
+	}
+	apply_to_buffer (self, doc->path, edits);
+	o = json_object_new ();
+	json_object_set_int_member (o, "edits", (gint64) edits->len);
+	n = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (n, o);
+	return n;
+}
+
+static void
+lsp_stop_language (LrgEditorCodePanel *self,
+                   const gchar        *language)
+{
+	LrgLspClient *client = g_hash_table_lookup (self->lsp, language);
+
+	if (client == NULL)
+		return;
+	g_signal_handlers_disconnect_by_data (client, self);
+	lrg_lsp_client_stop (client);
+	g_hash_table_remove (self->lsp, language);
+}
+
+static JsonNode *
+m_lsp_restart (LrgEditorServer *server,
+               JsonObject      *params,
+               gpointer         user_data,
+               GError         **error)
+{
+	LrgEditorCodePanel *self = ipc_panel (user_data, error);
+	const gchar        *language;
+	g_autoptr(GPtrArray) names = NULL;
+	guint               i;
+
+	(void) server;
+	if (self == NULL)
+		return NULL;
+	language = param_string (params, "language");
+	if (language != NULL)
+	{
+		gboolean known = FALSE;
+
+		for (i = 0; lsp_languages[i] != NULL; i++)
+			if (g_strcmp0 (lsp_languages[i], language) == 0)
+				known = TRUE;
+		if (!known)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+			             "unknown language %s", language);
+			return NULL;
+		}
+		lsp_stop_language (self, language);
+		lsp_client (self, language, TRUE, NULL);
+	}
+	else
+	{
+		GHashTableIter iter;
+		gpointer       key;
+
+		names = g_ptr_array_new_with_free_func (g_free);
+		g_hash_table_iter_init (&iter, self->lsp);
+		while (g_hash_table_iter_next (&iter, &key, NULL))
+			g_ptr_array_add (names, g_strdup (key));
+		for (i = 0; i < names->len; i++)
+		{
+			const gchar *name = g_ptr_array_index (names, i);
+
+			lsp_stop_language (self, name);
+			lsp_client (self, name, TRUE, NULL);
+		}
+	}
+	return lsp_servers_node (self);
+}
+
+static void
+install_lsp_methods (LrgEditorCodePanel *self,
+                     LrgEditorApp       *app)
+{
+	(void) self;
+	if (app->server == NULL)
+		return;
+	lrg_editor_server_register_method (app->server, "lsp.servers", m_lsp_servers, app, NULL);
+	lrg_editor_server_register_method (app->server, "lsp.status", m_lsp_status, app, NULL);
+	lrg_editor_server_register_method (app->server, "lsp.diagnostics", m_lsp_diagnostics, app, NULL);
+	lrg_editor_server_register_method (app->server, "lsp.complete", m_lsp_complete, app, NULL);
+	lrg_editor_server_register_method (app->server, "lsp.hover", m_lsp_hover, app, NULL);
+	lrg_editor_server_register_method (app->server, "lsp.definition", m_lsp_definition, app, NULL);
+	lrg_editor_server_register_method (app->server, "lsp.references", m_lsp_references, app, NULL);
+	lrg_editor_server_register_method (app->server, "lsp.rename", m_lsp_rename, app, NULL);
+	lrg_editor_server_register_method (app->server, "lsp.format", m_lsp_format, app, NULL);
+	lrg_editor_server_register_method (app->server, "lsp.restart", m_lsp_restart, app, NULL);
 }

@@ -44,6 +44,22 @@
 #include "lrg-editor-ui-layout-editor.h"
 #include "lrg-editor-dialog-tree-editor.h"
 #include "lrg-editor-dungeon-editor.h"
+#include "lrg-editor-material-editor.h"
+#include "lrg-editor-post-stack-editor.h"
+#include "lrg-editor-anim-graph-editor.h"
+#include "lrg-editor-bone-map-editor.h"
+#include "lrg-editor-skeleton2d-editor.h"
+#include "lrg-editor-physics-asset-editor.h"
+#include "lrg-editor-bt-editor.h"
+#include "lrg-editor-fsm-editor.h"
+#include "lrg-editor-particle-editor.h"
+#include "lrg-editor-weather-editor.h"
+#include "lrg-editor-mixer-editor.h"
+#include "lrg-editor-tileset-editor.h"
+#include "lrg-editor-sprite-editor.h"
+#include "lrg-editor-water-editor.h"
+#include "../lrg-editor-shader-graph-editor.h"
+#include "lrg-editor-vscript-editor.h"
 #include "../lrg-editor-app-private.h"
 #include "../lrg-editor-console-panel.h"
 #include "../../../ui/lrg-label.h"
@@ -220,6 +236,31 @@ registry_ensure (void)
 	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_UI_LAYOUT, LRG_TYPE_EDITOR_UI_LAYOUT_EDITOR);
 	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_DIALOG_TREE, LRG_TYPE_EDITOR_DIALOG_TREE_EDITOR);
 	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_DUNGEON, LRG_TYPE_EDITOR_DUNGEON_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL, LRG_TYPE_EDITOR_MATERIAL_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK, LRG_TYPE_EDITOR_POST_STACK_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH, LRG_TYPE_EDITOR_SHADER_GRAPH_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH, LRG_TYPE_EDITOR_ANIM_GRAPH_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP, LRG_TYPE_EDITOR_BONE_MAP_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D, LRG_TYPE_EDITOR_SKELETON2D_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET, LRG_TYPE_EDITOR_PHYSICS_ASSET_EDITOR);
+	/*
+	 * The 0.9.0 M6/M7 engine-backed formats.  Their editors are written
+	 * in parallel; until one derives from LrgEditorDataEditor its stub
+	 * GType is skipped by registry_add_builtin() and the format opens
+	 * nowhere (can_open() says no), never in the wrong editor.
+	 */
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_BT, LRG_TYPE_EDITOR_BT_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_FSM, LRG_TYPE_EDITOR_FSM_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES, LRG_TYPE_EDITOR_PARTICLE_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_WEATHER, LRG_TYPE_EDITOR_WEATHER_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_MIXER, LRG_TYPE_EDITOR_MIXER_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_TILESET, LRG_TYPE_EDITOR_TILESET_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_SPRITE, LRG_TYPE_EDITOR_SPRITE_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_WATER, LRG_TYPE_EDITOR_WATER_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT, LRG_TYPE_EDITOR_VSCRIPT_EDITOR);
+	/* .rseq files are opened by the docked sequencer panel and .rnav bake
+	 * settings by the Navigation panel (action nav.open-settings), not a
+	 * data editor: SEQUENCE and NAV_SETTINGS have no builtin here */
 }
 
 void
@@ -262,8 +303,13 @@ lrg_editor_data_editor_can_open (const gchar *path)
 	g_return_val_if_fail (path != NULL, FALSE);
 
 	/* data files are .yaml / .yml (levels, prefabs and projects have
-	 * their own extensions and editors) */
-	if (!g_str_has_suffix (path, ".yaml") && !g_str_has_suffix (path, ".yml"))
+	 * their own extensions and editors), plus the engine assets edited
+	 * on documents: every extension lrg_editor_document_format_get_extension()
+	 * knows (.rmat, .rpost, .rshadergraph, .ranim, .rbonemap, .rseq,
+	 * .rskel2d, .rphysasset, .rbt, .rfsm, .rparticles, .rweather,
+	 * .rmixer, .rtileset, .rsprite, .rwater, .rnav) */
+	if (!g_str_has_suffix (path, ".yaml") && !g_str_has_suffix (path, ".yml") &&
+	    lrg_editor_document_format_get_extension (lrg_editor_document_detect_format (path, NULL, 0)) == NULL)
 		return FALSE;
 	format = detect_file_format (path);
 	return format != LRG_EDITOR_DOCUMENT_FORMAT_UNKNOWN &&
@@ -379,6 +425,40 @@ format_icon (LrgEditorDocumentFormat format)
 		return LRG_ICON_USER;
 	case LRG_EDITOR_DOCUMENT_FORMAT_DUNGEON:
 		return LRG_ICON_HOME;
+	case LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL:
+		return LRG_ICON_STAR_HALF;
+	case LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK:
+		return LRG_ICON_EYE;
+	case LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH:
+		return LRG_ICON_MENU;
+	case LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH:
+		return LRG_ICON_REFRESH;
+	case LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP:
+		return LRG_ICON_ARROW_RIGHT;
+	case LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE:
+		return LRG_ICON_CLOCK;
+	case LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D:
+		return LRG_ICON_EDIT;
+	case LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET:
+		return LRG_ICON_USER;
+	case LRG_EDITOR_DOCUMENT_FORMAT_BT:
+	case LRG_EDITOR_DOCUMENT_FORMAT_FSM:
+		return LRG_ICON_MENU;
+	case LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES:
+		return LRG_ICON_STAR;
+	case LRG_EDITOR_DOCUMENT_FORMAT_WEATHER:
+		return LRG_ICON_EYE;
+	case LRG_EDITOR_DOCUMENT_FORMAT_MIXER:
+		return LRG_ICON_PLAY;
+	case LRG_EDITOR_DOCUMENT_FORMAT_TILESET:
+	case LRG_EDITOR_DOCUMENT_FORMAT_SPRITE:
+		return LRG_ICON_EDIT;
+	case LRG_EDITOR_DOCUMENT_FORMAT_WATER:
+		return LRG_ICON_REFRESH;
+	case LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS:
+		return LRG_ICON_ARROW_RIGHT;
+	case LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT:
+		return LRG_ICON_MENU;
 	default:
 		return LRG_ICON_FILE;
 	}
@@ -406,6 +486,42 @@ format_label (LrgEditorDocumentFormat format)
 		return "Dungeon";
 	case LRG_EDITOR_DOCUMENT_FORMAT_THEME:
 		return "Theme";
+	case LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL:
+		return "Material";
+	case LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK:
+		return "Post stack";
+	case LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH:
+		return "Shader graph";
+	case LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH:
+		return "Animation graph";
+	case LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP:
+		return "Bone map";
+	case LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE:
+		return "Sequence";
+	case LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D:
+		return "2D skeleton";
+	case LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET:
+		return "Physics asset";
+	case LRG_EDITOR_DOCUMENT_FORMAT_BT:
+		return "Behaviour tree";
+	case LRG_EDITOR_DOCUMENT_FORMAT_FSM:
+		return "State machine";
+	case LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES:
+		return "Particle effect";
+	case LRG_EDITOR_DOCUMENT_FORMAT_WEATHER:
+		return "Weather";
+	case LRG_EDITOR_DOCUMENT_FORMAT_MIXER:
+		return "Mixer";
+	case LRG_EDITOR_DOCUMENT_FORMAT_TILESET:
+		return "Tileset";
+	case LRG_EDITOR_DOCUMENT_FORMAT_SPRITE:
+		return "Sprite sheet";
+	case LRG_EDITOR_DOCUMENT_FORMAT_WATER:
+		return "Water body";
+	case LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS:
+		return "Navigation settings";
+	case LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT:
+		return "Visual script";
 	default:
 		return "Data";
 	}

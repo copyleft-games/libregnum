@@ -1,0 +1,380 @@
+* LrgEnvironment - Sky, Image-Based Lighting, Ambient and Fog
+:PROPERTIES:
+:CUSTOM_ID: lrgenvironment
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Lighting]]* > Environment
+#+end_quote
+
+=LrgEnvironment= describes the light of a 3D scene that does not come from a light source: the sky, the image-based lighting (IBL) derived from it, the flat ambient fallback, the distance fog, the volumetric fog parameters, the level's post-processing stack and the local [[file:reflection-probe.org][reflection probes]]. It is the object behind the =environment:= block of =.rlevel= files ([[file:../../editor/yaml-format.org::#environment][format]]) and plugs into the lit shader of [[file:../graphics/light-set.org][LrgLightSet]] through the =LRG_ENV_GLSL= hook (=lrg_light_set_set_environment()=).
+
+- *Type* - =LrgEnvironment=, final GObject, =LRG_TYPE_ENVIRONMENT=, GIR =Libregnum.Environment=
+- *Header* - =lighting/lrg-environment.h= (through =<libregnum.h>=)
+- *Enums* - =LrgEnvironmentSkySource= (=LRG_TYPE_ENVIRONMENT_SKY_SOURCE=), =LrgEnvironmentError= (=LRG_TYPE_ENVIRONMENT_ERROR=, domain =LRG_ENVIRONMENT_ERROR=)
+- *Signal* - =changed= (no arguments): any setting or probe changed; =lrg_environment_needs_bake()= tells whether the GPU maps are stale
+- *Since* - 0.9.0
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: environment-overview
+:END:
+Everything about an environment is plain data until it is baked. =lrg_environment_bake()= (needs a GL context) turns the sky into four GPU products:
+
+| Product | Format | Used for |
+|---------+--------+----------|
+| radiance cubemap | RGBA16F, =resolution= edge, one level | the sky itself (=lrg_environment_draw_sky()=), the source of the other maps |
+| irradiance | 27 floats (9 L2 spherical-harmonic coefficients x RGB), uniforms | diffuse light, =lrg_env_diffuse()= |
+| prefiltered specular cubemap | RGBA16F, full mip chain down to 1 x 1 | glossy reflections, =lrg_env_specular()= |
+| BRDF lookup table | 64 x 64 RGB32F (scale, bias) | split-sum Fresnel/visibility term, =lrg_env_brdf()= |
+
+The light set's shader computes the indirect light of a surface as =kd * albedo * lrg_env_diffuse(n) + lrg_env_specular(n, v, rough) * (F0 * brdf.x + brdf.y)= when the environment is active, and as =ambientColor * albedo= otherwise.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: environment-concepts
+:END:
+*** Sky sources
+:PROPERTIES:
+:CUSTOM_ID: environment-sky-sources
+:END:
+| Source | Data | How it is baked |
+|--------+------+-----------------|
+| =LRG_ENVIRONMENT_SKY_COLOR= | one sRGB colour | CPU faces |
+| =LRG_ENVIRONMENT_SKY_GRADIENT= | zenith / horizon / ground colours | CPU faces; colour = mix (horizon, zenith or ground, sqrt (abs (y))) in linear space |
+| =LRG_ENVIRONMENT_SKY_DOME= | an [[file:../graphics/sky-dome.org][LrgSkyDome]] | the dome is drawn into the six faces on the GPU, so its sun disc and horizon band show in reflections; irradiance is read back. The sky rotation is ignored (the dome has its own sun direction) |
+| =LRG_ENVIRONMENT_SKY_CUBEMAP= | six face images or one cross | CPU faces sampled bilinearly from the images |
+| =LRG_ENVIRONMENT_SKY_EQUIRECT= | an equirectangular [[file:../graphics/hdr-image.org][LrgHdrImage]] | CPU faces; a panorama wider than 4 x resolution is box-reduced first so the sun does not alias |
+
+Colours given to the environment (sky colour, gradient, ambient, fog) are sRGB-encoded 0..1 like every other engine colour; they are decoded with gamma 2.2 (the light set's model) before any lighting maths. Images: =.hdr= files are linear radiance, other formats (PNG, JPG...) are decoded from sRGB. All derived maps hold linear radiance, and the hook functions return linear values.
+
+Paths of images are kept as authored (=lrg_environment_set_sky_path()=, =lrg_environment_set_sky_face_path()=, a plain path or =guid:<uuid>=) and loaded by =lrg_environment_load_sources()=, which resolves =guid:= through an [[file:../core/asset-manager.org][LrgAssetManager]] and relative paths against a base directory (normally the level file's directory). Missing images at bake time fall back to the gradient with a warning.
+
+*** Exposure and rotation
+:PROPERTIES:
+:CUSTOM_ID: environment-exposure
+:END:
+The exposure is in stops: the sky, its diffuse and specular light and the flat ambient are multiplied by 2^exposure. The rotation turns the sky about +Y (degrees, counter-clockwise seen from above); a world direction =d= looks the sky up at =R_y(-rotation) d=. Both are uniforms: changing them needs no bake.
+
+*** Irradiance: why L2 spherical harmonics
+:PROPERTIES:
+:CUSTOM_ID: environment-irradiance
+:END:
+Diffuse light at a normal =n= is the irradiance E(n) = integral over the sphere of L(w) max (0, n . w) dw. It is a very low-frequency function of =n=, and Ramamoorthi and Hanrahan ("An Efficient Representation for Irradiance Environment Maps", 2001) showed that its projection onto the first nine real spherical harmonics is accurate to about 3% on average for natural lighting. The engine uses that representation instead of an irradiance cubemap:
+
+- *projection*: L_lm = sum over cube texels of L(w) Y_lm(w) dw, with the texel solid angle dw = (2/N)^2 / (1 + u^2 + v^2)^(3/2) (normalized so the total is exactly 4 pi);
+- *convolution*: multiply band l by the clamped-cosine coefficients A_0 = pi, A_1 = 2 pi / 3, A_2 = pi / 4, and divide by pi so that evaluating gives E(n) / pi directly (the factor a Lambert surface needs);
+- *evaluation*: =lrg_env_diffuse(n)= = sum c_i Y_i(n), clamped at 0, times exposure and diffuse intensity.
+
+Consequences: no texture unit and no extra render passes for diffuse light; a constant sky gives exactly that colour (the test suite checks it); very sharp skies ring slightly (negative lobes are clamped). The coefficients are stored coefficient-major (=c0.rgb, c1.rgb, ... c8.rgb=), the basis order is Y00, Y1-1 (y), Y10 (z), Y11 (x), Y2-2 (xy), Y2-1 (yz), Y20 (3z^2 - 1), Y21 (xz), Y22 (x^2 - y^2) in world axes.
+
+*** Specular: prefiltered mips and the split sum
+:PROPERTIES:
+:CUSTOM_ID: environment-specular
+:END:
+Glossy reflections use Karis' split-sum approximation ("Real Shading in Unreal Engine 4", 2013): the integral of radiance times the GGX/Smith BRDF is split into (a) the radiance convolved with the GGX lobe around the reflection vector (assuming n = v = r), stored per roughness in the mips of the prefiltered cubemap, and (b) the integral of the BRDF against white light, stored in the 2D BRDF table as F0 x scale + bias.
+
+- Mip =m= of =M= levels holds roughness =m / (M - 1)= (perceptual roughness; alpha = roughness^2). Mip 0 is an exact copy of the radiance. The shader samples =textureLod (map, R_y(-rotation) r, roughness * (M - 1))=.
+- Each texel of each mip is computed by GGX importance sampling (64 Hammersley samples) of the reflected direction. To avoid the noise of few samples on a high-resolution source, each sample reads a box-reduced copy of the radiance whose texel solid angle matches the sample's (filtered importance sampling: lod = 0.5 log2 (sample solid angle / texel solid angle) + 1, where the sample solid angle is 1 / (N_samples x pdf) and pdf = D / 4).
+- The BRDF table is integrated on the CPU (256 samples per entry, Smith-Schlick G with the IBL remapping k = alpha / 2): x is n.v, y is roughness, texel centres at (i + 0.5) / 64. At roughness 0 it is exactly (1 - (1 - nv)^5, (1 - nv)^5).
+- When the light set's hook window cannot spare a unit for the table (a 16-unit driver), the shader uses Karis' analytic fit of the table instead ("Physically Based Shading on Mobile", 2014).
+
+*** GL 3.3 without compute
+:PROPERTIES:
+:CUSTOM_ID: environment-gl33
+:END:
+Every GPU step is a full-screen quad drawn into one face of one mip of a cubemap attached to a framebuffer (=rlFramebufferAttach()= with =RL_ATTACHMENT_CUBEMAP_POSITIVE_X + face= and a mip level). Face =f= and texture coordinates (s, t) map to a direction exactly as the OpenGL cubemap lookup does (=lrg_environment_cube_face_direction()=). Mip chains are never generated with =glGenerateMipmap= (rlgl only exposes it for 2D textures): the box reductions are separate single-level cubemaps rendered from each other, so no pass ever reads the image it writes. Cubemaps are allocated with every level down to 1 x 1 so they are mipmap-complete. rlgl state (framebuffer, viewport, matrices, blend, depth, culling, active texture unit) is restored after each step.
+
+*** Ambient fallback and fog
+:PROPERTIES:
+:CUSTOM_ID: environment-ambient-fog
+:END:
+=lrg_env_active()= is false when no environment is bound, it is not baked, or IBL is disabled (=lrg_environment_set_ibl_enabled()=); the lit shader then uses the flat =ambientColor=. =lrg_environment_apply_to_light_set()= copies the ambient colour (scaled in linear space by its intensity and the exposure) and the distance fog (=lrg_light_set_set_fog()=, =lrg_light_set_set_fog_height()=, or =lrg_light_set_clear_fog()=) into a light set. The volumetric parameters feed [[file:volumetric-fog.org][LrgVolumetricFog]] (=lrg_volumetric_fog_set_from_environment()=); the =post_stack= reference names the =.rpost= file of the scene's [[file:../postprocess/post-stack.org][post stack]], which the caller loads.
+
+*** Reflection probes
+:PROPERTIES:
+:CUSTOM_ID: environment-probes
+:END:
+Probes added with =lrg_environment_add_probe()= are blended into =lrg_env_specular()=. On each bind the environment selects, among the probes that are captured and contain the reference point (=lrg_environment_set_reference_point()=), the two with the largest influence (ties: nearest centre) - =lrg_environment_select_probes()= does the same on the CPU. In the shader each probe's influence is evaluated at the shaded point (passed by the light model with =lrg_env_set_point()=, else the reference point), the probes' box-projected lookups are summed by weight (normalized when the weights exceed 1) and the global specular fills the remaining weight. Probe boxes are uploaded relative to the environment's floating origin (=lrg_environment_set_origin()=, use the light set's =lrg_light_set_get_origin()=).
+
+*** Lit-shader hook and texture units
+:PROPERTIES:
+:CUSTOM_ID: environment-hook
+:END:
+=LRG_ENV_GLSL= (private header =lighting/lrg-environment-glsl-private.h=) is pasted into the light set's GLSL library, so user shaders built on =lrg_light_set_get_glsl_library()= get it too. It defines =lrg_env_active()=, =lrg_env_diffuse()=, =lrg_env_specular()=, =lrg_env_brdf()= and =lrg_env_set_point()=. Its binder, called by =lrg_light_set_apply()=, claims texture units from the light set's hook window (=lrg_light_set_hook_unit_first()=, =LRG_LIGHT_SET_HOOK_UNIT=): the prefiltered map always (every cube sampler of the hook points at it while inactive, so no =samplerCube= ever shares a unit with a =sampler2D=), then the BRDF table and two probe cubemaps when the window has room (at most =LRG_ENVIRONMENT_TEXTURE_UNITS=). On a driver with only 16 units only the prefiltered map is claimed: analytic BRDF, no probes.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: environment-api
+:END:
+#+begin_src C
+/* constants */
+LRG_ENVIRONMENT_DEFAULT_RESOLUTION   /* 128 */
+LRG_ENVIRONMENT_MAX_RESOLUTION       /* 1024 */
+LRG_ENVIRONMENT_BRDF_LUT_SIZE        /* 64 */
+LRG_ENVIRONMENT_SH_FLOATS            /* 27 */
+LRG_ENVIRONMENT_TEXTURE_UNITS        /* 4 (most units the binder claims) */
+LRG_ENVIRONMENT_MAX_BOUND_PROBES     /* 2 */
+
+GType  lrg_environment_sky_source_get_type (void);
+GType  lrg_environment_error_get_type (void);
+GQuark lrg_environment_error_quark (void);
+
+LrgEnvironment *lrg_environment_new (void);
+
+/* format (the environment: block) */
+LrgEnvironment *lrg_environment_new_from_file  (const gchar *path, GError **error);
+gboolean        lrg_environment_load_from_data (LrgEnvironment *self, const gchar *data,
+                                                gssize length, GError **error);
+gchar          *lrg_environment_to_data        (LrgEnvironment *self);
+gboolean        lrg_environment_save_to_file   (LrgEnvironment *self, const gchar *path,
+                                                GError **error);
+
+/* sky source */
+void   lrg_environment_set_sky_source  (LrgEnvironment *self, LrgEnvironmentSkySource source);
+LrgEnvironmentSkySource lrg_environment_get_sky_source (LrgEnvironment *self);
+void   lrg_environment_set_sky_color   (LrgEnvironment *self, const gfloat *rgb);
+void   lrg_environment_get_sky_color   (LrgEnvironment *self, gfloat *out_rgb);
+void   lrg_environment_set_gradient    (LrgEnvironment *self, const gfloat *zenith,
+                                        const gfloat *horizon, const gfloat *ground);
+void   lrg_environment_get_gradient    (LrgEnvironment *self, gfloat *out_zenith,
+                                        gfloat *out_horizon, gfloat *out_ground);
+void   lrg_environment_set_sky_dome    (LrgEnvironment *self, LrgSkyDome *dome);
+LrgSkyDome  *lrg_environment_get_sky_dome (LrgEnvironment *self);
+void   lrg_environment_set_equirect    (LrgEnvironment *self, LrgHdrImage *image);
+LrgHdrImage *lrg_environment_get_equirect (LrgEnvironment *self);
+void   lrg_environment_set_cubemap_face (LrgEnvironment *self, guint face, LrgHdrImage *image);
+LrgHdrImage *lrg_environment_get_cubemap_face (LrgEnvironment *self, guint face);
+gboolean lrg_environment_set_cubemap_cross (LrgEnvironment *self, LrgHdrImage *cross,
+                                            GError **error);
+void   lrg_environment_set_sky_path    (LrgEnvironment *self, const gchar *path);
+const gchar *lrg_environment_get_sky_path (LrgEnvironment *self);
+void   lrg_environment_set_sky_face_path (LrgEnvironment *self, guint face, const gchar *path);
+const gchar *lrg_environment_get_sky_face_path (LrgEnvironment *self, guint face);
+gboolean lrg_environment_load_sources  (LrgEnvironment *self, LrgAssetManager *manager,
+                                        const gchar *base_dir, GError **error);
+
+/* intensity and orientation (no re-bake needed) */
+void   lrg_environment_set_exposure    (LrgEnvironment *self, gfloat ev);
+gfloat lrg_environment_get_exposure    (LrgEnvironment *self);
+void   lrg_environment_set_rotation    (LrgEnvironment *self, gfloat degrees);
+gfloat lrg_environment_get_rotation    (LrgEnvironment *self);
+void   lrg_environment_set_diffuse_intensity  (LrgEnvironment *self, gfloat intensity);
+gfloat lrg_environment_get_diffuse_intensity  (LrgEnvironment *self);
+void   lrg_environment_set_specular_intensity (LrgEnvironment *self, gfloat intensity);
+gfloat lrg_environment_get_specular_intensity (LrgEnvironment *self);
+void   lrg_environment_set_ibl_enabled (LrgEnvironment *self, gboolean enabled);
+gboolean lrg_environment_get_ibl_enabled (LrgEnvironment *self);
+void   lrg_environment_set_resolution  (LrgEnvironment *self, guint size);   /* re-bake */
+guint  lrg_environment_get_resolution  (LrgEnvironment *self);
+
+/* ambient, fog, volumetrics, post stack */
+void   lrg_environment_set_ambient     (LrgEnvironment *self, const gfloat *rgb, gfloat intensity);
+void   lrg_environment_get_ambient     (LrgEnvironment *self, gfloat *out_rgb, gfloat *out_intensity);
+void   lrg_environment_set_fog         (LrgEnvironment *self, gboolean enabled, LrgFogType type,
+                                        const gfloat *rgba, gfloat density, gfloat start, gfloat end);
+gboolean lrg_environment_get_fog       (LrgEnvironment *self, LrgFogType *out_type, gfloat *out_rgba,
+                                        gfloat *out_density, gfloat *out_start, gfloat *out_end);
+void   lrg_environment_set_fog_height  (LrgEnvironment *self, gfloat base_height, gfloat falloff);
+void   lrg_environment_get_fog_height  (LrgEnvironment *self, gfloat *out_base_height,
+                                        gfloat *out_falloff);
+void   lrg_environment_set_volumetric  (LrgEnvironment *self, gboolean enabled, gfloat density,
+                                        gfloat anisotropy, guint steps, gfloat max_distance,
+                                        gfloat intensity);
+gboolean lrg_environment_get_volumetric (LrgEnvironment *self, gfloat *out_density,
+                                         gfloat *out_anisotropy, guint *out_steps,
+                                         gfloat *out_max_distance, gfloat *out_intensity);
+void   lrg_environment_set_post_stack  (LrgEnvironment *self, const gchar *path);
+const gchar *lrg_environment_get_post_stack (LrgEnvironment *self);
+void   lrg_environment_apply_to_light_set (LrgEnvironment *self, LrgLightSet *light_set);
+
+/* reflection probes */
+void   lrg_environment_add_probe       (LrgEnvironment *self, LrgReflectionProbe *probe);
+gboolean lrg_environment_remove_probe  (LrgEnvironment *self, LrgReflectionProbe *probe);
+void   lrg_environment_clear_probes    (LrgEnvironment *self);
+guint  lrg_environment_get_n_probes    (LrgEnvironment *self);
+LrgReflectionProbe *lrg_environment_get_probe (LrgEnvironment *self, guint index);
+void   lrg_environment_set_reference_point (LrgEnvironment *self, gfloat x, gfloat y, gfloat z);
+void   lrg_environment_set_origin      (LrgEnvironment *self, gfloat x, gfloat y, gfloat z);
+guint  lrg_environment_select_probes   (LrgEnvironment *self, const gfloat *point,
+                                        LrgReflectionProbe **out_first,
+                                        LrgReflectionProbe **out_second);
+gboolean lrg_environment_fill_probe    (LrgEnvironment *self, LrgReflectionProbe *probe,
+                                        GError **error);
+
+/* CPU evaluation (headless) */
+void   lrg_environment_sample_sky      (LrgEnvironment *self, const gfloat *direction, gfloat *out_rgb);
+void   lrg_environment_compute_sh      (LrgEnvironment *self, guint face_size, gfloat *out_sh);
+void   lrg_environment_get_sh          (LrgEnvironment *self, gfloat *out_sh);
+void   lrg_environment_sample_diffuse  (LrgEnvironment *self, const gfloat *normal, gfloat *out_rgb);
+void   lrg_environment_sh_project_cubemap (const gfloat *faces, guint size, gfloat *out_sh);
+void   lrg_environment_sh_irradiance   (const gfloat *sh, const gfloat *normal, gfloat *out_rgb);
+void   lrg_environment_cube_face_direction (guint face, gfloat s, gfloat t, gfloat *out_direction);
+void   lrg_environment_integrate_brdf  (gfloat n_dot_v, gfloat roughness, guint samples,
+                                        gfloat *out_scale, gfloat *out_bias);
+gfloat *lrg_environment_compute_brdf_lut (guint size, guint samples, gsize *n_floats);
+
+/* GPU */
+gboolean lrg_environment_bake          (LrgEnvironment *self, GError **error);
+gboolean lrg_environment_is_baked      (LrgEnvironment *self);
+gboolean lrg_environment_needs_bake    (LrgEnvironment *self);
+void     lrg_environment_release_gpu   (LrgEnvironment *self);
+guint    lrg_environment_get_radiance_texture_id (LrgEnvironment *self);
+guint    lrg_environment_get_specular_texture_id (LrgEnvironment *self);
+guint    lrg_environment_get_specular_mip_count  (LrgEnvironment *self);
+guint    lrg_environment_get_brdf_texture_id     (LrgEnvironment *self);
+gfloat  *lrg_environment_read_specular_face      (LrgEnvironment *self, guint mip, guint face,
+                                                  guint *out_size);
+void     lrg_environment_draw_sky      (LrgEnvironment *self, const GrlVector3 *camera_position);
+#+end_src
+
+| Function | Notes |
+|----------+-------|
+| =lrg_environment_new()= | gradient sky, exposure 0, IBL on, resolution 128, ambient 0.2 grey, fog and volumetrics off |
+| =lrg_environment_load_from_data()= | resets every setting to the defaults first, then applies the block; accepts the block's mapping or a document with an =environment:= member; unknown keys kept |
+| =lrg_environment_to_data()= | the mapping without the =environment:= key; always writes every known key |
+| =lrg_environment_set_cubemap_cross()= | 4 x 3 horizontal (=. +Y . .= / =-X +Z +X -Z= / =. -Y . .=) or 3 x 4 vertical (-Z upside down at the bottom) |
+| =lrg_environment_load_sources()= | only loads what the current source needs; succeeds without doing anything for colour, gradient and dome sources |
+| =lrg_environment_set_resolution()= | rounded down to a power of two in 16..1024 |
+| =lrg_environment_compute_sh()= | CPU projection of the source (a dome contributes its gradient, without sun), stored as the environment's irradiance |
+| =lrg_environment_bake()= | needs a window; call outside =BeginDrawing()= / =BeginTextureMode()=; replaces previous maps |
+| =lrg_environment_read_specular_face()= | renders the face into an RGBA32F texture and reads it back: tests and previews only |
+| =lrg_environment_draw_sky()= | inside =BeginMode3D()=, before the world; a dome source draws its dome; others draw nothing before the first bake |
+| =lrg_environment_fill_probe()= | bakes first if needed, then captures the sky alone into the probe |
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: environment-examples
+:END:
+*** An HDR sky lighting a scene
+:PROPERTIES:
+:CUSTOM_ID: environment-example-hdr
+:END:
+#+begin_src C
+g_autoptr(GError)         error = NULL;
+g_autoptr(LrgEnvironment) env = lrg_environment_new ();
+g_autoptr(LrgLightSet)    lights = lrg_light_set_new ();
+
+lrg_environment_set_sky_source (env, LRG_ENVIRONMENT_SKY_EQUIRECT);
+lrg_environment_set_sky_path (env, "skies/noon.hdr");
+if (!lrg_environment_load_sources (env, NULL, "assets", &error))
+    g_warning ("%s", error->message);
+lrg_environment_set_exposure (env, -0.5f);
+
+/* once, after InitWindow() */
+if (!lrg_environment_bake (env, &error))
+    g_warning ("bake: %s", error->message);
+
+lrg_light_set_set_environment (lights, env);   /* the lit shader samples it */
+lrg_environment_apply_to_light_set (env, lights); /* ambient fallback + fog */
+
+while (!WindowShouldClose ())
+{
+    BeginDrawing ();
+    BeginMode3D (camera);
+    lrg_environment_draw_sky (env, &(GrlVector3){ camera.position.x, camera.position.y,
+                                                  camera.position.z });
+    lrg_light_set_apply (lights, camera.position.x, camera.position.y, camera.position.z);
+    /* ... draw the world with lrg_light_set_get_shader (lights) ... */
+    EndMode3D ();
+    EndDrawing ();
+}
+lrg_environment_release_gpu (env);   /* before CloseWindow() */
+#+end_src
+
+*** Turning the sky at runtime
+:PROPERTIES:
+:CUSTOM_ID: environment-example-rotate
+:END:
+#+begin_src C
+/* rotation and exposure are uniforms: no re-bake */
+lrg_environment_set_rotation (env, lrg_environment_get_rotation (env) + 10.0f * dt);
+if (lrg_environment_needs_bake (env))      /* FALSE here */
+    lrg_environment_bake (env, NULL);
+#+end_src
+
+*** A time-of-day dome
+:PROPERTIES:
+:CUSTOM_ID: environment-example-dome
+:END:
+#+begin_src C
+g_autoptr(LrgSkyDome) dome = lrg_sky_dome_new ();
+
+lrg_environment_set_sky_source (env, LRG_ENVIRONMENT_SKY_DOME);
+lrg_environment_set_sky_dome (env, dome);
+lrg_environment_set_resolution (env, 64);  /* dome bakes are read back: keep them small */
+
+/* every few game minutes, not every frame */
+lrg_sky_dome_set_time_of_day (dome, hours);
+lrg_environment_bake (env, NULL);
+#+end_src
+
+*** The environment of a loaded level
+:PROPERTIES:
+:CUSTOM_ID: environment-example-level
+:END:
+#+begin_src C
+g_autoptr(LrgLevelSerializer) ser = lrg_level_serializer_new ();
+g_autoptr(LrgLevel) level = lrg_level_serializer_load_from_file (ser, "levels/a.rlevel", &error);
+LrgEnvironment *env = lrg_level_get_environment (level);   /* NULL: no block */
+
+if (env != NULL)
+{
+    g_autofree gchar *dir = g_path_get_dirname ("levels/a.rlevel");
+
+    lrg_environment_load_sources (env, asset_manager, dir, &error);
+    lrg_environment_bake (env, &error);
+    lrg_light_set_set_environment (lights, env);
+    lrg_environment_apply_to_light_set (env, lights);
+}
+#+end_src
+
+*** Pure CPU: what does the sky give a floor?
+:PROPERTIES:
+:CUSTOM_ID: environment-example-cpu
+:END:
+#+begin_src C
+gfloat up[3] = { 0.0f, 1.0f, 0.0f };
+gfloat e[3];
+
+lrg_environment_compute_sh (env, 32, NULL);       /* headless */
+lrg_environment_sample_diffuse (env, up, e);      /* = lrg_env_diffuse() of the shader */
+g_print ("a white floor gets %.3f %.3f %.3f (linear)\n", e[0], e[1], e[2]);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: environment-performance
+:END:
+- *Bake cost* (resolution N): CPU face evaluation 6 N^2 lookups (128: about 100k, a few ms; equirect sampling dominates), SH projection the same, BRDF table 64 x 64 x 256 samples (about 1M GGX samples, 10-20 ms once per bake), GPU box chain (about 8 N^2 texels) and the prefilter (about 8 N^2 texels x 64 samples x 2 taps: 128 is about 17M texture fetches, well under a millisecond on a discrete GPU, about a second on llvmpipe). A dome bake adds six face read-backs (a pipeline stall). Bake at load time or on time-of-day steps, never every frame.
+- *Memory*: radiance N^2 x 6 x 8 bytes (128: 0.8 MB), prefiltered with mips 4/3 of that (1 MB), BRDF table 48 KB; transient chain about 1/3 of the radiance plus a zero-filled upload buffer during the bake.
+- *Per draw*: 9 vec3 uniforms and one cube fetch for diffuse + specular, one 2D fetch for the BRDF; each probe adds a box intersection and a cube fetch for fragments inside its box.
+- *Binder*: uniform locations are cached per program (and re-validated against one location every bind); probe selection is a linear scan over the probes.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: environment-pitfalls
+:END:
+- *Bake needs a context*: =lrg_environment_bake()= fails with =LRG_ENVIRONMENT_ERROR_GPU= before =InitWindow()=; release the maps (=lrg_environment_release_gpu()=) before =CloseWindow()=.
+- *Load the images*: setting =sky.path= (or loading a level) does not read the image; call =lrg_environment_load_sources()= before baking, or the bake falls back to the gradient with a warning.
+- *sRGB vs linear*: sky colours are sRGB like all engine colours; =.hdr= pixels are linear. A colour sky of (0.5, 0.5, 0.5) lights a white surface with linear 0.218, which displays as 0.5 again.
+- *Dome rotation*: =rotation= is ignored for a dome source (the dome positions its sun itself); turn the dome instead.
+- *Units*: the binder points its cube samplers at its own unit even when inactive; never set =lrgEnv*= sampler uniforms by hand.
+- *Probes need the point*: user shaders built on the light set's GLSL library should call =lrg_env_set_point(p)= before =lrg_env_specular()= (=lrg_light_pbr()= does), else the reference point decides the probe weights for the whole draw.
+- *Do not delete renderbuffers with rlUnloadTexture()*: the capture code relies on =rlUnloadFramebuffer()= to free its depth renderbuffer; deleting the renderbuffer id as a texture frees an unrelated texture of the same number (the default white texture, typically).
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: environment-editor
+:END:
+The level being edited owns its environment (=lrg_level_get_environment()=, created on demand with =lrg_level_ensure_environment()=) and it is saved in the =.rlevel= =environment:= block. The editor's *Environment* panel (=LrgEditorEnvironmentPanel=, a tab next to the Inspector) edits it live: sky source with a texture picker for equirect and cubemap images, colours, exposure and rotation, image based lighting, ambient, fog, volumetric fog and the level's post stack, with a panorama preview of the sky. Every edit is one undoable level command that updates the live object in place, so the viewport (which draws the level's environment through =LrgWorld3DRenderer= and bakes it lazily) follows at once; *Bake* runs =lrg_environment_bake()= with a progress bar and recaptures the reflection probes. Over IPC: =environment.get=, =environment.set= (dotted keys such as =fog.density=), =environment.reset=, =environment.bake=, =environment.progress= (=lrgeditorctl env ...=). See [[file:../../editor/environment.org][Level Look]]. Unknown keys survive editor saves.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: environment-see-also
+:END:
+- [[file:../graphics/hdr-image.org][LrgHdrImage]] - Radiance =.hdr= reader/writer for equirect skies
+- [[file:reflection-probe.org][LrgReflectionProbe]] - local box-projected reflections
+- [[file:volumetric-fog.org][LrgVolumetricFog]] - screen-space height fog with sun shafts
+- [[file:../graphics/light-set.org][LrgLightSet]] - the lit shader and its hooks
+- [[file:../graphics/sky-dome.org][LrgSkyDome]] - gradient sky with sun and time of day
+- [[file:../../editor/yaml-format.org::#environment][.rlevel environment block]]

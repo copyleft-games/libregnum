@@ -1,0 +1,179 @@
+#+title: 2D games: tiles, sprites, lights
+#+description: Building a 2D scene with libregnum 0.9.0: tileset assets, rule tiles, isometric and hexagonal maps, sprite sheets with frame animations, and 2D lights with shadows
+#+created: 2026-11-07
+
+* 2D games: tiles, sprites, lights
+:PROPERTIES:
+:CUSTOM_ID: guide-2d
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > Guides > 2D
+#+end_quote
+
+This guide walks through the 2D stack of 0.9.0 end to end: a tileset described in an =.rtileset= file, a map painted with rule tiles (autotiling) on an isometric grid, a character animated from an =.rsprite= sheet, and 2D lights whose shadows come from the tiles and from the character's outline. The result is what =m67-twod= (the visual check of this wave) shows: raised plateaus whose edges join up by themselves, randomised floor tiles, three coloured lights with soft shadows, a running character.
+
+** The pieces
+:PROPERTIES:
+:CUSTOM_ID: pieces
+:END:
+| Need | Type | Page |
+|------+------+------|
+| Tiles with collision, data, animation; saved as =.rtileset= | =LrgTileset= | [[file:../modules/tilemap/tileset-asset.org][Tileset assets]] |
+| Flip/rotate a painted tile | =lrg_tile_make()=, =lrg_tile_rotate()= | [[file:../modules/tilemap/tileset-asset.org::#transform-bits][Transform bits]] |
+| Autotiling brushes | =LrgRuleTile=, =LrgTileRule= | [[file:../modules/tilemap/rule-tile.org][Rule tiles]] |
+| Isometric, staggered, hexagonal grids | =LrgTilemap= orientation | [[file:../modules/tilemap/iso-hex.org][Isometric and hexagonal maps]] |
+| Sprite frames, slicing | =LrgSpriteSheet= | [[file:../modules/atlas/sprite-sheet.org][LrgSpriteSheet]] |
+| Frame animations, =.rsprite=, a player component | =LrgSpriteAnimation=, =LrgSpriteAnimationPlayer= | [[file:../modules/atlas/sprite-animation.org][Sprite animations]] |
+| 2D lights and shadows | =LrgLightingManager=, =LrgShadowOccluder2D= | [[file:../modules/lighting/2d-shadows.org][2D lights and shadows]] |
+
+** Step 1: the tileset
+:PROPERTIES:
+:CUSTOM_ID: step-tileset
+:END:
+Describe the image and the tiles in =assets/terrain.rtileset=. Tile references in the file are 0-based indices; this set has 16 plateau tiles (an edge-mask set) and three floor variants:
+
+#+begin_src yaml
+version: 1
+name: terrain
+image: terrain.png
+tile_size: [64, 64]
+columns: 4
+tile_count: 20
+tiles:
+- {id: 0, flags: [solid]}
+# ... ids 1..15 solid as well
+- id: 17
+  data: {sound: stone-cracked}
+rule_tiles:
+- name: plateau
+  rules:                     # the 16-tile preset, written out by the editor or by code
+  - pattern: [".-.", "-@-", ".-."]
+    tiles: [0]
+  # ...
+- name: floor
+  rules:
+  - tiles: [16, {tile: 17, weight: 0.2}, {tile: 18, weight: 0.25}]
+#+end_src
+
+Or build it in code and save it: =lrg_rule_tile_new_edges16 ("plateau", 1)= creates the 16 rules (tile =1 + mask=, mask = N*1 + E*2 + S*4 + W*8 as 1-based ids), =lrg_tileset_add_rule_tile()= adds it and =lrg_tileset_save_to_file()= writes the file.
+
+Load it after the window is open:
+
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgTileset) terrain = lrg_tileset_new_from_asset_file ("assets/terrain.rtileset", TRUE, &error);
+
+if (terrain == NULL)
+	g_error ("%s", error->message);   /* names the key path of the mistake */
+#+end_src
+
+** Step 2: an isometric map painted with rule tiles
+:PROPERTIES:
+:CUSTOM_ID: step-map
+:END:
+#+begin_src C
+g_autoptr(LrgTilemap) map = lrg_tilemap_new (terrain);
+g_autoptr(LrgTilemapLayer) floor = lrg_tilemap_layer_new (18, 18);
+g_autoptr(LrgTilemapLayer) walls = lrg_tilemap_layer_new (18, 18);
+LrgRuleTile *plateau = lrg_tileset_get_rule_tile_by_name (terrain, "plateau");
+LrgRuleTile *stone = lrg_tileset_get_rule_tile_by_name (terrain, "floor");
+gint x, y;
+
+lrg_tilemap_set_orientation (map, LRG_TILEMAP_ORIENTATION_ISOMETRIC);
+lrg_tilemap_set_cell_size (map, 64, 32);          /* 64x64 images on 64x32 diamonds */
+lrg_tilemap_layer_set_collision_enabled (walls, TRUE);
+lrg_tilemap_add_layer (map, floor);
+lrg_tilemap_add_layer (map, walls);
+
+for (y = 0; y < 18; y++)
+	for (x = 0; x < 18; x++)
+		lrg_tilemap_paint_rule_tile (map, 0, stone, x, y);     /* weighted variants */
+for (x = 3; x <= 8; x++)
+	lrg_tilemap_paint_rule_tile (map, 1, plateau, x, 3);        /* edges join up */
+#+end_src
+
+The map draws back to front (rows top to bottom), so tall plateau tiles overlap correctly; =lrg_tilemap_world_to_cell()= picks the diamond under the mouse. A hexagonal board is the same code with =LRG_TILEMAP_ORIENTATION_HEXAGONAL= and a stagger axis; rule tiles then use six neighbours.
+
+** Step 3: an animated character
+:PROPERTIES:
+:CUSTOM_ID: step-sprite
+:END:
+=assets/hero.rsprite=:
+
+#+begin_src yaml
+version: 1
+name: hero
+image: hero.png
+image_size: [768, 128]
+grid: {frame_size: [128, 128], columns: 6, rows: 1, pivot: [64, 120]}
+animations:
+- name: run
+  fps: 10
+  frames: [0, 1, 2, 3, 4, 5]
+  events:
+  - {frame: 1, name: footstep}
+  - {frame: 4, name: footstep}
+#+end_src
+
+#+begin_src C
+g_autoptr(LrgSpriteSheet) sheet = lrg_sprite_sheet_new_from_rsprite_file ("assets/hero.rsprite", &error);
+LrgSpriteAnimationPlayer *anim = lrg_sprite_animation_player_new (sheet);
+
+lrg_game_object_add_component (hero, LRG_COMPONENT (lrg_sprite_component_new ()));
+lrg_game_object_add_component (hero, LRG_COMPONENT (anim));
+lrg_sprite_animation_player_set_texture (anim, hero_texture);
+lrg_sprite_animation_player_play (anim, "run");
+g_signal_connect (anim, "event", G_CALLBACK (on_footstep), NULL);
+#+end_src
+
+The player updates with the game object and writes the frame into the sprite component.
+
+** Step 4: lights and shadows
+:PROPERTIES:
+:CUSTOM_ID: step-lights
+:END:
+#+begin_src C
+g_autoptr(LrgLightingManager) lights = lrg_lighting_manager_new ();
+g_autoptr(LrgShadowOccluder2D) tiles_occ = lrg_shadow_occluder2d_new ();
+g_autoptr(LrgShadowOccluder2D) hero_occ = lrg_shadow_occluder2d_new ();
+LrgPointLight2D *lamp = lrg_point_light2d_new ();
+
+lrg_lighting_manager_set_ambient_color (lights, 60, 64, 90);
+lrg_lighting_manager_set_ambient_intensity (lights, 0.55f);
+lrg_light2d_set_shadow_softness (LRG_LIGHT2D (lamp), 0.35f);
+lrg_point_light2d_set_radius (lamp, 420.0f);
+lrg_lighting_manager_add_light (lights, LRG_LIGHT2D (lamp));
+
+lrg_shadow_occluder2d_add_tilemap (tiles_occ, map, -1, 0.0f, 0.0f);   /* solid diamonds, merged */
+lrg_lighting_manager_add_shadow_caster (lights, LRG_SHADOW_CASTER (tiles_occ));
+lrg_lighting_manager_add_shadow_caster (lights, LRG_SHADOW_CASTER (hero_occ));
+#+end_src
+
+Each frame: rebuild the hero's outline when its frame changes (=lrg_shadow_occluder2d_add_image_outline()= on the frame's rectangle, offset by the pivot) and move it with =lrg_shadow_occluder2d_set_position()=; then =lrg_lighting_manager_render()= before drawing, the map and sprites inside the camera, and =lrg_lighting_manager_composite()= last inside the camera.
+
+** Measured costs
+:PROPERTIES:
+:CUSTOM_ID: costs
+:END:
+On one core of the release build (=taskset -c 2=): a blob47 full refresh of a 256x256 layer 14 ms, painting a cell 12 µs; isometric picking 0.10 µs, hexagonal 0.63 µs; hard shadow geometry for 2000 edges 0.29 ms, 8 soft samples 1.2 ms; a 128x128 sprite outline 0.20 ms. See the module pages for details.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Files use 0-based tile indices; cells and code use 1-based ids with transform bits. =lrg_tile_get_id()= strips the bits.
+- Set the isometric cell size, or the grid inherits the (taller) image size.
+- Keep each rule tile's tiles apart from the others' (ownership is by tile id).
+- Sprite components draw from the object's position without a pivot: offset by the frame's pivot.
+- Soft shadows cost one light draw per sample; keep samples small and disable shadows on decorative lights.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../modules/tilemap/index.org][Tilemap module]]
+- [[file:../modules/atlas/index.org][Atlas module]]
+- [[file:../modules/lighting/index.org][Lighting module]]
+- [[file:../editor/editor-tools.org][Editor tools]] (tile painting)
+- [[file:../editor/2d-tools.org][2D Tools in the editor]] (rule tile painting, iso/hex grids, the .rtileset and .rsprite editors)
+- [[file:writing-a-data-format.org][Writing a data format]]

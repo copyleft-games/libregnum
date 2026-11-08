@@ -1,0 +1,182 @@
+#+title: Contact Solver and the Constraint Hook
+#+description: LrgSolverBody, the abstract LrgPhysicsConstraint class every joint implements, and the LrgContactSolver settings of the libregnum 0.9 sequential-impulse solver.
+
+* Contact Solver and the Constraint Hook
+:PROPERTIES:
+:CUSTOM_ID: contact-solver
+:END:
+=src/physics/lrg-contact-solver.h= (0.9) holds the solver contract of [[file:dynamics.org][LrgDynamicsWorld]]:
+
+- =LrgSolverBody=: the per-substep view of one body that constraints read and write,
+- =LrgPhysicsConstraint=: the abstract GObject class every joint derives from (the [[file:joint.org][LrgJoint]] family, the ragdoll's joints, the world's own 0.8 limit joint, your own constraints),
+- =LrgContactSolver=: the tuning knobs of the built-in contact constraint.
+
+The design follows Jolt Physics (MIT, Copyright 2021 Jorrit Rouwe): sequential impulses with warm starting at the velocity level (Jolt's =AxisConstraintPart=), then non-linear Gauss-Seidel at the position level.
+
+** LrgSolverBody
+:PROPERTIES:
+:CUSTOM_ID: solver-body
+:END:
+A plain boxed struct (=lrg_solver_body_get_type()=, =lrg_solver_body_copy()=, =lrg_solver_body_free()=) with public fields, all in world space except the two local ones:
+
+| Field | Meaning |
+|-------+---------|
+| =id= | the body id, or =G_MAXUINT= for the world frame |
+| =position[3]= | world centre of mass |
+| =orientation[4]= | xyzw quaternion |
+| =linear_velocity[3]=, =angular_velocity[3]= | velocities of the centre of mass |
+| =inv_mass= | inverse mass; 0 for static, kinematic, frozen and world bodies |
+| =inv_inertia[9]= | world inverse inertia, column-major; 0 when =inv_mass= is 0 |
+| =com_local[3]= | centre of mass in the body frame (local anchors measured from the origin are offset by it) |
+| =inv_inertia_local[9]= | body-frame inverse inertia |
+
+Immovable bodies simply have a zero inverse mass and inertia, so constraint maths needs no special cases, and a constraint's second body is never =NULL=: the world frame is a static solver body at the identity. A kinematic body has zero inverse mass but a real velocity, so a joint to a moving platform drags the dynamic end along.
+
+Helpers (use them instead of writing the fields so the world inertia stays consistent):
+
+| Function | Use |
+|----------+-----|
+| =lrg_solver_body_is_dynamic()= | impulses move it |
+| =lrg_solver_body_local_to_world()= | a body-local anchor (from the origin) to world |
+| =lrg_solver_body_rotate_to_world()= | a body-local direction to world |
+| =lrg_solver_body_mul_inv_inertia()= | I⁻¹ v (angular velocity change of an angular impulse) |
+| =lrg_solver_body_get_point_velocity()= | v + ω × (p - com) |
+| =lrg_solver_body_get_effective_mass_inv()= | 1/m + (r × n)·I⁻¹(r × n) of one body along a direction at a point |
+| =lrg_solver_body_apply_impulse()= | linear impulse at a point (or the centre of mass) |
+| =lrg_solver_body_apply_angular_impulse()= | angular impulse |
+| =lrg_solver_body_apply_position_correction()= | NGS: move by a position impulse and turn by I⁻¹ (r × impulse + angular), refreshing the world inertia |
+
+** LrgPhysicsConstraint
+:PROPERTIES:
+:CUSTOM_ID: constraint
+:END:
+An abstract derivable GObject with three properties: =LrgPhysicsConstraint:body-a= (a body id), =LrgPhysicsConstraint:body-b= (a body id or =LRG_DYNAMICS_WORLD_BODY= / =G_MAXUINT= for the world frame) and =LrgPhysicsConstraint:enabled=. Functions: =lrg_physics_constraint_get_body_a()=, =lrg_physics_constraint_get_body_b()=, =lrg_physics_constraint_set_bodies()= (only while not in a world), =lrg_physics_constraint_get_enabled()=, =lrg_physics_constraint_set_enabled()=, =lrg_physics_constraint_get_in_world()= and =lrg_physics_constraint_get_id()=.
+
+*** The vtable
+:PROPERTIES:
+:CUSTOM_ID: vtable
+:END:
+Every vfunc is optional (the defaults do nothing or return =FALSE=; =debug_draw= draws a line between the centres of mass). Each receives the two =LrgSolverBody= views.
+
+| vfunc | When | What to do |
+|-------+------+------------|
+| =setup (self, a, b, dt)= | once per substep, before warm starting | compute world anchors and axes from the current poses, effective masses, biases |
+| =warm_start (self, a, b, ratio)= | once per substep | re-apply last substep's accumulated impulses times =ratio= (1 with a fixed step) |
+| =solve_velocity (self, a, b, dt)= | every velocity iteration | one sequential-impulse pass; accumulate and clamp impulses; return =TRUE= when an impulse was applied |
+| =solve_position (self, a, b, dt, baumgarte)= | every position iteration | remove =baumgarte= times the remaining position error with =lrg_solver_body_apply_position_correction()=; return =TRUE= when it moved something |
+| =post_solve (self, a, b, dt)= | once, after all iterations | read the accumulated impulses: break a breakable joint (disable it and emit your own signal), report motor torque |
+| =reset_warm_start (self)= | when added, re-enabled, or warm starting is off | forget accumulated impulses |
+| =debug_draw (self, a, b, draw)= | from =lrg_dynamics_world_debug_draw()= with =CONSTRAINTS= | draw anchors, axes, limits |
+
+Order inside a substep: setup → warm_start → N × (all contacts, then constraints in insertion order) solve_velocity → integrate → M × (contacts, then constraints) solve_position → post_solve. Constraints link islands, so both bodies sleep and wake together; a disabled constraint is skipped and links nothing; a constraint whose body was evicted is skipped; removing a body removes its constraints.
+
+Do not add or remove bodies or constraints from inside a vfunc. To break a joint, call =lrg_physics_constraint_set_enabled()= with =FALSE= from =post_solve= and remove it later.
+
+*** Writing a constraint
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+A rod that keeps a body point at a fixed distance from a world pivot (the test suite's =TestRod=, abridged):
+
+#+begin_src c
+struct _MyRod
+{
+	LrgPhysicsConstraint parent_instance;
+	gfloat pivot[3];      /* world */
+	gfloat length;
+	gfloat n[3];          /* setup: unit direction pivot -> point */
+	gfloat point[3];      /* setup: world anchor (body origin) */
+	gfloat mass;          /* setup: effective mass along n */
+	gfloat impulse;       /* accumulated, warm started */
+};
+G_DEFINE_FINAL_TYPE (MyRod, my_rod, LRG_TYPE_PHYSICS_CONSTRAINT)
+
+static void
+my_rod_setup (LrgPhysicsConstraint *c, LrgSolverBody *a, LrgSolverBody *b, gfloat dt)
+{
+	MyRod *rod = MY_ROD (c);
+	gfloat origin[3] = { 0.0f, 0.0f, 0.0f };
+	gfloat len;
+
+	lrg_solver_body_local_to_world (a, origin, rod->point);
+	rod->n[0] = rod->point[0] - rod->pivot[0];
+	rod->n[1] = rod->point[1] - rod->pivot[1];
+	rod->n[2] = rod->point[2] - rod->pivot[2];
+	len = sqrtf (rod->n[0] * rod->n[0] + rod->n[1] * rod->n[1] + rod->n[2] * rod->n[2]);
+	rod->n[0] /= len;
+	rod->n[1] /= len;
+	rod->n[2] /= len;
+	rod->mass = 1.0f / lrg_solver_body_get_effective_mass_inv (a, rod->point, rod->n);
+}
+
+static gboolean
+my_rod_solve_velocity (LrgPhysicsConstraint *c, LrgSolverBody *a, LrgSolverBody *b, gfloat dt)
+{
+	MyRod *rod = MY_ROD (c);
+	gfloat v[3];
+	gfloat lambda;
+	gfloat j[3];
+
+	/* Drive the point velocity along the rod to zero. */
+	lrg_solver_body_get_point_velocity (a, rod->point, v);
+	lambda = -(v[0] * rod->n[0] + v[1] * rod->n[1] + v[2] * rod->n[2]) * rod->mass;
+	rod->impulse += lambda;
+	j[0] = rod->n[0] * lambda;
+	j[1] = rod->n[1] * lambda;
+	j[2] = rod->n[2] * lambda;
+	lrg_solver_body_apply_impulse (a, j, rod->point);
+	return TRUE;
+}
+
+/* warm_start re-applies rod->impulse along n; solve_position pushes the
+ * point back to rod->length with lrg_solver_body_apply_position_correction (). */
+
+/* Use: */
+g_autoptr(MyRod) rod = g_object_new (MY_TYPE_ROD, "body-a", bob, "body-b", LRG_DYNAMICS_WORLD_BODY, NULL);
+lrg_dynamics_world_add_constraint (world, LRG_PHYSICS_CONSTRAINT (rod), NULL, &error);
+#+end_src
+
+** The contact constraint
+:PROPERTIES:
+:CUSTOM_ID: contacts
+:END:
+Each contact manifold (up to four points sharing a normal) is solved like Jolt's contact constraint:
+
+- *Normal rows*, one per point, between each body's own surface point and its centre of mass. The accumulated impulse stays >= 0. The target relative normal velocity is 0 for a touching point, -gap/dt for a speculative point (it may close the gap this substep but not more), and -e times the closing speed when the closing speed exceeds the restitution threshold and the point will touch within the substep.
+- *Manifold friction* at each body's friction centre (the average of its contact points): two tangent rows on a fixed basis (so warm starting stays meaningful) clamped together to the circle mu * sum of normal impulses, and a twist row about the normal clamped to mu * sum (normal impulse * distance to the centre). Friction is solved first each iteration and the normal rows last, so non-penetration has the final say.
+- *Cached Jacobians*: r × n and I⁻¹(r × n) of both bodies are computed once per substep, so an iteration is a handful of dot products.
+- *Alternating order*: normal rows are walked forward on even and backward on odd iterations, so Gauss-Seidel order bias does not turn resting bodies one way.
+- *Warm starting*: points are matched to last substep's points of the same pair by feature id or 1 cm proximity (normals within about 5 degrees) and start from their impulses; the friction and twist impulses carry over with the manifold.
+- *Position pass (NGS)*: each penetrating point beyond the slop is pushed apart along the normal by =baumgarte= times its penetration (at most =max-correction=) through position impulses that move and turn both bodies without adding velocity.
+
+** LrgContactSolver
+:PROPERTIES:
+:CUSTOM_ID: settings
+:END:
+A final GObject of settings; each world owns one (=lrg_dynamics_world_get_contact_solver()=); =lrg_contact_solver_new()= makes a standalone one with the defaults. Every setting is a property with =G_PARAM_EXPLICIT_NOTIFY=.
+
+| Property | Default | Accessors | Meaning |
+|----------+---------+-----------+---------|
+| =velocity-iterations= | 10 | =lrg_contact_solver_get_velocity_iterations()=, =lrg_contact_solver_set_velocity_iterations()= | velocity passes per substep (1 .. 64) |
+| =position-iterations= | 2 | =lrg_contact_solver_get_position_iterations()=, =lrg_contact_solver_set_position_iterations()= | NGS passes per substep (0 .. 64; 0 turns position correction off) |
+| =baumgarte= | 0.2 | =lrg_contact_solver_get_baumgarte()=, =lrg_contact_solver_set_baumgarte()= | fraction of the error removed per position pass |
+| =penetration-slop= | 0.02 m | =lrg_contact_solver_get_penetration_slop()=, =lrg_contact_solver_set_penetration_slop()= | penetration left alone (keeps resting contacts touching) |
+| =speculative-distance= | 0.02 m | =lrg_contact_solver_get_speculative_distance()=, =lrg_contact_solver_set_speculative_distance()= | gap under which separated shapes already get a contact |
+| =restitution-threshold= | 1 m/s | =lrg_contact_solver_get_restitution_threshold()=, =lrg_contact_solver_set_restitution_threshold()= | slower contacts do not bounce |
+| =warm-starting= | on | =lrg_contact_solver_get_warm_starting()=, =lrg_contact_solver_set_warm_starting()= | reuse last impulses (turning it off makes stacks sag) |
+| =max-correction= | 0.2 m | =lrg_contact_solver_get_max_correction()=, =lrg_contact_solver_set_max_correction()= | largest position push per contact per pass |
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- A solver body pointer is only valid inside the vfunc call; copy what you need.
+- Anchors given to =lrg_solver_body_local_to_world()= are measured from the body *origin*, not the centre of mass.
+- Write velocities through the impulse helpers and positions through =lrg_solver_body_apply_position_correction()=; writing =orientation= directly leaves =inv_inertia= stale for the rest of the substep.
+- Velocity iterations trade cost for stiffness: tall stacks and long chains want more.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:dynamics.org][LrgDynamicsWorld]], [[file:islands.org][Islands]], [[file:joint.org][Joints]], [[file:../../guides/physics.org][Physics guide]]

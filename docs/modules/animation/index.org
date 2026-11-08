@@ -17,6 +17,9 @@ The Animation module provides a complete skeletal animation system with state ma
 - *LrgBlendTree* - Multi-animation blending
 - *LrgAnimationLayer* - Layered animation with masks
 - *LrgIKSolver* - Inverse kinematics solvers
+- *LrgGltfAnimation* - glTF skins, clips and morph targets into the types above
+- *LrgBoneMap* / *LrgRetargeter* - retarget clips between skeletons with different rest poses (=.rbonemap=)
+- *LrgSequence* / *LrgSequencePlayer* - cinematic sequences (=.rseq=): Bézier transform/property curves, camera cuts, audio, events, clips and sub-sequences on =LrgWorld3D= entities
 
 ** Quick Start
 :PROPERTIES:
@@ -89,3 +92,8 @@ LrgIKChain + LrgIKSolver (post-process)
 | [[file:blend-tree.org]]    | Animation blending            |
 | [[file:layers.org]]        | Layered animation             |
 | [[file:ik-solver.org]]     | Inverse kinematics            |
+| [[file:anim-graph.org]]    | .ranim animation graphs, pose utilities, root motion, IK post-pass |
+| [[file:gltf-animation.org]] | glTF skins, clips, morph targets |
+| [[file:retargeter.org]]    | Bone maps and retargeting     |
+| [[file:sequence.org]]      | Sequences (=.rseq=) and the sequence player |
+- [[file:skeleton2d.org][LrgSkeleton2D]] - 2D bones, slots, skins, clips, .rskel2d

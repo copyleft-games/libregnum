@@ -424,7 +424,7 @@ LrgEditorApp
 4. Tick navigation (held fly keys), the play session, timeline playback, thumbnails, autosave and the debounced validation; update the window title.
 5. Headless (no window), record the canvas so popups and widgets are laid out for =ui.state=.
 
-=lrg_editor_app_run_headless()= runs step 4 every 100 ms from a GLib timeout instead.
+=lrg_editor_app_run_headless()= runs step 4 every 100 ms from a GLib timeout instead, and that tick is also one profiler frame (=editor.tick=) and one =lrg_editor_script_api_tick()= so tool scripts and =profiler.capture= work without a window. The project directory is pushed to the script API when the project opens, because the console widget step that used to do it only runs from a UI frame.
 
 *** Actions, menus and shortcuts
 :PROPERTIES:
@@ -465,11 +465,19 @@ Every panel widget is created with =lrg_<panel>_new (app)=. The app keeps a refe
 :PROPERTIES:
 :CUSTOM_ID: scene-renderer
 :END:
-=LrgEditorSceneRenderer= draws what an editor viewport shows. It uses only raylib and rlgl, never the immediate-mode GUI, with fixed Catppuccin Mocha colours. Create one per editor with =lrg_editor_scene_renderer_new (editor)= and bind its inputs: =set_settings()= (=grid-size= and =grid-extent=, re-read on notify), =set_base_dir()= (what relative asset paths resolve against; changing it forgets the per-asset lookups), =set_gizmo()= and =set_playing()= (darker background during play).
+=LrgEditorSceneRenderer= draws what an editor viewport shows. Since 0.9.0 every pixel of scene geometry goes through the engine's shared renderer, =LrgWorld3DRenderer= ([[file:../modules/world3d/renderer.org][page]]), so the viewport and a game draw the same scene the same way; the editor renderer keeps only what an editor alone shows (grid, icons, selection bounds, tilemap grids, placeholders and the 2D overlays), with fixed Catppuccin Mocha colours. Create one per editor with =lrg_editor_scene_renderer_new (editor)= and bind its inputs: =set_settings()= (=grid-size= and =grid-extent=, re-read on notify), =set_base_dir()= (what relative asset paths resolve against; forwarded to the runtime renderer, which forgets its per-asset lookups), =set_gizmo()=, =set_playing()= (darker background during play) and =set_play_session()= (the play session whose 3D world is drawn while playing). =get_runtime_renderer()= returns the shared renderer (its caches, light set, shadow renderer and sky dome are the viewport's).
 
-Call =lrg_editor_scene_renderer_render (renderer, view_state, viewport, nav, active, width, height)= from an =LrgViewport= render callback, inside =BeginTextureMode()= on a =width= x =height= target; it clears the target itself. =viewport= is the camera index (-1 for the active one); the camera's render mode (=WIREFRAME= draws in wire mode, the other modes are lit for now) and overlay flags (=GRID=, =ICONS=, =GIZMOS=, =STATS=) are honoured. The transform gizmo is drawn only when =active=; the orientation axes and the box-select rectangle come from =nav= (nullable) so they match its hit testing. =get_drawn()= returns the draw calls of the last render.
+Call =lrg_editor_scene_renderer_render (renderer, view_state, viewport, nav, active, width, height)= from an =LrgViewport= render callback, inside =BeginTextureMode()= on a =width= x =height= target; it clears the target itself. =viewport= is the camera index (-1 for the active one). One render:
 
-GPU resources (lit shader, primitive meshes, model and texture caches) are created on the first render; =render()= returns =FALSE= and draws nothing without a window. =forget_asset (abs_path)= drops one cached model or texture (live reload). =release()= frees all GPU resources and must be called before =CloseWindow()=. =render_model_thumbnail()= and =render_font_thumbnail()= return a size x size =GrlImage= for the thumbnail cache's GPU hooks (models; font samples "Aa Bb 123" at the size and code points of the font's =.meta= sidecar); they run outside any texture mode.
+1. converts the camera's =LrgEditorView= into an =LrgWorld3DView= (same matrices, so picking and the image agree), the render mode into =LrgWorld3DRenderMode= (the values are equal) and the overlays into =LrgWorld3DRenderFlags=: /Shadows/ and /Sky/ in perspective, non-2D views, /Post Processing/ with the viewport's own =LrgPostProcessor= (=get_post_processor (slot)=);
+2. while the play session runs a 3D level (=lrg_editor_play_session_get_world3d()= returns a world), draws that world with =lrg_world3d_renderer_render_view()= and the world's own lights: play-in-editor shows exactly what the game draws;
+3. otherwise walks the level once, turning each visible node into a render item (primitives; mesh assets as models from the runtime cache; sprites as textured quads keeping the image's aspect ratio; CAD parts as orange cubes; translucent materials into the transparent pass; grids, 2D shapes and sprites cast no shadows) and, with /Scene Lighting/, each LIGHT node into an =LrgLight3DDesc=, then draws the sorted list with =lrg_world3d_renderer_render_list()=;
+4. draws the grid from the runtime renderer's =draw-background= hook and, per node, tilemap grids (rlgl quads, layer by layer), missing-asset and prefab placeholders, icons (/Icons/) and selection bounds from its =draw-overlay= hook (in wire mode for the wireframe mode, as before);
+5. draws the 2D pass when =get_draw_overlays()= is on: the transform gizmo (only when =active=, overlay /Gizmos/), the orientation axes and box-select rectangle from =nav= (nullable, so they match its hit testing), the view label and, with /Stats/, the counts.
+
+While the play world is drawn the node overlays (icons, bounds, tilemap grids) are left out: the play entities are not the authoring nodes. =get_drawn()= returns the draw calls of the last render (the runtime renderer's, shadow casters included, plus tilemap layers). =render_view()= renders through an arbitrary camera (the camera preview).
+
+GPU resources live in the runtime renderer and are created on the first render; =render()= returns =FALSE= and draws nothing without a window. =forget_asset (abs_path)= drops one cached model or texture (live reload); =get_generation()= adds the runtime renderer's generation (assets, base directory) to the grid-settings counter. =release()= frees all GPU resources (the runtime renderer's, the thumbnail shader, and replaces the post processors) and must be called before =CloseWindow()=. =render_model_thumbnail()= and =render_font_thumbnail()= return a size x size =GrlImage= for the thumbnail cache's GPU hooks (models lit by their own copy of the fallback =lit.fs= shader; font samples "Aa Bb 123" at the size and code points of the font's =.meta= sidecar); they run outside any texture mode.
 
 *** Dialogs
 :PROPERTIES:
@@ -521,6 +529,7 @@ Custom actions get a mirror =editor.<id>= action and their shortcut immediately,
 | =lrg_editor_app_get_view_state (app)= | 0.8.1 | Cameras, layout, render modes, dialog, timeline playhead, tile tool |
 | =lrg_editor_app_get_viewport_nav (app)= | 0.8.1 | Viewport navigation |
 | =lrg_editor_app_get_play_session (app)= | 0.8.1 | Play-in-editor |
+| =lrg_editor_app_get_scene_renderer (app)= | 0.9.0 | The renderer every viewport draws through (baked lighting, play world, thumbnails) |
 | =lrg_editor_window_get_menu_bar=, =get_menu_model=, =get_toasts=, =get_widget (window, name)= | 0.8.1 | The chrome's widgets (=get_widget= takes =toolbar=, =statusbar=, =status-reload=, =status-keep=, =status-counters=, =snap-move=, =snap-rotate=, =snap-scale=, =viewport-layout= or =tool:<action-id>=) |
 | =lrg_editor_viewport_panel_get_viewport (panel)= | 0.8.1 | The =LrgViewport= of the viewport panel |
 | =lrg_editor_gui_input_to_canvas (input, previous, out)=, =lrg_editor_gui_key_to_grl (key)= | 0.8.1 | Translate a 0.8.0 =LrgGuiInput= frame |
@@ -744,8 +753,49 @@ At construction the panel gives the shell's =view.asset-grid= (toggle, checked w
 | =asset.duplicate= | =path= | Copies a file as "name copy.ext" with a fresh GUID: the copy's =path relative is_dir guid= |
 | =asset.trash= | =path= | Moves the file and its sidecar (or a folder) to the desktop trash, without a confirmation: =path trashed= |
 | =asset.orphans= | =trash= (optional boolean) | Rescans and lists the sidecars whose asset is gone (=orphans=, project-relative); with =trash: true= moves them to the trash (=trashed= count) |
+| =asset.new= | =kind=, =path?=, =name?=, =image?= | Writes a new asset file (0.9.0): =kind= a document format nick or =terrain=; =path= project relative or absolute, else a free =<name or default stem>.<ext>= in the shown folder; =sprite= with =image= auto-slices it. Returns =path=, =relative=, =is_dir=, =guid= and =kind=; a taken path or unknown kind is =invalid-params= |
 
 Errors: a missing parameter is =invalid-params=, a path outside the project or that does not exist =not-found=, a name that exists or is invalid =invalid-params=, any other failure =failed=. Each method rescans, re-lists the panel and queues a git refresh.
+
+*** Rendering assets (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-assets-render
+:END:
+Materials, shaders and shader graphs are recognised by extension (the asset database types them as other files):
+
+| Files | Tile | Type column | Double click |
+|-------+------+-------------+--------------|
+| =.rmat= | the material on a lit sphere (rendered with the [[file:material-editor.org][material editor]]'s preview, one per frame while a window exists, again when the file changes); "Mt" glyph meanwhile | Material | the material editor |
+| =.rshader= | "Sh" glyph | Shader | the code panel (YAML), compiled on save |
+| =.glsl .vert .frag .vs .fs= | "GL" glyph | Shader stage | the code panel (GLSL), compiled on save |
+| =.rshadergraph= | "SG" glyph | Shader graph | the [[file:shader-graph-editor.org][shader graph editor]] |
+
+The background menu has a third section: *New Material* (=new_material.rmat=, a grey lit material), *New Shader* (=new_shader.rshader= plus =new_shader.frag=, a lit starter with three described uniforms) and *New Shader Graph* (=new_shader_graph.rshadergraph=, the PBR starter graph); each is created in the shown folder with a free name and renamed inline. Actions: =assets.new-material=, =assets.new-shader=, =assets.new-shader-graph=.
+
+The entry menu has *Create Variant* for prefabs and materials (=assets.create-variant=, =lrg_editor_assets_panel_create_variant()=): a prefab variant through =lrg_editor_create_prefab_variant()= (undoable: undo removes the file), a material instance through =lrg_editor_material_editor_create_variant()=, both as =<stem>_variant= next to the source, then renamed inline.
+
+*Gameplay and effect assets (0.9.0).* The navigation, AI, effects, terrain, audio and 2D formats are recognised by extension too:
+
+| Files | Glyph | Type column | Double click |
+|-------+-------+-------------+--------------|
+| =.rbt= | BT | Behaviour tree | the behaviour tree editor |
+| =.rfsm= | SM | State machine | the state machine editor |
+| =.rparticles= | Fx | Particle effect | the particle editor |
+| =.rweather= | Wx | Weather | the weather editor |
+| =.rmixer= | Mx | Mixer | the mixer editor |
+| =.rtileset= | TS | Tileset | the tileset editor |
+| =.rsprite= | Sp | Sprite sheet | the sprite editor |
+| =.rwater= | Wa | Water body | the water editor |
+| =.rnav= | Nv | Navigation settings | the Navigation panel (action =nav.open-settings=; the path rides on the app as ="lrg-editor-nav-settings-path"= data) |
+| =.rterrain= | Tr | Terrain | the external editor (terrains are edited on their level node) |
+
+The background menu's fourth section creates them in the shown folder with a free name, then renames inline: *New Behaviour Tree* (=new_behaviour_tree.rbt=, an empty =sequence= root), *New State Machine* (=new_state_machine.rfsm=, one =idle= state), *New Particle Effect* (=new_particle_effect.rparticles=), *New Weather*, *New Mixer* (a master bus), *New Tileset* (one 16x16 tile, no image yet), *New Sprite Sheet*, *New Water Body* (a plane), *New Terrain* (=new_terrain.rterrain=: a flat 4x4-chunk terrain, 64 cells and 32 units per chunk, with its sidecars) and *New Navigation Settings* (=new_navigation.rnav=, the =LrgNavBake= defaults). Actions: =assets.new-bt=, =assets.new-fsm=, =assets.new-particles=, =assets.new-weather=, =assets.new-mixer=, =assets.new-tileset=, =assets.new-sprite=, =assets.new-water=, =assets.new-terrain=, =assets.new-nav-settings=. Every document format's file is the engine's own default object written by the engine writer (see [[file:data-editors.org::#data-editors-engine-backed][Engine-backed formats]]).
+
+An image's entry menu has *Slice Sprite Sheet* (=assets.slice-sprite-sheet=): it writes =<image stem>.rsprite= next to the image (numbered when taken) with the image referenced relative to it and one frame per opaque island of the image (alpha above 8, islands at least 2 px, bottom-centre pivots; =lrg_sprite_sheet_slice_alpha()=), reports the frame count and opens the sprite editor. Over IPC and from scripts the same files come from =asset.new= (=lrgeditorctl asset new KIND [path=P] [name=N] [image=I]=) and ~lrg_editor_assets_panel_create_asset (path, kind, image, error)~.
+
+The Import Settings dialog of a model shows the LOD keys of 0.9.0 with labels and ranges: LOD levels (1..8), LOD ratios, LOD screen sizes, LOD max error (0..1), LOD lock border, LOD hysteresis (0..0.9), LOD fade (s) (0..10).
+
+The panel's constructor also registers the =material.*= and =shadergraph.*= IPC methods ([[file:ipc-protocol.org::#material-methods][IPC protocol]]).
 
 *** API
 :PROPERTIES:
@@ -766,6 +816,8 @@ Errors: a missing parameter is =invalid-params=, a path outside the project or t
 | ~lrg_editor_assets_panel_reveal (self, path)~ | Navigate to and select a file (=asset.reveal=) |
 | ~lrg_editor_assets_panel_begin_rename (self, path)~, ~get_renaming (self)~ | Inline rename (F2) |
 | ~lrg_editor_assets_panel_show_import_settings (self, path)~ | The Import Settings dialog |
+| ~lrg_editor_assets_panel_create_variant (self, path, error)~ | Create Variant of a prefab or material (0.9.0) |
+| ~lrg_editor_assets_panel_create_asset (path, kind, image, error)~ | A new asset file: a document format nick (=bt=, =fsm=, =particles=, =weather=, =mixer=, =tileset=, =sprite=, =water=, =nav-settings=, =material=, ...) or =terrain=; =sprite= with an image slices it (0.9.0) |
 
 *** Implementation notes
 :PROPERTIES:
@@ -985,12 +1037,13 @@ Actions registered by the panel: =console.copy=, =console.copy-all=, =console.cl
 :PROPERTIES:
 :CUSTOM_ID: editor-panel-problems
 :END:
-=LrgEditorProblemsPanel= shows the app's validation results (=lrg_editor_validate_level()=, re-run automatically, debounced, after every edit): one row per problem with a severity icon and colour, the node path, the message and the problem code as a chip. The toolbar shows error / warning / info counts and *Validate Now* (=problems-validate=). With no problems the panel says so. A click selects the problem's node; a double click (or Enter) opens the file of a script problem at line 1 (through the =code.open= IPC method when the code panel registered it, else the external editor) or frames the node (=view.focus=).
+=LrgEditorProblemsPanel= shows the app's validation results (=lrg_editor_validate_level()=, re-run automatically, debounced, after every edit): one row per problem with a severity icon and colour, the node path, the message and the problem code as a chip. The toolbar shows error / warning / info counts and *Validate Now* (=problems-validate=). With no problems the panel says so. A click selects the problem's node; a double click (or Enter) opens the file of a script or shader problem at its stored line (=lrg_editor_problems_panel_get_row_location()=, or line 1 when the line is 0) through the =code.open= IPC method when the code panel registered it, else the external editor, or frames the node (=view.focus=).
 
 | API | Use |
 |-----+-----|
 | =lrg_editor_problems_panel_new (app)= | Creates the panel |
 | =lrg_editor_problems_panel_get_n_rows (self)= | Problems listed (syncs with the last validation) |
+| =lrg_editor_problems_panel_get_row_location (self, i, line, column)= | 1-based source line and column copied onto the row (0 when unknown) |
 | =lrg_editor_problems_panel_activate_row (self, i, open)= | Click (=open= =FALSE=) or double click (=TRUE=) |
 
 ** Profiler panel
@@ -1011,7 +1064,7 @@ Actions: =profiler.pause= (checked while paused) and =profiler.clear=.
 *IPC* =profiler.sample= (params optional): =frames= (how many recent frame times, default 60, at most what was recorded) and =enable= (=true= pins the profiler on, =false= unpins it). The reply:
 
 #+begin_src json
-{ "enabled": true, "pinned": false, "paused": false, "frame_ms": 16.67,
+{ "enabled": true, "pinned": false, "paused": false, "gpu": false, "frame_ms": 16.67,
   "frames": [16.67, 16.67, 16.9],
   "sections": [ { "name": "play.tick", "last_ms": 0.21, "avg_ms": 0.2, "min_ms": 0.18, "max_ms": 0.4, "count": 120 } ] }
 #+end_src
@@ -1025,6 +1078,10 @@ Actions: =profiler.pause= (checked while paused) and =profiler.clear=.
 | =lrg_editor_profiler_panel_get_frames (self, &n)= | The recorded frame times in ms, oldest first (free with =g_free()=) |
 | =lrg_editor_profiler_panel_get_n_sections (self)= | Sections in the table (refreshes it) |
 | =lrg_editor_profiler_panel_get_hovered_frame (self)= | The frame under the pointer, or -1 |
+| =lrg_editor_profiler_panel_get_capture (self)= | The =.rprof= capture the panel is showing, or =NULL= |
+| =lrg_editor_profiler_panel_get_view_mode (self)= | ="timeline"=, ="flame"=, ="table"= or ="compare"= |
+
+0.9.0 adds thread and GPU lanes, a flame graph, capture / save / load of =.rprof=, and a compare view. The Frame Debugger is a separate widget (=lrg_editor_frame_debugger_new()=) presented by =frame.show=. Both are specified in [[file:profiling.org][Profiling]].
 
 The editor's own phases (=ui.input=, =ui.update=, =viewport.render[i]=, =play.tick=) appear in the table once the frame loop wraps them in =lrg_profiler_begin_section()= / =lrg_profiler_end_section()= on the default profiler.
 
@@ -1052,6 +1109,9 @@ Actions registered by the panel: =timeline.rename= and =timeline.delete= (the cu
 | =lrg_editor_timeline_panel_find_track (self, guid, channel)= | The view track of a channel (=NULL= channel: the node's group) |
 | =lrg_editor_timeline_panel_find_keyframe (self, guid, channel, time)= | The view keyframe id of a key, or =LRG_EDITOR_TIMELINE_PANEL_INVALID_KEY= |
 | =lrg_editor_timeline_panel_set_key_easing (self, easing)= | Easing of new keys and of the selected keys (one step) |
+| =lrg_editor_timeline_panel_set_key_tangents (self, bezier, mode)= | (0.9.0) Makes the selected keys Bézier keys of /mode/ (keeping their drawn slopes) or eased keys again (one step) |
+
+Since 0.9.0 the panel also has the Tangent picker (=timeline-tangent=), Curves (=timeline-curves=: channel rows become curve lanes), the Bone field and Key Bone (=timeline-bone=, =timeline-key-bone=), To Sequence (=timeline-to-sequence=, action =timeline.to-sequence=), a Key Tangents submenu and Convert to Sequence in the context menu, and the =timeline.tangent= IPC method; Bézier keys are drawn with their slopes and keep their handles when dragged. Bone channels read =bone  group.axis=. See [[file:editor-tools.org::#timeline-panel][Editor Tools > The Timeline panel]].
 
 ** Tiles panel
 :PROPERTIES:
@@ -1335,12 +1395,13 @@ Each panel has a slim header strip: the two combo boxes on the left (=vpN-header
 :CUSTOM_ID: editor-viewport-rendering
 :END:
 - *Render on demand.* Viewports are =LrgViewport= widgets in render mode with =continuous= off. A panel marks itself dirty on =LrgEditorViewState::camera-changed= / =::viewport-changed= for its index, on the active viewport, layout, tile mode and timeline time changing, on =LrgEditor::changed= and =::level-replaced=, on the level's =node-added= / =node-removed= / =node-changed=, on selection changes, on play start/stop/pause and when =lrg_editor_scene_renderer_get_generation()= moves (an asset reloaded, the base directory or the grid settings changed). Its step (which runs before the viewport's) queues one render. It renders every frame only while playing, while the timeline plays, during a gizmo drag or tile stroke, and while the active viewport navigates (fly, orbit, pan, zoom, axis gizmo). =lrg_editor_viewport_panel_get_render_pending()= exposes the flag.
-- *Lights* (=lrg_editor_scene_renderer_sync_lights()=): every visible LIGHT node becomes an =LrgLightSet= light. A light whose =light_type= visual param is the string ="directional"= is the sun (the first one; it shines down the node's local -Z); every other light is a point light at the node's world position with =range= as radius (default 10), =intensity= as intensity (default 1) and the material colour (white without a material). The engine's 3D light set has no spot lights: lights with =spot_angle= > 0 (or =light_type: spot=) are previewed as point lights. A level without a directional light gets the default editor sun (travelling along (0.5, -0.75, -0.45), from the upper left of the default camera, so shadows fall into view) so the scene stays readable; turning the /Scene Lighting/ overlay off lights the scene with that sun only. Ambient is a fixed dark blue-grey.
+- *Lights* (=lrg_editor_scene_renderer_sync_lights()=): every visible LIGHT node becomes an =LrgLight3DDesc= that =lrg_world3d_renderer_sync_lights()= puts into the light set, exactly as a game's light components do. A light whose =light_type= visual param is the string ="directional"= is the sun (the first one; it shines down the node's local -Z); every other light is a point light at the node's world position with =range= as radius (default 10), =intensity= as intensity (default 1) and the material colour (white without a material), or a spot light (=light_type: spot= or =spot_angle= > 0) along local -Z with =spot_angle= as its full outer cone and =spot_inner_angle= as its full inner cone (degrees; 80 % of the outer half-angle without it); =cast_shadows: true= gives point and spot lights shadow maps. A level without a directional light gets the default editor sun (travelling along (0.5, -0.75, -0.45), from the upper left of the default camera, so shadows fall into view) so the scene stays readable; turning the /Scene Lighting/ overlay off lights the scene with that sun only. Ambient is a fixed dark blue-grey.
 - *Shadows*: with /Shadows/ on, in perspective viewports and the lit modes, an =LrgShadowRenderer= (3 cascades of 2048 texels reaching 60 units, 3 x 3 filter, strength 0.85) renders the directional light's cascades for that viewport's camera before the scene and hands them to the light set. Orthographic and 2D viewports draw without shadows. Point-light cube shadows are not used (no shadow priorities in the level format yet).
 - *Sky*: with /Sky/ on, perspective viewports draw an =LrgSkyDome= behind the scene with its sun along the directional light. Weather and day/night preview are not wired: a level has no environment block declaring them yet (see the gap analysis, "Lights"); when it does, the dome's time of day and =LrgWeatherManager= fog plug in here.
-- *Post processing* (preview only, never saved into the level): with /Post Processing/ on, each viewport (and the camera preview) has an =LrgPostProcessor= (=lrg_editor_scene_renderer_get_post_processor()=) holding =LrgFxaa= (="fxaa"=), =LrgBloom= (="bloom"=, threshold 0.75, intensity 0.6), =LrgVignette= (="vignette"=, intensity 0.35) and =LrgColorGrade= (="color-grade"=, contrast 1.05, saturation 1.08). The scene is rendered into an offscreen image, the editor's =post.fs= pass applies FXAA, soft-knee bloom with a highlight shoulder and the vignette with those effects' parameters and enable flags, and =lrg_color_grade_draw_texture()= grades the result into the viewport. The engine's own =LrgPostProcessor= capture/render path and the FXAA, bloom and vignette =apply= methods are still stubs, which is why the editor runs the passes itself.
+- *Post processing* (preview only, never saved into the level): with /Post Processing/ on, each viewport (and the camera preview) has an =LrgPostProcessor= (=lrg_editor_scene_renderer_get_post_processor()=, made by =lrg_world3d_renderer_new_preview_post_processor()=) holding, in order, =LrgBloom= (="bloom"=, threshold 0.75, intensity 0.6), =LrgTonemap= (="tonemap"=, filmic, +1 EV), =LrgVignette= (="vignette"=, intensity 0.35), =LrgFxaa= (="fxaa"=) and =LrgColorGrade= (="color-grade"=, contrast 1.05, saturation 1.08). The shared renderer draws the scene into a half-float image kept per processor and runs the effects with =lrg_post_processor_process()=. When the level's environment names a =post_stack:= (=.rpost=), that stack is the look instead (the renderer's fallback look, resolved and cached by path, reloaded after =forget_asset()=); a stack the post-stack editor previews overrides both.
+- *Level look* (0.9.0): while authoring, the level's =environment:= block (sky, image-based light, reflection probes, fog, volumetric fog) and its post stack are the shared renderer's fallback look (=lrg_world3d_renderer_set_fallback_look()=); during play the play world's own look is used. Decal nodes become decals of the renderer's decal set (=size_x= / =size_y= / =size_z= box over the node, the asset as albedo, the material colour, =opacity=, =fade_angle=, =fade_width=, =sort_order=, =roughness=, =metallic=), reflection-probe nodes become probes on the environment for the frame (=extents_x/y/z=, default 5; =blend_distance=, =intensity=, =box_projection=, =resolution=, default 128), captured when they move or resize and on =lrg_editor_scene_renderer_recapture_probes()=. Mesh-asset nodes whose =.meta= asks for two or more LOD levels draw the level the viewport camera selects, or the level the inspector forces on =lrg_editor_scene_renderer_get_lod_group()=. =material:= references (=.rmat=) draw through =lrg_world3d_renderer_get_material()=. Each viewport (and the preview slot) has a render-layer mask, =lrg_editor_scene_renderer_set_cull_mask()=.
 - *Render modes*: Lit (the light set's shader with shadows; falls back to the editor's =lit.fs= one-light shader without GLSL 330), Unlit (=unlit.fs=, texture times material colour), Wireframe (unlit in rlgl wire mode), Normals (=normals.fs=, world normals as colours) and Lighting Only (the light set's shader on white surfaces). Tilemaps and icon lines use rlgl's default shader in every mode.
-- *Shaders*: =data/editor/shaders/scene.vs.glsl=, =lit.fs.glsl=, =unlit.fs.glsl=, =normals.fs.glsl= and =post.fs.glsl= are the readable sources. The library embeds them as string literals generated byte for byte from those files (=lrg_editor_scene_renderer_get_shader_source()=), so an installed editor needs no data files; =/editor-app/viewport/shader-sources= fails when a =.glsl= and its literal drift apart. Edit the =.glsl=, then regenerate the literal block in =lrg-editor-scene-renderer.c= (each line becomes ="...\n"=).
+- *Shaders*: =data/editor/shaders/scene.vs.glsl=, =lit.fs.glsl=, =unlit.fs.glsl= and =normals.fs.glsl= are the readable sources (the 0.8 =post.fs= is gone: post effects run through =lrg_post_processor_process()=). They are the shared renderer's shaders since 0.9.0: the library embeds them as string literals generated byte for byte from those files (=lrg_world3d_renderer_get_shader_source()=; =lrg_editor_scene_renderer_get_shader_source()= returns the same strings), so an installed editor or game needs no data files; =/editor-app/viewport/shader-sources= fails when a =.glsl= and its literal drift apart. Edit the =.glsl=, then regenerate the literal block in =src/world3d/lrg-world3d-renderer.c= (each line becomes ="...\n"=).
 - *Missing assets*: mesh, sprite and tileset references that do not resolve (=lrg_editor_scene_renderer_is_asset_missing()=) are drawn as magenta wire boxes in the scene and get a magenta screen box with a "missing: file" tag in the overlay, in every render mode.
 
 *** Overlays painted on top
@@ -1407,6 +1468,9 @@ Registered by the split (and the lone panel) from =lrg-editor-viewport-split.c=;
 | =lrg_editor_scene_renderer_get_generation= / =is_asset_missing= | Change counter, missing references |
 | =lrg_editor_scene_renderer_camera_node_view= | The view through a camera node |
 | =lrg_editor_scene_renderer_get_shader_source= | The embedded GLSL |
+| =lrg_editor_scene_renderer_set_cull_mask= / =get_cull_mask= | A viewport's render-layer mask (0.9.0) |
+| =lrg_editor_scene_renderer_get_lod_group= | The LOD group mesh-asset nodes of an asset draw with (0.9.0) |
+| =lrg_editor_scene_renderer_recapture_probes= | Capture every reflection-probe node again (0.9.0) |
 | =lrg_editor_gizmo_paint_transform= / =format_delta= / =drag_readout= / =axes= / =box_select= / =chip= / =tile_hover= / =play_frame= / =missing_asset= / =active_outline= | The overlay painters |
 
 *** Testing
@@ -1554,6 +1618,17 @@ Registry actions (category Code, no default shortcuts; bind them in Preferences)
 
 =lrgeditorctl code open PATH[:LINE]=, =code list= and =code save [PATH]= wrap them; the MCP tools are =code_open=, =code_list= and =code_save=.
 
+*** Shaders (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-code-shaders
+:END:
+- *Highlighting*: =.rshader=, =.rmat=, =.rshadergraph= and =.rpost= open with the YAML syntax; GLSL stages (=.glsl .vert .frag .vs .fs=) with the GLSL syntax.
+- *Compile on save*: saving a =.rshader= compiles it; saving a stage file compiles every =.rshader= of its folder whose vertex or fragment stage is that file. With a window this is a real GL compile and link (=lrg_shader_asset_compile()=); headless (=--headless=, tests) the document is only loaded, which still catches YAML errors, unknown keys and missing stage files. A toast reports the error count, the status line "Shader compiled".
+- *Mapped diagnostics*: driver messages are mapped back to the user's file and line (=LrgShaderDiagnostic=): a stage file at its own line, an inline stage at the line of the =.rshader= below its =fragment:= / =vertex:= key, preamble messages at the =.rshader=. A strip under the editor (=code-diagnostics=, up to six rows) lists the active file's messages with an error or warning icon; clicking one jumps to its line and column. Opening a file that has errors (without an explicit line) puts the caret on the first one.
+- *Problems panel*: the diagnostics are problems with the codes =shader-error= / =shader-warning= and the project-relative file; they stay listed when a level validation replaces the problem list, and go away with a clean save.
+- *Hot reload*: after the save the material preview's copies of the shader reload (keep-last-good on failure), so open material editors, the shader graph preview and material thumbnails show the new code at once. Games get the same through =lrg_shader_asset_set_watch()=.
+- *IPC*: =shader.create=, =shader.compile=, =shader.diagnostics=, =shader.uniforms=, =shader.reload= ([[file:ipc-protocol.org::#material-methods][IPC protocol]]).
+
 *** API
 :PROPERTIES:
 :CUSTOM_ID: editor-panel-code-api
@@ -1582,7 +1657,7 @@ Registry actions (category Code, no default shortcuts; bind them in Preferences)
 | Recover Autosave (=recover=) | opening a level with a newer autosave | Restore (loads it, keeps the level's path, marks it modified), Discard Autosave (to the trash), Later |
 | About (=about=) | Help > About | Version, description, copyright, AGPL-3.0-or-later, the IPC socket; Documentation, Source code and License buttons |
 | Keyboard Shortcuts (=shortcuts=) | Help > Keyboard Shortcuts (Ctrl+/) | The live, searchable shortcut table and the viewport mouse gestures; Edit Keybindings... opens Preferences on Keybindings |
-| Project Settings (=project-settings=) | File > Project Settings | Editable: name, default level (with Use current), game module, run command (={project} {level} {module}=), scripts folder and the asset folder list (Remove per folder, an Add field); Save writes =project.ryaml= through the =LrgProject= setters and =lrg_project_save()= |
+| Project Settings (=project-settings=) | File > Project Settings | Editable: name, default level (with Use current), game module, run command (={project} {level} {module}=), scripts folder and the asset folder list (Remove per folder, an Add field); Save writes =project.ryaml= through the =LrgProject= setters and =lrg_project_save()=. Since 0.9.0 the dialog has two pages, General and Physics (=project-settings-tabs=): the 32 collision layer names, the collide matrix (click a cell, the hovered row and column light up) and the world settings (gravity, substep, iterations, sleep), edited on a copy that Save applies; see [[file:physics-asset-editor.org::#project-physics][Project Settings > Physics]] |
 | Preferences (=preferences=) | Edit > Preferences | See [[#editor-panel-preferences][Preferences]] |
 | Save changes? (=confirm=), File changed on disk (=code-reload=), Go to Line (=goto-line=) | the code editor | See [[#editor-panel-code][Code editor]] |
 
@@ -1592,12 +1667,122 @@ Registry actions (category Code, no default shortcuts; bind them in Preferences)
 :END:
 =tests/test-editor-app-dialogs.c= drives all of this headless through the canvas and the IPC: a theme card click re-themes the canvas (a preset and a shipped theme file), a settings row applies live and =editor.yaml= is saved on close; "+" on the Keybindings page captures Ctrl+J (a lone Ctrl keeps waiting) and the new shortcut toggles visibility after the dialog closes, a conflict is reported, Reset and the remove button work; Reset All keeps the layout; the palette runs "select all" picked by fuzzy search, "@camera" selects the camera, a disabled action does not run, arrows wrap; quick open waits for the scan, skips hidden folders, opens a level and (with =script-editor= internal) a script in the code panel; the project settings form saves =project.ryaml=; New Script creates, attaches and opens a Python script; the shortcut table filters by key name, follows rebinding and leads to the Keybindings page; About; the code panel opens with syntax and caret, marks dirty, saves with the panel-scoped Ctrl+S without saving the level, reloads a clean tab changed on disk, asks for a dirty one, asks before closing a dirty tab and opens through the =code.open= GIO action; =code.open= / =code.list= / =code.save= over IPC with their errors, and =node.open-scripts= routed by =script-editor=.
 
+** Environment panel and level look tools
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-environment
+:END:
+Since 0.9.0. The window creates the Environment panel (=lrg_editor_environment_panel_new()=, dock id "environment", a tab of the Inspector's stack; View > Panels > Environment) and the data editor registry opens =.rpost= files in the post-stack editor. The viewport header gains the debug view modes in its render-mode combo and a render-layer picker button; the viewport draws volume gizmos for the selected light, decal or reflection probe and accepts =.rmat= drops on meshes; the inspector gains light rows by kind, decal and probe params and a LOD preview section; the Create menus offer spot and directional lights, decals and reflection probes. All of it is described in [[file:environment.org][Level Look]].
+
+** Lighting panel
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-bake
+:END:
+Since 0.9.0 M3. =LrgEditorBakePanel= (=src/editor/ui/lrg-editor-bake-panel.{h,c}=, dock id =bake=, =LRG_EDITOR_BAKE_PANEL_ID=; View > Panels > Lighting, a tab of the Inspector's stack) bakes the level's lighting; the tool is described in [[file:bake.org][Lighting Bake in the Editor]]. Widget names for tests and =ui.state=: =bake-top= with =bake-header= (=bake-title=, the status pill =bake-status=, =bake-bake= (Bake, Cancel while running), =bake-save=, =bake-preview= (eye: baked lighting in the viewport), =bake-clear=), =bake-progress= and =bake-phase= (visible while baking or after a failure), =bake-summary= (objects, texels, probes, seconds); the scrolled =bake-scroll= with =bake-atlas-row= (=bake-atlas=, =bake-page-prev=, =bake-page-next=; shown when there is a lightmap), =bake-cursor-row= (=bake-sample=, =bake-cursor=) and the settings grid =bake-grid=; =bake-empty= without a level. The header folds into icon chips in narrow docks. It registers the =bake.*= actions and IPC methods from its own file; the inspector's Lighting rows, the probe-volume node kind (Create > Probe Volume, its hierarchy icon and volume gizmo) and the viewport's baked lighting come with it. The app's scene renderer is reachable with =lrg_editor_app_get_scene_renderer()=.
+
+** Sequencer panel
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-sequencer
+:END:
+Since 0.9.0. =LrgEditorSequencerPanel= (=src/editor/ui/lrg-editor-sequencer-panel.{h,c}=, dock id =sequencer=, =LRG_EDITOR_SEQUENCER_PANEL_ID=) edits one =.rseq= sequence on an =LrgTimelineView= with a Bézier curve editor under it. The tool itself (tracks, keys, sections, preview, IPC) is described in [[file:sequencer.org][Sequencer]]; this section covers the widget.
+
+- *Rows* (top): =sequencer-toolbar= (title =sequencer-title=, path field =sequencer-path=, =sequencer-new=, =sequencer-open=, =sequencer-save=, =sequencer-length=, =sequencer-fps=, =sequencer-undo=, =sequencer-redo=) and =sequencer-transport= (=sequencer-prev=, =sequencer-play=, =sequencer-stop=, =sequencer-next=, the preview mode =sequencer-mode=, the toggles =sequencer-snap=, =sequencer-pilot=, =sequencer-curves=, then =sequencer-add-track= (opens a menu of track kinds), =sequencer-bind=, =sequencer-key=, =sequencer-delete= and the readout =sequencer-time=). Both rows fold into compact chips when the panel is narrow.
+- *View* (=sequencer-view=): group rows per binding, a row per track, a child row per keyed transform channel, clips for sections, bar keys and ruler flags for events. Edits made in the view (key, clip and flag drags, Delete, double click on a curve lane) are queued and applied on the panel's next step as one undo step; selection picks the detail strip's track, section and curve. The hint =sequencer-empty= replaces the view while there are no tracks.
+- *Strip* (=sequencer-strip=, 214 units high): the curve editor =sequencer-curve= (an =LrgCustomWidget=, focusable for Delete) and the key fields (=sequencer-key-row=: =sequencer-key-time=, =sequencer-key-value=, =sequencer-key-tangent=, =sequencer-key-in=, =sequencer-key-out=) on the left; =sequencer-detail= on the right with =sequencer-detail-title= and either =sequencer-track-box= (=sequencer-track-name=, =sequencer-track-binding=, =sequencer-track-bone=, =sequencer-track-component=, =sequencer-track-property=, =sequencer-track-mute=) or =sequencer-section-box= (=sequencer-section-name=, =-start=, =-duration=, =-offset=, =-rate=, =-weight=, =-loop=, =-payload=). Text fields apply on Enter, spins on change.
+- *Theme.* Everything uses theme colours and metrics (the curve editor draws with the =input=, =border=, =track=, =accent=, =handle=, =warning= and =text-muted= roles); track and clip colours come from a fixed wheel readable in dark and light themes.
+- *Step.* Per frame the panel applies queued view edits, advances the preview player while playing (posing the level), rebuilds the view after a change (never during a curve drag) and mirrors the playhead into the view.
+
+The shell creates it in =create_panels()= and docks it as a tab of the bottom stack (next to Timeline); View > Panels lists it as "Sequencer". Embedders that build their own window add it with =lrg_editor_app_add_panel()= (see [[file:sequencer.org::#sequencer-c][Sequencer > Using it from C]]).
+
+** 2D rig editor
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-skel2d
+:END:
+Since 0.9.0. =LrgEditorSkeleton2DEditor= (=src/editor/ui/data/lrg-editor-skeleton2d-editor.{h,c}=) is the data editor of =.rskel2d= files: a tab with the id =data:<absolute path>= docked next to the other data editors. The tool (modes, tools, undo model, animation, IPC) is described in [[file:skeleton2d-editor.org][2D Rig Editor]]; this section lists the widgets for tests and =ui.state=.
+
+- *Content* =skel-split= (an =LrgSplitter=, 72% / 28%): =skel-left= and =skel-side=. The data toolbar gains =skel-frame=.
+- *Left*: =skel-canvas-bar= (=skel-mode-setup=, =skel-mode-animate=, =skel-tool-select=, =skel-tool-bone=, =skel-tool-mesh=, =skel-tool-weights=, =skel-auto-weights=, =skel-triangulate=; the last two only in setup mode; labels fold into icons when narrow), the canvas =skel-canvas= (an =LrgCustomWidget=, focusable, accepts Tab, an asset drop target for images) and, in animation mode, =skel-anim=: the transport (=skel-play=, =skel-loop=, =skel-key=, =skel-add-clip-2=), the dope sheet =skel-dope= (=LrgTimelineView=, no play button, 30 fps, snapping to frames) and the curve view =skel-curves= (=LrgCurveEdit=, full mode, at least 240 wide).
+- *Side*: the command row (=skel-add-slot=, =skel-add-skin=, =skel-add-clip=, =skel-slot-up=, =skel-slot-down=, =skel-delete=), the outline =skel-outline= inside =skel-outline-scroll= (rows of 22, section headers of 26; a click selects, the eye at the right of an attachment row toggles it as the slot's setup attachment) and the property grid =skel-grid= (rows =bone-name=, =bone-x=, =bone-y=, =bone-rotation=, =bone-scale-x=, =bone-scale-y=, =bone-length=, =slot-name=, =slot-attachment=, =slot-color-r= ... =slot-color-a=, =attachment-image=, =clip-name=, =clip-duration=, =clip-loop=, =rig-name=, =brush-radius=, =brush-strength=).
+- *Theme.* The canvas uses the =window= colour with a =border= grid and =accent= axes, bones in =text-muted= / =accent= with =text= edges, the HUD on a =surface= pill, errors on =danger=; the weight heat ramp is fixed (blue, green, yellow, red) and reads on dark and light themes.
+- *Step.* Per frame the editor advances the preview while playing (mirroring the playhead into the dope sheet), applies the dope sheet's queued key drags and deletions as one undo step, fits the chip rows and rebuilds the grid after a selection change.
+- *State line* (=lrg_editor_data_editor_get_state()=, =data.list=): =mode= =tool= =bones= =slots= =skins= =clips= =bone= =slot= =attachment= =skin= =clip= =time= =playing=.
+
+** Animation tools
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-animation
+:END:
+Since 0.9.0 M4. The animation tools are described in [[file:animation-editor.org][Animation Tools in the Editor]]; this section lists what they add to the window and the widgets for tests and =ui.state=.
+
+- *Formats.* The data editor registry opens =.ranim= in =LrgEditorAnimGraphEditor= and =.rbonemap= in =LrgEditorBoneMapEditor= (tabs =data:<absolute path>=); =.rskel2d= opens in the 2D rig editor, =.rseq= in the sequencer. =LrgEditorDocument= knows the four formats (=anim-graph=, =bone-map=, =sequence=, =skeleton2d=) with new-document skeletons the engine loaders accept.
+- *Animation graph editor.* Content =anim-split= (=anim-left-scroll= | =anim-inner=: the canvas column and =anim-side=). Left: =anim-left= with =anim-params= (rows =anim-param-<name>=, controls =anim-param-<name>-value=, =anim-param-<name>-remove=), =anim-add-float=, =anim-add-int=, =anim-add-bool=, =anim-add-trigger=, =anim-clips= (labels =anim-clip-<key>=) and =anim-clips-from-model=. Centre: =anim-topbar= (=anim-layers= with =anim-layer-<i>= and =anim-layer-add=, the breadcrumb =anim-crumbs=) over =anim-canvas=. Side: the preview =anim-preview= (chips =anim-preview-play=, =anim-preview-bones=, =anim-preview-turntable=; =anim-preview-viewport=) with =anim-model= and =anim-scrub= under it, then =anim-inspector-scroll= / =anim-inspector=: =anim-inspector-title=, =anim-blend-space=, =anim-grid=, =anim-conditions= (rows =anim-cond-<i>= with =-param=, =-op=, =-value=, =-remove=; =anim-cond-add=). Toolbar: =anim-restart=. The theme drives everything: card categories take the canvas palette, highlights the =success= / =warning= roles, missing clips =warning=, card body lines =text-muted= / =link= / =accent= / =danger=; the preview's backdrop is a fixed dark slate that reads under both light and dark themes.
+- *Bone map editor.* Content =bonemap-split= (=bonemap-top= over the previews): =bonemap-source=, =bonemap-target=, =bonemap-rows-scroll= / =bonemap-rows= (rows =bonemap-row-<bone>=, combos =bonemap-row-<bone>-source=), the rules grid =bonemap-rules=, =bonemap-auto=, =bonemap-unmapped=; =bonemap-source-preview=, =bonemap-target-preview=, =bonemap-clip=.
+- *Assets panel.* An Animation section in the background menu (=assets.new-anim-graph=, =assets.new-bone-map=, =assets.new-sequence=, =assets.new-skeleton2d=), =assets.preview-clips= and =assets.anim-graph-from-model= on glTF entries, glyphs for the four formats, and the Animations dialog =assets-clip-dialog= (=assets-clip-box=: =assets-clip-preview=, =assets-clip-list=, =assets-clip-scrub=, =assets-clip-info=, =assets-clip-morph-<i>=).
+- *Inspector.* The Animator section =inspector-section-animator= (=inspector-animator-graph=, =inspector-animator-open=, the painted list =inspector-animator-list=) for one node with an =animator3d= component.
+- *Viewport.* The overlays menu's Animation section: =vp.anim-bones= (Bones) and =vp.anim-ik= (IK Targets), per viewport.
+- *IPC.* =anim.*=, =bonemap.*= and =clip.*= ([[file:ipc-protocol.org::#ipc-animation][IPC: animation methods]]), registered when the Assets panel is created.
+
+** Physics panel and physics gizmos
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-physics
+:END:
+Since 0.9.0 M5. The physics tools are described in [[file:physics.org][Physics in Levels]]; this section lists what they add to the window and the widgets for tests and =ui.state=.
+
+- *Panel.* =LrgEditorPhysicsPanel= (=lrg_editor_physics_panel_new()=, dock id "physics", a tab of the Inspector's stack; View > Panels > Physics, action =physics.show=). Widgets: =physics-panel=; header =physics-top= / =physics-header= (=physics-title=, =physics-node=, =physics-add-body=, =physics-remove-body=); content =physics-scroll= / =physics-content=: =physics-live-section= (=physics-live=, playing only), =physics-body-grid=, =physics-shapes-heading= (=physics-shape-kind=, =physics-add-shape=), the painted list =physics-shape-list= (24 px rows from y + 1; per row up, down and remove buttons, 22 px each, right aligned), =physics-fit-row= (=physics-fit-kind=, =physics-fit=), =physics-shape-grid=, =physics-joints-heading= (=physics-joint-kind=, =physics-add-joint=), =physics-joint-list= (one remove button per row), =physics-joint-grid=; empty state =physics-empty= (=physics-hint-none=, =physics-hint-2d=, =physics-hint=, =physics-empty-kind=, =physics-empty-add=). Every edit is one level command.
+- *Viewport.* Collider, joint and 2D collider gizmos with drag handles for the selected node (one undo step per drag, Escape cancels, Ctrl snaps); the overlays menu's Physics section (=vp.physics-shapes=, =vp.physics-joints=, =vp.physics-aabbs=, =vp.physics-contacts=, =vp.physics-sleeping=, =vp.physics-com=, =vp.physics-velocity=, =vp.physics-broadphase=, per viewport); while a 3D level plays the play world's physics debug draw inside the 3D pass.
+- *Inspector.* =inspector-section-physics= (=inspector-physics-summary=, =inspector-physics-open=) for one inspected 3D node.
+- *Hierarchy.* A body-kind badge on rows with a body; =hierarchy.state= rows carry ="physics"=.
+- *IPC.* =physics.*= ([[file:ipc-protocol.org::#ipc-physics][IPC: physics methods]]), registered when the panel is created; =physics.overlay= by the viewport panel.
+
+** Mixer panel and audio tools
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-mixer
+:END:
+Since 0.9.0 M7. The audio tools are described in [[file:audio.org][Audio in the Editor]]; this section lists what they add to the window and the widgets for tests and =ui.state=.
+
+- *Panel.* =LrgEditorMixerPanel= (=lrg_editor_mixer_panel_new()=, dock id "mixer", =LRG_EDITOR_MIXER_PANEL_ID=; View > Panels > Mixer, action =mixer.show=). Widgets: =mixer-panel=; header =mixer-panel-top= / =mixer-panel-header= (=mixer-panel-path=, =mixer-panel-source=, =mixer-panel-preview=, =mixer-panel-open=, =mixer-panel-save=, =mixer-panel-new=); =mixer-panel-scroll= holding the compact strips =mixer-strips-compact=; empty state =mixer-panel-empty= (=mixer-panel-hint=, =mixer-panel-empty-new=). Strip parts are painted, not widgets: =lrg_editor_mixer_strips_get_part_rect()= reports them after a paint.
+- *Mixer editor tab.* =LrgEditorMixerEditor= for =.rmixer= documents. Widgets: =mixer-split= (=mixer-strips-scroll= / =mixer-strips=, =mixer-details=); =mixer-bus-column= (=mixer-bus-heading=, =mixer-bus-grid=, =mixer-add-effect=, =mixer-add-send=, =mixer-bus-name=, =mixer-add-bus=, =mixer-effect-up=, =mixer-effect-down=, =mixer-remove=); =mixer-snapshot-column= (painted list =mixer-snapshots=: 22 px rows from y + 1, a preview and a trash button of 22 px at the right; =mixer-snapshot-name=, =mixer-add-snapshot=, =mixer-capture=, =mixer-snapshot-grid=); =mixer-duck-column= (painted list =mixer-ducks=, =mixer-duck-trigger=, =mixer-duck-target=, =mixer-add-duck=, =mixer-duck-grid=, =mixer-status=); toolbar tools =mixer-preview=, =mixer-base=. Every edit is one document command.
+- *Actions.* =mixer.show=, =mixer.new= (Tools > New Mixer), =mixer.open= (Tools > Open Project Mixer).
+- *Viewport.* The volume gizmo of a selected audio emitter (min / max distance spheres, half-volume ring, sound cones; handles =LRG_EDITOR_VOLUME_HANDLE_MIN_DISTANCE=, =..._MAX_DISTANCE=, =..._AUDIO_CONE=, =..._AUDIO_INNER_CONE=).
+- *Inspector.* =inspector-section-audio= (=inspector-audio-grid=, =inspector-audio-plot=, =inspector-audio-hint=, =inspector-audio-curve=) for one inspected audio emitter.
+- *IPC.* =mixer.*= (registered by =lrg_editor_mixer_editor_install()=: the panel, the Assets panel and every mixer editor call it) and =audio.*= (registered by the inspector), see [[file:audio.org::#editor-audio-ipc][Audio: IPC methods]].
+
+** Terrain panel and terrain / water tools
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-terrain
+:END:
+Since 0.9.0 (M6/M7 editor wave). The tools are described in [[file:terrain.org][Terrain and Water in the Editor]]; this section lists what they add to the window and the widgets for tests and =ui.state=.
+
+- *Panel.* =LrgEditorTerrainPanel= (=lrg_editor_terrain_panel_new()=, dock id "terrain", a tab of the Inspector's stack; action =terrain.show=). Widgets: =terrain-panel=; header =terrain-top= / =terrain-header= (=terrain-title=, =terrain-node=, =terrain-rebake=, =terrain-save=); content =terrain-scroll= / =terrain-content=: =terrain-tools-heading=, the painted tool strip =terrain-tools= (eleven 58 x 50 px cells, as many per row as fit, in =LrgEditorTerrainTool= order), =terrain-brush-heading=, =terrain-brush-grid=, =terrain-layers-heading= (=terrain-add-layer=), the painted list =terrain-layer-list= (24 px rows from y + 1, a 22 px remove button right aligned), =terrain-layer-grid=, =terrain-foliage-heading= (=terrain-foliage-kind=, =terrain-add-foliage=), =terrain-foliage-list=, =terrain-foliage-grid=, =terrain-grid-heading=, =terrain-info=; empty state =terrain-empty= (=terrain-hint=, =terrain-hint-missing=). Every edit is one level command.
+- *Viewport.* With a brush tool and a terrain node selected: the cursor ring, strokes on a left drag (one undo step each; Ctrl inverts, Shift smooths, =[= / =]= radius, Escape cancels), the transform gizmo hidden; for a selected water lake or river its outline handles (drag, Ctrl+click adds, Shift+click removes). =lrg_editor_viewport_panel_get_terrain_painted()= counts what the last overlay pass drew.
+- *Scene renderer.* =terrain= and =water= nodes draw through their stand-in components while authoring (=lrg_editor_terrain_node_component()=); a file that does not load is a magenta frame and a missing asset.
+- *Data editor.* =.rwater= files open in =LrgEditorWaterEditor= (=water-grid=, =water-waves-heading=, =water-add-wave=, =water-wave-list=, =water-wave-grid=, =water-points-heading=, =water-add-point=, =water-point-list=, =water-point-grid=, =water-preview=, =water-caption=).
+- *Create menu.* Terrain and Water (actions =terrain.create=, =terrain.create-water=; =lrg_editor_terrain_init_node()= writes the asset).
+- *IPC.* =terrain.*= (registered when the panel is created) and =water.*= ([[file:terrain.org::#editor-terrain-ipc][Terrain and water IPC]]).
+
+** AI panel and AI editors
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-ai
+:END:
+Since 0.9.0 (M6/M7 editor wave). The tools are described in [[file:ai.org][AI in the Editor]]; this section lists what they add to the window and the widgets for tests and =ui.state=.
+
+- *Panel.* =LrgEditorAiDebugPanel= (=lrg_editor_ai_debug_panel_new()=, dock id "ai", =LRG_EDITOR_AI_DEBUG_PANEL_ID=, a tab of the Inspector's stack; View > Panels > AI, action =ai.show=). Widgets: =ai-panel=; header =ai-top= (=ai-status=); =ai-scroll= / =ai-body=: =ai-agents= (one chip =ai-agent-N= per live agent, or the hint =ai-hint=), =ai-agent= (playing with a focus only: =ai-agent-lines= with =ai-agent-line-N=, =ai-open-tree=, =ai-open-machine=, =ai-event=, =ai-event-send=, =ai-blackboard= with one row =ai-bb-KEY= and its value =ai-bb-KEY-value= per key), =ai-brains= (=ai-brain-N= totals, chips =ai-topic-TOPIC=, hint =ai-brains-hint=), =ai-topic= (=ai-topic-line-N=), =ai-log= (=ai-log-line-N=).
+- *Behaviour tree editor tab.* =LrgEditorBtEditor= for =.rbt= documents. Widgets: =bt-split= (=bt-left-scroll= / =bt-left= / =bt-palette= with chips =bt-palette-TYPE=, =bt-palette-action-NAME=, =bt-palette-condition-NAME=), =bt-inner= (=bt-center=: =bt-topbar= with =bt-trees= (=bt-tree-main=, =bt-tree-NAME=) and =bt-live=, the canvas =bt-canvas=; =bt-inspector-scroll= / =bt-inspector=: =bt-inspector-title=, =bt-grid=, =bt-param-row= (=bt-param-name=, =bt-param-add=), =bt-blackboard= (rows =bt-key-NAME=, =bt-key-NAME-default=, =bt-key-NAME-remove=), =bt-key-add-row= (=bt-key-name=, =bt-key-type=, =bt-key-add=), =bt-subtrees= (rows =bt-sub-NAME=, =bt-sub-NAME-open=, =bt-sub-NAME-remove=), =bt-sub-add-row= (=bt-sub-name=, =bt-sub-file=, =bt-sub-add=)); toolbar tool =bt-layout=. Canvas card ids are node ids.
+- *State-machine editor tab.* =LrgEditorFsmEditor= for =.rfsm= documents. Widgets: =fsm-split= (=fsm-center=: =fsm-topbar= with =fsm-crumbs= and =fsm-live=, the canvas =fsm-canvas=; =fsm-inspector-scroll= / =fsm-inspector=: =fsm-inspector-title=, =fsm-grid=, =fsm-lists= (entry rows =fsm-KEY-N= with =fsm-KEY-N-text=, =fsm-KEY-N-up=, =fsm-KEY-N-remove=, add buttons =fsm-KEY-add-KIND=, transition buttons =fsm-tr-N=; KEY is =enter=, =update=, =exit=, =when= or =do=), =fsm-blackboard=, =fsm-key-add-row=, =fsm-event-row= (=fsm-event=, =fsm-event-send=)); toolbar tools =fsm-add-state=, =fsm-up=. Card ids are child state names, the owner card =@owner= (=LRG_EDITOR_FSM_EDITOR_OWNER_CARD=), exit cards =@to:TARGET=.
+- *Live.* While playing, both editors follow the focused agent (=lrg_editor_ai_debug_panel_find_for_file()=); the panel picks it.
+- *IPC.* =bt.*=, =fsm.*= and =ai.*= ([[file:ai.org::#editor-ai-ipc][AI: IPC methods]]): registered by =lrg_editor_bt_editor_install()=, =lrg_editor_fsm_editor_install()= (the Assets panel and every editor call them) and =lrg_editor_ai_debug_panel_install()= (the panel and both editors).
+
 ** API index
 :PROPERTIES:
 :CUSTOM_ID: editor-app-api-index
 :END:
 
 Every public function of the editor application widget headers that the sections above do not walk through, with the one-line summary from its header. The GIR comments in the headers are the full reference (parameters, ownership, nullability); this index exists so each symbol can be found from the docs.
+
+*** =lrg-editor-sequencer-panel.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-app-api-lrg-editor-sequencer-panel
+:END:
+
+The full table with one line per function is in [[file:sequencer.org::#sequencer-api][Sequencer > API reference]].
 
 *** =lrg-editor-window.h=
 :PROPERTIES:
@@ -1650,6 +1835,16 @@ Every public function of the editor application widget headers that the sections
 | =lrg_editor_viewport_panel_get_header ()= | The header bar: a view preset combo box ("view-preset"), a render mode combo box ("render-mode"), the overlays menu button ("overlays"), the camera preview toggle ("preview-toggle") and the maximise toggle ("maximize"); names are prefixed with "vpN-" for viewport N. |
 | =lrg_editor_viewport_panel_get_preview_node ()= | Returns the camera node the preview shows, or =NULL= when the preview is hidden. |
 | =lrg_editor_viewport_panel_get_preview_enabled ()= | Returns whether a selected camera shows its preview. |
+| =lrg_editor_viewport_panel_set_layer_mask ()= | The viewport's render-layer picker: sets which layers it draws (handed to =lrg_editor_scene_renderer_set_cull_mask()=); a view setting, not saved (0.9.0, see [[file:environment.org::#view-modes][View modes and render layers]]). |
+| =lrg_editor_viewport_panel_set_physics_overlay ()= | The Physics overlay flags (=LrgDynamicsDebugFlags=): authored shapes / joints / bounds / origins while authoring, the play world's debug draw while playing; a view setting (0.9.0, see [[file:physics.org::#editor-physics-overlay][Physics overlay]]). |
+| =lrg_editor_viewport_panel_get_physics_overlay ()= | The Physics overlay flags (0.9.0). |
+| =lrg_editor_viewport_panel_record_physics ()= | Records the play world's physics into the panel's debug draw batch; returns the primitive count (0.9.0). |
+| =lrg_editor_viewport_panel_get_physics_debug_draw ()= | The batch the 3D pass draws the play world's physics from (0.9.0). |
+| =lrg_editor_viewport_panel_get_physics_painted ()= | Shapes and joints the last authoring overlay paint drew (0.9.0). |
+| =lrg_editor_viewport_panel_get_terrain_painted ()= | Terrain brush rings and water outline handles the last overlay paint drew (0.9.0, see [[file:terrain.org::#editor-terrain-viewport][Viewport brush]]). |
+| =lrg_editor_viewport_panel_get_physics_handle ()= | The physics gizmo handle being dragged, else hovered (0.9.0). |
+| =lrg_editor_viewport_panel_get_layer_mask ()= | Returns the viewport's render-layer mask (default all) (0.9.0). |
+| =lrg_editor_viewport_panel_queue_render ()= | Renders the scene again next frame, for changes the panel does not watch (a previewed post stack, a bake) (0.9.0). |
 
 *** =lrg-editor-viewport-split.h=
 :PROPERTIES:
@@ -1676,6 +1871,9 @@ Every public function of the editor application widget headers that the sections
 | =lrg_editor_scene_renderer_set_gizmo ()= | Sets the transform gizmo drawn over the active viewport. The renderer only reads it (origin, axes, size, hovered and active handle). |
 | =lrg_editor_scene_renderer_set_playing ()= | While playing the background turns a darker blue so play mode is visible at a glance. |
 | =lrg_editor_scene_renderer_get_playing ()= | Returns whether the play-mode background is used. |
+| =lrg_editor_scene_renderer_set_play_session ()= | While the session runs a 3D level, renders draw its =LrgWorld3D= through the shared renderer instead of the authoring nodes (0.9.0). |
+| =lrg_editor_scene_renderer_get_play_session ()= | Returns the play session (0.9.0). |
+| =lrg_editor_scene_renderer_get_runtime_renderer ()= | Returns the =LrgWorld3DRenderer= every render draws through (0.9.0). |
 | =lrg_editor_scene_renderer_get_draw_overlays ()= | Returns whether the 2D overlays are drawn into the image. |
 | =lrg_editor_scene_renderer_has_scene_sun ()= | Returns =TRUE= when the last =lrg_editor_scene_renderer_sync_lights()= took the directional light from the level, =FALSE= when it used the default editor sun. |
 | =lrg_editor_scene_renderer_get_sky_dome ()= | The sky drawn behind perspective viewports with overlay =LRG_EDITOR_VIEW_OVERLAY_SKY=. |
@@ -1683,7 +1881,11 @@ Every public function of the editor application widget headers that the sections
 | =lrg_editor_scene_renderer_forget_asset ()= | Drops the cached GPU copy of a model or texture so the next render loads it again (live reload). |
 | =lrg_editor_scene_renderer_render_model_thumbnail ()= | Renders a model from a 3/4 angle, framed by its bounding box and lit like the viewport, into a /size/ x /size/ image. |
 | =lrg_editor_scene_renderer_render_font_thumbnail ()= | Loads the font with the size and code points of its ".meta" sidecar (32 pixels and 32-126 without one) and draws the sample "Aa Bb 123" centred on a dark background into a /size/ x /size/ image. |
-| =lrg_editor_scene_renderer_release ()= | Frees every GPU resource (shader, meshes, cached models and textures). |
+| =lrg_editor_scene_renderer_release ()= | Frees every GPU resource (the runtime renderer's shaders, meshes, cached models, textures and materials, post images; the thumbnail shader; LOD groups and probe captures). |
+| =lrg_editor_scene_renderer_set_cull_mask ()= | Sets which render layers one viewport (or the preview slot) draws; default every layer (0.9.0). |
+| =lrg_editor_scene_renderer_get_cull_mask ()= | Returns a viewport's render-layer mask (0.9.0). |
+| =lrg_editor_scene_renderer_get_lod_group ()= | The LOD group built from the cached model and its ".meta" for mesh-asset nodes of an asset; its forced level previews in every viewport (0.9.0). |
+| =lrg_editor_scene_renderer_recapture_probes ()= | Captures every reflection-probe node again before the next frame (0.9.0). |
 
 *** =lrg-editor-gizmo-paint.h=
 :PROPERTIES:
@@ -1701,6 +1903,24 @@ Every public function of the editor application widget headers that the sections
 | =lrg_editor_gizmo_paint_play_frame ()= | Paints the play-mode frame (a success-coloured, or warning-coloured while paused, border) and a pill label at the bottom centre with the play keys. |
 | =lrg_editor_gizmo_paint_missing_asset ()= | Paints a magenta box around the screen bounds of /node/ with a small "missing: file" tag, so broken references stand out in every render mode. |
 | =lrg_editor_gizmo_paint_active_outline ()= | Paints the accent outline of the active viewport of a split layout. |
+| =lrg_editor_volume_handle_get_type ()= | The =GType= of =LrgEditorVolumeHandle=, the handles of the volume gizmos (0.9.0, see [[file:environment.org::#volume-gizmos][Volume gizmos]]). |
+| =lrg_editor_physics_handle_get_type ()= | The =GType= of =LrgEditorPhysicsHandle=, the handles of the physics gizmo (0.9.0, see [[file:physics.org::#editor-physics-gizmos][Collider and joint gizmos]]). |
+| =lrg_editor_physics_handle_get_field ()= | The field a physics handle edits (0.9.0). |
+| =lrg_editor_physics_has_gizmo ()= | Whether a node shows the physics gizmo (0.9.0). |
+| =lrg_editor_physics_get_shape_frame ()= | The runtime collider frame of a shape (0.9.0). |
+| =lrg_editor_physics_get_handle_position ()= | World position of a physics handle (0.9.0). |
+| =lrg_editor_physics_hit_test ()= | The physics handle under the pointer (0.9.0). |
+| =lrg_editor_physics_drag_value ()= | The field value that puts a handle under the pointer (0.9.0). |
+| =lrg_editor_gizmo_paint_physics_shapes ()= | Paints a node's authored physics as wireframes (0.9.0). |
+| =lrg_editor_gizmo_paint_physics ()= | Paints the selected node's physics gizmo with handles (0.9.0). |
+| =lrg_editor_volume_handle_get_param ()= | The visual param a volume handle edits ("range", "spot_angle", "size_x", "extents_y", ...). |
+| =lrg_editor_volume_has_gizmo ()= | Whether a node shows a volume gizmo (point and spot lights, decals, reflection probes). |
+| =lrg_editor_volume_get_handle_position ()= | A volume handle's world position, as the viewport draws it. |
+| =lrg_editor_volume_hit_test ()= | The volume handle under a viewport pixel. |
+| =lrg_editor_volume_drag_value ()= | The param value that puts a dragged handle under the pointer. |
+| =lrg_editor_gizmo_paint_volume ()= | Paints a node's volume (range sphere, cones, decal or probe box) and its handles. |
+| =lrg_editor_gizmo_paint_lod_bounds ()= | Paints a LOD'd node's bounding sphere and a chip with the drawn level, triangles and screen size. |
+| =lrg_editor_lod_node_screen_size ()= | The screen size of a node's LOD group through a view (the LOD threshold measure). |
 
 *** =lrg-editor-code-panel.h=
 :PROPERTIES:

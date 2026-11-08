@@ -14,32 +14,33 @@ The particle system follows a producer-consumer pattern with object pooling for 
 - *LrgParticlePool* - Pre-allocated pool of particles for efficient memory management
 - *LrgParticleEmitter* - Spawns particles with configurable shapes and properties
 - *LrgParticleForce* - Modifies particle behavior (gravity, wind, attractors, turbulence)
-- *LrgParticleSystem* - Coordinates emitters, forces, and rendering
+- *LrgParticleSystem* - Coordinates emitters, forces, the 0.9.0 module stack and its seeded generator
+- *LrgParticleAsset* / *LrgParticleEffect* (0.9.0) - The =.rparticles= format (emitters, module stacks, renderers) and its playing instance
+- *Renderers* - billboards, ribbons and trails, instanced meshes; GPU particles for very large counts
+
+For authored effects start with [[file:particle-asset.org][Particle assets]] and the [[file:../../guides/vfx.org][Visual effects guide]].
 
 ** Quick Start
 :PROPERTIES:
 :CUSTOM_ID: quick-start
 :END:
 #+begin_src C
-/* Create a particle system */
-LrgParticleSystem *system = lrg_particle_system_new ();
+/* An authored effect (0.9.0) */
+g_autoptr(LrgParticleAsset)  asset = lrg_particle_asset_new_from_file ("fx/fire.rparticles", NULL);
+g_autoptr(LrgParticleEffect) fire = lrg_particle_effect_new (asset);
 
-/* Create an emitter */
+lrg_particle_effect_play (fire);
+/* each frame: */
+lrg_particle_effect_update (fire, delta_time);
+lrg_particle_effect_draw_camera (fire, camera);   /* inside BeginMode3D () */
+
+/* A system built in code (legacy emitters and forces) */
+LrgParticleSystem  *system = lrg_particle_system_new (1000);
 LrgParticleEmitter *emitter = lrg_particle_emitter_new ();
-lrg_particle_emitter_set_rate (emitter, 50.0f);  /* 50 particles/second */
-lrg_particle_emitter_set_lifetime (emitter, 2.0f);
-lrg_particle_emitter_set_position (emitter, 400.0f, 300.0f, 0.0f);
-
-/* Add gravity force */
-LrgParticleForce *gravity = lrg_particle_force_gravity_new (0.0f, 100.0f, 0.0f);
-lrg_particle_system_add_force (system, gravity);
-
-/* Add emitter to system */
+lrg_particle_emitter_set_emission_rate (emitter, 50.0f);
 lrg_particle_system_add_emitter (system, emitter);
-
-/* In game loop */
-lrg_particle_system_update (system, delta_time);
-lrg_particle_system_draw (system);
+lrg_particle_system_add_force (system, lrg_particle_force_gravity_new (0.0f, -9.81f, 0.0f));
+lrg_particle_system_play (system);
 #+end_src
 
 ** Key Concepts
@@ -96,3 +97,8 @@ lrg_particle_system_draw (system);
 | [[file:forces.org]]   | LrgParticleForce implementations  |
 | [[file:system.org]]   | LrgParticleSystem coordination    |
 | [[file:billboard-renderer.org]] | LrgParticleBillboardRenderer: camera-facing textured quads, flipbooks |
+| [[file:particle-asset.org]] | =.rparticles=: LrgParticleAsset, emitters, the 20 module kinds, LrgParticleEffect (0.9.0) |
+| [[file:ribbon-renderer.org]] | LrgParticleRibbonRenderer: trails and ribbons (0.9.0) |
+| [[file:mesh-renderer.org]] | LrgParticleMeshRenderer: instanced mesh particles (0.9.0) |
+| [[file:gpu-particles.org]] | LrgGpuParticles: transform-feedback GPU emitter (100k+) with a CPU twin; runs the GPU subset of .rparticles (0.9.0) |
+

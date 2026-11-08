@@ -60,6 +60,19 @@ struct _LrgHeatHaze
 
 static void lrg_heat_haze_prewarmable_init (LrgPrewarmableInterface *iface);
 
+enum
+{
+    PROP_0,
+    PROP_STRENGTH,
+    PROP_SCALE,
+    PROP_SPEED,
+    PROP_HORIZON,
+    PROP_BAND,
+    N_PROPS
+};
+
+static GParamSpec *properties[N_PROPS];
+
 G_DEFINE_FINAL_TYPE_WITH_CODE (LrgHeatHaze, lrg_heat_haze, LRG_TYPE_POST_EFFECT,
                                G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
                                                       lrg_heat_haze_prewarmable_init))
@@ -212,12 +225,127 @@ lrg_heat_haze_finalize (GObject *object)
 }
 
 static void
+lrg_heat_haze_get_property (GObject    *object,
+                            guint       prop_id,
+                            GValue     *value,
+                            GParamSpec *pspec)
+{
+    LrgHeatHaze *self = LRG_HEAT_HAZE (object);
+
+    switch (prop_id)
+    {
+    case PROP_STRENGTH:
+        g_value_set_float (value, self->strength);
+        break;
+    case PROP_SCALE:
+        g_value_set_float (value, self->scale);
+        break;
+    case PROP_SPEED:
+        g_value_set_float (value, self->speed);
+        break;
+    case PROP_HORIZON:
+        g_value_set_float (value, self->horizon);
+        break;
+    case PROP_BAND:
+        g_value_set_float (value, self->band);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
+static void
+lrg_heat_haze_set_property (GObject      *object,
+                            guint         prop_id,
+                            const GValue *value,
+                            GParamSpec   *pspec)
+{
+    LrgHeatHaze *self = LRG_HEAT_HAZE (object);
+    gfloat v = g_value_get_float (value);
+
+    switch (prop_id)
+    {
+    case PROP_STRENGTH:
+        lrg_heat_haze_set_strength (self, v);
+        break;
+    case PROP_SCALE:
+        lrg_heat_haze_set_shape (self, v, self->speed, self->horizon, self->band);
+        break;
+    case PROP_SPEED:
+        lrg_heat_haze_set_shape (self, self->scale, v, self->horizon, self->band);
+        break;
+    case PROP_HORIZON:
+        lrg_heat_haze_set_shape (self, self->scale, self->speed, v, self->band);
+        break;
+    case PROP_BAND:
+        lrg_heat_haze_set_shape (self, self->scale, self->speed, self->horizon, v);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
+static void
 lrg_heat_haze_class_init (LrgHeatHazeClass *klass)
 {
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
     LrgPostEffectClass *effect_class = LRG_POST_EFFECT_CLASS (klass);
 
     object_class->finalize = lrg_heat_haze_finalize;
+    object_class->get_property = lrg_heat_haze_get_property;
+    object_class->set_property = lrg_heat_haze_set_property;
+
+    /**
+     * LrgHeatHaze:strength:
+     *
+     * Peak displacement as a fraction of the screen (0..0.05).
+     */
+    properties[PROP_STRENGTH] =
+        g_param_spec_float ("strength", "Strength", "Peak displacement (fraction of the screen)",
+                            0.0f, 0.05f, 0.004f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgHeatHaze:scale:
+     *
+     * Ripple frequency across the screen.
+     */
+    properties[PROP_SCALE] =
+        g_param_spec_float ("scale", "Scale", "Ripple frequency",
+                            0.001f, G_MAXFLOAT, 9.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgHeatHaze:speed:
+     *
+     * How fast the ripples rise.
+     */
+    properties[PROP_SPEED] =
+        g_param_spec_float ("speed", "Speed", "Ripple rise speed",
+                            -G_MAXFLOAT, G_MAXFLOAT, 2.2f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgHeatHaze:horizon:
+     *
+     * Screen height (0 bottom, 1 top) the band is centred on.
+     */
+    properties[PROP_HORIZON] =
+        g_param_spec_float ("horizon", "Horizon", "Band centre (0 bottom, 1 top)",
+                            0.0f, 1.0f, 0.55f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgHeatHaze:band:
+     *
+     * Half height of the shimmering band (fraction of the screen).
+     */
+    properties[PROP_BAND] =
+        g_param_spec_float ("band", "Band", "Band half height",
+                            0.001f, G_MAXFLOAT, 0.18f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    g_object_class_install_properties (object_class, N_PROPS, properties);
     effect_class->initialize = lrg_heat_haze_real_initialize;
     effect_class->shutdown = lrg_heat_haze_real_shutdown;
     effect_class->apply = lrg_heat_haze_real_apply;
@@ -249,7 +377,11 @@ lrg_heat_haze_set_strength (LrgHeatHaze *self,
                             gfloat       strength)
 {
     g_return_if_fail (LRG_IS_HEAT_HAZE (self));
-    self->strength = isfinite (strength) ? CLAMP (strength, 0.0f, 0.05f) : 0.0f;
+    strength = isfinite (strength) ? CLAMP (strength, 0.0f, 0.05f) : 0.0f;
+    if (self->strength == strength)
+        return;
+    self->strength = strength;
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STRENGTH]);
 }
 
 gfloat
@@ -268,14 +400,28 @@ lrg_heat_haze_set_shape (LrgHeatHaze *self,
 {
     g_return_if_fail (LRG_IS_HEAT_HAZE (self));
 
-    if (isfinite (scale) && scale > 0.0f)
+    g_object_freeze_notify (G_OBJECT (self));
+    if (isfinite (scale) && scale > 0.0f && self->scale != scale)
+    {
         self->scale = scale;
-    if (isfinite (speed))
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SCALE]);
+    }
+    if (isfinite (speed) && self->speed != speed)
+    {
         self->speed = speed;
-    if (isfinite (horizon))
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SPEED]);
+    }
+    if (isfinite (horizon) && self->horizon != CLAMP (horizon, 0.0f, 1.0f))
+    {
         self->horizon = CLAMP (horizon, 0.0f, 1.0f);
-    if (isfinite (band) && band > 0.0f)
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_HORIZON]);
+    }
+    if (isfinite (band) && band > 0.0f && self->band != band)
+    {
         self->band = band;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_BAND]);
+    }
+    g_object_thaw_notify (G_OBJECT (self));
 }
 
 void

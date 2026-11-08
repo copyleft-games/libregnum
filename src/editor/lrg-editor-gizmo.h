@@ -259,4 +259,52 @@ LRG_AVAILABLE_IN_ALL
 void lrg_editor_gizmo_get_drag_delta (LrgEditorGizmo *self,
                                       gfloat         *out);
 
+/**
+ * lrg_editor_gizmo_set_pivot_mode:
+ * @self: an #LrgEditorGizmo
+ * @mode: an #LrgPivotMode (active, median, bounds or cursor)
+ *
+ * Where get_origin() sits when no drag is in progress. The default is
+ * the active node's origin. A drag keeps the pivot it started with.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_gizmo_set_pivot_mode (LrgEditorGizmo *self,
+                                      gint            mode);
+
+/**
+ * lrg_editor_gizmo_set_cursor:
+ * @self: an #LrgEditorGizmo
+ * @x: cursor X
+ * @y: cursor Y
+ * @z: cursor Z
+ *
+ * The point %LRG_PIVOT_CURSOR uses.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_gizmo_set_cursor (LrgEditorGizmo *self,
+                                  gfloat          x,
+                                  gfloat          y,
+                                  gfloat          z);
+
+/**
+ * lrg_editor_gizmo_apply:
+ * @self: an #LrgEditorGizmo
+ * @op: "snap", "drop", "align-min", "align-center", "align-max",
+ *   "distribute" or "surface"
+ * @axis: 0, 1 or 2 (the up axis for drop; ignored by snap and surface)
+ * @value: grid spacing, floor height, or unused
+ *
+ * Runs one transform on the current selection and writes the locations
+ * back. Snap with a zero grid changes nothing. Surface casts a ray
+ * straight down from 8 units above the primary onto the other selected
+ * nodes' unit boxes and moves only the primary.
+ *
+ * Returns: %TRUE when the operation was applied
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_gizmo_apply (LrgEditorGizmo *self,
+                                 const gchar    *op,
+                                 gint            axis,
+                                 gfloat          value);
+
 G_END_DECLS

@@ -29,6 +29,7 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "../debug/lrg-debug-draw.h"
 
 G_BEGIN_DECLS
 
@@ -122,6 +123,30 @@ lrg_nav_poly_mesh_add_triangles (LrgNavPolyMesh *self,
                                  const gfloat   *vertices,
                                  guint           n_floats,
                                  gboolean        walkable);
+
+/**
+ * lrg_nav_poly_mesh_add_solid:
+ * @self: an #LrgNavPolyMesh
+ * @vertices: (array length=n_floats): the closed surface of one solid
+ *   (nine floats per triangle, world space)
+ * @n_floats: number of floats, a multiple of nine
+ *
+ * Stages a closed solid (a crate, a pillar, a convex collider): the bake
+ * fills every column it covers from its lowest to its highest surface,
+ * so no floor is found inside it.  Plain triangles only mark the surface
+ * they lie on, which leaves the inside of a tall closed mesh walkable (an
+ * island no path reaches, but one nearest-point searches may pick).  Its
+ * top is walkable where it is flat enough.
+ *
+ * Returns: the number of triangles staged
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_nav_poly_mesh_add_solid (LrgNavPolyMesh *self,
+                             const gfloat   *vertices,
+                             guint           n_floats);
 
 /**
  * lrg_nav_poly_mesh_add_area_box:
@@ -654,5 +679,253 @@ gboolean
 lrg_nav_poly_mesh_load (LrgNavPolyMesh  *self,
                         GBytes          *bytes,
                         GError         **error);
+
+/* ==========================================================================
+ * 0.9.0: area costs, boundaries, inspection, debug draw
+ * ========================================================================== */
+
+/**
+ * LrgNavDebugFlags:
+ * @LRG_NAV_DEBUG_NONE: nothing
+ * @LRG_NAV_DEBUG_POLYGONS: the walkable polygons as translucent slabs,
+ *   one colour per region (disabled polygons and switched-off tags red)
+ * @LRG_NAV_DEBUG_POLYGON_EDGES: every polygon's outline
+ * @LRG_NAV_DEBUG_BOUNDARIES: the boundary segments local avoidance
+ *   treats as walls (lrg_nav_poly_mesh_get_boundary_segments())
+ * @LRG_NAV_DEBUG_PORTALS: the portals between polygons
+ * @LRG_NAV_DEBUG_LINKS: off-mesh links as arcs with arrow heads (cyan
+ *   added links, yellow baked drops, grey disabled or unconnected)
+ * @LRG_NAV_DEBUG_AREAS: colour polygons by area tag instead of region
+ * @LRG_NAV_DEBUG_AGENTS: each agent's radius and height (#LrgNavCrowd)
+ * @LRG_NAV_DEBUG_PATHS: each agent's remaining path and steer target
+ * @LRG_NAV_DEBUG_VELOCITIES: preferred (white) and actual (green)
+ *   velocities
+ * @LRG_NAV_DEBUG_ORCA: the ORCA half-planes of each agent's last step,
+ *   drawn in velocity space around the agent (one line per constraint,
+ *   its tick pointing into the permitted side)
+ * @LRG_NAV_DEBUG_NEIGHBOURS: lines to the agents and walls each agent
+ *   avoided in its last step
+ * @LRG_NAV_DEBUG_DEFAULT: polygons, boundaries, links, agents, paths and
+ *   velocities
+ * @LRG_NAV_DEBUG_ALL: everything
+ *
+ * What lrg_nav_poly_mesh_debug_draw(), lrg_nav_crowd_debug_draw() and
+ * lrg_world3d_debug_draw_navigation() record.  Everything goes to
+ * %LRG_DEBUG_CATEGORY_NAVIGATION.
+ *
+ * Since: 0.9.0
+ */
+typedef enum /*< flags >*/
+{
+    LRG_NAV_DEBUG_NONE          = 0,
+    LRG_NAV_DEBUG_POLYGONS      = 1 << 0,
+    LRG_NAV_DEBUG_POLYGON_EDGES = 1 << 1,
+    LRG_NAV_DEBUG_BOUNDARIES    = 1 << 2,
+    LRG_NAV_DEBUG_PORTALS       = 1 << 3,
+    LRG_NAV_DEBUG_LINKS         = 1 << 4,
+    LRG_NAV_DEBUG_AREAS         = 1 << 5,
+    LRG_NAV_DEBUG_AGENTS        = 1 << 8,
+    LRG_NAV_DEBUG_PATHS         = 1 << 9,
+    LRG_NAV_DEBUG_VELOCITIES    = 1 << 10,
+    LRG_NAV_DEBUG_ORCA          = 1 << 11,
+    LRG_NAV_DEBUG_NEIGHBOURS    = 1 << 12,
+    LRG_NAV_DEBUG_DEFAULT       = (1 << 0) | (1 << 2) | (1 << 4) | (1 << 8) | (1 << 9) | (1 << 10),
+    LRG_NAV_DEBUG_ALL           = 0x1f3f
+} LrgNavDebugFlags;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_nav_debug_flags_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_NAV_DEBUG_FLAGS (lrg_nav_debug_flags_get_type ())
+
+/**
+ * lrg_nav_poly_mesh_set_tag_cost:
+ * @self: an #LrgNavPolyMesh
+ * @tag: a nonzero area tag
+ * @cost: cost multiplier of travelling through polygons of @tag (> 0;
+ *   1 is the default: grass 1, mud 3, road 0.8)
+ *
+ * Gives an area type a traversal cost: lrg_nav_poly_mesh_find_path()
+ * weighs the distance walked inside a polygon by its tag's cost, so a
+ * path detours around expensive areas when the detour is cheaper.  Costs
+ * below 1 scale the A* heuristic down to stay admissible (slower
+ * searches).  Costs are a query setting: they survive rebakes and are
+ * not part of lrg_nav_poly_mesh_save().  #LrgNavBake applies the costs
+ * of its areas.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_nav_poly_mesh_set_tag_cost (LrgNavPolyMesh *self,
+                                guint32         tag,
+                                gfloat          cost);
+
+/**
+ * lrg_nav_poly_mesh_get_tag_cost:
+ * @self: an #LrgNavPolyMesh
+ * @tag: an area tag
+ *
+ * Returns: the cost multiplier of @tag (1 when none was set, and for 0)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat
+lrg_nav_poly_mesh_get_tag_cost (LrgNavPolyMesh *self,
+                                guint32         tag);
+
+/**
+ * lrg_nav_poly_mesh_get_serial:
+ * @self: an #LrgNavPolyMesh
+ *
+ * A counter that changes on every successful bake or load: agents
+ * compare it to notice a new mesh and plan their paths again.
+ *
+ * Returns: the serial
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_nav_poly_mesh_get_serial (LrgNavPolyMesh *self);
+
+/**
+ * lrg_nav_poly_mesh_get_is_baked:
+ * @self: an #LrgNavPolyMesh
+ *
+ * Returns: %TRUE once a bake or load succeeded (queries work)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_nav_poly_mesh_get_is_baked (LrgNavPolyMesh *self);
+
+/**
+ * lrg_nav_poly_mesh_get_polygon_corners:
+ * @self: an #LrgNavPolyMesh
+ * @polygon: a polygon index
+ * @corners: (out caller-allocates) (array fixed-size=12): the four
+ *   corners (x y z each) at their floor heights, counter-clockwise seen
+ *   from below: (min x, min z), (max x, min z), (max x, max z),
+ *   (min x, max z), the vertices lrg_nav_poly_mesh_to_obj() writes
+ *
+ * Returns: %FALSE when @polygon is out of range
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_nav_poly_mesh_get_polygon_corners (LrgNavPolyMesh *self,
+                                       guint           polygon,
+                                       gfloat         *corners);
+
+/**
+ * lrg_nav_poly_mesh_get_polygon_enabled:
+ * @self: an #LrgNavPolyMesh
+ * @polygon: a polygon index
+ *
+ * Returns: whether lrg_nav_poly_mesh_set_polygon_enabled() left it on
+ *   (%FALSE when out of range)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_nav_poly_mesh_get_polygon_enabled (LrgNavPolyMesh *self,
+                                       guint           polygon);
+
+/**
+ * lrg_nav_poly_mesh_get_link:
+ * @self: an #LrgNavPolyMesh
+ * @link: 0 .. lrg_nav_poly_mesh_get_link_count() - 1: the added links
+ *   (their ids) first, then the baked drops
+ * @start: (out caller-allocates) (array fixed-size=3) (optional): where
+ *   it is entered
+ * @end: (out caller-allocates) (array fixed-size=3) (optional): where it
+ *   leads
+ * @bidirectional: (out) (optional): whether it works both ways
+ * @enabled: (out) (optional): whether it is enabled and both ends found
+ *   a polygon
+ * @tag: (out) (optional): its tag, 0 for none
+ *
+ * Reads a link, for inspection and debug drawing.
+ *
+ * Returns: %FALSE when @link is out of range
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_nav_poly_mesh_get_link (LrgNavPolyMesh *self,
+                            guint           link,
+                            gfloat         *start,
+                            gfloat         *end,
+                            gboolean       *bidirectional,
+                            gboolean       *enabled,
+                            guint32        *tag);
+
+/**
+ * lrg_nav_poly_mesh_get_boundary_count:
+ * @self: an #LrgNavPolyMesh
+ *
+ * The number of boundary segments: the polygon sides no portal covers,
+ * collinear touching ones merged.  They are built on first use after a
+ * bake or load.
+ *
+ * Returns: the number of segments
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_nav_poly_mesh_get_boundary_count (LrgNavPolyMesh *self);
+
+/**
+ * lrg_nav_poly_mesh_get_boundary_segments:
+ * @self: an #LrgNavPolyMesh
+ * @center: (array fixed-size=3) (nullable): the query centre, %NULL for
+ *   every segment
+ * @radius: X/Z distance from @center a segment must come within
+ * @half_height: how far above or below the segment's height range
+ *   @center may lie (separates floors)
+ * @n_floats: (out): number of floats returned, six per segment
+ *
+ * The walls of the walkable surface: six floats per segment (start
+ * x y z, end x y z), oriented with the walkable side on the right when
+ * seen from above along +Y looking down with +X right and +Z up (the
+ * orientation of the RVO2 obstacle convention), in a stable order.
+ * #LrgNavCrowd feeds them to ORCA as static obstacles.  Segments follow
+ * the bake: polygons disabled later still count as walkable.
+ *
+ * Returns: (transfer full) (array length=n_floats): the segments
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat *
+lrg_nav_poly_mesh_get_boundary_segments (LrgNavPolyMesh *self,
+                                         const gfloat   *center,
+                                         gfloat          radius,
+                                         gfloat          half_height,
+                                         guint          *n_floats);
+
+/**
+ * lrg_nav_poly_mesh_debug_draw:
+ * @self: an #LrgNavPolyMesh
+ * @draw: the batch to record into (one frame)
+ * @flags: what to draw; the agent flags are ignored here
+ *
+ * Records the mesh into @draw in %LRG_DEBUG_CATEGORY_NAVIGATION:
+ * polygons, outlines, portals, boundaries and links as @flags ask.
+ * Nothing before a bake.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_nav_poly_mesh_debug_draw (LrgNavPolyMesh   *self,
+                              LrgDebugDraw     *draw,
+                              LrgNavDebugFlags  flags);
 
 G_END_DECLS

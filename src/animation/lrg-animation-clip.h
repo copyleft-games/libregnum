@@ -22,6 +22,51 @@
 
 G_BEGIN_DECLS
 
+/**
+ * LrgAnimationInterpolation:
+ * @LRG_ANIMATION_INTERPOLATION_STEP: hold each key's value until the next
+ *   key (glTF "STEP")
+ * @LRG_ANIMATION_INTERPOLATION_LINEAR: linear between keys; rotations use
+ *   spherical linear interpolation along the shorter arc (glTF "LINEAR")
+ * @LRG_ANIMATION_INTERPOLATION_CUBIC_SPLINE: cubic Hermite spline with an
+ *   in-tangent and an out-tangent stored per key, scaled by the key
+ *   interval (glTF "CUBICSPLINE"); rotations are renormalised
+ *
+ * How a channel (see lrg_animation_clip_set_track_channel()) is
+ * interpolated between its keys.
+ */
+typedef enum
+{
+    LRG_ANIMATION_INTERPOLATION_STEP,
+    LRG_ANIMATION_INTERPOLATION_LINEAR,
+    LRG_ANIMATION_INTERPOLATION_CUBIC_SPLINE
+} LrgAnimationInterpolation;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_animation_interpolation_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ANIMATION_INTERPOLATION (lrg_animation_interpolation_get_type ())
+
+/**
+ * LrgAnimationChannelPath:
+ * @LRG_ANIMATION_CHANNEL_TRANSLATION: the bone's local position (3 floats
+ *   per value)
+ * @LRG_ANIMATION_CHANNEL_ROTATION: the bone's local rotation quaternion
+ *   x, y, z, w (4 floats per value)
+ * @LRG_ANIMATION_CHANNEL_SCALE: the bone's local scale (3 floats per value)
+ *
+ * The bone pose component a track channel animates.
+ */
+typedef enum
+{
+    LRG_ANIMATION_CHANNEL_TRANSLATION,
+    LRG_ANIMATION_CHANNEL_ROTATION,
+    LRG_ANIMATION_CHANNEL_SCALE
+} LrgAnimationChannelPath;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_animation_channel_path_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ANIMATION_CHANNEL_PATH (lrg_animation_channel_path_get_type ())
+
 #define LRG_TYPE_ANIMATION_CLIP (lrg_animation_clip_get_type ())
 
 LRG_AVAILABLE_IN_ALL
@@ -278,5 +323,208 @@ void                    lrg_animation_clip_sample_track     (LrgAnimationClip *s
  */
 LRG_AVAILABLE_IN_ALL
 void                    lrg_animation_clip_calculate_smooth_tangents (LrgAnimationClip *self);
+
+/* ------------------------------------------------------------------------ */
+/* Channels (per-component keys, as glTF stores them)                       */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * lrg_animation_clip_find_track:
+ * @self: A #LrgAnimationClip
+ * @bone_name: The bone name
+ *
+ * Finds the first track that animates @bone_name.
+ *
+ * Returns: the track index, or -1 when no track names the bone
+ */
+LRG_AVAILABLE_IN_ALL
+gint                    lrg_animation_clip_find_track       (LrgAnimationClip *self,
+                                                             const gchar      *bone_name);
+
+/**
+ * lrg_animation_clip_set_track_channel:
+ * @self: A #LrgAnimationClip
+ * @track_index: The track index
+ * @path: Which pose component the channel animates
+ * @interpolation: How values between keys are computed
+ * @n_keys: Number of keys (at least 1)
+ * @times: (array length=n_keys): key times in seconds, not decreasing
+ * @values: (array) (element-type gfloat): the key values: 3 floats per key
+ *   for translation and scale, 4 (x, y, z, w) for rotation; with
+ *   %LRG_ANIMATION_INTERPOLATION_CUBIC_SPLINE three times as many, each key
+ *   stored as in-tangent, value, out-tangent (the glTF layout)
+ * @error: return location for a #GError
+ *
+ * Gives a track a channel: keys for one component of the bone pose with
+ * their own times and interpolation, replacing a channel of the same
+ * @path. A track with at least one channel is sampled from its channels
+ * (components without a channel come from the track's base pose, see
+ * lrg_animation_clip_set_track_base_pose()); its keyframes are then
+ * ignored. The clip's duration grows to the last key time. Fails with
+ * %G_IO_ERROR_INVALID_ARGUMENT for a bad track, no keys, decreasing or
+ * non-finite times.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean                lrg_animation_clip_set_track_channel (LrgAnimationClip         *self,
+                                                              guint                     track_index,
+                                                              LrgAnimationChannelPath   path,
+                                                              LrgAnimationInterpolation interpolation,
+                                                              guint                     n_keys,
+                                                              const gfloat             *times,
+                                                              const gfloat             *values,
+                                                              GError                  **error);
+
+/**
+ * lrg_animation_clip_get_track_channel:
+ * @self: A #LrgAnimationClip
+ * @track_index: The track index
+ * @path: The pose component
+ * @out_interpolation: (out) (optional): the channel's interpolation
+ * @out_n_keys: (out) (optional): the number of keys
+ * @out_times: (out) (optional) (transfer none) (array length=out_n_keys):
+ *   the key times
+ * @out_values: (out) (optional) (transfer none): the key values, laid out
+ *   as lrg_animation_clip_set_track_channel() takes them
+ *
+ * Reads a channel back (the editor's curve view and the retargeter use
+ * it).
+ *
+ * Returns: %TRUE when the track has a channel for @path
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean                lrg_animation_clip_get_track_channel (LrgAnimationClip           *self,
+                                                              guint                       track_index,
+                                                              LrgAnimationChannelPath     path,
+                                                              LrgAnimationInterpolation  *out_interpolation,
+                                                              guint                      *out_n_keys,
+                                                              const gfloat              **out_times,
+                                                              const gfloat              **out_values);
+
+/**
+ * lrg_animation_clip_track_has_channels:
+ * @self: A #LrgAnimationClip
+ * @track_index: The track index
+ *
+ * Returns: %TRUE when the track is sampled from channels rather than
+ *   from keyframes
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean                lrg_animation_clip_track_has_channels (LrgAnimationClip *self,
+                                                               guint             track_index);
+
+/**
+ * lrg_animation_clip_set_track_base_pose:
+ * @self: A #LrgAnimationClip
+ * @track_index: The track index
+ * @pose: The pose whose components fill in for missing channels
+ *
+ * Sets the values used for the components a channel track does not
+ * animate (the glTF importer stores the node's rest transform, so a
+ * rotation-only track keeps the bone's rest position and scale). The
+ * default is the identity pose.
+ */
+LRG_AVAILABLE_IN_ALL
+void                    lrg_animation_clip_set_track_base_pose (LrgAnimationClip  *self,
+                                                                guint              track_index,
+                                                                const LrgBonePose *pose);
+
+/**
+ * lrg_animation_clip_get_track_base_pose:
+ * @self: A #LrgAnimationClip
+ * @track_index: The track index
+ * @out_pose: (out caller-allocates): the base pose
+ *
+ * Returns: %FALSE (and the identity) when @track_index is out of range
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean                lrg_animation_clip_get_track_base_pose (LrgAnimationClip *self,
+                                                                guint             track_index,
+                                                                LrgBonePose      *out_pose);
+
+/* ------------------------------------------------------------------------ */
+/* Morph target weight channels                                             */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * lrg_animation_clip_add_weights_channel:
+ * @self: A #LrgAnimationClip
+ * @target_name: the morph target group the weights drive (the glTF
+ *   importer uses the animated node's name, which is also the group name
+ *   of that node's targets in #LrgMorphTargets)
+ * @n_weights: weights per key (the number of morph targets, at least 1)
+ * @interpolation: how values between keys are computed
+ * @n_keys: number of keys (at least 1)
+ * @times: (array length=n_keys): key times in seconds, not decreasing
+ * @values: (array) (element-type gfloat): @n_weights floats per key
+ *   (three times as many for cubic spline: in-tangents, values,
+ *   out-tangents, each @n_weights wide)
+ * @error: return location for a #GError
+ *
+ * Adds a channel of morph target weights. The clip's duration grows to
+ * the last key time.
+ *
+ * Returns: the channel index, or -1 on error
+ */
+LRG_AVAILABLE_IN_ALL
+gint                    lrg_animation_clip_add_weights_channel (LrgAnimationClip         *self,
+                                                                const gchar              *target_name,
+                                                                guint                     n_weights,
+                                                                LrgAnimationInterpolation interpolation,
+                                                                guint                     n_keys,
+                                                                const gfloat             *times,
+                                                                const gfloat             *values,
+                                                                GError                  **error);
+
+/**
+ * lrg_animation_clip_get_weights_channel_count:
+ * @self: A #LrgAnimationClip
+ *
+ * Returns: the number of morph weight channels
+ */
+LRG_AVAILABLE_IN_ALL
+guint                   lrg_animation_clip_get_weights_channel_count (LrgAnimationClip *self);
+
+/**
+ * lrg_animation_clip_get_weights_channel_target:
+ * @self: A #LrgAnimationClip
+ * @channel: the weight channel index
+ *
+ * Returns: (transfer none) (nullable): the morph target group the
+ *   channel drives, %NULL when out of range
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *           lrg_animation_clip_get_weights_channel_target (LrgAnimationClip *self,
+                                                                       guint             channel);
+
+/**
+ * lrg_animation_clip_get_weights_channel_width:
+ * @self: A #LrgAnimationClip
+ * @channel: the weight channel index
+ *
+ * Returns: weights per key, 0 when out of range
+ */
+LRG_AVAILABLE_IN_ALL
+guint                   lrg_animation_clip_get_weights_channel_width (LrgAnimationClip *self,
+                                                                      guint             channel);
+
+/**
+ * lrg_animation_clip_sample_weights:
+ * @self: A #LrgAnimationClip
+ * @channel: the weight channel index
+ * @time: The time in seconds (the clip's loop mode applies)
+ * @out_weights: (array) (out caller-allocates) (element-type gfloat):
+ *   lrg_animation_clip_get_weights_channel_width() floats
+ *
+ * Samples a morph weight channel.
+ *
+ * Returns: %FALSE when @channel is out of range
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean                lrg_animation_clip_sample_weights   (LrgAnimationClip *self,
+                                                             guint             channel,
+                                                             gfloat            time,
+                                                             gfloat           *out_weights);
 
 G_END_DECLS

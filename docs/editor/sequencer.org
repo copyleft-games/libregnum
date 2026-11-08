@@ -1,0 +1,258 @@
+#+title: Sequencer
+#+description: The lrgeditor Sequencer panel for .rseq cinematics: tracks grouped by binding, a Bézier curve editor with tangent modes, camera cut, audio, animation and sub-sequence sections, event markers, bindings picked from the level, scrub and playback preview on level nodes with camera piloting, frame snapping, undo, and the sequence.* IPC methods
+#+authors: Zach Podbielniak
+#+categories: libregnum editor animation sequence cinematics timeline
+#+created: 2026-11-07T00:00:00-05:00
+#+updated: 2026-11-07T00:00:00-05:00
+#+version: 0.9.0
+
+* Sequencer
+:PROPERTIES:
+:CUSTOM_ID: sequencer
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Sequencer
+#+end_quote
+
+The Sequencer is the editor's tool for =.rseq= sequences: cinematic or scripted animation assets that move level entities, change their properties, cut between cameras, start sounds, fire gameplay events, play animation clips and nest other sequences. The asset, its YAML format and the runtime player are described in [[file:../modules/animation/sequence.org][Sequences (.rseq)]]; this page describes how to author one in =lrgeditor=. Since 0.9.0.
+
+| Piece | Source |
+|-------+--------|
+| =LrgEditorSequencerPanel= (the panel, its actions and its IPC methods) | =src/editor/ui/lrg-editor-sequencer-panel.{h,c}= |
+| The edited asset | =LrgSequence= (=src/animation/lrg-sequence.h=) |
+| The preview transport | a world-less =LrgSequencePlayer= (=src/animation/lrg-sequence-player.h=) |
+| The track view | =LrgTimelineView= (=src/ui/lrg-timeline-view.h=) |
+| The curve editor | an =LrgCustomWidget= named =sequencer-curve= inside the panel |
+| Tests | =tests/test-editor-app-sequencer.c= |
+
+Level timelines ([[file:editor-tools.org::#animation-timeline][Animation timeline]]) stay the quick way to keyframe nodes inside a level; a sequence is a separate file that a game plays with an =LrgSequencePlayer= or an =LrgSequenceComponent=, and a level timeline converts into one with one click (To Sequence).
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: sequencer-concepts
+:END:
+- *One document.* The panel edits one =.rseq= file at a time (=self->seq=). Opening another replaces it; the title shows the file name and a =*= while unsaved.
+- *Bindings are level nodes.* A track names the entity it drives by GUID (=lrg_sequence_track_set_binding()=). =lrg_level_instantiate_3d()= gives every runtime =LrgEntity3D= the GUID of its level node, so a sequence authored against the open level drives the same entities in the game. The sequence's binding list records the GUIDs with display names; the panel fills it whenever a node is bound. A binding does not have to be a GUID: an override name such as =self= works at runtime (=lrg_sequence_player_set_binding_override()=, =LrgSequenceComponent= binds =self=).
+- *Undo lives in the panel.* Every edit replaces the sequence with an edited copy and pushes the old one on the panel's own undo stack (Undo / Redo chips, =sequence.undo=, actions =sequence.undo= / =sequence.redo=). The level's Edit > Undo does not touch the sequence and the sequence's undo does not touch the level.
+- *Preview never edits the level.* Scrubbing and playing pose the bound level nodes outside the level's history, exactly like the level timeline preview, and everything goes back on Stop, Save, play-in-editor or loading a level.
+
+** Opening and creating
+:PROPERTIES:
+:CUSTOM_ID: sequencer-open
+:END:
+- Double click a =.rseq= in the Assets panel (=lrg_editor_sequencer_panel_open_file()=), or File > Open on a =.rseq=, or type a path into the panel's path field and press Open (Enter opens an existing file and creates a missing one).
+- New creates an empty sequence (5 s, 30 fps, =once=): with a path typed it is written there at once (an existing file is refused), without one it stays "Untitled.rseq" until Save, which then uses the typed path.
+- Save writes the file (=lrg_sequence_save_to_file()=, byte stable); typing a different path before Save is Save As.
+- Timeline panel > To Sequence converts the current level timeline (=lrg_editor_sequencer_panel_convert_timeline()=, =sequence.from_timeline=) to =sequences/<timeline>.rseq= and opens it here; the bindings get the node names.
+
+The panel is a dock panel with id =sequencer= (=LRG_EDITOR_SEQUENCER_PANEL_ID=), View > Panels > Sequencer, action =sequence.show=.
+
+** Layout
+:PROPERTIES:
+:CUSTOM_ID: sequencer-layout
+:END:
+From top to bottom:
+
+1. *File row*: title (file name, =*= when dirty), path field, New, Open, Save | Length (seconds) and FPS (both undoable) | Undo, Redo.
+2. *Transport and edit row*: previous frame, Play/Pause, Stop, next frame, the preview mode (Once, Loop, Ping-pong) | Snap (frames), Pilot (camera cuts), Curves (curve lanes) | + Track (a menu of track kinds), Bind, Key, Delete | the frame and time readout (=36 / 120 · 1.20 s=).
+3. *Tracks* (an =LrgTimelineView=): one group row per binding in binding order (tracks without a binding under "Sequence"), one row per track inside it:
+   - transform tracks: one child row per keyed channel (=location.x= ... =scale.z=); bone tracks read =Name  [bone head]=;
+   - property tracks: the curve's keys on the track row (titled =Component.property= when unnamed);
+   - camera cut, audio, animation and sub-sequence tracks: their sections as clips, coloured by kind; an open-ended section (duration 0) is drawn to where it ends (the next section of its track, else the end), a sound with no duration as one second;
+   - event tracks: bar keys on the row plus a flag on the ruler per event (named after the event).
+   Keys are dots for auto, user and broken keys, diamonds for linear keys, squares for constant (stepped) keys. With Curves on, channel and property rows become curve lanes that draw the curve with its Bézier segments.
+4. *Bottom strip*: the curve editor and the selected key's fields (Time, Value, Tangent, In, Out) on the left; the detail fields on the right: the selected track's Name, Binding (a picker of the sequence's bindings), Bone (transform tracks), Component and property (property tracks) and Mute, or, when a section is selected, the section's Name (camera, sound, clip, sequence or event name), Start and length, Offset and rate, Weight (volume for sounds) and Loop, and Payload for events.
+
+Without tracks the view is replaced by a hint. Every widget has a name (=sequencer-*=) so tests, =ui.state= and screenshots can find it.
+
+** Tracks and bindings
+:PROPERTIES:
+:CUSTOM_ID: sequencer-tracks
+:END:
+- *Bind* adds every node selected in the Hierarchy (or viewport) to the sequence's bindings (GUID + node name), one undo step.
+- *+ Track* opens a menu: Transform, Bone Transform, Property, Audio, Animation Clip (bound to an entity), Camera Cut, Event, Sub-sequence (sequence wide). An entity track binds to the selected track's binding, else to the first selected node (which becomes a binding), else to nothing (pick a binding later in the detail strip). A bone transform track starts on bone =root=; type the real bone name into Bone.
+- *Binding picker* (detail strip) rebinds the selected track to another binding or to none.
+- *Mute* skips a track in the preview and at runtime (=lrg_sequence_track_set_muted()=); muted rows are drawn dimmed.
+- *Delete* removes the selected keys and sections in the view; with nothing selected there, the curve editor's selected key; else the selected track.
+
+** Keys and the curve editor
+:PROPERTIES:
+:CUSTOM_ID: sequencer-curves
+:END:
+*Key* adds keys at the playhead on the selected track, one undo step:
+
+| Track | Key adds |
+|-------+----------|
+| transform | the bound node's current values of the keyed channels (all nine on the first key); bone tracks read the node's bone offsets |
+| property | the node's value when the property is a level channel (=roughness=, =color.r=, =param.intensity=, ...) and no component is named, else the curve's own value |
+| camera cut | a cut to the selected camera node (bound on the way), else to the track's binding |
+| audio, event, animation, sub-sequence | a placeholder section (=sfx:sound=, =event=, clip =Idle= for 1 s, =shot.rseq=) to rename in the detail fields |
+
+Keys can also be added by double clicking a curve lane (Curves on) or the curve editor, and over IPC (=sequence.add_key=, which defaults the value to the node's current one).
+
+The *curve editor* shows the selected curve (click a key in the view, or =lrg_editor_sequencer_panel_select_curve()=) sampled exactly as the engine evaluates it (=lrg_sequence_curve_evaluate()=), a value grid with labels, a line per second and the playhead. Each key's tangent handles are drawn where the cubic Bézier control points are: a third of the neighbouring segment's duration away along the key's resolved slopes (=lrg_sequence_curve_get_slopes()=). With more than twelve keys only the selected key's handles are drawn.
+
+| Gesture | Effect | Undo |
+|---------+--------+------|
+| click a key | selects it (its handles and fields show) | none |
+| drag a key | moves it in time (snapped) and value; keys may pass each other | one step ("Move Key") |
+| drag a handle | sets that slope: an auto, linear or constant key becomes a =user= key (both sides follow, aligned); a =broken= key, or any key with Shift held, changes only that side and becomes =broken= | one step ("Edit Tangents") |
+| double click empty space | adds a key on the curve at that time | one step |
+| Delete / Backspace (curve focused) | removes the selected key | one step |
+| Escape during a drag | puts the curve back | none |
+
+The key fields edit the selected key numerically: Time (retimes it with =lrg_sequence_curve_move_key()=, keeping its handles), Value, Tangent (=Auto=, =User=, =Broken=, =Linear=, =Constant=; switching keeps the slopes the key is drawn with, so the shape only changes when a slope is edited), In and Out (editing In makes an aligned =user= key unless it is =broken=; editing Out makes it =broken=).
+
+Keys dragged in the track view keep their tangents too: a drag of several keys (and sections) is applied as one undo step on the next frame, never inside the view's signal emission.
+
+** Sections and events
+:PROPERTIES:
+:CUSTOM_ID: sequencer-sections
+:END:
+Sections are clips: drag one to move it (an open-ended section stays open-ended), drag an edge to give it an explicit length, Delete removes it. Selecting one shows its fields. Names mean: a camera binding (camera cut; the clip shows the binding's name), a =bank:sound= or sound file (audio), a clip name (animation; see [[file:../modules/animation/sequence.org::#sequence-animation][Animation clips and bones]]), a registered sequence name or a =.rseq= path relative to this file (sub-sequence). Offset and rate map sequence time to clip or sub-sequence time (=local = offset + (t - start) * rate=), Loop wraps it, Weight is the clip's blend weight or the sound's volume.
+
+Events are points: drag the bar key on the event row or the flag on the ruler to retime one, set its name and payload in the detail fields. Events crossed while scrubbing or playing are logged to the Console (domain =sequence=, e.g. =Event door (slow) at 0.500 s=) and reported by =sequence.scrub= / =sequence.play=; scrubbing backwards reports them as =reverse=.
+
+** Preview, playback and snapping
+:PROPERTIES:
+:CUSTOM_ID: sequencer-preview
+:END:
+The panel's =LrgSequencePlayer= has no world: it owns the playhead, the play mode and the crossing rules (events, ping-pong turns, loop wraps; [[file:../modules/animation/sequence.org::#sequence-playback][Playback, crossing and events]]). After every move the panel evaluates the sequence onto the open level:
+
+- transform tracks write their keyed channels onto the bound node (=lrg_timeline_channel_write()=), bone tracks write the bone offset channels (=bone.NAME.rotation.y= ...), which the viewport uses to pose skinned meshes;
+- property tracks write their curve when the property is a level channel and no component is named;
+- camera cuts pick the camera at the playhead; with *Pilot* on the active viewport looks through that camera node (its world position, its -Z axis, its =fov= param), and turning Pilot off or ending the preview gives the viewport its own camera back exactly;
+- audio, animation clips, sub-sequences and component properties are runtime only: they are drawn and edited but not previewed on level nodes (sub-sequence events still fire).
+
+Every channel's value from before the preview is kept in the same rest table the level timeline preview uses, so =editor_timeline_end_preview()= puts the level back on Stop (the panel's or the Timeline panel's), Save, play-in-editor and loading a level. A posed level is never saved and never marked dirty. Keying while previewing records the node's posed values.
+
+- *Scrub*: click or drag the ruler, the frame buttons, =sequence.scrub= (=time= or =frame=), or =lrg_editor_sequencer_panel_scrub()=.
+- *Play / Pause*: plays from the playhead in the preview mode (Once stops at the end, Loop wraps, Ping-pong turns around). A once preview at its end starts over. Play-in-editor pauses the preview.
+- *Stop*: pauses, rewinds to 0 and restores the level and the camera.
+- *Preview mode* is a panel setting; the sequence's own default play mode is set with =sequence.set {play_mode}= (and starts the preview mode when a file opens).
+- *Snap* (on by default): keys, sections, events and the playhead snap to the sequence's frames (=1 / fps=); off, they keep milliseconds. The view's grid snapping follows.
+
+** Actions
+:PROPERTIES:
+:CUSTOM_ID: sequencer-actions
+:END:
+Registered by the panel on construction (they appear in menus' search, the command palette and =action.run=):
+
+| Action | Does |
+|--------+------|
+| =sequence.show= | brings the Sequencer to the front |
+| =sequence.new= | New (the typed path, else untitled) |
+| =sequence.save= | Save |
+| =sequence.undo= / =sequence.redo= | the panel's undo stack |
+| =sequence.play= | Play / Pause (checked while playing) |
+| =sequence.stop= | Stop |
+| =sequence.key= | Key the selected track at the playhead |
+| =sequence.bind= | Bind the selected nodes |
+| =sequence.delete= | Delete (as the chip) |
+| =timeline.to-sequence= | registered by the Timeline panel: Convert the current level timeline |
+
+** IPC
+:PROPERTIES:
+:CUSTOM_ID: sequencer-ipc
+:END:
+The =sequence.*= methods are registered by the panel (a default window always has them). =path= is a =.rseq= file, absolute or project relative; when given and not the open file, it is opened first. =track= is a track index (=sequence.get= lists them). Errors: missing or mistyped parameters are =invalid-params=, a missing file, track, key or node =not-found=, anything else =failed=. The full table is in [[file:ipc-protocol.org::#sequence-methods][IPC Protocol > Sequence methods]].
+
+#+begin_src sh
+# lrg: the socat helper from ipc-protocol.org (Examples)
+lrg sequence.create '{"path":"sequences/intro.rseq","length":8,"fps":24}'
+lrg sequence.bind '{"node":"Hero"}'
+lrg sequence.add_track '{"kind":"transform","binding":"Hero"}'
+lrg sequence.add_key '{"track":0,"channel":"location.x","time":0}'
+lrg sequence.add_key '{"track":0,"channel":"location.x","time":4,"value":6,"tangent":"broken","in":1.5,"out":0}'
+lrg sequence.add_track '{"kind":"camera-cut"}'
+lrg sequence.add_section '{"track":1,"start":0,"name":"Camera A"}'
+lrg sequence.add_track '{"kind":"event","name":"Cues"}'
+lrg sequence.add_section '{"track":2,"start":3.5,"name":"door-open","payload":"slow"}'
+lrg sequence.scrub '{"time":3.6}'        # -> {time, frame, playing, mode, camera, events:[{name:"door-open",...}]}
+lrg sequence.save '{}'
+#+end_src
+
+** Using it from C
+:PROPERTIES:
+:CUSTOM_ID: sequencer-c
+:END:
+The panel is created by the editor window. Code embedding the editor (a plugin, a test) reaches it through the app:
+
+#+begin_src C
+LrgEditorSequencerPanel *seq = lrg_editor_sequencer_panel_find (app);
+g_autoptr(GError)        error = NULL;
+LrgSequence             *edit;
+
+if (!lrg_editor_sequencer_panel_open_file (app, "sequences/intro.rseq", &error))
+	g_warning ("%s", error->message);
+
+/* an undoable edit: copy, change, commit */
+edit = lrg_sequence_copy (lrg_editor_sequencer_panel_get_sequence (seq));
+lrg_sequence_set_length (edit, 10.0f);
+lrg_editor_sequencer_panel_commit (seq, edit, "Longer");
+g_object_unref (edit);
+
+/* preview at 2.5 s, through the cut cameras */
+lrg_editor_sequencer_panel_set_pilot (seq, TRUE);
+lrg_editor_sequencer_panel_scrub (seq, 2.5f);
+lrg_editor_sequencer_panel_stop (seq);   /* level and camera back */
+lrg_editor_sequencer_panel_save (seq, NULL, &error);
+#+end_src
+
+To dock it yourself (an embedding without the stock window): =lrg_editor_sequencer_panel_new (app)= as the child of an =LrgDockPanel= with id =sequencer=, then =lrg_editor_app_add_panel (app, panel, NULL)=.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: sequencer-api
+:END:
+| Symbol | Summary |
+|--------+---------|
+| =LRG_EDITOR_SEQUENCER_PANEL_ID= | ="sequencer"= |
+| =lrg_editor_sequencer_panel_new()= | the panel; registers its actions and =sequence.*= methods |
+| =lrg_editor_sequencer_panel_find()= | the app's panel or =NULL= |
+| =lrg_editor_sequencer_panel_open_file()= | open a =.rseq= and present the panel (assets double click) |
+| =lrg_editor_sequencer_panel_convert_timeline()= | level timeline -> =.rseq= (written, opened) |
+| =lrg_editor_sequencer_panel_load()=, =lrg_editor_sequencer_panel_create()=, =lrg_editor_sequencer_panel_save()= | the document |
+| =lrg_editor_sequencer_panel_get_sequence()=, =lrg_editor_sequencer_panel_commit()= | read, and edit as one undo step |
+| =lrg_editor_sequencer_panel_undo()=, =lrg_editor_sequencer_panel_redo()= | the panel's history |
+| =lrg_editor_sequencer_panel_get_path()=, =lrg_editor_sequencer_panel_get_dirty()= | file state |
+| =lrg_editor_sequencer_panel_get_view()=, =lrg_editor_sequencer_panel_get_player()=, =lrg_editor_sequencer_panel_get_curve_editor()= | the parts |
+| =lrg_editor_sequencer_panel_find_track()=, =lrg_editor_sequencer_panel_find_keyframe()=, =lrg_editor_sequencer_panel_find_clip()= | model -> view ids (tests, tools) |
+| =lrg_editor_sequencer_panel_select_curve()=, =lrg_editor_sequencer_panel_get_curve_point()= | the curve editor's curve; where a key or handle is drawn |
+| =lrg_editor_sequencer_panel_get_time()=, =lrg_editor_sequencer_panel_scrub()= | the playhead |
+| =lrg_editor_sequencer_panel_get_playing()=, =lrg_editor_sequencer_panel_set_playing()=, =lrg_editor_sequencer_panel_stop()= | transport |
+| =lrg_editor_sequencer_panel_get_preview_mode()=, =lrg_editor_sequencer_panel_set_preview_mode()= | once / loop / ping-pong |
+| =lrg_editor_sequencer_panel_get_snap()=, =lrg_editor_sequencer_panel_set_snap()= | frame snapping |
+| =lrg_editor_sequencer_panel_get_pilot()=, =lrg_editor_sequencer_panel_set_pilot()=, =lrg_editor_sequencer_panel_get_cut_camera()= | camera cuts in the viewport |
+
+Properties (all =G_PARAM_EXPLICIT_NOTIFY=): =dirty= (read-only), =playing= (read-only), =snap=, =pilot=, =preview-mode= (=LrgSequencePlayMode=).
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: sequencer-performance
+:END:
+- Every committed edit copies the sequence (=lrg_sequence_copy()=) and rebuilds the view; sequences of a few hundred keys rebuild in well under a millisecond. The undo stack keeps at most 200 snapshots.
+- A curve drag edits the live sequence and rebuilds the view only on release; the curve editor samples 200 points per frame.
+- The preview evaluates every curve once per move and does a GUID lookup per track (=lrg_level_find_node()=); playback costs that once per frame.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: sequencer-pitfalls
+:END:
+- The sequence's undo is separate from the level's: Edit > Undo (Ctrl+Z) undoes level edits, the panel's Undo chip (or =sequence.undo=) undoes sequence edits.
+- Opening another file replaces the sequence without asking; save first (=sequence.list= reports =dirty=).
+- Rotation channels are Euler radians and interpolate per axis (not a slerp).
+- Audio, animation clips, sub-sequences and component properties do not preview on level nodes; check them in play mode or the game. Property tracks preview only level channels (=roughness=, =metallic=, =color.*=, =param.*=).
+- Bindings are GUIDs: a sequence authored against one level drives another level only where node GUIDs match (prefab instances get new GUIDs). Use override names (=self=, =hero=) for sequences reused across levels.
+- A camera cut needs a node with a camera; at runtime the bound entity needs an =LrgCameraComponent=.
+- The preview pose is shared with the level timeline preview: stopping either restores both.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: sequencer-see-also
+:END:
+- [[file:../modules/animation/sequence.org][Sequences (.rseq)]]: the asset, format, player and component
+- [[file:editor-tools.org::#animation-timeline][Animation timeline]]: level timelines, Bézier keys, bone tracks
+- [[file:editor-app.org::#editor-panel-sequencer][Editor Application > Sequencer panel]]
+- [[file:ipc-protocol.org::#sequence-methods][IPC Protocol > Sequence methods]]
+- [[file:../guides/animation-pipeline.org][Animation pipeline guide]]

@@ -21,6 +21,7 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "lrg-container.h"
+#include "lrg-menu.h"
 
 G_BEGIN_DECLS
 
@@ -58,6 +59,40 @@ typedef enum
 LRG_AVAILABLE_IN_ALL
 GType lrg_dock_position_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_DOCK_POSITION (lrg_dock_position_get_type ())
+
+/* ==========================================================================
+ * LrgDockStripButton
+ * ========================================================================== */
+
+/**
+ * LrgDockStripButton:
+ * @LRG_DOCK_STRIP_BUTTON_SCROLL_BACK: scrolls the tab strip towards
+ *   its first tab (the left arrow; the right one in right-to-left
+ *   layouts)
+ * @LRG_DOCK_STRIP_BUTTON_SCROLL_FORWARD: scrolls the tab strip towards
+ *   its last tab
+ * @LRG_DOCK_STRIP_BUTTON_LIST: opens a menu listing every tab of the
+ *   stack (lrg_dock_area_popup_tab_list())
+ *
+ * The buttons at the trailing end of a tab strip whose tabs do not fit
+ * (see lrg_dock_area_get_tabs_overflow()). Strips whose tabs fit have
+ * none of them.
+ */
+typedef enum
+{
+	LRG_DOCK_STRIP_BUTTON_SCROLL_BACK,
+	LRG_DOCK_STRIP_BUTTON_SCROLL_FORWARD,
+	LRG_DOCK_STRIP_BUTTON_LIST
+} LrgDockStripButton;
+
+/**
+ * lrg_dock_strip_button_get_type:
+ *
+ * Returns: the #GType of #LrgDockStripButton
+ */
+LRG_AVAILABLE_IN_ALL
+GType lrg_dock_strip_button_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_DOCK_STRIP_BUTTON (lrg_dock_strip_button_get_type ())
 
 /* ==========================================================================
  * LrgDockPanel
@@ -402,6 +437,10 @@ gboolean lrg_dock_area_get_stack_rect (LrgDockArea  *self,
  * @width: (out) (optional): tab width
  * @height: (out) (optional): tab height
  *
+ * The rectangle follows the strip's scroll offset, so for a tab
+ * scrolled out of an overflowing strip it lies (partly) outside the
+ * visible tab region; see lrg_dock_area_get_tab_visible().
+ *
  * Returns: %TRUE if @panel is docked in @self
  */
 LRG_AVAILABLE_IN_ALL
@@ -411,6 +450,152 @@ gboolean lrg_dock_area_get_tab_rect (LrgDockArea  *self,
                                      gfloat       *y,
                                      gfloat       *width,
                                      gfloat       *height);
+
+/* ==========================================================================
+ * Tab strip overflow
+ * ========================================================================== */
+
+/**
+ * lrg_dock_area_get_tabs_overflow:
+ * @self: an #LrgDockArea
+ * @panel: a docked panel
+ *
+ * Whether the tabs of the stack holding @panel do not fit its strip
+ * even at their readable minimum width. Tabs first shrink from their
+ * natural width towards that minimum (titles end in an ellipsis);
+ * past it the strip scrolls instead, and scroll arrows plus a tab
+ * list button appear at its trailing end.
+ *
+ * Returns: %TRUE if the strip overflows; %FALSE when it does not or
+ *   @panel is not docked in a stack of @self
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_dock_area_get_tabs_overflow (LrgDockArea  *self,
+                                          LrgDockPanel *panel);
+
+/**
+ * lrg_dock_area_get_tab_scroll:
+ * @self: an #LrgDockArea
+ * @panel: a docked panel
+ *
+ * Gets how far the strip of @panel's stack is scrolled from its first
+ * tab, in units, as currently drawn (the offset glides on a spring
+ * after lrg_dock_area_scroll_tabs() and wheel scrolling).
+ *
+ * Returns: the scroll offset, 0 when the strip does not overflow
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_dock_area_get_tab_scroll (LrgDockArea  *self,
+                                     LrgDockPanel *panel);
+
+/**
+ * lrg_dock_area_get_tab_scroll_max:
+ * @self: an #LrgDockArea
+ * @panel: a docked panel
+ *
+ * Returns: the largest scroll offset of @panel's strip (the length of
+ *   the tab row minus the visible tab region), 0 when it fits
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_dock_area_get_tab_scroll_max (LrgDockArea  *self,
+                                         LrgDockPanel *panel);
+
+/**
+ * lrg_dock_area_set_tab_scroll:
+ * @self: an #LrgDockArea
+ * @panel: a docked panel
+ * @offset: wanted scroll offset in units; clamped to
+ *   0..lrg_dock_area_get_tab_scroll_max()
+ *
+ * Scrolls the strip of @panel's stack to @offset at once (no glide).
+ * The strip may scroll the active tab out of view this way; it comes
+ * back into view whenever a tab is activated, the stack's tabs change
+ * or the stack is resized.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_dock_area_set_tab_scroll (LrgDockArea  *self,
+                                   LrgDockPanel *panel,
+                                   gfloat        offset);
+
+/**
+ * lrg_dock_area_scroll_tabs:
+ * @self: an #LrgDockArea
+ * @panel: a docked panel
+ * @delta: units to scroll, positive towards the last tab
+ *
+ * Scrolls the strip of @panel's stack by @delta from its current
+ * target, gliding there on a spring (what the mouse wheel does over
+ * the strip). Does nothing when the strip does not overflow.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_dock_area_scroll_tabs (LrgDockArea  *self,
+                                LrgDockPanel *panel,
+                                gfloat        delta);
+
+/**
+ * lrg_dock_area_get_tab_visible:
+ * @self: an #LrgDockArea
+ * @panel: a docked panel
+ *
+ * Returns: %TRUE if @panel's tab lies entirely in the visible tab
+ *   region of its strip (always, for strips that do not overflow)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_dock_area_get_tab_visible (LrgDockArea  *self,
+                                        LrgDockPanel *panel);
+
+/**
+ * lrg_dock_area_get_strip_button_rect:
+ * @self: an #LrgDockArea
+ * @panel: a docked panel
+ * @button: which strip button
+ * @x: (out) (optional): world left edge of the button
+ * @y: (out) (optional): world top edge
+ * @width: (out) (optional): button width
+ * @height: (out) (optional): button height
+ *
+ * Gets where one of the overflow buttons of @panel's strip is drawn.
+ *
+ * Returns: %TRUE if the strip overflows (and so has the button)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_dock_area_get_strip_button_rect (LrgDockArea        *self,
+                                              LrgDockPanel       *panel,
+                                              LrgDockStripButton  button,
+                                              gfloat             *x,
+                                              gfloat             *y,
+                                              gfloat             *width,
+                                              gfloat             *height);
+
+/**
+ * lrg_dock_area_popup_tab_list:
+ * @self: an #LrgDockArea
+ * @panel: a docked panel
+ *
+ * Opens the tab list of @panel's stack under its list button (or
+ * under the strip's trailing end when the strip does not overflow):
+ * an #LrgMenu with one row per tab (icon and full title), the active
+ * tab highlighted. Picking a row presents that panel and scrolls its
+ * tab into view. The area must be on a canvas.
+ *
+ * Returns: %TRUE if the menu opened
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_dock_area_popup_tab_list (LrgDockArea  *self,
+                                       LrgDockPanel *panel);
+
+/**
+ * lrg_dock_area_get_tab_list_menu:
+ * @self: an #LrgDockArea
+ *
+ * Gets the menu lrg_dock_area_popup_tab_list() shows (created on its
+ * first use and reused), e.g. to read or activate its rows in tests.
+ *
+ * Returns: (transfer none) (nullable): the tab list menu, or %NULL
+ *   before the list was first opened
+ */
+LRG_AVAILABLE_IN_ALL
+LrgMenu * lrg_dock_area_get_tab_list_menu (LrgDockArea *self);
 
 /**
  * lrg_dock_area_get_panel_share:

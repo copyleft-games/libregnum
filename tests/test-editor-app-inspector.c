@@ -783,6 +783,8 @@ test_live (EditorAppFixture *f,
 	g_auto(GValue)           v = G_VALUE_INIT;
 	g_auto(GValue)           shown = G_VALUE_INIT;
 
+	/* LrgGameObject live inspection: play this level in 2D */
+	lrg_level_set_default_2d (lrg_editor_get_level (f->editor), TRUE);
 	add_health (node, TEST_KIND_MAGIC, 30.0);
 	select_nodes (f, node, NULL, NULL);
 	g_assert_true (lrg_editor_app_activate_action (f->app, "play.start"));
@@ -1177,6 +1179,105 @@ test_checkbox_inconsistent (void)
  * Main
  * ========================================================================== */
 
+/* 0.9.0 (ED2): light rows by kind, decal and probe param hints, the
+ * LOD section and lod.* without a GPU. */
+static LrgNode *
+add_kind (EditorAppFixture  *f,
+          const gchar       *name,
+          LrgNodeVisualKind  kind)
+{
+	LrgNode                 *node = add_node (f, name, 0.0f, 0.0f);
+	g_autoptr(LrgNodeVisual) visual = lrg_node_visual_new (kind);
+
+	lrg_node_set_visual (node, visual);
+	return node;
+}
+
+static void
+test_render_kinds (EditorAppFixture *f,
+                   gconstpointer     data)
+{
+	LrgEditorInspectorPanel *insp = inspector (f);
+	LrgPropertyGrid         *grid;
+	LrgNode                 *light, *decal, *probe, *mesh;
+	g_auto(GValue)           v = G_VALUE_INIT;
+	g_autofree gchar        *reply = NULL;
+	g_autofree gchar        *req = NULL;
+
+	lrg_editor_new_level (f->editor, "kinds");
+	light = add_kind (f, "lamp", LRG_NODE_VISUAL_LIGHT);
+	decal = add_kind (f, "stain", LRG_NODE_VISUAL_DECAL);
+	probe = add_kind (f, "mirror", LRG_NODE_VISUAL_REFLECTION_PROBE);
+	mesh = add_kind (f, "rock", LRG_NODE_VISUAL_MESH_ASSET);
+	efx_frames (f, 2);
+	grid = lrg_editor_inspector_panel_get_grid (insp, LRG_EDITOR_NODE_SECTION_VISUAL, NULL);
+
+	/* A point light: range, the light type picker, no inner cone */
+	select_nodes (f, light, NULL, NULL);
+	g_assert_nonnull (lrg_property_grid_get_row (grid, "param-range"));
+	g_assert_nonnull (lrg_property_grid_get_row (grid, "param-light-type"));
+	g_assert_null (lrg_property_grid_get_row (grid, "param-spot-inner-angle"));
+
+	/* A spot shows its inner cone */
+	g_value_init (&v, G_TYPE_STRING);
+	g_value_set_string (&v, "spot");
+	lrg_node_visual_set_param (lrg_node_get_visual (light), "light_type", &v);
+	select_nodes (f, decal, NULL, NULL);
+	select_nodes (f, light, NULL, NULL);
+	g_assert_nonnull (lrg_property_grid_get_row (grid, "param-spot-inner-angle"));
+
+	/* A directional light has no range or cone */
+	g_value_set_string (&v, "directional");
+	lrg_node_visual_set_param (lrg_node_get_visual (light), "light_type", &v);
+	select_nodes (f, decal, NULL, NULL);
+	select_nodes (f, light, NULL, NULL);
+	g_assert_null (lrg_property_grid_get_row (grid, "param-range"));
+	g_assert_null (lrg_property_grid_get_row (grid, "param-spot-angle"));
+
+	/* A decal: box size, fade, an albedo asset row; no roughness material row */
+	select_nodes (f, decal, NULL, NULL);
+	g_assert_nonnull (lrg_property_grid_get_row (grid, "param-size-x"));
+	g_assert_nonnull (lrg_property_grid_get_row (grid, "param-fade-angle"));
+	g_assert_nonnull (lrg_property_grid_get_row (grid, "asset"));
+	g_assert_nonnull (lrg_property_grid_get_row (grid, "color"));
+	g_assert_null (lrg_property_grid_get_row (grid, "roughness"));
+
+	/* A probe: extents (default 5), blend band, resolution */
+	select_nodes (f, probe, NULL, NULL);
+	g_assert_nonnull (lrg_property_grid_get_row (grid, "param-extents-x"));
+	g_assert_nonnull (lrg_property_grid_get_row (grid, "param-blend-distance"));
+	g_assert_nonnull (lrg_property_grid_get_row (grid, "param-resolution"));
+	req = g_strdup_printf ("{'id':1,'method':'inspector.get','params':{'node':'%s','section':'visual',"
+	                       "'name':'param-extents-y'}}", lrg_node_get_guid (probe));
+	{
+		g_autoptr(JsonNode) r = efx_ipc_result (f, req);
+		JsonObject         *o = json_node_get_object (r);
+
+		g_assert_cmpfloat_with_epsilon (json_object_get_double_member (o, "value"), 5.0, 1e-6);
+	}
+
+	/* The LOD section stays hidden without levels (no GPU, no meta) */
+	select_nodes (f, mesh, NULL, NULL);
+	g_assert_false (lrg_widget_get_visible (efx_find (f, "inspector-section-lod")));
+	g_clear_pointer (&req, g_free);
+	req = g_strdup_printf ("{'id':2,'method':'lod.get','params':{'node':'%s'}}", lrg_node_get_guid (mesh));
+	{
+		g_autoptr(JsonNode) r = efx_ipc_result (f, req);
+		JsonObject         *o = json_node_get_object (r);
+
+		g_assert_false (json_object_get_boolean_member (o, "available"));
+		g_assert_cmpint (json_object_get_int_member (o, "forced"), ==, -1);
+		g_assert_cmpuint (json_array_get_length (json_object_get_array_member (o, "levels")), ==, 0);
+	}
+	g_clear_pointer (&req, g_free);
+	req = g_strdup_printf ("{'id':3,'method':'lod.force','params':{'node':'%s','level':1}}", lrg_node_get_guid (mesh));
+	reply = efx_ipc (f, req);
+	g_assert_nonnull (strstr (reply, "no LOD levels"));
+	g_clear_pointer (&reply, g_free);
+	reply = efx_ipc (f, "{'id':4,'method':'lod.get','params':{'node':'nope'}}");
+	g_assert_nonnull (strstr (reply, "\"error\""));
+}
+
 int
 main (int argc, char *argv[])
 {
@@ -1205,6 +1306,7 @@ main (int argc, char *argv[])
 	ADD ("live", test_live);
 	ADD ("ipc", test_ipc);
 	ADD ("enum-roundtrip", test_enum_roundtrip);
+	ADD ("render-kinds", test_render_kinds);
 #undef ADD
 	g_test_add_func ("/editor-app/inspector/spin-box-scrub", test_spin_box_scrub);
 	g_test_add_func ("/editor-app/inspector/checkbox-inconsistent", test_checkbox_inconsistent);

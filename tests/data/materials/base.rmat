@@ -1,0 +1,8 @@
+version: 1
+name: base
+base_color: [0.2, 0.4, 0.6, 1.0]
+roughness: 0.9
+textures:
+  albedo: crate_albedo.png
+uniforms:
+  wobble: 1.5

@@ -58,7 +58,10 @@
 #include "../../core/lrg-registry.h"
 #include "../../ecs/lrg-component.h"
 #include "../../ecs/lrg-game-object.h"
+#include "../../world3d/lrg-entity3d.h"
+#include "../../world3d/lrg-world3d.h"
 #include "../../ui/lrg-label.h"
+#include "../../ui/lrg-inspector-nested.h"
 #include "../../ui/lrg-button.h"
 #include "../../ui/lrg-text-input.h"
 #include "../../ui/lrg-scroll-box.h"
@@ -67,6 +70,26 @@
 #include "../../ui/lrg-expander.h"
 #include "../../ui/lrg-drop-target.h"
 #include "../../ui/lrg-ui-event.h"
+#include "../../ui/lrg-combo-box.h"
+#include "../../ui/lrg-custom-widget.h"
+#include "../../graphics/lrg-lod-group.h"
+#include "../../animation/lrg-anim-graph.h"
+#include "../../animation/lrg-animation-layer.h"
+#include "../../animation/lrg-animation-state-machine.h"
+#include "../../animation/lrg-ik-chain.h"
+#include "../../world3d/components/lrg-animator-component3d.h"
+#include "../../world3d/components/lrg-audio-source-component.h"
+#include "../../level/lrg-level-instantiate.h"
+#include "../../audio/lrg-mixer-asset.h"
+#include "../../audio/lrg-audio-manager.h"
+#include "../../ui/lrg-curve-edit.h"
+#include "../../tween/lrg-keyframe-curve.h"
+#include "data/lrg-editor-mixer-editor.h"
+#include "data/lrg-editor-anim-graph-editor.h"
+#include "lrg-editor-scene-renderer.h"
+#include "lrg-editor-gizmo-paint.h"
+#include "lrg-editor-viewport-panel.h"
+#include "lrg-editor-viewport-split.h"
 #include "../../paint/lrg-paint-icons.h"
 #include "../../lrg-log.h"
 #include <json-glib/json-glib.h>
@@ -680,6 +703,228 @@ insp_level_source_new (LrgEditorApp *app)
 }
 
 /* ==========================================================================
+ * Private: InspEntitySource, a live 3D entity's own state
+ * ========================================================================== */
+
+#define INSP_TYPE_ENTITY_SOURCE (insp_entity_source_get_type ())
+G_DECLARE_FINAL_TYPE (InspEntitySource, insp_entity_source, INSP, ENTITY_SOURCE, GObject)
+
+/*
+ * InspEntitySource:
+ *
+ * The "Entity" section of a live #LrgEntity3D during 3D play: name,
+ * active and visible flags, the local transform (position, Euler
+ * rotation in degrees, scale) and the read-only world position. Edits
+ * go straight into the play world like every live row (a DIRECT grid):
+ * they are not undoable and are dropped on Stop unless the simulation
+ * sync-back writes them into the node. The entity is held weakly, so a
+ * destroyed entity just reads as nothing.
+ */
+struct _InspEntitySource
+{
+	GObject      parent_instance;
+
+	LrgEntity3D *entity;   /* weak */
+	GPtrArray   *pspecs;   /* GParamSpec*, owned refs */
+};
+
+static void insp_entity_source_iface_init (LrgPropertySourceInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (InspEntitySource, insp_entity_source, G_TYPE_OBJECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PROPERTY_SOURCE, insp_entity_source_iface_init))
+
+#define INSP_RAD2DEG (180.0 / G_PI)
+#define INSP_DEG2RAD (G_PI / 180.0)
+
+static GPtrArray *
+insp_entity_source_list (LrgPropertySource *source)
+{
+	InspEntitySource *self = INSP_ENTITY_SOURCE (source);
+	GPtrArray        *infos = g_ptr_array_new_with_free_func ((GDestroyNotify) lrg_property_info_unref);
+	guint             i;
+
+	for (i = 0; i < self->pspecs->len; i++)
+		g_ptr_array_add (infos, lrg_property_info_new (g_ptr_array_index (self->pspecs, i)));
+	return infos;
+}
+
+/* A boxed GrlVector3 value from three floats (scaled by @k). */
+static void
+insp_vec3_value (GValue       *value,
+                 const gfloat *v,
+                 gdouble       k)
+{
+	g_value_init (value, GRL_TYPE_VECTOR3);
+	g_value_take_boxed (value, grl_vector3_new ((gfloat) (v[0] * k), (gfloat) (v[1] * k), (gfloat) (v[2] * k)));
+}
+
+static gboolean
+insp_entity_source_get (LrgPropertySource *source,
+                        const gchar       *name,
+                        GValue            *value)
+{
+	InspEntitySource *self = INSP_ENTITY_SOURCE (source);
+	gfloat            v[3];
+
+	if (self->entity == NULL)
+		return FALSE;
+
+	if (g_strcmp0 (name, "name") == 0)
+	{
+		g_value_init (value, G_TYPE_STRING);
+		g_value_set_string (value, lrg_entity3d_get_name (self->entity));
+	}
+	else if (g_strcmp0 (name, "active") == 0)
+	{
+		g_value_init (value, G_TYPE_BOOLEAN);
+		g_value_set_boolean (value, lrg_entity3d_get_active (self->entity));
+	}
+	else if (g_strcmp0 (name, "visible") == 0)
+	{
+		g_value_init (value, G_TYPE_BOOLEAN);
+		g_value_set_boolean (value, lrg_entity3d_get_visible (self->entity));
+	}
+	else if (g_strcmp0 (name, "position") == 0)
+	{
+		lrg_entity3d_get_position (self->entity, v);
+		insp_vec3_value (value, v, 1.0);
+	}
+	else if (g_strcmp0 (name, "rotation") == 0)
+	{
+		lrg_entity3d_get_rotation_euler (self->entity, v);
+		insp_vec3_value (value, v, INSP_RAD2DEG);
+	}
+	else if (g_strcmp0 (name, "scale") == 0)
+	{
+		lrg_entity3d_get_scale (self->entity, v);
+		insp_vec3_value (value, v, 1.0);
+	}
+	else if (g_strcmp0 (name, "world") == 0)
+	{
+		lrg_entity3d_get_world_position (self->entity, v);
+		insp_vec3_value (value, v, 1.0);
+	}
+	else
+		return FALSE;
+	return TRUE;
+}
+
+static gboolean
+insp_entity_source_set (LrgPropertySource *source,
+                        const gchar       *name,
+                        const GValue      *value)
+{
+	InspEntitySource *self = INSP_ENTITY_SOURCE (source);
+	GrlVector3       *vec;
+	gfloat            v[3];
+
+	if (self->entity == NULL)
+		return FALSE;
+
+	if (g_strcmp0 (name, "name") == 0 && G_VALUE_HOLDS_STRING (value))
+		lrg_entity3d_set_name (self->entity, g_value_get_string (value));
+	else if (g_strcmp0 (name, "active") == 0 && G_VALUE_HOLDS_BOOLEAN (value))
+		lrg_entity3d_set_active (self->entity, g_value_get_boolean (value));
+	else if (g_strcmp0 (name, "visible") == 0 && G_VALUE_HOLDS_BOOLEAN (value))
+		lrg_entity3d_set_visible (self->entity, g_value_get_boolean (value));
+	else if (G_VALUE_HOLDS (value, GRL_TYPE_VECTOR3) && (vec = g_value_get_boxed (value)) != NULL)
+	{
+		v[0] = vec->x;
+		v[1] = vec->y;
+		v[2] = vec->z;
+		if (g_strcmp0 (name, "position") == 0)
+			lrg_entity3d_set_position (self->entity, v);
+		else if (g_strcmp0 (name, "scale") == 0)
+			lrg_entity3d_set_scale (self->entity, v);
+		else if (g_strcmp0 (name, "rotation") == 0)
+		{
+			v[0] = (gfloat) (v[0] * INSP_DEG2RAD);
+			v[1] = (gfloat) (v[1] * INSP_DEG2RAD);
+			v[2] = (gfloat) (v[2] * INSP_DEG2RAD);
+			lrg_entity3d_set_rotation_euler (self->entity, v);
+		}
+		else
+			return FALSE;
+	}
+	else
+		return FALSE;
+
+	lrg_property_source_emit_changed (source, name);
+	return TRUE;
+}
+
+static LrgPropertyState
+insp_entity_source_get_state (LrgPropertySource *source,
+                              const gchar       *name)
+{
+	return LRG_PROPERTY_STATE_NONE;
+}
+
+static void
+insp_entity_source_iface_init (LrgPropertySourceInterface *iface)
+{
+	iface->list_properties = insp_entity_source_list;
+	iface->get_value = insp_entity_source_get;
+	iface->set_value = insp_entity_source_set;
+	iface->get_state = insp_entity_source_get_state;
+}
+
+static void
+insp_entity_source_dispose (GObject *object)
+{
+	g_clear_weak_pointer (&INSP_ENTITY_SOURCE (object)->entity);
+	G_OBJECT_CLASS (insp_entity_source_parent_class)->dispose (object);
+}
+
+static void
+insp_entity_source_finalize (GObject *object)
+{
+	g_ptr_array_unref (INSP_ENTITY_SOURCE (object)->pspecs);
+	G_OBJECT_CLASS (insp_entity_source_parent_class)->finalize (object);
+}
+
+static void
+insp_entity_source_class_init (InspEntitySourceClass *klass)
+{
+	G_OBJECT_CLASS (klass)->dispose = insp_entity_source_dispose;
+	G_OBJECT_CLASS (klass)->finalize = insp_entity_source_finalize;
+}
+
+static void
+insp_entity_source_init (InspEntitySource *self)
+{
+	GParamFlags rw = G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS;
+	GParamFlags ro = G_PARAM_READABLE | G_PARAM_STATIC_STRINGS;
+
+	self->pspecs = g_ptr_array_new_with_free_func ((GDestroyNotify) g_param_spec_unref);
+	g_ptr_array_add (self->pspecs, g_param_spec_ref_sink (
+		g_param_spec_string ("name", "Name", "The entity's name", NULL, rw)));
+	g_ptr_array_add (self->pspecs, g_param_spec_ref_sink (
+		g_param_spec_boolean ("active", "Active", "Takes part in updates", TRUE, rw)));
+	g_ptr_array_add (self->pspecs, g_param_spec_ref_sink (
+		g_param_spec_boolean ("visible", "Visible", "Collected for rendering", TRUE, rw)));
+	g_ptr_array_add (self->pspecs, g_param_spec_ref_sink (
+		g_param_spec_boxed ("position", "Position", "[hint:vector3] Local position", GRL_TYPE_VECTOR3, rw)));
+	g_ptr_array_add (self->pspecs, g_param_spec_ref_sink (
+		g_param_spec_boxed ("rotation", "Rotation", "[hint:vector3] Local Euler rotation, in degrees",
+		                    GRL_TYPE_VECTOR3, rw)));
+	g_ptr_array_add (self->pspecs, g_param_spec_ref_sink (
+		g_param_spec_boxed ("scale", "Scale", "[hint:vector3] Local scale", GRL_TYPE_VECTOR3, rw)));
+	g_ptr_array_add (self->pspecs, g_param_spec_ref_sink (
+		g_param_spec_boxed ("world", "World", "[hint:vector3] World-space position (read-only)",
+		                    GRL_TYPE_VECTOR3, ro)));
+}
+
+static InspEntitySource *
+insp_entity_source_new (LrgEntity3D *entity)
+{
+	InspEntitySource *self = g_object_new (INSP_TYPE_ENTITY_SOURCE, NULL);
+
+	g_set_weak_pointer (&self->entity, entity);
+	return self;
+}
+
+/* ==========================================================================
  * Private: InspPicker, a searchable list popup
  * ========================================================================== */
 
@@ -1212,7 +1457,8 @@ typedef struct
 	gchar           *key;
 	LrgExpander     *expander;  /* owned ref */
 	LrgPropertyGrid *grid;      /* borrowed */
-	LrgComponent    *component; /* owned ref while shown */
+	GObject         *target;    /* owned ref while shown: a component, or the
+	                             * entity for the "entity" section */
 } LiveSection;
 
 struct _LrgEditorInspectorPanel
@@ -1240,6 +1486,7 @@ struct _LrgEditorInspectorPanel
 	LrgButton            *prefab_revert;
 	LrgButton            *prefab_unlink;
 	LrgButton            *prefab_relink;
+	LrgButton            *prefab_variant;   /* Create Variant (0.9.0) */
 	LrgScrollBox         *scroll;
 	LrgVBox              *body;
 
@@ -1262,6 +1509,47 @@ struct _LrgEditorInspectorPanel
 	gchar                *script_sig;   /* rows were built for this */
 	LrgButton            *new_script;
 	LrgButton            *attach_script;
+
+	/* Physics summary (0.9.0 M5): one line about the node's body, a
+	 * button to the Physics panel */
+	LrgExpander          *phys_section;
+	LrgLabel             *phys_summary;
+	LrgButton            *phys_add;
+
+	/* Audio source (0.9.0 M7): one audio emitter's attenuation, cone,
+	 * doppler, occlusion and bus, a rolloff plot and the custom curve */
+	LrgExpander          *audio_section;
+	LrgPropertyGrid      *audio_grid;
+	GObject              *audio_src;     /* InspAudioSource, owned */
+	LrgWidget            *audio_plot;    /* custom: gain over distance */
+	LrgCurveEdit         *audio_curve;   /* the custom rolloff curve */
+	LrgLabel             *audio_label;
+	LrgNode              *audio_node;    /* weak: the emitter shown */
+	LrgNode              *audio_before;  /* snapshot while the curve is dragged */
+	gchar                *audio_sig;     /* node + bus list the rows were built for */
+	gboolean              audio_syncing;
+
+	/* LOD preview (0.9.0): mesh-asset nodes whose model has LOD levels */
+	LrgExpander          *lod_section;
+	LrgWidget            *lod_levels;   /* custom: screen-size meter and level rows */
+	LrgComboBox          *lod_force;
+	LrgLodGroup          *lod_group;    /* weak: the group shown (owned by the scene renderer) */
+	LrgNode              *lod_node;     /* weak: its node */
+	guint                 lod_n;        /* levels the force combo lists */
+	gboolean              lod_syncing;
+
+	/* Animator (0.9.0): nodes with an animator3d component */
+	LrgExpander          *anim_section;
+	LrgLabel             *anim_label;
+	LrgButton            *anim_open;
+	LrgWidget            *anim_list;     /* custom: parameters, layers, IK goals */
+	gchar                *anim_path;     /* absolute graph path shown */
+	LrgAnimGraph         *anim_file_graph; /* loaded from anim_path (authoring view) */
+	gchar                *anim_error;
+	GPtrArray            *anim_hits;     /* AnimHit* of the last paint */
+	gchar                *anim_drag;     /* parameter being dragged */
+	gfloat                anim_drag_x;
+	gfloat                anim_drag_value;
 
 	/* Live inspection */
 	LrgVBox              *live_box;
@@ -2286,6 +2574,48 @@ update_script_rows (LrgEditorInspectorPanel *self)
  * ========================================================================== */
 
 /*
+ * prefab_chain_text:
+ *
+ * "base.rprefab > variant.rprefab" for a source that is a prefab variant
+ * (base first, then each variant down to @source), or NULL for a plain
+ * prefab or an unreadable chain. The chain is read from the files once
+ * per source and cached on the info label until the source changes.
+ */
+static const gchar *
+prefab_chain_text (LrgEditorInspectorPanel *self,
+                   const gchar             *source)
+{
+	const gchar         *cached_src = g_object_get_data (G_OBJECT (self->prefab_info), "insp-chain-src");
+	g_autofree gchar    *abs = NULL;
+	g_auto(GStrv)        chain = NULL;
+	g_autoptr(GString)   text = NULL;
+	gint                 i;
+
+	if (g_strcmp0 (cached_src, source) == 0)
+		return g_object_get_data (G_OBJECT (self->prefab_info), "insp-chain-text");
+
+	abs = (self->app != NULL) ? editor_app_project_path (self->app, source) : NULL;
+	chain = lrg_prefab_get_variant_chain (abs != NULL ? abs : source, NULL);
+	if (chain != NULL && g_strv_length (chain) > 1)
+	{
+		text = g_string_new (NULL);
+		for (i = (gint) g_strv_length (chain) - 1; i >= 0; i--)
+		{
+			g_autofree gchar *base = g_path_get_basename (chain[i]);
+
+			g_string_append (text, base);
+			if (i > 0)
+				g_string_append (text, " > ");
+		}
+	}
+
+	g_object_set_data_full (G_OBJECT (self->prefab_info), "insp-chain-src", g_strdup (source), g_free);
+	g_object_set_data_full (G_OBJECT (self->prefab_info), "insp-chain-text",
+	                        text != NULL ? g_string_free (g_steal_pointer (&text), FALSE) : NULL, g_free);
+	return g_object_get_data (G_OBJECT (self->prefab_info), "insp-chain-text");
+}
+
+/*
  * update_prefab_bar:
  *
  * For a node of a linked prefab instance (the first inspected node):
@@ -2321,9 +2651,17 @@ update_prefab_bar (LrgEditorInspectorPanel *self,
 
 	if (link != NULL)
 	{
+		const gchar *chain = prefab_chain_text (self, source);
+
+		/* Overrides are always relative to the nearest source: the
+		 * variant when the source is one, its base chain shown first. */
 		n = lrg_prefab_link_get_n_overrides (link);
-		info = n == 0 ? g_strdup ("Linked prefab instance, no overrides")
-		              : g_strdup_printf ("Linked prefab instance, %u override%s", n, n == 1 ? "" : "s");
+		if (chain != NULL)
+			info = n == 0 ? g_strdup_printf ("Variant chain %s, no overrides", chain)
+			              : g_strdup_printf ("Variant chain %s, %u override%s", chain, n, n == 1 ? "" : "s");
+		else
+			info = n == 0 ? g_strdup ("Linked prefab instance, no overrides")
+			              : g_strdup_printf ("Linked prefab instance, %u override%s", n, n == 1 ? "" : "s");
 		lrg_widget_set_enabled (LRG_WIDGET (self->prefab_select), node != owner || self->nodes->len > 1);
 		lrg_widget_set_enabled (LRG_WIDGET (self->prefab_apply), n > 0);
 		lrg_widget_set_enabled (LRG_WIDGET (self->prefab_revert), n > 0);
@@ -2336,6 +2674,8 @@ update_prefab_bar (LrgEditorInspectorPanel *self,
 	lrg_widget_set_visible (LRG_WIDGET (self->prefab_revert), link != NULL);
 	lrg_widget_set_visible (LRG_WIDGET (self->prefab_unlink), link != NULL);
 	lrg_widget_set_visible (LRG_WIDGET (self->prefab_relink), link == NULL);
+	lrg_widget_set_visible (LRG_WIDGET (self->prefab_variant), link != NULL);
+	lrg_widget_set_enabled (LRG_WIDGET (self->prefab_variant), link != NULL && node == owner);
 }
 
 /* prefab_owner: the instance root of the first inspected node */
@@ -2431,6 +2771,44 @@ on_prefab_relink_clicked (LrgButton *button,
 		                   error != NULL ? error->message : "unknown error");
 }
 
+/*
+ * on_prefab_variant_clicked:
+ *
+ * Create Variant from the inspected instance root: the variant goes next
+ * to the source as `<stem>_variant.rprefab` (resolved against the project
+ * root), the instance's overrides move into it and the instance is
+ * relinked to it; one undo step (lrg_editor_prefab_create_variant()).
+ */
+static void
+on_prefab_variant_clicked (LrgButton *button,
+                           gpointer   user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+	g_autoptr(LrgNode)       owner = prefab_owner (self) != NULL ? g_object_ref (prefab_owner (self)) : NULL;
+	g_autoptr(GError)        error = NULL;
+	LrgPrefabLink           *link;
+	const gchar             *source;
+	g_autofree gchar        *abs = NULL;
+	g_autofree gchar        *variant = NULL;
+
+	if (owner == NULL || (link = lrg_node_get_prefab_link (owner)) == NULL)
+		return;
+	source = lrg_prefab_link_get_source_path (link);
+	if (source == NULL)
+		return;
+
+	abs = (self->app != NULL) ? editor_app_project_path (self->app, source) : NULL;
+	variant = lrg_editor_prefab_suggest_variant_path (abs != NULL ? abs : source);
+	if (variant == NULL)
+		return;
+
+	if (lrg_editor_prefab_create_variant (self->editor, owner, variant, &error))
+		status (self, "Created prefab variant");
+	else if (self->app != NULL)
+		editor_app_notify (self->app, EDITOR_NOTIFY_ERROR, "Create variant failed: %s",
+		                   error != NULL ? error->message : "unknown error");
+}
+
 /* ==========================================================================
  * Live inspection
  * ========================================================================== */
@@ -2441,7 +2819,7 @@ live_section_free (gpointer data)
 	LiveSection *sec = data;
 
 	g_free (sec->key);
-	g_clear_object (&sec->component);
+	g_clear_object (&sec->target);
 	g_clear_object (&sec->expander);
 	g_free (sec);
 }
@@ -2458,10 +2836,10 @@ on_live_apply (GSimpleAction *action,
 	const gchar             *name = g_variant_get_string (parameter, NULL);
 	g_autoptr(GError)        error = NULL;
 
-	if (self == NULL || sec == NULL || sec->component == NULL || !LRG_IS_GAME_OBJECT (self->live_object))
+	if (self == NULL || sec == NULL || !LRG_IS_COMPONENT (sec->target) || self->live_object == NULL)
 		return;
-	if (lrg_editor_play_session_apply_to_level (self->play, LRG_GAME_OBJECT (self->live_object), sec->component,
-	                                            name, &error))
+	if (lrg_editor_play_session_apply_live (self->play, self->live_object, LRG_COMPONENT (sec->target),
+	                                        name, &error))
 	{
 		if (self->app != NULL)
 			editor_app_set_status (self->app, "Applied %s to the level", name);
@@ -2526,35 +2904,70 @@ live_type_name (LrgComponent *component)
 	return name != NULL ? name : G_OBJECT_TYPE_NAME (component);
 }
 
+/* The components of a live object (2D game object or 3D entity), in
+ * attach order; the array does not own them. */
+static GPtrArray *
+live_object_components (GObject *object)
+{
+	GPtrArray *out = g_ptr_array_new ();
+	guint      i;
+
+	if (LRG_IS_GAME_OBJECT (object))
+	{
+		GList *list = lrg_game_object_get_components (LRG_GAME_OBJECT (object));
+		GList *l;
+
+		for (l = list; l != NULL; l = l->next)
+			g_ptr_array_add (out, l->data);
+		g_list_free (list);
+	}
+	else if (LRG_IS_ENTITY3D (object))
+	{
+		GPtrArray *comps = lrg_entity3d_get_components (LRG_ENTITY3D (object));
+
+		for (i = 0; comps != NULL && i < comps->len; i++)
+			g_ptr_array_add (out, g_ptr_array_index (comps, i));
+	}
+	return out;
+}
+
+/* The key of the live section showing a 3D entity's own state. */
+#define LIVE_ENTITY_KEY "entity"
+
 /*
  * update_live:
  *
  * One DIRECT grid per component of @object over an
  * LrgObjectPropertySource; the LrgComponent base properties other than
- * "enabled" are hidden. A grid's source is replaced only when its
- * component object changed.
+ * "enabled" are hidden. A 3D entity gets an "entity" section first (its
+ * name, flags and transform, InspEntitySource). A grid's source is
+ * replaced only when its target object changed.
  */
 static void
 update_live (LrgEditorInspectorPanel *self,
              GObject                 *object)
 {
 	g_autoptr(GPtrArray)  keys = g_ptr_array_new_with_free_func (g_free);
-	g_autoptr(GPtrArray)  comps = g_ptr_array_new ();
+	g_autoptr(GPtrArray)  targets = g_ptr_array_new ();
 	g_autoptr(GHashTable) counts = g_hash_table_new (g_str_hash, g_str_equal);
-	GList                *list = lrg_game_object_get_components (LRG_GAME_OBJECT (object));
-	GList                *l;
+	g_autoptr(GPtrArray)  list = live_object_components (object);
 	guint                 i;
 
-	for (l = list; l != NULL; l = l->next)
+	if (LRG_IS_ENTITY3D (object))
 	{
-		const gchar *type = live_type_name (l->data);
-		guint        n = GPOINTER_TO_UINT (g_hash_table_lookup (counts, type)) + 1;
+		g_ptr_array_add (keys, g_strdup (LIVE_ENTITY_KEY));
+		g_ptr_array_add (targets, object);
+	}
+	for (i = 0; i < list->len; i++)
+	{
+		LrgComponent *comp = g_ptr_array_index (list, i);
+		const gchar  *type = live_type_name (comp);
+		guint         n = GPOINTER_TO_UINT (g_hash_table_lookup (counts, type)) + 1;
 
 		g_hash_table_insert (counts, (gpointer) type, GUINT_TO_POINTER (n));
 		g_ptr_array_add (keys, n == 1 ? g_strdup (type) : g_strdup_printf ("%s#%u", type, n));
-		g_ptr_array_add (comps, l->data);
+		g_ptr_array_add (targets, comp);
 	}
-	g_list_free (list);
 
 	if (!strv_equal_array (self->live_keys, keys))
 	{
@@ -2573,14 +2986,27 @@ update_live (LrgEditorInspectorPanel *self,
 
 		if (!g_ptr_array_find_with_equal_func (keys, sec->key, g_str_equal, &at))
 		{
-			if (sec->component != NULL)
+			if (sec->target != NULL)
 			{
 				lrg_property_grid_set_sources (sec->grid, NULL);
-				g_clear_object (&sec->component);
+				g_clear_object (&sec->target);
 			}
 			continue;
 		}
-		if (sec->component != g_ptr_array_index (comps, at))
+		if (sec->target == g_ptr_array_index (targets, at))
+			continue;
+
+		g_set_object (&sec->target, g_ptr_array_index (targets, at));
+		if (LRG_IS_ENTITY3D (sec->target))
+		{
+			/* The entity's own state: no "Apply to Level" (the
+			 * sync-back already writes simulated transforms) */
+			g_autoptr(InspEntitySource) source = insp_entity_source_new (LRG_ENTITY3D (sec->target));
+
+			lrg_property_grid_set_source (sec->grid, LRG_PROPERTY_SOURCE (source));
+			update_row_menus (sec->grid, FALSE, FALSE);
+		}
+		else
 		{
 			g_autoptr(LrgObjectPropertySource) source = NULL;
 			GObjectClass                      *base = g_type_class_ref (LRG_TYPE_COMPONENT);
@@ -2588,8 +3014,7 @@ update_live (LrgEditorInspectorPanel *self,
 			guint                              n = 0;
 			guint                              k;
 
-			g_set_object (&sec->component, g_ptr_array_index (comps, at));
-			source = lrg_object_property_source_new (G_OBJECT (sec->component));
+			source = lrg_object_property_source_new (sec->target);
 			pspecs = g_object_class_list_properties (base, &n);
 			for (k = 0; k < n; k++)
 				if (g_strcmp0 (pspecs[k]->name, "enabled") != 0)
@@ -2612,10 +3037,10 @@ clear_live (LrgEditorInspectorPanel *self)
 	{
 		LiveSection *sec = g_ptr_array_index (self->live_pool, i);
 
-		if (sec->component != NULL)
+		if (sec->target != NULL)
 		{
 			lrg_property_grid_set_sources (sec->grid, NULL);
-			g_clear_object (&sec->component);
+			g_clear_object (&sec->target);
 		}
 	}
 	lrg_container_remove_all (LRG_CONTAINER (self->live_box));
@@ -2633,14 +3058,21 @@ clear_live (LrgEditorInspectorPanel *self)
 static GObject *
 compute_live_object (LrgEditorInspectorPanel *self)
 {
+	LrgWorld3D *world3d;
+
 	if (self->play == NULL || !lrg_editor_play_session_is_playing (self->play))
 		return NULL;
-	if (LRG_IS_GAME_OBJECT (self->live_explicit) &&
-	    lrg_editor_play_session_get_guid_for_object (self->play, LRG_GAME_OBJECT (self->live_explicit)) != NULL)
+
+	/* The Live tab's pick: a game object made from a node, or any entity
+	 * still in the 3D play world (spawned ones too) */
+	world3d = lrg_editor_play_session_get_world3d (self->play);
+	if (self->live_explicit != NULL &&
+	    (lrg_editor_play_session_get_guid_for_live (self->play, self->live_explicit) != NULL ||
+	     (world3d != NULL && LRG_IS_ENTITY3D (self->live_explicit) &&
+	      lrg_entity3d_get_world (LRG_ENTITY3D (self->live_explicit)) == world3d)))
 		return self->live_explicit;
 	if (self->nodes->len > 0)
-		return (GObject *) lrg_editor_play_session_get_object_for_node (self->play,
-		                                                               g_ptr_array_index (self->nodes, 0));
+		return lrg_editor_play_session_get_live_for_node (self->play, g_ptr_array_index (self->nodes, 0));
 	return NULL;
 }
 
@@ -2715,8 +3147,10 @@ structure_signature (LrgEditorInspectorPanel *self,
 	guint    i;
 
 	g_string_append_printf (sig, "L%d P%p|", self->locked, (gpointer) live);
-	if (live != NULL)
+	if (LRG_IS_GAME_OBJECT (live))
 		g_string_append_printf (sig, "c%u|", lrg_game_object_get_component_count (LRG_GAME_OBJECT (live)));
+	else if (LRG_IS_ENTITY3D (live))
+		g_string_append_printf (sig, "e%u|", lrg_entity3d_get_n_components (LRG_ENTITY3D (live)));
 	for (i = 0; i < self->nodes->len; i++)
 	{
 		LrgNode              *node = g_ptr_array_index (self->nodes, i);
@@ -2754,11 +3188,12 @@ update_title (LrgEditorInspectorPanel *self,
 
 	if (live != NULL)
 	{
-		const gchar *guid = lrg_editor_play_session_get_guid_for_object (self->play, LRG_GAME_OBJECT (live));
+		const gchar *guid = lrg_editor_play_session_get_guid_for_live (self->play, live);
 		LrgNode     *node = guid != NULL ? lrg_editor_find_node (self->editor, guid) : NULL;
+		const gchar *name = (node != NULL) ? lrg_node_get_name (node)
+		                  : LRG_IS_ENTITY3D (live) ? lrg_entity3d_get_name (LRG_ENTITY3D (live)) : NULL;
 
-		text = g_strdup_printf ("%s (live)", node != NULL && lrg_node_get_name (node) != NULL
-		                                     ? lrg_node_get_name (node) : G_OBJECT_TYPE_NAME (live));
+		text = g_strdup_printf ("%s (live)", name != NULL ? name : G_OBJECT_TYPE_NAME (live));
 	}
 	else if (self->nodes->len == 0)
 		text = g_strdup ("Level");
@@ -2790,6 +3225,1472 @@ set_mode_visibility (LrgEditorInspectorPanel *self,
 			lrg_widget_set_visible (LRG_WIDGET (self->sections[i]), nodes_mode);
 	lrg_widget_set_visible (LRG_WIDGET (self->comp_box), nodes_mode);
 	lrg_widget_set_visible (LRG_WIDGET (self->add_row), nodes_mode);
+}
+
+/* ==========================================================================
+ * LOD preview (0.9.0)
+ *
+ * For one selected mesh-asset node whose model has LOD levels (the scene
+ * renderer's per-asset LrgLodGroup, built from the asset's .meta): a meter
+ * of the node's screen size in the active viewport against every level's
+ * threshold, one row per level (triangles, simplification error, the
+ * threshold) with the level drawn now highlighted, and a "Force level"
+ * picker. Forcing sets the shared group's force level, so every instance
+ * of the asset shows it; it is a preview, reset when the node is no
+ * longer inspected (lrg_lod_group_set_force_level (group, -1)).
+ * ========================================================================== */
+
+/* The group of @node, or NULL (no window, model not loaded, one level). */
+static LrgLodGroup *
+lod_group_for (LrgEditorInspectorPanel *self,
+               LrgNode                 *node)
+{
+	LrgNodeVisual *visual = (node != NULL) ? lrg_node_get_visual (node) : NULL;
+
+	if (self->app == NULL || self->app->renderer == NULL || visual == NULL ||
+	    lrg_node_visual_get_kind (visual) != LRG_NODE_VISUAL_MESH_ASSET || lrg_node_visual_get_asset (visual) == NULL)
+		return NULL;
+	return lrg_editor_scene_renderer_get_lod_group (self->app->renderer, lrg_node_visual_get_asset (visual));
+}
+
+static void
+lod_queue_viewports (LrgEditorInspectorPanel *self)
+{
+	guint i;
+
+	if (self->app == NULL || self->app->viewport_split == NULL)
+		return;
+	for (i = 0; i < LRG_EDITOR_VIEW_MAX_VIEWPORTS; i++)
+	{
+		LrgEditorViewportPanel *p = lrg_editor_viewport_split_get_panel (self->app->viewport_split, i);
+
+		if (p != NULL)
+			lrg_editor_viewport_panel_queue_render (p);
+	}
+}
+
+/* The current screen size of the inspected LOD node. */
+static gfloat
+lod_screen_size (LrgEditorInspectorPanel *self)
+{
+	LrgEditorView view;
+
+	if (self->lod_group == NULL || self->lod_node == NULL || self->view == NULL)
+		return 0.0f;
+	lrg_editor_view_state_get_view (self->view, -1, &view);
+	return lrg_editor_lod_node_screen_size (&view, self->lod_node, self->lod_group);
+}
+
+#define LOD_METER_H (34.0f)
+#define LOD_ROW_H   (22.0f)
+
+static void
+lod_levels_measure (LrgCustomWidget     *widget,
+                    gfloat               avail_width,
+                    gfloat               avail_height,
+                    LrgCustomWidgetSize *size,
+                    gpointer             user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+	guint                    n = (self->lod_group != NULL) ? lrg_lod_group_get_n_levels (self->lod_group) : 0;
+
+	size->width = 160.0f;
+	size->height = LOD_METER_H + (gfloat) n * LOD_ROW_H + 4.0f;
+}
+
+/* Screen size 0..1 -> meter x (square root: small sizes get room). */
+static gfloat
+lod_meter_x (gfloat size,
+             gfloat x,
+             gfloat width)
+{
+	return x + width * sqrtf (CLAMP (size, 0.0f, 1.0f));
+}
+
+static void
+lod_levels_paint (LrgCustomWidget *widget,
+                  LrgPaintList    *list,
+                  gfloat           x,
+                  gfloat           y,
+                  gfloat           width,
+                  gfloat           height,
+                  gpointer         user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+	LrgTheme                *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	GrlFont                 *font = lrg_theme_get_ui_font (theme);
+	gfloat                   fs = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE_SMALL);
+	gfloat                   radius = lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS);
+	GrlColor                 track = *lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK);
+	GrlColor                 accent = *lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT);
+	GrlColor                 text = *lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT);
+	GrlColor                 muted = *lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED);
+	GrlColor                 sel = *lrg_theme_get_color (theme, LRG_THEME_COLOR_SELECTION);
+	GrlColor                 warn = *lrg_theme_get_color (theme, LRG_THEME_COLOR_WARNING);
+	gfloat                   size, mx;
+	gint                     current, forced;
+	guint                    n, i;
+	g_autofree gchar        *caption = NULL;
+
+	if (self->lod_group == NULL)
+		return;
+	n = lrg_lod_group_get_n_levels (self->lod_group);
+	size = lod_screen_size (self);
+	forced = lrg_lod_group_get_force_level (self->lod_group);
+	current = lrg_lod_group_select_level (self->lod_group, size, LRG_LOD_LEVEL_NONE);
+
+	/* The meter: track, threshold ticks, the node's size as a marker */
+	caption = g_strdup_printf ("Screen size %.1f%%", (gdouble) size * 100.0);
+	lrg_paint_list_text (list, font, caption, x, y, fs, 0.0f, &muted);
+	lrg_paint_list_rect (list, x, y + 18.0f, width, 8.0f, 4.0f, &track);
+	mx = lod_meter_x (size, x, width);
+	{
+		GrlColor fill = accent;
+
+		fill.a = 0x70;
+		lrg_paint_list_rect (list, x, y + 18.0f, MAX (mx - x, 8.0f), 8.0f, 4.0f, &fill);
+	}
+	for (i = 0; i < n; i++)
+	{
+		gfloat tx = lod_meter_x (lrg_lod_group_get_level_screen_size (self->lod_group, i), x, width);
+
+		lrg_paint_list_line (list, tx, y + 15.0f, tx, y + 29.0f, 1.5f, &text);
+	}
+	lrg_paint_list_circle (list, mx, y + 22.0f, 6.0f, &accent);
+
+	/* One row per level */
+	for (i = 0; i < n; i++)
+	{
+		gfloat            ry = y + LOD_METER_H + (gfloat) i * LOD_ROW_H;
+		gboolean          on = (gint) i == current;
+		g_autofree gchar *row = g_strdup_printf ("LOD %u   %d tris   >= %.0f%%   err %.4f", i,
+		                                         lrg_lod_group_get_level_triangle_count (self->lod_group, i),
+		                                         (gdouble) lrg_lod_group_get_level_screen_size (self->lod_group, i) *
+		                                         100.0,
+		                                         (gdouble) lrg_lod_group_get_level_error (self->lod_group, i));
+
+		if (on)
+			lrg_paint_list_rect (list, x - 2.0f, ry, width + 4.0f, LOD_ROW_H - 2.0f, radius, &sel);
+		lrg_paint_list_circle (list, x + 6.0f, ry + LOD_ROW_H * 0.5f - 1.0f, 3.5f,
+		                       on ? (forced >= 0 ? &warn : &accent) : &track);
+		lrg_paint_list_text (list, font, row, x + 16.0f, roundf (ry + (LOD_ROW_H - fs) * 0.5f - 1.0f), fs, 0.0f,
+		                     on ? &text : &muted);
+	}
+}
+
+/* Force picker: item 0 is "Auto", item k is level k - 1. */
+static void
+on_lod_force_changed (LrgComboBox *combo,
+                      gpointer     user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+	gint                     i = lrg_combo_box_get_selected (combo);
+
+	if (self->lod_syncing || self->lod_group == NULL || i < 0)
+		return;
+	lrg_lod_group_set_force_level (self->lod_group, i - 1);
+	lod_queue_viewports (self);
+}
+
+/* Shows / hides the LOD section for what is inspected now. */
+static void
+update_lod (LrgEditorInspectorPanel *self)
+{
+	LrgNode     *node = (self->nodes->len == 1) ? g_ptr_array_index (self->nodes, 0) : NULL;
+	LrgLodGroup *group = lod_group_for (self, node);
+	guint        n, i;
+
+	/* A preview force ends when its node is no longer inspected */
+	if (self->lod_group != NULL && self->lod_group != group)
+		lrg_lod_group_set_force_level (self->lod_group, -1);
+	g_set_weak_pointer (&self->lod_group, group);
+	g_set_weak_pointer (&self->lod_node, group != NULL ? node : NULL);
+	lrg_widget_set_visible (LRG_WIDGET (self->lod_section), group != NULL && self->live_object == NULL);
+	if (group == NULL)
+		return;
+
+	n = lrg_lod_group_get_n_levels (group);
+	self->lod_syncing = TRUE;
+	if (n != self->lod_n)
+	{
+		lrg_combo_box_remove_all (self->lod_force);
+		lrg_combo_box_append (self->lod_force, "Auto (screen size)");
+		for (i = 0; i < n; i++)
+		{
+			g_autofree gchar *label = g_strdup_printf ("LOD %u", i);
+
+			lrg_combo_box_append (self->lod_force, label);
+		}
+		self->lod_n = n;
+	}
+	lrg_combo_box_set_selected (self->lod_force, lrg_lod_group_get_force_level (group) + 1);
+	self->lod_syncing = FALSE;
+	lrg_widget_queue_layout (self->lod_levels);
+}
+
+static void
+on_lod_camera_changed (LrgEditorViewState *view,
+                       guint               index,
+                       gpointer            user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+
+	/* the meter follows the camera; the group itself appears once the
+	 * viewport has loaded the model */
+	if (self->lod_group == NULL && self->nodes->len == 1 && !self->refreshing)
+		update_lod (self);
+	else if (self->lod_group != NULL)
+		lrg_widget_queue_layout (self->lod_levels);
+}
+
+static LrgExpander *
+build_lod_section (LrgEditorInspectorPanel *self)
+{
+	static const LrgCustomWidgetFuncs funcs = { lod_levels_measure, lod_levels_paint, NULL, NULL, { NULL } };
+	LrgVBox                          *box = lrg_vbox_new ();
+	LrgHBox                          *row = lrg_hbox_new ();
+	LrgLabel                         *label = lrg_label_new ("Force level");
+	LrgExpander                      *section;
+
+	lrg_container_set_spacing (LRG_CONTAINER (box), 6.0f);
+	self->lod_levels = LRG_WIDGET (lrg_custom_widget_new ());
+	lrg_widget_set_name (self->lod_levels, "inspector-lod-levels");
+	lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (self->lod_levels), &funcs, self, NULL);
+	add_owned (box, self->lod_levels);
+	lrg_container_set_spacing (LRG_CONTAINER (row), 6.0f);
+	lrg_widget_set_valign (LRG_WIDGET (label), LRG_ALIGN_CENTER);
+	add_owned (row, label);
+	self->lod_force = lrg_combo_box_new ();
+	lrg_widget_set_name (LRG_WIDGET (self->lod_force), "inspector-lod-force");
+	lrg_widget_set_fill_weight (LRG_WIDGET (self->lod_force), 1.0f);
+	g_signal_connect (self->lod_force, "changed", G_CALLBACK (on_lod_force_changed), self);
+	add_owned (row, self->lod_force);
+	add_owned (box, row);
+	section = make_section ("inspector-section-lod", "LOD", LRG_WIDGET (box));
+	g_object_unref (box);
+	lrg_widget_set_visible (LRG_WIDGET (section), FALSE);
+	return section;
+}
+
+/* ==========================================================================
+ * Physics summary (0.9.0 M5)
+ *
+ * For one inspected node (not while a live object is inspected): a short
+ * summary of its `physics:` block ("Dynamic body, 20 kg, layer debris /
+ * 2 shapes: box, sphere (trigger) / 1 joint: hinge") with "Edit in
+ * Physics Panel", or "No physics body" with "Add Body". The full editor is
+ * the Physics panel (lrg-editor-physics-panel.c); both buttons go through
+ * its actions, so the inspector does not depend on the panel being
+ * docked.
+ * ========================================================================== */
+
+static gchar *
+physics_summary (LrgNode *node)
+{
+	LrgNodePhysics       *phys = lrg_node_get_physics (node);
+	GString              *s;
+	g_autoptr(GEnumClass) kinds = NULL;
+	g_autoptr(GEnumClass) shape_kinds = NULL;
+	g_autoptr(GEnumClass) joint_kinds = NULL;
+	GPtrArray            *shapes, *joints;
+	guint                 i;
+
+	if (phys == NULL)
+		return g_strdup ("No physics body");
+	kinds = g_type_class_ref (LRG_TYPE_DYNAMICS_BODY_KIND);
+	shape_kinds = g_type_class_ref (LRG_TYPE_COLLIDER3D_KIND);
+	joint_kinds = g_type_class_ref (LRG_TYPE_JOINT_KIND);
+	s = g_string_new (NULL);
+	g_string_append_printf (s, "%s body", g_enum_get_value (kinds, (gint) lrg_node_physics_get_body_kind (phys))->value_nick);
+	if (lrg_node_physics_get_body_kind (phys) == LRG_DYNAMICS_BODY_DYNAMIC)
+		g_string_append_printf (s, ", %.3g kg", (gdouble) lrg_node_physics_get_mass (phys));
+	if (lrg_node_physics_get_layer (phys) != NULL)
+		g_string_append_printf (s, ", layer %s", lrg_node_physics_get_layer (phys));
+	shapes = lrg_node_physics_get_shapes (phys);
+	g_string_append_printf (s, "\n%u shape%s", shapes->len, shapes->len == 1 ? "" : "s");
+	for (i = 0; i < shapes->len; i++)
+	{
+		LrgNodePhysicsShape *shape = g_ptr_array_index (shapes, i);
+
+		g_string_append_printf (s, "%s%s%s", i == 0 ? ": " : ", ",
+		                        g_enum_get_value (shape_kinds, (gint) lrg_node_physics_shape_get_kind (shape))->value_nick,
+		                        lrg_node_physics_shape_get_trigger (shape) ? " (trigger)" : "");
+	}
+	joints = lrg_node_physics_get_joints (phys);
+	if (joints->len > 0)
+	{
+		g_string_append_printf (s, "\n%u joint%s", joints->len, joints->len == 1 ? "" : "s");
+		for (i = 0; i < joints->len; i++)
+			g_string_append_printf (s, "%s%s", i == 0 ? ": " : ", ",
+			                        g_enum_get_value (joint_kinds, (gint) lrg_node_physics_joint_get_kind (
+			                                              g_ptr_array_index (joints, i)))->value_nick);
+	}
+	return g_string_free (s, FALSE);
+}
+
+/* Shows / updates the Physics section for what is inspected now. */
+static void
+update_physics (LrgEditorInspectorPanel *self)
+{
+	LrgNode          *node = (self->nodes->len == 1) ? g_ptr_array_index (self->nodes, 0) : NULL;
+	g_autofree gchar *text = NULL;
+	gboolean          show = node != NULL && self->live_object == NULL && !lrg_node_get_is_2d (node);
+
+	lrg_widget_set_visible (LRG_WIDGET (self->phys_section), show);
+	if (!show)
+		return;
+	text = physics_summary (node);
+	lrg_label_set_text (self->phys_summary, text);
+	lrg_button_set_text (self->phys_add, lrg_node_get_physics (node) != NULL ? "Edit in Physics Panel" : "Add Body");
+}
+
+static void
+on_physics_button (LrgButton *button,
+                   gpointer   user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+	LrgNode                 *node = (self->nodes->len == 1) ? g_ptr_array_index (self->nodes, 0) : NULL;
+	LrgEditorActions        *actions;
+
+	if (self->app == NULL || node == NULL)
+		return;
+	actions = lrg_editor_app_get_actions (self->app);
+	if (lrg_node_get_physics (node) == NULL && lrg_editor_actions_has (actions, "physics.add-body"))
+		lrg_editor_actions_activate (actions, "physics.add-body");
+	if (lrg_editor_actions_has (actions, "physics.show"))
+		lrg_editor_actions_activate (actions, "physics.show");
+	update_physics (self);
+}
+
+static LrgExpander *
+build_physics_section (LrgEditorInspectorPanel *self)
+{
+	LrgVBox     *box = lrg_vbox_new ();
+	LrgExpander *section;
+
+	lrg_container_set_spacing (LRG_CONTAINER (box), 6.0f);
+	self->phys_summary = add_owned (box, lrg_label_new (""));
+	lrg_widget_set_name (LRG_WIDGET (self->phys_summary), "inspector-physics-summary");
+	lrg_widget_add_class (LRG_WIDGET (self->phys_summary), "dim");
+	self->phys_add = add_owned (box, make_button ("Add Body", "inspector-physics-open", NULL,
+	                                              G_CALLBACK (on_physics_button), self));
+	lrg_widget_set_halign (LRG_WIDGET (self->phys_add), LRG_ALIGN_START);
+	section = make_section ("inspector-section-physics", "Physics", LRG_WIDGET (box));
+	g_object_unref (box);
+	lrg_widget_set_visible (LRG_WIDGET (section), FALSE);
+	return section;
+}
+
+/* ==========================================================================
+ * Audio source (0.9.0 M7)
+ *
+ * For one inspected AUDIO_EMITTER node (not while a live object is
+ * inspected): the spatial settings of the LrgAudioSourceComponent the
+ * level builds for it, edited as visual params.
+ *
+ * Rows are the component's own properties (types, ranges, the rolloff
+ * enum) read from the component lrg_level_visual_create_component()
+ * builds, so unset params show the runtime defaults; writes go through
+ * lrg_level_visual_store_property(), the inverse map ("max-distance"
+ * is stored as "radius", enums by nick), each one undoable
+ * (lrg_editor_commit_node_state(); a spin drag is one step). The bus
+ * row picks from the project mixer's buses.
+ *
+ * Under the grid: a plot of the distance gain (the engine's own
+ * lrg_audio_source_component_get_distance_gain()) with the min, half
+ * and max distances, and for the custom rolloff an LrgCurveEdit whose
+ * keys are written to "rolloff_curve_keys" (one undo step per drag).
+ * ========================================================================== */
+
+/* The rows: component property, label, group, tooltip. */
+static const struct
+{
+	const gchar *property;
+	const gchar *label;
+	const gchar *group;
+	const gchar *tooltip;
+} audio_rows[] = {
+	{ "rolloff-mode", "Rolloff", "Distance", "How the volume falls between the min and max distance" },
+	{ "min-distance", "Min distance", "Distance", "Full volume within this distance" },
+	{ "max-distance", "Max distance", "Distance", "Silent beyond this distance (the level's radius)" },
+	{ "rolloff", "Steepness", "Distance", "Steepness of the inverse rolloff (0 is linear)" },
+	{ "rolloff-curve-keys", "Curve keys", "Distance", "The custom curve as t:gain pairs (0 = min, 1 = max)" },
+	{ "cone-inner-angle", "Inner angle", "Cone", "Full angle heard at full volume (360: no cone)" },
+	{ "cone-outer-angle", "Outer angle", "Cone", "Full angle beyond which the outer gain applies" },
+	{ "cone-outer-gain", "Outer gain", "Cone", "Gain behind the cone" },
+	{ "doppler-factor", "Doppler", "Doppler", "Pitch shift scale from relative velocity (0: off)" },
+	{ "speed-of-sound", "Speed of sound", "Doppler", "Units per second" },
+	{ "occlusion", "Occlusion", "Occlusion", "Physics rays between listener and source muffle it" },
+	{ "occlusion-gain", "Gain per body", "Occlusion", "Gain multiplied per occluding body" },
+	{ "occlusion-cutoff", "Low-pass", "Occlusion", "Low-pass cut-off (Hz) of occluded mixer voices" },
+	{ "bus", "Bus", "Routing", "The mixer bus it plays through (empty: a device voice)" },
+	{ "spatial-blend", "Spatial blend", "Routing", "0 plays flat (2D), 1 fully positional" },
+};
+
+/* The visual param a component property is stored in. */
+static gchar *
+audio_param_name (const gchar *property)
+{
+	gchar *name, *p;
+
+	if (g_strcmp0 (property, "max-distance") == 0)
+		return g_strdup ("radius");
+	name = g_strdup (property);
+	for (p = name; *p != '\0'; p++)
+		if (*p == '-')
+			*p = '_';
+	return name;
+}
+
+/* The component property of a param (the IPC's keys), or NULL. */
+static const gchar *
+audio_property_for_param (const gchar *param)
+{
+	guint i;
+
+	if (g_strcmp0 (param, "radius") == 0 || g_strcmp0 (param, "max_distance") == 0)
+		return "max-distance";
+	for (i = 0; i < G_N_ELEMENTS (audio_rows); i++)
+	{
+		g_autofree gchar *name = audio_param_name (audio_rows[i].property);
+
+		if (g_strcmp0 (name, param) == 0)
+			return audio_rows[i].property;
+	}
+	return NULL;
+}
+
+static gboolean
+is_audio_emitter (LrgNode *node)
+{
+	LrgNodeVisual *visual = node != NULL ? lrg_node_get_visual (node) : NULL;
+
+	return visual != NULL && lrg_node_visual_get_kind (visual) == LRG_NODE_VISUAL_AUDIO_EMITTER;
+}
+
+/* The runtime component of @node's visual (configured from its params). */
+static LrgAudioSourceComponent *
+audio_component (LrgNode *node)
+{
+	LrgComponent *comp;
+
+	if (!is_audio_emitter (node))
+		return NULL;
+	comp = lrg_level_visual_create_component (lrg_node_get_visual (node));
+	if (comp != NULL && !LRG_IS_AUDIO_SOURCE_COMPONENT (comp))
+		g_clear_object (&comp);
+	return (LrgAudioSourceComponent *) comp;
+}
+
+/* The project mixer's buses (the open editor's, else the file's). */
+static gchar **
+audio_project_buses (LrgEditorApp *app)
+{
+	g_autofree gchar         *path = app != NULL ? lrg_editor_mixer_editor_project_mixer_path (app) : NULL;
+	LrgEditorMixerEditor     *ed;
+	g_autoptr(LrgMixerAsset)  disk = NULL;
+
+	if (path == NULL)
+		return NULL;
+	ed = lrg_editor_mixer_editor_find_for_path (app, path, FALSE, NULL);
+	if (ed != NULL && lrg_editor_mixer_editor_get_asset (ed) != NULL)
+		return lrg_mixer_asset_get_bus_names (lrg_editor_mixer_editor_get_asset (ed));
+	disk = lrg_mixer_asset_new_from_file (path, NULL);
+	return disk != NULL ? lrg_mixer_asset_get_bus_names (disk) : NULL;
+}
+
+/*
+ * audio_store:
+ * Writes component property values into @node's visual as ONE undo
+ * step: @values[i] NULL removes the param (back to the default).
+ * @merge coalesces with the previous commit of the same label (a drag).
+ */
+static gboolean
+audio_store (LrgEditor          *editor,
+             LrgNode            *node,
+             const gchar *const *properties,
+             const GValue      **values,
+             guint               n,
+             const gchar        *label,
+             gboolean            merge)
+{
+	g_autoptr(LrgNode) before = lrg_editor_snapshot_node (node);
+	LrgNodeVisual     *visual = lrg_node_get_visual (node);
+	gboolean           ok = TRUE;
+	guint              i;
+
+	for (i = 0; i < n; i++)
+	{
+		if (values[i] == NULL)
+		{
+			g_autofree gchar *param = audio_param_name (properties[i]);
+
+			lrg_node_visual_remove_param (visual, param);
+		}
+		else if (!lrg_level_visual_store_property (visual, properties[i], values[i]))
+			ok = FALSE;
+	}
+	if (lrg_editor_get_level (editor) != NULL)
+		lrg_level_notify_node_changed (lrg_editor_get_level (editor), node);
+	lrg_editor_commit_node_state (editor, node, before, label, merge);
+	return ok;
+}
+
+/* --- InspAudioSource --- */
+
+#define INSP_TYPE_AUDIO_SOURCE (insp_audio_source_get_type ())
+G_DECLARE_FINAL_TYPE (InspAudioSource, insp_audio_source, INSP, AUDIO_SOURCE, GObject)
+
+struct _InspAudioSource
+{
+	GObject                  parent_instance;
+
+	LrgEditorInspectorPanel *panel;     /* not owned: the panel owns us */
+	gboolean                 in_gesture;
+	gboolean                 first;
+};
+
+static void insp_audio_source_iface_init (LrgPropertySourceInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (InspAudioSource, insp_audio_source, G_TYPE_OBJECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PROPERTY_SOURCE, insp_audio_source_iface_init))
+
+static GParamSpec *
+audio_pspec (const gchar *property)
+{
+	GObjectClass *klass = g_type_class_ref (LRG_TYPE_AUDIO_SOURCE_COMPONENT);
+	GParamSpec   *p = g_object_class_find_property (klass, property);
+
+	g_type_class_unref (klass);
+	return p;
+}
+
+static GPtrArray *
+insp_audio_source_list (LrgPropertySource *source)
+{
+	InspAudioSource *src = INSP_AUDIO_SOURCE (source);
+	GPtrArray       *infos = g_ptr_array_new_with_free_func ((GDestroyNotify) lrg_property_info_unref);
+	g_auto(GStrv)    buses = src->panel != NULL ? audio_project_buses (src->panel->app) : NULL;
+	guint            i;
+
+	for (i = 0; i < G_N_ELEMENTS (audio_rows); i++)
+	{
+		GParamSpec      *p = audio_pspec (audio_rows[i].property);
+		LrgPropertyInfo *info;
+
+		if (p == NULL)
+			continue;
+		info = lrg_property_info_new (p);
+		lrg_property_info_set_label (info, audio_rows[i].label);
+		lrg_property_info_set_group (info, audio_rows[i].group);
+		lrg_property_info_set_tooltip (info, audio_rows[i].tooltip);
+		/* the unbounded floats get usable spin ranges */
+		if (g_strcmp0 (audio_rows[i].property, "min-distance") == 0 ||
+		    g_strcmp0 (audio_rows[i].property, "max-distance") == 0)
+			lrg_property_info_set_hint (info, "range:0,10000,0.1");
+		else if (g_strcmp0 (audio_rows[i].property, "rolloff") == 0)
+			lrg_property_info_set_hint (info, "range:0,20,0.05");
+		else if (g_strcmp0 (audio_rows[i].property, "speed-of-sound") == 0)
+			lrg_property_info_set_hint (info, "range:1,10000,1");
+		else if (g_strcmp0 (audio_rows[i].property, "bus") == 0 && buses != NULL)
+		{
+			g_autofree gchar *joined = g_strjoinv (",", buses);
+			g_autofree gchar *hint = g_strdup_printf ("enum-strings:,%s", joined);
+
+			lrg_property_info_set_hint (info, hint);
+		}
+		g_ptr_array_add (infos, info);
+	}
+	return infos;
+}
+
+static gboolean
+insp_audio_source_get (LrgPropertySource *source,
+                       const gchar       *name,
+                       GValue            *value)
+{
+	InspAudioSource                   *src = INSP_AUDIO_SOURCE (source);
+	g_autoptr(LrgAudioSourceComponent) comp = NULL;
+	GParamSpec                        *p = audio_pspec (name);
+
+	if (src->panel == NULL || p == NULL || src->panel->audio_node == NULL)
+		return FALSE;
+	comp = audio_component (src->panel->audio_node);
+	if (comp == NULL)
+		return FALSE;
+	g_value_init (value, G_PARAM_SPEC_VALUE_TYPE (p));
+	g_object_get_property (G_OBJECT (comp), name, value);
+	if (G_VALUE_HOLDS_STRING (value) && g_value_get_string (value) == NULL)
+		g_value_set_string (value, "");
+	return TRUE;
+}
+
+static gboolean
+insp_audio_source_set (LrgPropertySource *source,
+                       const gchar       *name,
+                       const GValue      *value)
+{
+	InspAudioSource         *src = INSP_AUDIO_SOURCE (source);
+	LrgEditorInspectorPanel *panel = src->panel;
+	const gchar             *props[1];
+	const GValue            *vals[1];
+	g_autofree gchar        *label = NULL;
+	gboolean                 merge;
+	gboolean                 ok;
+
+	if (panel == NULL || panel->audio_node == NULL || panel->editor == NULL)
+		return FALSE;
+	props[0] = name;
+	/* an empty bus clears the routing */
+	vals[0] = (G_VALUE_HOLDS_STRING (value) && g_strcmp0 (name, "bus") == 0 &&
+	           (g_value_get_string (value) == NULL || *g_value_get_string (value) == '\0')) ? NULL : value;
+	label = g_strdup_printf ("Set %s", name);
+	merge = src->in_gesture && !src->first;
+	src->first = FALSE;
+	ok = audio_store (panel->editor, panel->audio_node, props, vals, 1, label, merge);
+	return ok;
+}
+
+static LrgPropertyState
+insp_audio_source_get_state (LrgPropertySource *source,
+                             const gchar       *name)
+{
+	InspAudioSource  *src = INSP_AUDIO_SOURCE (source);
+	g_autofree gchar *param = audio_param_name (name);
+
+	if (src->panel == NULL || src->panel->audio_node == NULL || !is_audio_emitter (src->panel->audio_node))
+		return LRG_PROPERTY_STATE_NONE;
+	return lrg_node_visual_get_param (lrg_node_get_visual (src->panel->audio_node), param) != NULL
+	       ? LRG_PROPERTY_STATE_OVERRIDDEN : LRG_PROPERTY_STATE_DEFAULT;
+}
+
+static gboolean
+insp_audio_source_reset (LrgPropertySource *source,
+                         const gchar       *name)
+{
+	InspAudioSource         *src = INSP_AUDIO_SOURCE (source);
+	LrgEditorInspectorPanel *panel = src->panel;
+	const gchar             *props[1];
+	const GValue            *vals[1] = { NULL };
+	g_autofree gchar        *label = g_strdup_printf ("Reset %s", name);
+
+	if (panel == NULL || panel->audio_node == NULL)
+		return FALSE;
+	props[0] = name;
+	return audio_store (panel->editor, panel->audio_node, props, vals, 1, label, FALSE);
+}
+
+static void
+insp_audio_source_iface_init (LrgPropertySourceInterface *iface)
+{
+	iface->list_properties = insp_audio_source_list;
+	iface->get_value = insp_audio_source_get;
+	iface->set_value = insp_audio_source_set;
+	iface->get_state = insp_audio_source_get_state;
+	iface->reset = insp_audio_source_reset;
+}
+
+static void
+insp_audio_source_class_init (InspAudioSourceClass *klass)
+{
+}
+
+static void
+insp_audio_source_init (InspAudioSource *self)
+{
+}
+
+static void
+on_audio_edit_begin (LrgPropertyGrid *grid,
+                     const gchar     *name,
+                     guint            gesture_id,
+                     gpointer         user_data)
+{
+	InspAudioSource *src = INSP_AUDIO_SOURCE (user_data);
+
+	src->in_gesture = TRUE;
+	src->first = TRUE;
+}
+
+static void
+on_audio_edit_end (LrgPropertyGrid *grid,
+                   const gchar     *name,
+                   guint            gesture_id,
+                   gboolean         commit_,
+                   gpointer         user_data)
+{
+	InspAudioSource *src = INSP_AUDIO_SOURCE (user_data);
+
+	src->in_gesture = FALSE;
+	src->first = FALSE;
+}
+
+/* --- the rolloff plot --- */
+
+#define AUDIO_PLOT_H (96.0f)
+
+static void
+audio_plot_measure (LrgCustomWidget     *widget,
+                    gfloat               avail_width,
+                    gfloat               avail_height,
+                    LrgCustomWidgetSize *size,
+                    gpointer             user_data)
+{
+	size->width = 160.0f;
+	size->height = AUDIO_PLOT_H;
+}
+
+static void
+audio_plot_paint (LrgCustomWidget *widget,
+                  LrgPaintList    *list,
+                  gfloat           x,
+                  gfloat           y,
+                  gfloat           width,
+                  gfloat           height,
+                  gpointer         user_data)
+{
+	LrgEditorInspectorPanel           *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+	LrgTheme                          *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	g_autoptr(LrgAudioSourceComponent) comp = self->audio_node != NULL ? audio_component (self->audio_node) : NULL;
+	GrlColor                           track, curve;
+	const GrlColor                    *muted, *border;
+	gfloat                             fs, mn = 1.0f, mx = 50.0f, span, gx, gy, gw, gh, px = 0.0f, py = 0.0f;
+	GrlFont                           *font;
+	gint                               i;
+	const gint                         n = 64;
+	g_autofree gchar                  *lab = NULL;
+
+	if (theme == NULL || comp == NULL)
+		return;
+	fs = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE_SMALL);
+	font = lrg_theme_get_ui_font (theme);
+	muted = lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED);
+	border = lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER);
+	track = *lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK);
+	track.a = (guint8) (track.a / 2);
+	curve = *lrg_theme_get_color (theme, LRG_THEME_COLOR_SUCCESS);
+	lrg_paint_list_rect (list, x, y, width, height, lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS),
+	                     &track);
+	g_object_get (comp, "min-distance", &mn, "max-distance", &mx, NULL);
+	mx = MAX (mx, mn);
+	span = MAX (mx * 1.1f, 0.1f);
+	gx = x + 8.0f;
+	gy = y + 8.0f;
+	gw = width - 16.0f;
+	gh = height - 16.0f - fs - 2.0f;
+
+	/* min and max markers */
+	lrg_paint_list_line (list, gx + gw * mn / span, gy, gx + gw * mn / span, gy + gh, 1.0f, border);
+	lrg_paint_list_line (list, gx + gw * mx / span, gy, gx + gw * mx / span, gy + gh, 1.0f, border);
+	lrg_paint_list_line (list, gx, gy + gh, gx + gw, gy + gh, 1.0f, border);
+
+	/* the curve */
+	for (i = 0; i <= n; i++)
+	{
+		gfloat d = span * (gfloat) i / (gfloat) n;
+		gfloat g = lrg_audio_source_component_get_distance_gain (comp, d);
+		gfloat cx = gx + gw * (gfloat) i / (gfloat) n;
+		gfloat cy = gy + gh * (1.0f - CLAMP (g, 0.0f, 1.0f));
+
+		if (i > 0)
+			lrg_paint_list_line (list, px, py, cx, cy, 2.0f, &curve);
+		px = cx;
+		py = cy;
+	}
+	lab = g_strdup_printf ("min %.3g   max %.3g   (gain over distance)", (gdouble) mn, (gdouble) mx);
+	lrg_paint_list_text (list, font, lab, gx, gy + gh + 4.0f, fs, 0.0f, muted);
+}
+
+/* --- the custom curve --- */
+
+static gchar *
+audio_curve_keys (LrgKeyframeCurve *curve)
+{
+	GString *s = g_string_new (NULL);
+	guint    i;
+
+	for (i = 0; i < lrg_keyframe_curve_get_key_count (curve); i++)
+	{
+		gfloat t = 0.0f, v = 0.0f;
+		gchar  tb[G_ASCII_DTOSTR_BUF_SIZE], vb[G_ASCII_DTOSTR_BUF_SIZE];
+
+		lrg_keyframe_curve_get_key (curve, i, &t, &v, NULL);
+		g_string_append_printf (s, "%s%s:%s", i > 0 ? ", " : "",
+		                        g_ascii_formatd (tb, sizeof tb, "%.4g", (gdouble) CLAMP (t, 0.0f, 1.0f)),
+		                        g_ascii_formatd (vb, sizeof vb, "%.4g", (gdouble) CLAMP (v, 0.0f, 1.0f)));
+	}
+	return g_string_free (s, FALSE);
+}
+
+/* Writes the curve's keys (and custom mode) into the node, live. */
+static void
+audio_curve_write (LrgEditorInspectorPanel *self)
+{
+	LrgNodeVisual    *visual;
+	g_autofree gchar *keys = NULL;
+	g_auto(GValue)    v = G_VALUE_INIT;
+	g_auto(GValue)    m = G_VALUE_INIT;
+
+	if (self->audio_node == NULL || !is_audio_emitter (self->audio_node))
+		return;
+	visual = lrg_node_get_visual (self->audio_node);
+	keys = audio_curve_keys (lrg_curve_edit_get_curve (self->audio_curve));
+	g_value_init (&v, G_TYPE_STRING);
+	g_value_set_string (&v, keys);
+	lrg_level_visual_store_property (visual, "rolloff-curve-keys", &v);
+	g_value_init (&m, LRG_TYPE_AUDIO_ROLLOFF);
+	g_value_set_enum (&m, LRG_AUDIO_ROLLOFF_CUSTOM);
+	lrg_level_visual_store_property (visual, "rolloff-mode", &m);
+	self->audio_syncing = TRUE;
+	if (lrg_editor_get_level (self->editor) != NULL)
+		lrg_level_notify_node_changed (lrg_editor_get_level (self->editor), self->audio_node);
+	self->audio_syncing = FALSE;
+}
+
+static void
+on_audio_curve_begin (LrgCurveEdit *edit,
+                      gpointer      user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+
+	g_clear_object (&self->audio_before);
+	if (self->audio_node != NULL)
+		self->audio_before = lrg_editor_snapshot_node (self->audio_node);
+}
+
+static void
+on_audio_curve_changed (LrgCurveEdit *edit,
+                        gpointer      user_data)
+{
+	audio_curve_write (LRG_EDITOR_INSPECTOR_PANEL (user_data));
+}
+
+static void
+on_audio_curve_end (LrgCurveEdit *edit,
+                    gboolean      commit_,
+                    gpointer      user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+
+	if (self->audio_node != NULL && self->audio_before != NULL)
+	{
+		if (commit_)
+		{
+			audio_curve_write (self);
+			lrg_editor_commit_node_state (self->editor, self->audio_node, self->audio_before,
+			                              "Edit rolloff curve", FALSE);
+		}
+		else
+		{
+			lrg_node_copy_state (self->audio_node, self->audio_before);
+			if (lrg_editor_get_level (self->editor) != NULL)
+				lrg_level_notify_node_changed (lrg_editor_get_level (self->editor), self->audio_node);
+		}
+	}
+	g_clear_object (&self->audio_before);
+}
+
+/* Shows / updates the Audio Source section for what is inspected now. */
+static void
+update_audio (LrgEditorInspectorPanel *self)
+{
+	LrgNode                           *node = (self->nodes->len == 1) ? g_ptr_array_index (self->nodes, 0) : NULL;
+	gboolean                           show = node != NULL && self->live_object == NULL && is_audio_emitter (node);
+	g_autoptr(LrgAudioSourceComponent) comp = NULL;
+	g_auto(GStrv)                      buses = NULL;
+	g_autofree gchar                  *joined = NULL;
+	g_autofree gchar                  *sig = NULL;
+	LrgAudioRolloff                    mode = LRG_AUDIO_ROLLOFF_INVERSE;
+
+	lrg_widget_set_visible (LRG_WIDGET (self->audio_section), show);
+	if (!show)
+	{
+		g_clear_weak_pointer (&self->audio_node);
+		return;
+	}
+	g_set_weak_pointer (&self->audio_node, node);
+
+	/* rows: rebuilt for another node or another bus list */
+	buses = audio_project_buses (self->app);
+	joined = buses != NULL ? g_strjoinv (",", buses) : g_strdup ("");
+	sig = g_strdup_printf ("%p|%s", (gpointer) node, joined);
+	if (g_strcmp0 (sig, self->audio_sig) != 0)
+	{
+		g_free (self->audio_sig);
+		self->audio_sig = g_steal_pointer (&sig);
+		lrg_property_source_emit_changed (LRG_PROPERTY_SOURCE (self->audio_src), NULL);
+	}
+	else
+		lrg_property_grid_refresh (self->audio_grid);
+
+	/* the custom curve editor: only for the custom rolloff */
+	comp = audio_component (node);
+	if (comp != NULL)
+		g_object_get (comp, "rolloff-mode", &mode, NULL);
+	lrg_widget_set_visible (LRG_WIDGET (self->audio_curve), mode == LRG_AUDIO_ROLLOFF_CUSTOM);
+	if (mode == LRG_AUDIO_ROLLOFF_CUSTOM && self->audio_before == NULL && !self->audio_syncing && comp != NULL)
+	{
+		LrgKeyframeCurve *c = lrg_audio_source_component_get_rolloff_curve (comp);
+
+		lrg_curve_edit_set_curve (self->audio_curve, c);
+	}
+	lrg_label_set_text (self->audio_label, mode == LRG_AUDIO_ROLLOFF_CUSTOM
+	                                       ? "Custom curve: gain over distance, min to max"
+	                                       : "Rolloff Custom draws your own curve.");
+}
+
+static LrgExpander *
+build_audio_section (LrgEditorInspectorPanel *self)
+{
+	static const LrgCustomWidgetFuncs plot_funcs = { audio_plot_measure, audio_plot_paint, NULL, NULL, { NULL } };
+	LrgVBox         *box = lrg_vbox_new ();
+	LrgExpander     *section;
+	InspAudioSource *src;
+
+	lrg_container_set_spacing (LRG_CONTAINER (box), 6.0f);
+	src = g_object_new (INSP_TYPE_AUDIO_SOURCE, NULL);
+	src->panel = self;
+	self->audio_src = G_OBJECT (src);
+	self->audio_grid = add_owned (box, lrg_property_grid_new ());
+	lrg_widget_set_name (LRG_WIDGET (self->audio_grid), "inspector-audio-grid");
+	lrg_property_grid_set_label_width (self->audio_grid, 110.0f);
+	lrg_property_grid_set_source (self->audio_grid, LRG_PROPERTY_SOURCE (src));
+	g_signal_connect (self->audio_grid, "edit-begin", G_CALLBACK (on_audio_edit_begin), src);
+	g_signal_connect (self->audio_grid, "edit-end", G_CALLBACK (on_audio_edit_end), src);
+	self->audio_plot = add_owned (box, lrg_custom_widget_new ());
+	lrg_widget_set_name (self->audio_plot, "inspector-audio-plot");
+	lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (self->audio_plot), &plot_funcs, self, NULL);
+	self->audio_label = add_owned (box, lrg_label_new (""));
+	lrg_widget_set_name (LRG_WIDGET (self->audio_label), "inspector-audio-hint");
+	lrg_widget_add_class (LRG_WIDGET (self->audio_label), "dim");
+	self->audio_curve = add_owned (box, lrg_curve_edit_new ());
+	lrg_widget_set_name (LRG_WIDGET (self->audio_curve), "inspector-audio-curve");
+	lrg_curve_edit_set_compact (self->audio_curve, FALSE);
+	lrg_curve_edit_set_value_range (self->audio_curve, 0.0f, 1.0f);
+	g_signal_connect (self->audio_curve, "edit-begin", G_CALLBACK (on_audio_curve_begin), self);
+	g_signal_connect (self->audio_curve, "curve-changed", G_CALLBACK (on_audio_curve_changed), self);
+	g_signal_connect (self->audio_curve, "edit-end", G_CALLBACK (on_audio_curve_end), self);
+	section = make_section ("inspector-section-audio", "Audio Source", LRG_WIDGET (box));
+	g_object_unref (box);
+	lrg_widget_set_visible (LRG_WIDGET (section), FALSE);
+	return section;
+}
+
+/* ==========================================================================
+ * Animator (0.9.0)
+ *
+ * For one inspected node with an `animator3d` component (or the live
+ * entity of such a node while playing): the graph file with an Open
+ * button, then a painted list of the graph's parameters (defaults from the
+ * file, live values while playing: click a bool to toggle it, click a
+ * trigger to fire it, drag a number sideways to change it), its layers
+ * (current state, a weight bar you click to set the weight while playing)
+ * and its IK goals (kind, chain, weight; the last solved target while
+ * playing). The viewport draws the goals' targets (IK Targets overlay).
+ * ========================================================================== */
+
+#define ANIM_ROW_H (22.0f)
+
+typedef enum
+{
+	ANIM_HIT_NONE,
+	ANIM_HIT_PARAM,
+	ANIM_HIT_LAYER
+} AnimHitKind;
+
+typedef struct
+{
+	AnimHitKind kind;
+	gchar      *name;
+	gfloat      x, y, w, h;
+} AnimHit;
+
+static void
+anim_hit_free (gpointer data)
+{
+	AnimHit *h = data;
+
+	g_free (h->name);
+	g_free (h);
+}
+
+/* The animator3d description of @node, or NULL. */
+static LrgComponentDesc *
+animator_desc (LrgNode *node)
+{
+	GPtrArray *comps = node != NULL ? lrg_node_get_components (node) : NULL;
+	guint      i;
+
+	for (i = 0; comps != NULL && i < comps->len; i++)
+	{
+		LrgComponentDesc *desc = g_ptr_array_index (comps, i);
+		const gchar      *type = lrg_component_desc_get_type_name (desc);
+		GType             t = type != NULL ? g_type_from_name (type) : G_TYPE_INVALID;
+
+		if (g_strcmp0 (type, "animator3d") == 0 ||
+		    (t != G_TYPE_INVALID && g_type_is_a (t, LRG_TYPE_ANIMATOR_COMPONENT3D)))
+			return desc;
+	}
+	return NULL;
+}
+
+static const gchar *
+desc_graph_path (LrgComponentDesc *desc)
+{
+	static const gchar * const keys[] = { "graph-path", "graph_path" };
+	guint                      i;
+
+	for (i = 0; desc != NULL && i < G_N_ELEMENTS (keys); i++)
+	{
+		const GValue *v = lrg_component_desc_get_value (desc, keys[i]);
+
+		if (v != NULL && G_VALUE_HOLDS_STRING (v))
+			return g_value_get_string (v);
+	}
+	return NULL;
+}
+
+/* The live animator of what is inspected, or NULL. */
+static LrgAnimatorComponent3D *
+live_animator (LrgEditorInspectorPanel *self)
+{
+	GObject *live = self->live_object;
+
+	if (live == NULL && self->nodes->len == 1 && self->play != NULL && lrg_editor_play_session_is_playing (self->play))
+		live = lrg_editor_play_session_get_live_for_node (self->play, g_ptr_array_index (self->nodes, 0));
+	if (live == NULL || !LRG_IS_ENTITY3D (live))
+		return NULL;
+	return (LrgAnimatorComponent3D *) lrg_entity3d_get_component (LRG_ENTITY3D (live), LRG_TYPE_ANIMATOR_COMPONENT3D);
+}
+
+/* The graph the section describes: the live one, else the file's. */
+static LrgAnimGraph *
+anim_section_graph (LrgEditorInspectorPanel *self)
+{
+	LrgAnimatorComponent3D *anim = live_animator (self);
+
+	if (anim != NULL && lrg_animator_component3d_get_graph (anim) != NULL)
+		return lrg_animator_component3d_get_graph (anim);
+	return self->anim_file_graph;
+}
+
+static const gchar *
+param_type_name (LrgAnimParameterType type)
+{
+	switch (type)
+	{
+	case LRG_ANIM_PARAMETER_FLOAT:   return "float";
+	case LRG_ANIM_PARAMETER_INT:     return "int";
+	case LRG_ANIM_PARAMETER_BOOL:    return "bool";
+	case LRG_ANIM_PARAMETER_TRIGGER: return "trigger";
+	default:                         return "?";
+	}
+}
+
+/* The rows as text (painted, and returned by the public getter). */
+static GPtrArray *
+anim_rows (LrgEditorInspectorPanel *self)
+{
+	GPtrArray              *rows = g_ptr_array_new_with_free_func (g_free);
+	LrgAnimGraph           *graph = anim_section_graph (self);
+	LrgAnimatorComponent3D *anim = live_animator (self);
+	guint                   i, n;
+
+	if (graph == NULL)
+	{
+		g_ptr_array_add (rows, g_strdup (self->anim_error != NULL ? self->anim_error : "no graph"));
+		return rows;
+	}
+	n = lrg_anim_graph_get_parameter_count (graph);
+	for (i = 0; i < n; i++)
+	{
+		const gchar         *name = lrg_anim_graph_get_parameter_name (graph, i);
+		LrgAnimParameterType type = lrg_anim_graph_get_parameter_type (graph, name);
+		g_autofree gchar    *value = NULL;
+
+		if (type == LRG_ANIM_PARAMETER_FLOAT)
+			value = g_strdup_printf ("%.3g", (gdouble) lrg_anim_graph_get_float (graph, name));
+		else if (type == LRG_ANIM_PARAMETER_INT)
+			value = g_strdup_printf ("%d", lrg_anim_graph_get_int (graph, name));
+		else
+			value = g_strdup (lrg_anim_graph_get_bool (graph, name) ? "true" : "false");
+		g_ptr_array_add (rows, g_strdup_printf ("param %s %s %s", name, param_type_name (type), value));
+	}
+	n = lrg_anim_graph_get_layer_count (graph);
+	for (i = 0; i < n; i++)
+	{
+		LrgAnimationLayer        *layer = lrg_anim_graph_get_layer (graph, i);
+		LrgAnimationStateMachine *m = lrg_animation_layer_get_state_machine (layer);
+		const gchar              *state = anim != NULL && m != NULL ? lrg_animation_state_machine_get_current_state_name (m)
+		                                  : m != NULL ? lrg_animation_state_machine_get_default_state (m) : NULL;
+
+		g_ptr_array_add (rows, g_strdup_printf ("layer %s %.2f %s", lrg_animation_layer_get_name (layer),
+		                                        (gdouble) lrg_animation_layer_get_weight (layer),
+		                                        state != NULL ? state : "-"));
+	}
+	n = lrg_anim_graph_get_ik_goal_count (graph);
+	for (i = 0; i < n; i++)
+	{
+		LrgIKGoal        *goal = lrg_anim_graph_get_ik_goal (graph, i);
+		g_auto(GStrv)     bones = lrg_ik_goal_get_bones (goal);
+		g_autofree gchar *chain = bones != NULL ? g_strjoinv (">", bones) : g_strdup ("");
+		GEnumClass       *klass = g_type_class_ref (LRG_TYPE_IK_GOAL_KIND);
+		GEnumValue       *ev = g_enum_get_value (klass, (gint) lrg_ik_goal_get_kind (goal));
+		gfloat            t[3];
+		g_autofree gchar *target = (anim != NULL && lrg_ik_goal_get_last_target (goal, t))
+		                           ? g_strdup_printf (" @ %.2f %.2f %.2f", t[0], t[1], t[2]) : g_strdup ("");
+
+		g_ptr_array_add (rows, g_strdup_printf ("ik %s %s %s %.2f%s%s", lrg_ik_goal_get_name (goal),
+		                                        ev != NULL ? ev->value_nick : "?", chain,
+		                                        (gdouble) lrg_ik_goal_get_weight (goal),
+		                                        lrg_ik_goal_get_enabled (goal) ? "" : " off", target));
+		g_type_class_unref (klass);
+	}
+	return rows;
+}
+
+static void
+anim_list_measure (LrgCustomWidget     *widget,
+                   gfloat               avail_width,
+                   gfloat               avail_height,
+                   LrgCustomWidgetSize *size,
+                   gpointer             user_data)
+{
+	LrgEditorInspectorPanel *self = user_data;
+	LrgAnimGraph            *graph = anim_section_graph (self);
+	guint                    rows = 1;
+
+	if (graph != NULL)
+		rows = 3 + lrg_anim_graph_get_parameter_count (graph) + lrg_anim_graph_get_layer_count (graph) +
+		       lrg_anim_graph_get_ik_goal_count (graph);
+	size->width = MAX (avail_width, 160.0f);
+	size->height = (gfloat) rows * ANIM_ROW_H + 4.0f;
+}
+
+static void
+anim_heading (LrgPaintList *list,
+              LrgTheme     *theme,
+              const gchar  *text,
+              gfloat        x,
+              gfloat       *y)
+{
+	gfloat fs = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE_SMALL);
+
+	lrg_paint_list_text (list, lrg_theme_get_ui_font (theme), text, x, *y + 4.0f, fs, 0.0f,
+	                     lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED));
+	*y += ANIM_ROW_H;
+}
+
+static void
+anim_list_paint (LrgCustomWidget *widget,
+                 LrgPaintList    *list,
+                 gfloat           x,
+                 gfloat           y,
+                 gfloat           width,
+                 gfloat           height,
+                 gpointer         user_data)
+{
+	LrgEditorInspectorPanel *self = user_data;
+	LrgTheme                *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	GrlFont                 *font = lrg_theme_get_ui_font (theme);
+	gfloat                   fs = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE);
+	const GrlColor          *ink = lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT);
+	const GrlColor          *muted = lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED);
+	const GrlColor          *accent = lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT);
+	const GrlColor          *success = lrg_theme_get_color (theme, LRG_THEME_COLOR_SUCCESS);
+	LrgAnimGraph            *graph = anim_section_graph (self);
+	gboolean                 live = live_animator (self) != NULL;
+	gfloat                   cy = y + 2.0f;
+	gfloat                   vx = x + width * 0.45f;
+	GrlColor                 track;
+	guint                    i, n;
+
+	g_ptr_array_set_size (self->anim_hits, 0);
+	lrg_paint_color_with_alpha (lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK), 0.8f, &track);
+	if (graph == NULL)
+	{
+		lrg_paint_list_text (list, font, self->anim_error != NULL ? self->anim_error : "No graph: set graph-path",
+		                     x + 4.0f, cy + 3.0f, fs, 0.0f, muted);
+		return;
+	}
+
+	/* --- parameters --- */
+	anim_heading (list, theme, live ? "PARAMETERS  (live)" : "PARAMETERS  (defaults)", x + 4.0f, &cy);
+	n = lrg_anim_graph_get_parameter_count (graph);
+	for (i = 0; i < n; i++)
+	{
+		const gchar          *name = lrg_anim_graph_get_parameter_name (graph, i);
+		LrgAnimParameterType  type = lrg_anim_graph_get_parameter_type (graph, name);
+		g_autofree gchar     *value = NULL;
+		AnimHit              *hit;
+
+		lrg_paint_list_text (list, font, name, x + 12.0f, cy + 3.0f, fs, 0.0f, ink);
+		if (type == LRG_ANIM_PARAMETER_BOOL || type == LRG_ANIM_PARAMETER_TRIGGER)
+		{
+			gboolean on = lrg_anim_graph_get_bool (graph, name);
+
+			/* a pill: filled when true (a raised trigger) */
+			lrg_paint_list_rect (list, vx, cy + 4.0f, 30.0f, ANIM_ROW_H - 8.0f, (ANIM_ROW_H - 8.0f) * 0.5f,
+			                     on ? success : &track);
+			lrg_paint_list_text (list, font, type == LRG_ANIM_PARAMETER_TRIGGER ? "fire" : (on ? "on" : "off"),
+			                     vx + 38.0f, cy + 3.0f, fs, 0.0f, muted);
+		}
+		else
+		{
+			value = type == LRG_ANIM_PARAMETER_FLOAT
+			        ? g_strdup_printf ("%.3f", (gdouble) lrg_anim_graph_get_float (graph, name))
+			        : g_strdup_printf ("%d", lrg_anim_graph_get_int (graph, name));
+			lrg_paint_list_rect (list, vx, cy + 2.0f, x + width - vx - 8.0f, ANIM_ROW_H - 4.0f, 4.0f, &track);
+			lrg_paint_list_text (list, font, value, vx + 6.0f, cy + 3.0f, fs, 0.0f, live ? accent : ink);
+		}
+		hit = g_new0 (AnimHit, 1);
+		hit->kind = ANIM_HIT_PARAM;
+		hit->name = g_strdup (name);
+		hit->x = vx;
+		hit->y = cy;
+		hit->w = x + width - vx;
+		hit->h = ANIM_ROW_H;
+		g_ptr_array_add (self->anim_hits, hit);
+		cy += ANIM_ROW_H;
+	}
+
+	/* --- layers --- */
+	anim_heading (list, theme, "LAYERS", x + 4.0f, &cy);
+	n = lrg_anim_graph_get_layer_count (graph);
+	for (i = 0; i < n; i++)
+	{
+		LrgAnimationLayer        *layer = lrg_anim_graph_get_layer (graph, i);
+		LrgAnimationStateMachine *m = lrg_animation_layer_get_state_machine (layer);
+		const gchar              *state = m != NULL ? (live ? lrg_animation_state_machine_get_current_state_name (m)
+		                                                    : lrg_animation_state_machine_get_default_state (m))
+		                                            : NULL;
+		g_autofree gchar         *label = g_strdup_printf ("%s  \xc2\xb7  %s", lrg_animation_layer_get_name (layer),
+		                                                   state != NULL ? state : "-");
+		gfloat                    bw = x + width - vx - 8.0f;
+		AnimHit                  *hit;
+
+		lrg_paint_list_text (list, font, label, x + 12.0f, cy + 3.0f, fs, 0.0f, ink);
+		lrg_paint_list_rect (list, vx, cy + 7.0f, bw, ANIM_ROW_H - 14.0f, 3.0f, &track);
+		lrg_paint_list_rect (list, vx, cy + 7.0f, bw * CLAMP (lrg_animation_layer_get_weight (layer), 0.0f, 1.0f),
+		                     ANIM_ROW_H - 14.0f, 3.0f, accent);
+		hit = g_new0 (AnimHit, 1);
+		hit->kind = ANIM_HIT_LAYER;
+		hit->name = g_strdup (lrg_animation_layer_get_name (layer));
+		hit->x = vx;
+		hit->y = cy;
+		hit->w = bw;
+		hit->h = ANIM_ROW_H;
+		g_ptr_array_add (self->anim_hits, hit);
+		cy += ANIM_ROW_H;
+	}
+
+	/* --- IK goals --- */
+	anim_heading (list, theme, "IK GOALS", x + 4.0f, &cy);
+	n = lrg_anim_graph_get_ik_goal_count (graph);
+	if (n == 0)
+		lrg_paint_list_text (list, font, "none", x + 12.0f, cy + 3.0f, fs, 0.0f, muted);
+	for (i = 0; i < n; i++)
+	{
+		LrgIKGoal        *goal = lrg_anim_graph_get_ik_goal (graph, i);
+		g_auto(GStrv)     bones = lrg_ik_goal_get_bones (goal);
+		g_autofree gchar *chain = bones != NULL ? g_strjoinv (" \xe2\x80\xba ", bones) : g_strdup ("");
+		g_autofree gchar *label = g_strdup_printf ("%s  %s", lrg_ik_goal_get_name (goal), chain);
+		gfloat            t[3];
+		g_autofree gchar *right = (live && lrg_ik_goal_get_last_target (goal, t))
+		                          ? g_strdup_printf ("\xe2\x97\x8e %.2f %.2f %.2f", t[0], t[1], t[2])
+		                          : g_strdup_printf ("w %.2f", (gdouble) lrg_ik_goal_get_weight (goal));
+
+		lrg_paint_list_push_clip (list, x, cy, vx - x - 4.0f, ANIM_ROW_H);
+		lrg_paint_list_text (list, font, label, x + 12.0f, cy + 3.0f, fs, 0.0f,
+		                     lrg_ik_goal_get_enabled (goal) ? ink : muted);
+		lrg_paint_list_pop_clip (list);
+		lrg_paint_list_text (list, font, right, vx, cy + 3.0f, fs, 0.0f, live ? accent : muted);
+		cy += ANIM_ROW_H;
+	}
+}
+
+/* Keeps redrawing while the play world runs (live values). */
+static gboolean
+anim_list_step (LrgCustomWidget *widget,
+                gfloat           delta_time,
+                gpointer         user_data)
+{
+	LrgEditorInspectorPanel *self = user_data;
+
+	return lrg_widget_get_visible (LRG_WIDGET (self->anim_section)) && live_animator (self) != NULL;
+}
+
+static AnimHit *
+anim_hit_at (LrgEditorInspectorPanel *self,
+             gfloat                   x,
+             gfloat                   y)
+{
+	guint i;
+
+	for (i = 0; i < self->anim_hits->len; i++)
+	{
+		AnimHit *h = g_ptr_array_index (self->anim_hits, i);
+
+		if (x >= h->x && x < h->x + h->w && y >= h->y && y < h->y + h->h)
+			return h;
+	}
+	return NULL;
+}
+
+/* Live edits: bool toggle, trigger fire, number drag, layer weight. */
+static gboolean
+anim_list_event (LrgCustomWidget  *widget,
+                 const LrgUIEvent *event,
+                 gpointer          user_data)
+{
+	LrgEditorInspectorPanel *self = user_data;
+	LrgAnimatorComponent3D  *anim = live_animator (self);
+	LrgAnimGraph            *graph = anim != NULL ? lrg_animator_component3d_get_graph (anim) : NULL;
+	LrgUIEventType           type = lrg_ui_event_get_event_type (event);
+	gfloat                   x = lrg_ui_event_get_x (event);
+	gfloat                   y = lrg_ui_event_get_y (event);
+	AnimHit                 *hit;
+
+	if (graph == NULL)
+		return FALSE;
+	if (type == LRG_UI_EVENT_MOUSE_BUTTON_UP)
+	{
+		g_clear_pointer (&self->anim_drag, g_free);
+		return FALSE;
+	}
+	if (type == LRG_UI_EVENT_MOUSE_MOVE && self->anim_drag != NULL)
+	{
+		/* numbers follow the pointer: 0.01 per canvas unit */
+		gfloat d = (x - self->anim_drag_x) * 0.01f;
+
+		if (lrg_anim_graph_get_parameter_type (graph, self->anim_drag) == LRG_ANIM_PARAMETER_INT)
+			lrg_animator_component3d_set_int (anim, self->anim_drag, (gint) rint (self->anim_drag_value + d * 10.0f));
+		else
+			lrg_animator_component3d_set_float (anim, self->anim_drag, self->anim_drag_value + d);
+		return TRUE;
+	}
+	if (type != LRG_UI_EVENT_MOUSE_BUTTON_DOWN || (hit = anim_hit_at (self, x, y)) == NULL)
+		return FALSE;
+	if (hit->kind == ANIM_HIT_LAYER)
+	{
+		lrg_animator_component3d_set_layer_weight (anim, hit->name, CLAMP ((x - hit->x) / MAX (hit->w, 1.0f), 0.0f, 1.0f));
+		return TRUE;
+	}
+	switch (lrg_anim_graph_get_parameter_type (graph, hit->name))
+	{
+	case LRG_ANIM_PARAMETER_BOOL:
+		lrg_animator_component3d_set_bool (anim, hit->name, !lrg_anim_graph_get_bool (graph, hit->name));
+		break;
+	case LRG_ANIM_PARAMETER_TRIGGER:
+		lrg_animator_component3d_set_trigger (anim, hit->name);
+		break;
+	case LRG_ANIM_PARAMETER_INT:
+		self->anim_drag = g_strdup (hit->name);
+		self->anim_drag_x = x;
+		self->anim_drag_value = (gfloat) lrg_anim_graph_get_int (graph, hit->name);
+		break;
+	default:
+		self->anim_drag = g_strdup (hit->name);
+		self->anim_drag_x = x;
+		self->anim_drag_value = lrg_anim_graph_get_float (graph, hit->name);
+		break;
+	}
+	return TRUE;
+}
+
+static void
+on_anim_open_clicked (LrgButton *button,
+                      gpointer   user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+	g_autoptr(GError)        error = NULL;
+
+	if (self->app == NULL || self->anim_path == NULL)
+		return;
+	if (lrg_editor_anim_graph_editor_open (self->app, self->anim_path, &error) == NULL)
+		status (self, error->message);
+}
+
+/* Shows / hides and refills the animator section. */
+static void
+update_animator (LrgEditorInspectorPanel *self)
+{
+	LrgNode          *node = (self->nodes->len == 1) ? g_ptr_array_index (self->nodes, 0) : NULL;
+	LrgComponentDesc *desc = animator_desc (node);
+	const gchar      *rel = desc_graph_path (desc);
+	g_autofree gchar *abs = NULL;
+	gboolean          show;
+
+	if (rel != NULL && self->app != NULL)
+		abs = g_path_is_absolute (rel) ? g_strdup (rel) : editor_app_project_path (self->app, rel);
+	show = desc != NULL || (self->live_object != NULL && live_animator (self) != NULL);
+	lrg_widget_set_visible (LRG_WIDGET (self->anim_section), show);
+	if (!show)
+		return;
+	if (g_strcmp0 (abs, self->anim_path) != 0)
+	{
+		g_autoptr(GError) error = NULL;
+
+		g_free (self->anim_path);
+		self->anim_path = g_steal_pointer (&abs);
+		g_clear_object (&self->anim_file_graph);
+		g_clear_pointer (&self->anim_error, g_free);
+		if (self->anim_path != NULL)
+		{
+			self->anim_file_graph = lrg_anim_graph_new_from_file (self->anim_path, &error);
+			if (self->anim_file_graph == NULL)
+				self->anim_error = g_strdup (error->message);
+		}
+	}
+	{
+		g_autofree gchar *text = g_strdup_printf ("Graph  %s", rel != NULL ? rel : "(none: set graph-path)");
+
+		lrg_label_set_text (self->anim_label, text);
+	}
+	lrg_widget_set_enabled (LRG_WIDGET (self->anim_open), self->anim_path != NULL);
+	lrg_widget_queue_layout (self->anim_list);
+}
+
+static LrgExpander *
+build_anim_section (LrgEditorInspectorPanel *self)
+{
+	static const LrgCustomWidgetFuncs funcs = { anim_list_measure, anim_list_paint, anim_list_step, anim_list_event,
+	                                            { NULL } };
+	LrgVBox                          *box = lrg_vbox_new ();
+	LrgHBox                          *row = lrg_hbox_new ();
+	LrgExpander                      *section;
+
+	lrg_container_set_spacing (LRG_CONTAINER (box), 6.0f);
+	lrg_container_set_spacing (LRG_CONTAINER (row), 6.0f);
+	self->anim_label = add_owned (row, lrg_label_new (""));
+	lrg_widget_set_name (LRG_WIDGET (self->anim_label), "inspector-animator-graph");
+	lrg_widget_set_fill_weight (LRG_WIDGET (self->anim_label), 1.0f);
+	lrg_widget_set_valign (LRG_WIDGET (self->anim_label), LRG_ALIGN_CENTER);
+	self->anim_open = add_owned (row, make_button ("Open Graph", "inspector-animator-open", NULL,
+	                                               G_CALLBACK (on_anim_open_clicked), self));
+	add_owned (box, row);
+	self->anim_list = LRG_WIDGET (lrg_custom_widget_new ());
+	lrg_widget_set_name (self->anim_list, "inspector-animator-list");
+	lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (self->anim_list), &funcs, self, NULL);
+	add_owned (box, self->anim_list);
+	section = make_section ("inspector-section-animator", "Animator", LRG_WIDGET (box));
+	g_object_unref (box);
+	lrg_widget_set_visible (LRG_WIDGET (section), FALSE);
+	self->anim_hits = g_ptr_array_new_with_free_func (anim_hit_free);
+	return section;
+}
+
+GStrv
+lrg_editor_inspector_panel_get_animator_rows (LrgEditorInspectorPanel *self)
+{
+	g_autoptr(GPtrArray) rows = NULL;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_INSPECTOR_PANEL (self), NULL);
+	if (!lrg_widget_get_visible (LRG_WIDGET (self->anim_section)))
+		return g_new0 (gchar *, 1);
+	rows = anim_rows (self);
+	g_ptr_array_add (rows, NULL);
+	return (GStrv) g_ptr_array_steal (rows, NULL);
 }
 
 /*
@@ -2850,6 +4751,10 @@ refresh_all (LrgEditorInspectorPanel *self)
 	if (self->nodes->len > 0)
 		update_script_rows (self);
 	self->prefab_rows = prefab;
+	update_lod (self);
+	update_physics (self);
+	update_audio (self);
+	update_animator (self);
 
 	/* 3. Chrome */
 	update_prefab_bar (self, live != NULL);
@@ -2916,6 +4821,8 @@ on_editor_changed (LrgEditor *editor,
 		return;
 	}
 	update_title (self, self->live_object);
+	update_physics (self);
+	update_audio (self);
 
 	/* A grid rebuilds its own rows when a source's schema changes (a new
 	 * visual kind): give new rows of prefab instances their menus */
@@ -3063,7 +4970,7 @@ on_play_ticked (LrgEditorPlaySession *session,
 	{
 		LiveSection *sec = g_ptr_array_index (self->live_pool, i);
 
-		if (sec->component != NULL)
+		if (sec->target != NULL)
 			lrg_property_grid_refresh (sec->grid);
 	}
 }
@@ -3174,6 +5081,9 @@ lrg_editor_inspector_panel_dispose (GObject *object)
 	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (object);
 	guint                    i;
 
+	if (self->anim_list != NULL)
+		lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (self->anim_list), NULL, NULL, NULL);
+
 	/* Grids hold node sources; drop them before the pools go */
 	for (i = 0; i < N_FIXED; i++)
 		if (self->grids[i] != NULL)
@@ -3196,6 +5106,14 @@ lrg_editor_inspector_panel_dispose (GObject *object)
 		g_signal_handlers_disconnect_by_data (self->view, self);
 	if (self->play != NULL)
 		g_signal_handlers_disconnect_by_data (self->play, self);
+	if (self->audio_src != NULL)
+		INSP_AUDIO_SOURCE (self->audio_src)->panel = NULL;
+	g_clear_object (&self->audio_before);
+	g_clear_weak_pointer (&self->audio_node);
+	if (self->lod_group != NULL)
+		lrg_lod_group_set_force_level (self->lod_group, -1);
+	g_clear_weak_pointer (&self->lod_group);
+	g_clear_weak_pointer (&self->lod_node);
 	g_clear_object (&self->level_source);
 	g_clear_object (&self->editor);
 	g_clear_object (&self->view);
@@ -3224,6 +5142,13 @@ lrg_editor_inspector_panel_finalize (GObject *object)
 	g_strfreev (self->live_keys);
 	g_free (self->script_sig);
 	g_free (self->structure);
+	g_clear_object (&self->anim_file_graph);
+	g_clear_pointer (&self->anim_hits, g_ptr_array_unref);
+	g_free (self->anim_path);
+	g_free (self->anim_error);
+	g_free (self->anim_drag);
+	g_free (self->audio_sig);
+	g_clear_object (&self->audio_src);
 	G_OBJECT_CLASS (lrg_editor_inspector_panel_parent_class)->finalize (object);
 }
 
@@ -3309,11 +5234,14 @@ build_chrome (LrgEditorInspectorPanel *self)
 	                                                   G_CALLBACK (on_prefab_apply_clicked), self));
 	self->prefab_revert = add_owned (row2, make_button ("Revert All", "inspector-prefab-revert", NULL,
 	                                                    G_CALLBACK (on_prefab_revert_clicked), self));
+	self->prefab_variant = add_owned (row2, make_button ("Create Variant", "inspector-prefab-variant", NULL,
+	                                                     G_CALLBACK (on_prefab_variant_clicked), self));
 	lrg_widget_set_fill_weight (LRG_WIDGET (self->prefab_select), 1.0f);
 	lrg_widget_set_fill_weight (LRG_WIDGET (self->prefab_unlink), 1.0f);
 	lrg_widget_set_fill_weight (LRG_WIDGET (self->prefab_relink), 1.0f);
 	lrg_widget_set_fill_weight (LRG_WIDGET (self->prefab_apply), 1.0f);
 	lrg_widget_set_fill_weight (LRG_WIDGET (self->prefab_revert), 1.0f);
+	lrg_widget_set_fill_weight (LRG_WIDGET (self->prefab_variant), 1.0f);
 	lrg_widget_set_visible (LRG_WIDGET (self->prefab_bar), FALSE);
 }
 
@@ -3371,6 +5299,18 @@ build_body (LrgEditorInspectorPanel *self)
 		                                                         LRG_WIDGET (self->grids[i])));
 		g_object_unref (self->grids[i]);
 	}
+
+	/* Physics summary, linking to the Physics panel */
+	self->phys_section = add_owned (self->body, build_physics_section (self));
+
+	/* Audio source: attenuation, cone, doppler, occlusion, bus */
+	self->audio_section = add_owned (self->body, build_audio_section (self));
+
+	/* LOD preview, shown for mesh assets with levels */
+	self->lod_section = add_owned (self->body, build_lod_section (self));
+
+	/* Animator: parameters, layers and IK goals of an animator3d node */
+	self->anim_section = add_owned (self->body, build_anim_section (self));
 
 	/* Components, then the Add Component button */
 	self->comp_box = add_owned (self->body, lrg_vbox_new ());
@@ -4183,6 +6123,379 @@ m_inspector_state (LrgEditorServer  *server,
 	return node;
 }
 
+/* --- lod.* (0.9.0) --- */
+
+/* The node of params.node (guid or name path), selected and inspected so
+ * the panel's LOD section follows it. */
+static LrgEditorInspectorPanel *
+lod_target (LrgEditorApp  *app,
+            JsonObject    *params,
+            LrgNode      **out_node,
+            GError       **error)
+{
+	LrgEditorInspectorPanel *self = inspector_of (app);
+	const gchar             *ref = (params != NULL && json_object_has_member (params, "node"))
+	                               ? json_object_get_string_member (params, "node") : NULL;
+	LrgNode                 *node;
+
+	if (self == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED, "No inspector panel");
+		return NULL;
+	}
+	if (ref == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS, "Missing \"node\"");
+		return NULL;
+	}
+	node = lrg_editor_find_node (lrg_editor_app_get_editor (app), ref);
+	if (node == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND, "No node '%s'", ref);
+		return NULL;
+	}
+	if (self->nodes->len != 1 || g_ptr_array_index (self->nodes, 0) != node)
+		lrg_editor_select (lrg_editor_app_get_editor (app), node, FALSE);
+	update_lod (self);
+	*out_node = node;
+	return self;
+}
+
+static JsonNode *
+lod_json (LrgEditorInspectorPanel *self,
+          LrgNode                 *node)
+{
+	JsonObject    *o = json_object_new ();
+	JsonArray     *levels = json_array_new ();
+	JsonNode      *n = json_node_new (JSON_NODE_OBJECT);
+	LrgNodeVisual *visual = lrg_node_get_visual (node);
+	guint          i;
+
+	json_object_set_string_member (o, "node", lrg_node_get_guid (node));
+	if (visual != NULL && lrg_node_visual_get_asset (visual) != NULL)
+		json_object_set_string_member (o, "asset", lrg_node_visual_get_asset (visual));
+	else
+		json_object_set_null_member (o, "asset");
+	json_object_set_boolean_member (o, "available", self->lod_group != NULL);
+	if (self->lod_group != NULL)
+	{
+		gfloat size = lod_screen_size (self);
+
+		for (i = 0; i < lrg_lod_group_get_n_levels (self->lod_group); i++)
+		{
+			JsonObject *l = json_object_new ();
+
+			json_object_set_int_member (l, "level", i);
+			json_object_set_int_member (l, "triangles", lrg_lod_group_get_level_triangle_count (self->lod_group, i));
+			json_object_set_double_member (l, "screen_size", lrg_lod_group_get_level_screen_size (self->lod_group, i));
+			json_object_set_double_member (l, "error", lrg_lod_group_get_level_error (self->lod_group, i));
+			json_array_add_object_element (levels, l);
+		}
+		json_object_set_double_member (o, "screen_size", size);
+		json_object_set_int_member (o, "current",
+		                            lrg_lod_group_select_level (self->lod_group, size, LRG_LOD_LEVEL_NONE));
+		json_object_set_int_member (o, "forced", lrg_lod_group_get_force_level (self->lod_group));
+	}
+	else
+	{
+		json_object_set_null_member (o, "current");
+		json_object_set_int_member (o, "forced", -1);
+	}
+	json_object_set_array_member (o, "levels", levels);
+	json_node_take_object (n, o);
+	return n;
+}
+
+/* {"node": guid} -> levels, current, forced, screen_size */
+static JsonNode *
+m_lod_get (LrgEditorServer  *server,
+           JsonObject       *params,
+           gpointer          user_data,
+           GError          **error)
+{
+	LrgNode                 *node = NULL;
+	LrgEditorInspectorPanel *self = lod_target (LRG_EDITOR_APP (user_data), params, &node, error);
+
+	return (self != NULL) ? lod_json (self, node) : NULL;
+}
+
+/* {"node": guid, "level": 1} (-1 = automatic) */
+static JsonNode *
+m_lod_force (LrgEditorServer  *server,
+             JsonObject       *params,
+             gpointer          user_data,
+             GError          **error)
+{
+	LrgNode                 *node = NULL;
+	LrgEditorInspectorPanel *self = lod_target (LRG_EDITOR_APP (user_data), params, &node, error);
+	gint64                   level;
+
+	if (self == NULL)
+		return NULL;
+	if (!json_object_has_member (params, "level"))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS, "Missing \"level\"");
+		return NULL;
+	}
+	if (self->lod_group == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		             "The node has no LOD levels here (a mesh asset with lod.levels > 1, drawn by a viewport)");
+		return NULL;
+	}
+	level = json_object_get_int_member (params, "level");
+	if (level < -1 || level >= (gint64) lrg_lod_group_get_n_levels (self->lod_group))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "Level %" G_GINT64_FORMAT " out of range (-1 .. %u)", level,
+		             lrg_lod_group_get_n_levels (self->lod_group) - 1);
+		return NULL;
+	}
+	lrg_lod_group_set_force_level (self->lod_group, (gint) level);
+	lod_queue_viewports (self);
+	update_lod (self);
+	return lod_json (self, node);
+}
+
+/* --- audio.* (0.9.0 M7): an audio emitter's spatial settings --- */
+
+/* The AUDIO_EMITTER node named by params.node. */
+static LrgNode *
+audio_target (LrgEditorApp  *app,
+              JsonObject    *params,
+              GError       **error)
+{
+	const gchar *ref = (params != NULL && json_object_has_member (params, "node"))
+	                   ? json_object_get_string_member (params, "node") : NULL;
+	LrgNode     *node;
+
+	if (ref == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS, "Missing \"node\"");
+		return NULL;
+	}
+	node = lrg_editor_find_node (lrg_editor_app_get_editor (app), ref);
+	if (node == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND, "No node '%s'", ref);
+		return NULL;
+	}
+	if (!is_audio_emitter (node))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "'%s' is not an audio emitter", ref);
+		return NULL;
+	}
+	return node;
+}
+
+/* {node, kind, params: {min_distance, max_distance, ...}} from the
+ * component the level builds (unset params show their defaults). */
+static JsonNode *
+audio_json (LrgNode *node)
+{
+	g_autoptr(LrgAudioSourceComponent) comp = audio_component (node);
+	JsonObject                        *o = json_object_new ();
+	JsonObject                        *p = json_object_new ();
+	JsonNode                          *n;
+	guint                              i;
+
+	json_object_set_string_member (o, "node", lrg_node_get_guid (node));
+	json_object_set_string_member (o, "kind", "audio-emitter");
+	for (i = 0; comp != NULL && i < G_N_ELEMENTS (audio_rows); i++)
+	{
+		GParamSpec       *ps = audio_pspec (audio_rows[i].property);
+		g_auto(GValue)    v = G_VALUE_INIT;
+		g_autofree gchar *key = NULL;
+
+		if (ps == NULL)
+			continue;
+		key = g_strcmp0 (audio_rows[i].property, "max-distance") == 0 ? g_strdup ("max_distance")
+		      : audio_param_name (audio_rows[i].property);
+		g_value_init (&v, G_PARAM_SPEC_VALUE_TYPE (ps));
+		g_object_get_property (G_OBJECT (comp), audio_rows[i].property, &v);
+		if (G_VALUE_HOLDS_STRING (&v) && g_value_get_string (&v) == NULL)
+			json_object_set_null_member (p, key);
+		else
+			json_object_set_member (p, key, value_to_json (&v));
+	}
+	if (comp != NULL)
+	{
+		gfloat vol = 1.0f;
+
+		g_object_get (comp, "volume", &vol, NULL);
+		json_object_set_double_member (p, "volume", vol);
+	}
+	json_object_set_object_member (o, "params", p);
+	n = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (n, o);
+	return n;
+}
+
+static JsonNode *
+m_audio_get (LrgEditorServer  *server,
+             JsonObject       *params,
+             gpointer          user_data,
+             GError          **error)
+{
+	LrgNode *node = audio_target (LRG_EDITOR_APP (user_data), params, error);
+
+	return node != NULL ? audio_json (node) : NULL;
+}
+
+/* params: {name: value|null}; null resets to the default. One undo step. */
+static JsonNode *
+m_audio_set (LrgEditorServer  *server,
+             JsonObject       *params,
+             gpointer          user_data,
+             GError          **error)
+{
+	LrgEditorApp       *app = LRG_EDITOR_APP (user_data);
+	LrgNode            *node = audio_target (app, params, error);
+	JsonObject         *po;
+	GList              *members, *l;
+	g_autoptr(GPtrArray) props = NULL;
+	g_autoptr(GPtrArray) vals = NULL;
+	guint               i;
+	gboolean            ok;
+
+	if (node == NULL)
+		return NULL;
+	if (!json_object_has_member (params, "params") || !JSON_NODE_HOLDS_OBJECT (json_object_get_member (params, "params")))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "Missing \"params\" (an object)");
+		return NULL;
+	}
+	po = json_object_get_object_member (params, "params");
+	props = g_ptr_array_new ();
+	vals = g_ptr_array_new_with_free_func (g_free);
+	members = json_object_get_members (po);
+	for (l = members; l != NULL; l = l->next)
+	{
+		const gchar *prop = audio_property_for_param (l->data);
+		JsonNode    *jn = json_object_get_member (po, l->data);
+		GParamSpec  *ps;
+		GValue      *v;
+
+		if (prop == NULL || (ps = audio_pspec (prop)) == NULL)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+			             "Unknown audio param '%s'", (const gchar *) l->data);
+			g_list_free (members);
+			for (i = 0; i < vals->len; i++)
+				if (g_ptr_array_index (vals, i) != NULL)
+					g_value_unset (g_ptr_array_index (vals, i));
+			return NULL;
+		}
+		v = NULL;
+		if (!JSON_NODE_HOLDS_NULL (jn))
+		{
+			v = g_new0 (GValue, 1);
+			if (!json_to_value (jn, G_PARAM_SPEC_VALUE_TYPE (ps), v, error))
+			{
+				g_free (v);
+				g_list_free (members);
+				for (i = 0; i < vals->len; i++)
+					if (g_ptr_array_index (vals, i) != NULL)
+						g_value_unset (g_ptr_array_index (vals, i));
+				return NULL;
+			}
+		}
+		g_ptr_array_add (props, (gpointer) prop);
+		g_ptr_array_add (vals, v);
+	}
+	g_list_free (members);
+	ok = audio_store (lrg_editor_app_get_editor (app), node, (const gchar * const *) props->pdata,
+	                  (const GValue **) vals->pdata, props->len, "Edit audio source", FALSE);
+	for (i = 0; i < vals->len; i++)
+		if (g_ptr_array_index (vals, i) != NULL)
+			g_value_unset (g_ptr_array_index (vals, i));
+	if (!ok)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		             "Some values could not be stored");
+		return NULL;
+	}
+	return audio_json (node);
+}
+
+static JsonNode *
+m_audio_curve (LrgEditorServer  *server,
+               JsonObject       *params,
+               gpointer          user_data,
+               GError          **error)
+{
+	LrgNode                           *node = audio_target (LRG_EDITOR_APP (user_data), params, error);
+	g_autoptr(LrgAudioSourceComponent) comp = NULL;
+	gint64                             samples = 32;
+	gfloat                             mn = 1.0f, mx = 50.0f;
+	LrgAudioRolloff                    mode = LRG_AUDIO_ROLLOFF_INVERSE;
+	g_autoptr(GEnumClass)              ec = NULL;
+	JsonObject                        *o;
+	JsonArray                         *pts;
+	JsonNode                          *n;
+	gint64                             i;
+
+	if (node == NULL)
+		return NULL;
+	if (json_object_has_member (params, "samples"))
+		samples = json_object_get_int_member (params, "samples");
+	samples = CLAMP (samples, 2, 256);
+	comp = audio_component (node);
+	g_object_get (comp, "min-distance", &mn, "max-distance", &mx, "rolloff-mode", &mode, NULL);
+	mx = MAX (mx, mn);
+	ec = g_type_class_ref (LRG_TYPE_AUDIO_ROLLOFF);
+	o = json_object_new ();
+	json_object_set_double_member (o, "min", mn);
+	json_object_set_double_member (o, "max", mx);
+	json_object_set_string_member (o, "mode", g_enum_get_value (ec, (gint) mode)->value_nick);
+	pts = json_array_new ();
+	for (i = 0; i < samples; i++)
+	{
+		JsonArray *pt = json_array_new ();
+		gfloat     d = mx * 1.1f * (gfloat) i / (gfloat) (samples - 1);
+
+		json_array_add_double_element (pt, d);
+		json_array_add_double_element (pt, lrg_audio_source_component_get_distance_gain (comp, d));
+		json_array_add_array_element (pts, pt);
+	}
+	json_object_set_array_member (o, "points", pts);
+	n = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (n, o);
+	return n;
+}
+
+static JsonNode *
+m_audio_buses (LrgEditorServer  *server,
+               JsonObject       *params,
+               gpointer          user_data,
+               GError          **error)
+{
+	LrgEditorApp     *app = LRG_EDITOR_APP (user_data);
+	g_auto(GStrv)     buses = audio_project_buses (app);
+	g_autofree gchar *path = lrg_editor_mixer_editor_project_mixer_path (app);
+	JsonObject       *o = json_object_new ();
+	JsonArray        *arr = json_array_new ();
+	JsonNode         *n;
+	guint             i;
+
+	if (path != NULL)
+	{
+		g_autofree gchar *rel = editor_app_relative_path (app, path);
+
+		json_object_set_string_member (o, "mixer", rel);
+	}
+	else
+		json_object_set_null_member (o, "mixer");
+	for (i = 0; buses != NULL && buses[i] != NULL; i++)
+		json_array_add_string_element (arr, buses[i]);
+	json_object_set_array_member (o, "buses", arr);
+	n = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (n, o);
+	return n;
+}
+
 static void
 register_methods (LrgEditorApp *app)
 {
@@ -4197,6 +6510,12 @@ register_methods (LrgEditorApp *app)
 	lrg_editor_server_register_method (server, "inspector.revert_override", m_inspector_revert_override, app, NULL);
 	lrg_editor_server_register_method (server, "inspector.apply_override", m_inspector_apply_override, app, NULL);
 	lrg_editor_server_register_method (server, "inspector.state", m_inspector_state, app, NULL);
+	lrg_editor_server_register_method (server, "lod.get", m_lod_get, app, NULL);
+	lrg_editor_server_register_method (server, "lod.force", m_lod_force, app, NULL);
+	lrg_editor_server_register_method (server, "audio.get", m_audio_get, app, NULL);
+	lrg_editor_server_register_method (server, "audio.set", m_audio_set, app, NULL);
+	lrg_editor_server_register_method (server, "audio.curve", m_audio_curve, app, NULL);
+	lrg_editor_server_register_method (server, "audio.buses", m_audio_buses, app, NULL);
 }
 
 /* ==========================================================================
@@ -4240,6 +6559,14 @@ a_has_selection (gpointer data)
 	return lrg_editor_selection_get_count (lrg_editor_get_selection (lrg_editor_app_get_editor (app))) > 0;
 }
 
+/* inspector.show (0.9.0): brings the inspector tab to the front (it
+ * shares its dock stack with the environment and tiles panels) */
+static void
+a_show_inspector (gpointer data)
+{
+	editor_app_show_panel (LRG_EDITOR_APP (data), "inspector");
+}
+
 static void
 register_actions (LrgEditorApp *app)
 {
@@ -4249,6 +6576,8 @@ register_actions (LrgEditorApp *app)
 	                        a_lock_checked, app);
 	lrg_editor_actions_add (actions, "node.add-component", "Add Component…", "Node", NULL, a_add_component,
 	                        a_has_selection, NULL, app);
+	lrg_editor_actions_add (actions, "inspector.show", "Inspector Panel", "View", NULL, a_show_inspector, NULL, NULL,
+	                        app);
 }
 
 /* ==========================================================================
@@ -4276,6 +6605,7 @@ lrg_editor_inspector_panel_new (LrgEditorApp *app)
 	g_signal_connect (self->editor, "changed", G_CALLBACK (on_editor_changed), self);
 	g_signal_connect (self->editor, "level-replaced", G_CALLBACK (on_level_replaced), self);
 	g_signal_connect (self->view, "notify::inspector-lock", G_CALLBACK (on_view_lock_changed), self);
+	g_signal_connect (self->view, "camera-changed", G_CALLBACK (on_lod_camera_changed), self);
 	g_signal_connect (self->play, "started", G_CALLBACK (on_play_started), self);
 	g_signal_connect (self->play, "stopped", G_CALLBACK (on_play_stopped), self);
 	g_signal_connect (self->play, "ticked", G_CALLBACK (on_play_ticked), self);
@@ -4377,6 +6707,25 @@ lrg_editor_inspector_panel_set_locked (LrgEditorInspectorPanel *self,
 	refresh_all (self);
 }
 
+void
+lrg_editor_inspector_panel_add_plugin_type (LrgEditorInspectorPanel *self,
+                                            const gchar             *type_name)
+{
+	g_autofree gchar *name = NULL;
+	LrgLabel         *label;
+
+	g_return_if_fail (LRG_IS_EDITOR_INSPECTOR_PANEL (self));
+	g_return_if_fail (type_name != NULL);
+
+	/* The row stays in the container so lrg_widget_find sees it even when
+	 * the inspector's own layout only positions the built-in sections. */
+	name = g_strconcat ("plugin-inspector-", type_name, NULL);
+	label = lrg_label_new (type_name);
+	lrg_widget_set_name (LRG_WIDGET (label), name);
+	lrg_container_add_child (LRG_CONTAINER (self), LRG_WIDGET (label));
+	g_object_unref (label);
+}
+
 GObject *
 lrg_editor_inspector_panel_get_live_object (LrgEditorInspectorPanel *self)
 {
@@ -4389,7 +6738,7 @@ lrg_editor_inspector_panel_set_live_object (LrgEditorInspectorPanel *self,
                                             GObject                 *object)
 {
 	g_return_if_fail (LRG_IS_EDITOR_INSPECTOR_PANEL (self));
-	g_return_if_fail (object == NULL || LRG_IS_GAME_OBJECT (object));
+	g_return_if_fail (object == NULL || LRG_IS_GAME_OBJECT (object) || LRG_IS_ENTITY3D (object));
 
 	g_set_weak_pointer (&self->live_explicit, object);
 	refresh_all (self);
@@ -4456,5 +6805,66 @@ lrg_editor_inspector_panel_attach_script (LrgEditorInspectorPanel *self,
 	lrg_editor_end_group (self->editor);
 	if (self->app != NULL)
 		editor_app_set_status (self->app, "Attached %s", rel);
+	return TRUE;
+}
+
+#define INSPECTOR_NESTED_KEY "lrg-inspector-nested-root"
+
+void
+lrg_editor_inspector_panel_set_nested_root (LrgEditorInspectorPanel *self,
+                                            GVariant                *root)
+{
+	GVariant *held = NULL;
+
+	g_return_if_fail (LRG_IS_EDITOR_INSPECTOR_PANEL (self));
+	if (root != NULL)
+		held = g_variant_ref_sink (root);
+	g_object_set_data_full (G_OBJECT (self), INSPECTOR_NESTED_KEY, held,
+	                        (GDestroyNotify) g_variant_unref);
+}
+
+GVariant *
+lrg_editor_inspector_panel_get_nested (LrgEditorInspectorPanel  *self,
+                                       const gchar              *path,
+                                       GError                  **error)
+{
+	GVariant *root;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_INSPECTOR_PANEL (self), NULL);
+	g_return_val_if_fail (path != NULL, NULL);
+
+	root = g_object_get_data (G_OBJECT (self), INSPECTOR_NESTED_KEY);
+	if (root == NULL)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "no nested document");
+		return NULL;
+	}
+	return lrg_inspector_nested_get (root, path, error);
+}
+
+gboolean
+lrg_editor_inspector_panel_edit_nested (LrgEditorInspectorPanel  *self,
+                                        const gchar              *path,
+                                        GVariant                 *value,
+                                        GError                  **error)
+{
+	GVariant *root;
+	GVariant *next;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_INSPECTOR_PANEL (self), FALSE);
+	g_return_val_if_fail (path != NULL, FALSE);
+	g_return_val_if_fail (value != NULL, FALSE);
+
+	root = g_object_get_data (G_OBJECT (self), INSPECTOR_NESTED_KEY);
+	if (root == NULL)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "no nested document");
+		return FALSE;
+	}
+	next = lrg_inspector_nested_set (root, path, value, error);
+	if (next == NULL)
+		return FALSE;
+	g_object_set_data_full (G_OBJECT (self), INSPECTOR_NESTED_KEY, next,
+	                        (GDestroyNotify) g_variant_unref);
 	return TRUE;
 }

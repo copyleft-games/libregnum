@@ -8,6 +8,33 @@
 #include "config.h"
 #include "lrg-screen-shake.h"
 #include <math.h>
+#include <raylib.h>
+#include <rlgl.h>
+#include "core/lrg-prewarm.h"
+
+/*
+ * Screen shake in one pass: every pixel samples the source rotated about
+ * the centre (in pixel space, so the rotation is not squashed by the
+ * aspect ratio) and shifted by the current offset. The image is zoomed
+ * just enough (overscan) to keep the shifted, rotated edges off screen.
+ */
+static const gchar shake_fs[] =
+    "#version 330\n"
+    "in vec2 fragTexCoord;\n"
+    "in vec4 fragColor;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform vec2 resolution;\n"
+    "uniform vec4 params;\n"   /* offset x, offset y (pixels), rotation (rad), zoom */
+    "out vec4 finalColor;\n"
+    "void main()\n"
+    "{\n"
+    "    vec2 p = (fragTexCoord - 0.5) * resolution / params.w;\n"
+    "    float s = sin(params.z);\n"
+    "    float c = cos(params.z);\n"
+    "    p = vec2(p.x * c - p.y * s, p.x * s + p.y * c);\n"
+    "    p += vec2(params.x, -params.y);\n"
+    "    finalColor = texture(texture0, p / resolution + 0.5);\n"
+    "}\n";
 
 /**
  * SECTION:lrg-screen-shake
@@ -57,9 +84,22 @@ struct _LrgScreenShake
     gfloat         seed_x;
     gfloat         seed_y;
     gfloat         seed_rot;
+
+    /* set by lrg_screen_shake_update(), cleared by apply: apply only
+     * advances the shake itself when the game did not this frame */
+    gboolean       updated;
+
+    GrlShader     *shader;
+    gboolean       shader_tried;
+    gint           loc_resolution;
+    gint           loc_params;
 };
 
-G_DEFINE_TYPE (LrgScreenShake, lrg_screen_shake, LRG_TYPE_POST_EFFECT)
+static void lrg_screen_shake_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgScreenShake, lrg_screen_shake, LRG_TYPE_POST_EFFECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                lrg_screen_shake_prewarmable_init))
 
 enum
 {
@@ -68,23 +108,34 @@ enum
     PROP_DECAY,
     PROP_FREQUENCY,
     PROP_MAX_ROTATION,
+    PROP_MAX_OFFSET_X,
+    PROP_MAX_OFFSET_Y,
     N_PROPS
 };
 
 static GParamSpec *properties[N_PROPS];
 
-/* Simple noise function for shake */
+/* Smooth 1D value noise in [-1, 1]: hashed values at integer steps of
+ * @x, blended with a smoothstep so the shake moves instead of jittering */
 static gfloat
-noise (gfloat x,
+hash1 (gfloat i,
        gfloat seed)
 {
     gfloat val;
 
-    val = sinf (x * 12.9898f + seed * 78.233f);
-    val = val * 43758.5453f;
-    val = val - floorf (val);
+    val = sinf (i * 12.9898f + seed * 78.233f) * 43758.5453f;
+    return (val - floorf (val)) * 2.0f - 1.0f;
+}
 
-    return val * 2.0f - 1.0f;
+static gfloat
+noise (gfloat x,
+       gfloat seed)
+{
+    gfloat i = floorf (x);
+    gfloat f = x - i;
+    gfloat u = f * f * (3.0f - 2.0f * f);
+
+    return hash1 (i, seed) * (1.0f - u) + hash1 (i + 1.0f, seed) * u;
 }
 
 static gboolean
@@ -99,7 +150,30 @@ lrg_screen_shake_real_initialize (LrgPostEffect *effect,
 static void
 lrg_screen_shake_real_shutdown (LrgPostEffect *effect)
 {
-    (void)effect;
+    LrgScreenShake *self = LRG_SCREEN_SHAKE (effect);
+
+    g_clear_object (&self->shader);
+    self->shader_tried = FALSE;
+}
+
+/* Compiles the pass shader once (needs a window) */
+static GrlShader *
+shake_get_shader (LrgScreenShake *self)
+{
+    g_autoptr(GError) error = NULL;
+
+    if (self->shader != NULL || self->shader_tried || !IsWindowReady ())
+        return self->shader;
+    self->shader_tried = TRUE;
+    self->shader = lrg_post_effect_compile_shader (shake_fs, &error);
+    if (self->shader == NULL)
+    {
+        g_warning ("screen shake: %s", error->message);
+        return NULL;
+    }
+    self->loc_resolution = grl_shader_get_location (self->shader, "resolution");
+    self->loc_params = grl_shader_get_location (self->shader, "params");
+    return self->shader;
 }
 
 static void
@@ -110,36 +184,52 @@ lrg_screen_shake_real_apply (LrgPostEffect *effect,
                              guint          height,
                              gfloat         delta_time)
 {
-    /*
-     * Apply screen shake as UV offset in shader:
-     *
-     * uniform vec2 shakeOffset;
-     * uniform float shakeRotation;
-     * uniform vec2 resolution;
-     *
-     * void main() {
-     *     vec2 uv = gl_FragCoord.xy / resolution;
-     *     vec2 center = vec2(0.5, 0.5);
-     *
-     *     // Apply rotation around center
-     *     float s = sin(shakeRotation);
-     *     float c = cos(shakeRotation);
-     *     uv -= center;
-     *     uv = vec2(uv.x * c - uv.y * s, uv.x * s + uv.y * c);
-     *     uv += center;
-     *
-     *     // Apply offset
-     *     uv += shakeOffset / resolution;
-     *
-     *     gl_FragColor = texture(texture0, uv);
-     * }
-     */
-    (void)effect;
-    (void)source_texture_id;
+    LrgScreenShake *self = LRG_SCREEN_SHAKE (effect);
+    GrlShader *shader;
+    gfloat k;
+    gfloat ox, oy, rot, zoom;
+
     (void)target_texture_id;
-    (void)width;
-    (void)height;
-    (void)delta_time;
+
+    /* Advance unless the game already called lrg_screen_shake_update() */
+    if (!self->updated && isfinite (delta_time) && delta_time > 0.0f)
+        lrg_screen_shake_update (self, delta_time);
+    self->updated = FALSE;
+
+    k = lrg_post_effect_get_intensity (effect);
+    ox = self->current_offset_x * k;
+    oy = self->current_offset_y * k;
+    rot = self->current_rotation * k * (gfloat)G_PI / 180.0f;
+    shader = (ox != 0.0f || oy != 0.0f || rot != 0.0f) ? shake_get_shader (self) : NULL;
+    if (shader != NULL && width > 0 && height > 0)
+    {
+        /* overscan: twice the shift as a fraction of the screen plus the
+         * rotation's corner sweep keeps the borders out of view */
+        zoom = 1.0f + 2.0f * MAX (fabsf (ox) / (gfloat)width, fabsf (oy) / (gfloat)height) +
+               fabsf (sinf (rot)) * ((gfloat)MAX (width, height) / (gfloat)MIN (width, height));
+        grl_shader_set_value_vec2 (shader, self->loc_resolution, (gfloat)width, (gfloat)height);
+        grl_shader_set_value_vec4 (shader, self->loc_params, ox, oy, rot, zoom);
+        grl_shader_begin (shader);
+    }
+    else
+        shader = NULL;
+    lrg_post_effect_draw_fullscreen (source_texture_id, width, height);
+    if (shader != NULL)
+        grl_shader_end (shader);
+}
+
+/* lrg_screen_shake_prewarm: compiles the pass shader ahead of the first frame */
+static gboolean
+lrg_screen_shake_prewarm (LrgPrewarmable *prewarmable)
+{
+    shake_get_shader (LRG_SCREEN_SHAKE (prewarmable));
+    return TRUE;
+}
+
+static void
+lrg_screen_shake_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_screen_shake_prewarm;
 }
 
 static const gchar *
@@ -181,6 +271,12 @@ lrg_screen_shake_get_property (GObject    *object,
     case PROP_MAX_ROTATION:
         g_value_set_float (value, self->max_rotation);
         break;
+    case PROP_MAX_OFFSET_X:
+        g_value_set_float (value, self->max_offset_x);
+        break;
+    case PROP_MAX_OFFSET_Y:
+        g_value_set_float (value, self->max_offset_y);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -207,6 +303,12 @@ lrg_screen_shake_set_property (GObject      *object,
         break;
     case PROP_MAX_ROTATION:
         lrg_screen_shake_set_max_rotation (self, g_value_get_float (value));
+        break;
+    case PROP_MAX_OFFSET_X:
+        lrg_screen_shake_set_max_offset (self, g_value_get_float (value), self->max_offset_y);
+        break;
+    case PROP_MAX_OFFSET_Y:
+        lrg_screen_shake_set_max_offset (self, self->max_offset_x, g_value_get_float (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -264,6 +366,26 @@ lrg_screen_shake_class_init (LrgScreenShakeClass *klass)
                             G_PARAM_STATIC_STRINGS |
                             G_PARAM_EXPLICIT_NOTIFY);
 
+    /**
+     * LrgScreenShake:max-offset-x:
+     *
+     * Horizontal shift in pixels at full trauma.
+     */
+    properties[PROP_MAX_OFFSET_X] =
+        g_param_spec_float ("max-offset-x", "Max Offset X", "Horizontal shift in pixels at full trauma",
+                            0.0f, G_MAXFLOAT, 20.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgScreenShake:max-offset-y:
+     *
+     * Vertical shift in pixels at full trauma.
+     */
+    properties[PROP_MAX_OFFSET_Y] =
+        g_param_spec_float ("max-offset-y", "Max Offset Y", "Vertical shift in pixels at full trauma",
+                            0.0f, G_MAXFLOAT, 15.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -285,6 +407,9 @@ lrg_screen_shake_init (LrgScreenShake *self)
     self->seed_x = (gfloat)g_random_double () * 1000.0f;
     self->seed_y = (gfloat)g_random_double () * 1000.0f;
     self->seed_rot = (gfloat)g_random_double () * 1000.0f;
+
+    /* compile ahead of the first frame when a loading screen prewarms */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgScreenShake *
@@ -364,8 +489,18 @@ lrg_screen_shake_set_max_offset (LrgScreenShake *self,
 {
     g_return_if_fail (LRG_IS_SCREEN_SHAKE (self));
 
-    self->max_offset_x = MAX (0.0f, x);
-    self->max_offset_y = MAX (0.0f, y);
+    x = MAX (0.0f, x);
+    y = MAX (0.0f, y);
+    if (self->max_offset_x != x)
+    {
+        self->max_offset_x = x;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MAX_OFFSET_X]);
+    }
+    if (self->max_offset_y != y)
+    {
+        self->max_offset_y = y;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MAX_OFFSET_Y]);
+    }
 }
 
 gfloat
@@ -433,6 +568,7 @@ lrg_screen_shake_update (LrgScreenShake *self,
     self->current_offset_x = shake * self->max_offset_x * noise (t, self->seed_x);
     self->current_offset_y = shake * self->max_offset_y * noise (t, self->seed_y);
     self->current_rotation = shake * self->max_rotation * noise (t, self->seed_rot);
+    self->updated = TRUE;
 }
 
 void

@@ -27,6 +27,7 @@
 
 #define LRG_EDITOR_PANEL_INTERNAL
 #include "lrg-editor-profiler-panel.h"
+#include "lrg-editor-frame-debugger.h"
 #include "lrg-editor-console-panel.h"
 #include "lrg-editor-app-private.h"
 #include "../../ui/lrg-label.h"
@@ -120,6 +121,16 @@ struct _LrgEditorProfilerPanel
 	gboolean              clear_pending;
 	guint                 apply_id;     /* idle applying want / clear */
 	gfloat                since_refresh;
+
+	/* 0 timeline, 1 flame, 2 table, 3 compare.  view_frame -1 = newest. */
+	LrgWidget            *lanes;
+	LrgWidget            *mode_chips[4];
+	LrgEditorFrameDebugger *debugger;   /* ref; docked only by frame.show */
+	LrgProfilerCapture   *held;         /* last profiler.capture / load */
+	LrgProfilerCapture   *live_snap;    /* a few live frames, for the lanes */
+	gint                  mode;
+	gint64                view_frame;
+	gint64                compare_frame;
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorProfilerPanel, lrg_editor_profiler_panel, LRG_TYPE_CONTAINER)
@@ -361,6 +372,11 @@ tap_step (LrgCustomWidget *tap,
 	if (shown && self->since_refresh >= REFRESH_INTERVAL)
 	{
 		self->since_refresh = 0.0f;
+		if (self->held == NULL)
+		{
+			g_clear_object (&self->live_snap);
+			self->live_snap = lrg_profiler_capture (self->profiler, 8);
+		}
 		refresh_table (self);
 		refresh_readout (self);
 	}
@@ -578,6 +594,8 @@ m_profiler_sample (LrgEditorServer  *server,
 	json_builder_add_boolean_value (b, self->pinned);
 	json_builder_set_member_name (b, "paused");
 	json_builder_add_boolean_value (b, self->paused);
+	json_builder_set_member_name (b, "gpu");
+	json_builder_add_boolean_value (b, lrg_profiler_get_gpu_enabled (self->profiler));
 	json_builder_set_member_name (b, "frame_ms");
 	json_builder_add_double_value (b, self->n_frames > 0 ? self->frames[ring_index (self, self->n_frames - 1)] : 0.0);
 
@@ -623,6 +641,964 @@ m_profiler_sample (LrgEditorServer  *server,
 }
 
 /* --------------------------------------------------------------------------
+ * Lanes, flame graph, compare
+ * -------------------------------------------------------------------------- */
+
+static const gchar *
+prof_mode_nick (gint mode)
+{
+	switch (mode)
+	{
+	case 1:
+		return "flame";
+	case 2:
+		return "table";
+	case 3:
+		return "compare";
+	default:
+		return "timeline";
+	}
+}
+
+static gint
+prof_mode_from (const gchar *nick)
+{
+	if (g_strcmp0 (nick, "flame") == 0)
+		return 1;
+	if (g_strcmp0 (nick, "table") == 0)
+		return 2;
+	if (g_strcmp0 (nick, "compare") == 0)
+		return 3;
+	if (g_strcmp0 (nick, "timeline") == 0)
+		return 0;
+	return -1;
+}
+
+static void
+prof_set_mode (LrgEditorProfilerPanel *self,
+               gint                    mode)
+{
+	guint i;
+
+	self->mode = mode;
+	for (i = 0; i < 4; i++)
+		if (self->mode_chips[i] != NULL)
+			editor_chip_set_checked (self->mode_chips[i], (gint) i == mode);
+	if (self->held == NULL && self->profiler != NULL)
+	{
+		g_clear_object (&self->live_snap);
+		self->live_snap = lrg_profiler_capture (self->profiler, 8);
+	}
+	lrg_widget_queue_layout (LRG_WIDGET (self));
+}
+
+static void
+on_mode (LrgWidget *chip,
+         gpointer   user_data)
+{
+	prof_set_mode (LRG_EDITOR_PROFILER_PANEL (user_data),
+	               prof_mode_from (lrg_widget_get_name (chip) + strlen ("profiler-mode-")));
+}
+
+static LrgProfilerCapture *
+paint_capture (LrgEditorProfilerPanel *self)
+{
+	if (self->held != NULL)
+		return self->held;
+	return self->live_snap;
+}
+
+static gint
+paint_position (LrgEditorProfilerPanel *self,
+                LrgProfilerCapture     *cap)
+{
+	guint n;
+	gint  pos;
+
+	n = lrg_profiler_capture_get_n_frames (cap);
+	if (n == 0)
+		return -1;
+	if (self->view_frame < 0)
+		return (gint) n - 1;
+	pos = lrg_profiler_capture_find_frame (cap, (guint64) self->view_frame);
+	if (pos < 0)
+		return (gint) n - 1;
+	return pos;
+}
+
+static void
+draw_span (LrgPaintList *list,
+           gfloat        x,
+           gfloat        y,
+           gfloat        w,
+           gfloat        h,
+           gint64        start,
+           gint64        dur,
+           gint64        span,
+           guint         depth,
+           const GrlColor *color)
+{
+	gfloat bx;
+	gfloat bw;
+	GrlColor c;
+
+	if (span < 1)
+		span = 1;
+	bx = x + (gfloat) start / (gfloat) span * w;
+	bw = MAX (1.0f, (gfloat) dur / (gfloat) span * w);
+	lrg_paint_color_with_alpha (color, 0.35f + 0.15f * (gfloat) (depth % 4), &c);
+	lrg_paint_list_rect (list, bx, y + (gfloat) (depth % 4) * 3.0f, bw, MAX (4.0f, h - 4.0f), 0.0f, &c);
+}
+
+static void
+lanes_paint (LrgCustomWidget *widget,
+             LrgPaintList    *list,
+             gfloat           x,
+             gfloat           y,
+             gfloat           width,
+             gfloat           height,
+             gpointer         user_data)
+{
+	LrgEditorProfilerPanel *self = LRG_EDITOR_PROFILER_PANEL (user_data);
+	LrgProfilerCapture     *cap;
+	LrgTheme               *theme;
+	GrlFont                *font;
+	const GrlColor         *muted;
+	const GrlColor         *accent;
+	gfloat                  fs;
+	gint                    pos;
+	guint                   n_threads;
+	guint                   lane;
+	guint                   ne = 0;
+	gint64                  span;
+	const LrgProfilerEvent *ev;
+
+	(void) widget;
+	if (height < 4.0f || width < 4.0f)
+		return;
+	theme = lrg_widget_get_theme (LRG_WIDGET (self));
+	font = lrg_theme_get_ui_font (theme);
+	fs = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE_SMALL);
+	muted = lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED);
+	accent = lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT);
+	lrg_paint_list_rect (list, x, y, width, height, 4.0f, lrg_theme_get_color (theme, LRG_THEME_COLOR_SURFACE));
+	lrg_paint_list_border (list, x, y, width, height, 4.0f, 1.0f, lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER));
+	cap = paint_capture (self);
+	if (cap == NULL)
+	{
+		lrg_paint_list_text (list, font, "No capture yet", x + 8.0f, y + 8.0f, fs, 0.0f, muted);
+		return;
+	}
+	pos = paint_position (self, cap);
+	if (pos < 0)
+	{
+		lrg_paint_list_text (list, font, "No frames in this capture", x + 8.0f, y + 8.0f, fs, 0.0f, muted);
+		return;
+	}
+	if (self->mode == 3)
+	{
+		lrg_paint_list_text (list, font, "Compare: section deltas are in profiler.compare", x + 8.0f, y + 8.0f, fs, 0.0f, muted);
+		return;
+	}
+	span = lrg_profiler_capture_get_frame_duration_us (cap, (guint) pos);
+	n_threads = lrg_profiler_capture_get_n_threads (cap);
+	ev = lrg_profiler_capture_get_events (cap, (guint) pos, &ne);
+	lrg_paint_list_push_clip (list, x, y, width, height);
+	if (self->mode == 1)
+	{
+		guint i;
+
+		for (i = 0; i < ne; i++)
+		{
+			gfloat row_h = MAX (10.0f, fs + 2.0f);
+			gfloat by = y + 4.0f + (gfloat) ev[i].depth * row_h;
+
+			if (by > y + height)
+				continue;
+			draw_span (list, x + 4.0f, by, width - 8.0f, row_h - 2.0f, ev[i].start_us, ev[i].duration_us, span,
+			           0, accent);
+			lrg_paint_list_text (list, font, ev[i].name, x + 6.0f, by, fs, 0.0f, muted);
+		}
+	}
+	else
+	{
+		gfloat lane_h;
+		guint  lanes_n = n_threads + 1;
+
+		lane_h = height / (gfloat) MAX (lanes_n, 1u);
+		for (lane = 0; lane < n_threads; lane++)
+		{
+			const gchar *name = lrg_profiler_capture_get_thread_name (cap, lane);
+			gfloat       ly = y + (gfloat) lane * lane_h;
+			guint        i;
+
+			lrg_paint_list_text (list, font, name != NULL ? name : "", x + 4.0f, ly + 2.0f, fs, 0.0f, muted);
+			for (i = 0; i < ne; i++)
+			{
+				if (ev[i].thread != lane)
+					continue;
+				draw_span (list, x + 72.0f, ly + fs, width - 80.0f, MAX (4.0f, lane_h - fs - 4.0f),
+				           ev[i].start_us, ev[i].duration_us, span, ev[i].depth, accent);
+			}
+		}
+		{
+			const LrgProfilerEvent *gpu;
+			guint                   ng = 0;
+			gfloat                  ly = y + (gfloat) n_threads * lane_h;
+			guint                   i;
+
+			gpu = lrg_profiler_capture_get_gpu_events (cap, (guint) pos, &ng);
+			lrg_paint_list_text (list, font, "GPU", x + 4.0f, ly + 2.0f, fs, 0.0f,
+			                     lrg_theme_get_color (theme, LRG_THEME_COLOR_WARNING));
+			for (i = 0; i < ng; i++)
+				draw_span (list, x + 72.0f, ly + fs, width - 80.0f, MAX (4.0f, lane_h - fs - 4.0f),
+				           gpu[i].start_us, gpu[i].duration_us, span, gpu[i].depth,
+				           lrg_theme_get_color (theme, LRG_THEME_COLOR_WARNING));
+		}
+	}
+	lrg_paint_list_pop_clip (list);
+}
+
+/* --------------------------------------------------------------------------
+ * IPC: profiler.set / capture / save / load / frames / frame / compare / view
+ * -------------------------------------------------------------------------- */
+
+typedef struct
+{
+	gchar   *name;
+	gdouble  a_ms;
+	gdouble  b_ms;
+	gdouble  delta_ms;
+	guint    a_calls;
+	guint    b_calls;
+} ProfCmp;
+
+static void
+prof_cmp_clear (gpointer data)
+{
+	g_free (((ProfCmp *) data)->name);
+}
+
+static void
+prof_cmp_add (GArray             *rows,
+              GHashTable         *seen,
+              LrgProfilerCapture *cap,
+              guint               pos_a,
+              guint               pos_b,
+              const gchar        *name)
+{
+	ProfCmp row;
+	gint64  a_us;
+	gint64  b_us;
+	guint   a_calls = 0;
+	guint   b_calls = 0;
+
+	if (name == NULL || g_hash_table_lookup (seen, name) != NULL)
+		return;
+	a_us = lrg_profiler_capture_get_section_total_us (cap, pos_a, name, &a_calls);
+	b_us = lrg_profiler_capture_get_section_total_us (cap, pos_b, name, &b_calls);
+	row.name = g_strdup (name);
+	row.a_ms = (gdouble) a_us / 1000.0;
+	row.b_ms = (gdouble) b_us / 1000.0;
+	row.delta_ms = row.b_ms - row.a_ms;
+	row.a_calls = a_calls;
+	row.b_calls = b_calls;
+	g_array_append_val (rows, row);
+	g_hash_table_insert (seen, row.name, row.name);
+}
+
+static GArray *
+prof_compare_rows (LrgProfilerCapture *cap,
+                   guint               pos_a,
+                   guint               pos_b)
+{
+	g_auto(GStrv) names_a = lrg_profiler_capture_get_section_names (cap, (gint) pos_a);
+	g_auto(GStrv) names_b = lrg_profiler_capture_get_section_names (cap, (gint) pos_b);
+	GArray       *rows = g_array_new (FALSE, TRUE, sizeof (ProfCmp));
+	GHashTable   *seen = g_hash_table_new (g_str_hash, g_str_equal);
+	guint         i;
+	guint         j;
+
+	g_array_set_clear_func (rows, prof_cmp_clear);
+	for (i = 0; names_a != NULL && names_a[i] != NULL; i++)
+		prof_cmp_add (rows, seen, cap, pos_a, pos_b, names_a[i]);
+	for (i = 0; names_b != NULL && names_b[i] != NULL; i++)
+		prof_cmp_add (rows, seen, cap, pos_a, pos_b, names_b[i]);
+	g_hash_table_unref (seen);
+	for (i = 1; i < rows->len; i++)
+	{
+		ProfCmp key = g_array_index (rows, ProfCmp, i);
+
+		j = i;
+		while (j > 0 && fabs (g_array_index (rows, ProfCmp, j - 1).delta_ms) < fabs (key.delta_ms))
+		{
+			g_array_index (rows, ProfCmp, j) = g_array_index (rows, ProfCmp, j - 1);
+			j--;
+		}
+		g_array_index (rows, ProfCmp, j) = key;
+	}
+	return rows;
+}
+
+static gchar *
+prof_abs_path (LrgEditorProfilerPanel *self,
+               const gchar            *path)
+{
+	const gchar *dir = NULL;
+
+	if (path == NULL || path[0] == '\0')
+		return NULL;
+	if (g_path_is_absolute (path))
+		return g_strdup (path);
+	if (self->app != NULL)
+		dir = lrg_editor_app_get_project_dir (self->app);
+	if (dir == NULL || dir[0] == '\0')
+		return g_strdup (path);
+	return g_build_filename (dir, path, NULL);
+}
+
+static LrgProfilerCapture *
+take_source (LrgEditorProfilerPanel *self,
+             JsonObject             *params,
+             gboolean               *owned,
+             GError                **error)
+{
+	const gchar *source = NULL;
+	gboolean     use_held;
+
+	*owned = FALSE;
+	if (params != NULL && json_object_has_member (params, "source"))
+		source = json_object_get_string_member (params, "source");
+	if (source != NULL && g_strcmp0 (source, "live") != 0 && g_strcmp0 (source, "capture") != 0)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "source must be live or capture");
+		return NULL;
+	}
+	use_held = (source == NULL) ? (self->held != NULL) : (g_strcmp0 (source, "capture") == 0);
+	if (use_held)
+	{
+		if (self->held == NULL)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+			             "no capture is held");
+			return NULL;
+		}
+		return self->held;
+	}
+	*owned = TRUE;
+	return lrg_profiler_capture (self->profiler, 0);
+}
+
+static gint
+frame_pos (LrgProfilerCapture *cap,
+           gint64              index,
+           gboolean            newest,
+           GError            **error)
+{
+	guint n;
+	gint  pos;
+
+	n = lrg_profiler_capture_get_n_frames (cap);
+	if (n == 0)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+		             "the capture has no frames");
+		return -1;
+	}
+	if (index < 0)
+	{
+		if (!newest)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+			             "no such frame");
+			return -1;
+		}
+		return (gint) n - 1;
+	}
+	pos = lrg_profiler_capture_find_frame (cap, (guint64) index);
+	if (pos < 0)
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+		             "no frame %d", (gint) index);
+	return pos;
+}
+
+static void
+add_gpu_ms (JsonBuilder *b,
+            gint64       gpu_us)
+{
+	json_builder_set_member_name (b, "gpu_ms");
+	if (gpu_us < 0)
+		json_builder_add_null_value (b);
+	else
+		json_builder_add_double_value (b, (gdouble) gpu_us / 1000.0);
+}
+
+static void
+add_threads (JsonBuilder        *b,
+             LrgProfilerCapture *cap)
+{
+	guint i;
+	guint n;
+
+	n = lrg_profiler_capture_get_n_threads (cap);
+	json_builder_set_member_name (b, "threads");
+	json_builder_begin_array (b);
+	for (i = 0; i < n; i++)
+	{
+		const gchar *name = lrg_profiler_capture_get_thread_name (cap, i);
+
+		json_builder_add_string_value (b, name != NULL ? name : "");
+	}
+	json_builder_end_array (b);
+}
+
+static guint
+count_cpu_events (LrgProfilerCapture *cap)
+{
+	guint n;
+	guint i;
+	guint total = 0;
+	guint ne = 0;
+
+	n = lrg_profiler_capture_get_n_frames (cap);
+	for (i = 0; i < n; i++)
+	{
+		lrg_profiler_capture_get_events (cap, i, &ne);
+		total += ne;
+	}
+	return total;
+}
+
+static void
+add_capture_head (JsonBuilder        *b,
+                  LrgProfilerCapture *cap,
+                  const gchar        *path)
+{
+	guint n;
+
+	n = lrg_profiler_capture_get_n_frames (cap);
+	json_builder_set_member_name (b, "frames");
+	json_builder_add_int_value (b, (gint64) n);
+	json_builder_set_member_name (b, "first");
+	if (n == 0)
+		json_builder_add_null_value (b);
+	else
+		json_builder_add_int_value (b, (gint64) lrg_profiler_capture_get_frame_index (cap, 0));
+	json_builder_set_member_name (b, "last");
+	if (n == 0)
+		json_builder_add_null_value (b);
+	else
+		json_builder_add_int_value (b, (gint64) lrg_profiler_capture_get_frame_index (cap, n - 1));
+	json_builder_set_member_name (b, "events");
+	json_builder_add_int_value (b, (gint64) count_cpu_events (cap));
+	add_threads (b, cap);
+	json_builder_set_member_name (b, "path");
+	if (path == NULL)
+		json_builder_add_null_value (b);
+	else
+		json_builder_add_string_value (b, path);
+}
+
+static JsonNode *
+m_profiler_set (LrgEditorServer *server,
+                JsonObject      *params,
+                gpointer         user_data,
+                GError         **error)
+{
+	LrgEditorProfilerPanel *self = LRG_EDITOR_PROFILER_PANEL (user_data);
+	g_autoptr(JsonBuilder)  b = json_builder_new ();
+	LrgGpuTimer            *timer;
+	gboolean                playing;
+
+	(void) server;
+	if (params != NULL && json_object_has_member (params, "ring"))
+	{
+		gint64 ring = json_object_get_int_member (params, "ring");
+
+		if (ring < 8 || ring > 4096)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+			             "ring must be from 8 to 4096");
+			return NULL;
+		}
+		lrg_profiler_set_frame_capacity (self->profiler, (guint) ring);
+	}
+	if (params != NULL && json_object_has_member (params, "enable"))
+	{
+		gboolean enable = json_object_get_boolean_member (params, "enable");
+
+		playing = self->app != NULL && lrg_editor_app_is_playing (self->app);
+		self->pinned = enable;
+		self->want = enable || panel_shown (self) || playing;
+		if (self->want && !lrg_profiler_is_enabled (self->profiler))
+		{
+			lrg_profiler_set_enabled (self->profiler, TRUE);
+			self->we_enabled = TRUE;
+		}
+		else if (!self->want && self->we_enabled)
+		{
+			lrg_profiler_set_enabled (self->profiler, FALSE);
+			self->we_enabled = FALSE;
+		}
+	}
+	if (params != NULL && json_object_has_member (params, "gpu"))
+		lrg_profiler_set_gpu_enabled (self->profiler, json_object_get_boolean_member (params, "gpu"));
+	if (params != NULL && json_object_has_member (params, "paused"))
+		lrg_editor_profiler_panel_set_paused (self, json_object_get_boolean_member (params, "paused"));
+	timer = lrg_profiler_get_gpu_timer (self->profiler);
+	json_builder_begin_object (b);
+	json_builder_set_member_name (b, "enabled");
+	json_builder_add_boolean_value (b, lrg_profiler_is_enabled (self->profiler));
+	json_builder_set_member_name (b, "pinned");
+	json_builder_add_boolean_value (b, self->pinned);
+	json_builder_set_member_name (b, "paused");
+	json_builder_add_boolean_value (b, self->paused);
+	json_builder_set_member_name (b, "gpu");
+	json_builder_add_boolean_value (b, lrg_profiler_get_gpu_enabled (self->profiler));
+	json_builder_set_member_name (b, "gpu_supported");
+	json_builder_add_boolean_value (b, timer != NULL && lrg_gpu_timer_is_supported (timer));
+	json_builder_set_member_name (b, "ring");
+	json_builder_add_int_value (b, (gint64) lrg_profiler_get_frame_capacity (self->profiler));
+	json_builder_end_object (b);
+	return json_builder_get_root (b);
+}
+
+static JsonNode *
+m_profiler_capture (LrgEditorServer *server,
+                    JsonObject      *params,
+                    gpointer         user_data,
+                    GError         **error)
+{
+	LrgEditorProfilerPanel *self = LRG_EDITOR_PROFILER_PANEL (user_data);
+	g_autoptr(JsonBuilder)  b = json_builder_new ();
+	g_autofree gchar       *path = NULL;
+	gint64                  n = 120;
+
+	(void) server;
+	if (params != NULL && json_object_has_member (params, "frames"))
+		n = json_object_get_int_member (params, "frames");
+	if (n < 0)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "frames must be >= 0");
+		return NULL;
+	}
+	if (params != NULL && json_object_has_member (params, "path"))
+		path = prof_abs_path (self, json_object_get_string_member (params, "path"));
+	g_clear_object (&self->held);
+	self->held = lrg_profiler_capture (self->profiler, (guint) n);
+	self->view_frame = -1;
+	if (path != NULL)
+	{
+		g_autoptr(GError) local = NULL;
+
+		if (!lrg_profiler_capture_save_to_file (self->held, path, &local))
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+			             "%s", local != NULL ? local->message : "save failed");
+			return NULL;
+		}
+	}
+	json_builder_begin_object (b);
+	add_capture_head (b, self->held, path);
+	json_builder_end_object (b);
+	return json_builder_get_root (b);
+}
+
+static JsonNode *
+m_profiler_save (LrgEditorServer *server,
+                 JsonObject      *params,
+                 gpointer         user_data,
+                 GError         **error)
+{
+	LrgEditorProfilerPanel *self = LRG_EDITOR_PROFILER_PANEL (user_data);
+	g_autoptr(JsonBuilder)  b = json_builder_new ();
+	g_autoptr(GError)       local = NULL;
+	g_autofree gchar       *path = NULL;
+
+	(void) server;
+	if (self->held == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+		             "no capture is held");
+		return NULL;
+	}
+	if (params == NULL || !json_object_has_member (params, "path"))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "path is required");
+		return NULL;
+	}
+	path = prof_abs_path (self, json_object_get_string_member (params, "path"));
+	if (!lrg_profiler_capture_save_to_file (self->held, path, &local))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		             "%s", local != NULL ? local->message : "save failed");
+		return NULL;
+	}
+	json_builder_begin_object (b);
+	json_builder_set_member_name (b, "path");
+	json_builder_add_string_value (b, path);
+	json_builder_set_member_name (b, "frames");
+	json_builder_add_int_value (b, (gint64) lrg_profiler_capture_get_n_frames (self->held));
+	json_builder_set_member_name (b, "events");
+	json_builder_add_int_value (b, (gint64) count_cpu_events (self->held));
+	json_builder_end_object (b);
+	return json_builder_get_root (b);
+}
+
+static JsonNode *
+m_profiler_load (LrgEditorServer *server,
+                 JsonObject      *params,
+                 gpointer         user_data,
+                 GError         **error)
+{
+	LrgEditorProfilerPanel *self = LRG_EDITOR_PROFILER_PANEL (user_data);
+	g_autoptr(JsonBuilder)  b = json_builder_new ();
+	g_autoptr(GError)       local = NULL;
+	g_autofree gchar       *path = NULL;
+	LrgProfilerCapture     *loaded;
+
+	(void) server;
+	if (params == NULL || !json_object_has_member (params, "path"))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "path is required");
+		return NULL;
+	}
+	path = prof_abs_path (self, json_object_get_string_member (params, "path"));
+	loaded = lrg_profiler_capture_new_from_file (path, &local);
+	if (loaded == NULL)
+	{
+		gint code = LRG_EDITOR_SERVER_ERROR_FAILED;
+
+		if (local != NULL && g_error_matches (local, G_FILE_ERROR, G_FILE_ERROR_NOENT))
+			code = LRG_EDITOR_SERVER_ERROR_NOT_FOUND;
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, code, "%s",
+		             local != NULL ? local->message : "load failed");
+		return NULL;
+	}
+	g_clear_object (&self->held);
+	self->held = loaded;
+	self->view_frame = -1;
+	json_builder_begin_object (b);
+	add_capture_head (b, self->held, path);
+	json_builder_end_object (b);
+	return json_builder_get_root (b);
+}
+
+static JsonNode *
+m_profiler_frames (LrgEditorServer *server,
+                   JsonObject      *params,
+                   gpointer         user_data,
+                   GError         **error)
+{
+	LrgEditorProfilerPanel *self = LRG_EDITOR_PROFILER_PANEL (user_data);
+	g_autoptr(JsonBuilder)  b = json_builder_new ();
+	g_autoptr(LrgProfilerCapture) owned = NULL;
+	LrgProfilerCapture     *cap;
+	gboolean                owned_flag = FALSE;
+	gint64                  count = 60;
+	guint                   n;
+	guint                   start;
+	guint                   i;
+
+	(void) server;
+	cap = take_source (self, params, &owned_flag, error);
+	if (cap == NULL)
+		return NULL;
+	if (owned_flag)
+		owned = cap;
+	if (params != NULL && json_object_has_member (params, "count"))
+		count = json_object_get_int_member (params, "count");
+	if (count < 0)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "count must be >= 0");
+		return NULL;
+	}
+	n = lrg_profiler_capture_get_n_frames (cap);
+	start = (n > (guint) count) ? n - (guint) count : 0;
+	json_builder_begin_array (b);
+	for (i = start; i < n; i++)
+	{
+		guint  ne = 0;
+		guint  nc = 0;
+		gint64 gpu = lrg_profiler_capture_get_frame_gpu_us (cap, i);
+
+		lrg_profiler_capture_get_events (cap, i, &ne);
+		lrg_profiler_capture_get_counters (cap, i, &nc);
+		json_builder_begin_object (b);
+		json_builder_set_member_name (b, "index");
+		json_builder_add_int_value (b, (gint64) lrg_profiler_capture_get_frame_index (cap, i));
+		json_builder_set_member_name (b, "start_us");
+		json_builder_add_int_value (b, lrg_profiler_capture_get_frame_start_us (cap, i));
+		json_builder_set_member_name (b, "duration_ms");
+		json_builder_add_double_value (b, (gdouble) lrg_profiler_capture_get_frame_duration_us (cap, i) / 1000.0);
+		add_gpu_ms (b, gpu);
+		json_builder_set_member_name (b, "events");
+		json_builder_add_int_value (b, (gint64) ne);
+		json_builder_set_member_name (b, "counters");
+		json_builder_add_int_value (b, (gint64) nc);
+		json_builder_end_object (b);
+	}
+	json_builder_end_array (b);
+	return json_builder_get_root (b);
+}
+
+static JsonNode *
+m_profiler_frame (LrgEditorServer *server,
+                  JsonObject      *params,
+                  gpointer         user_data,
+                  GError         **error)
+{
+	LrgEditorProfilerPanel *self = LRG_EDITOR_PROFILER_PANEL (user_data);
+	g_autoptr(JsonBuilder)  b = json_builder_new ();
+	g_autoptr(LrgProfilerCapture) owned = NULL;
+	LrgProfilerCapture     *cap;
+	gboolean                owned_flag = FALSE;
+	gint64                  index = -1;
+	gint                    pos;
+	guint                   ne = 0;
+	guint                   ng = 0;
+	guint                   nc = 0;
+	guint                   i;
+	guint                   n_threads;
+	const LrgProfilerEvent *ev;
+	const LrgProfilerEvent *gpu;
+	const LrgProfilerCounter *counters;
+
+	(void) server;
+	cap = take_source (self, params, &owned_flag, error);
+	if (cap == NULL)
+		return NULL;
+	if (owned_flag)
+		owned = cap;
+	if (params != NULL && json_object_has_member (params, "index"))
+		index = json_object_get_int_member (params, "index");
+	pos = frame_pos (cap, index, TRUE, error);
+	if (pos < 0)
+		return NULL;
+	ev = lrg_profiler_capture_get_events (cap, (guint) pos, &ne);
+	gpu = lrg_profiler_capture_get_gpu_events (cap, (guint) pos, &ng);
+	counters = lrg_profiler_capture_get_counters (cap, (guint) pos, &nc);
+	n_threads = lrg_profiler_capture_get_n_threads (cap);
+	json_builder_begin_object (b);
+	json_builder_set_member_name (b, "index");
+	json_builder_add_int_value (b, (gint64) lrg_profiler_capture_get_frame_index (cap, (guint) pos));
+	json_builder_set_member_name (b, "start_us");
+	json_builder_add_int_value (b, lrg_profiler_capture_get_frame_start_us (cap, (guint) pos));
+	json_builder_set_member_name (b, "duration_ms");
+	json_builder_add_double_value (b, (gdouble) lrg_profiler_capture_get_frame_duration_us (cap, (guint) pos) / 1000.0);
+	add_gpu_ms (b, lrg_profiler_capture_get_frame_gpu_us (cap, (guint) pos));
+	json_builder_set_member_name (b, "threads");
+	json_builder_begin_array (b);
+	for (i = 0; i < n_threads; i++)
+	{
+		const gchar *name = lrg_profiler_capture_get_thread_name (cap, i);
+
+		json_builder_begin_object (b);
+		json_builder_set_member_name (b, "id");
+		json_builder_add_int_value (b, (gint64) i);
+		json_builder_set_member_name (b, "name");
+		json_builder_add_string_value (b, name != NULL ? name : "");
+		json_builder_end_object (b);
+	}
+	json_builder_end_array (b);
+	json_builder_set_member_name (b, "events");
+	json_builder_begin_array (b);
+	for (i = 0; i < ne; i++)
+	{
+		json_builder_begin_object (b);
+		json_builder_set_member_name (b, "name");
+		json_builder_add_string_value (b, ev[i].name != NULL ? ev[i].name : "");
+		json_builder_set_member_name (b, "thread");
+		json_builder_add_int_value (b, (gint64) ev[i].thread);
+		json_builder_set_member_name (b, "depth");
+		json_builder_add_int_value (b, (gint64) ev[i].depth);
+		json_builder_set_member_name (b, "parent");
+		json_builder_add_int_value (b, ev[i].parent);
+		json_builder_set_member_name (b, "start_us");
+		json_builder_add_int_value (b, ev[i].start_us);
+		json_builder_set_member_name (b, "duration_us");
+		json_builder_add_int_value (b, ev[i].duration_us);
+		json_builder_end_object (b);
+	}
+	json_builder_end_array (b);
+	json_builder_set_member_name (b, "gpu");
+	json_builder_begin_array (b);
+	for (i = 0; i < ng; i++)
+	{
+		json_builder_begin_object (b);
+		json_builder_set_member_name (b, "name");
+		json_builder_add_string_value (b, gpu[i].name != NULL ? gpu[i].name : "");
+		json_builder_set_member_name (b, "depth");
+		json_builder_add_int_value (b, (gint64) gpu[i].depth);
+		json_builder_set_member_name (b, "start_us");
+		json_builder_add_int_value (b, gpu[i].start_us);
+		json_builder_set_member_name (b, "duration_us");
+		json_builder_add_int_value (b, gpu[i].duration_us);
+		json_builder_end_object (b);
+	}
+	json_builder_end_array (b);
+	json_builder_set_member_name (b, "counters");
+	json_builder_begin_array (b);
+	for (i = 0; i < nc; i++)
+	{
+		json_builder_begin_object (b);
+		json_builder_set_member_name (b, "name");
+		json_builder_add_string_value (b, counters[i].name != NULL ? counters[i].name : "");
+		json_builder_set_member_name (b, "value");
+		json_builder_add_double_value (b, counters[i].value);
+		json_builder_end_object (b);
+	}
+	json_builder_end_array (b);
+	json_builder_end_object (b);
+	return json_builder_get_root (b);
+}
+
+static JsonNode *
+m_profiler_compare (LrgEditorServer *server,
+                    JsonObject      *params,
+                    gpointer         user_data,
+                    GError         **error)
+{
+	LrgEditorProfilerPanel *self = LRG_EDITOR_PROFILER_PANEL (user_data);
+	g_autoptr(JsonBuilder)  b = json_builder_new ();
+	g_autoptr(LrgProfilerCapture) owned = NULL;
+	g_autoptr(GArray)       rows = NULL;
+	LrgProfilerCapture     *cap;
+	gboolean                owned_flag = FALSE;
+	gint                    pos_a;
+	gint                    pos_b;
+	guint                   i;
+
+	(void) server;
+	if (params == NULL || !json_object_has_member (params, "a") || !json_object_has_member (params, "b"))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "a and b frame indexes are required");
+		return NULL;
+	}
+	cap = take_source (self, params, &owned_flag, error);
+	if (cap == NULL)
+		return NULL;
+	if (owned_flag)
+		owned = cap;
+	pos_a = frame_pos (cap, json_object_get_int_member (params, "a"), FALSE, error);
+	if (pos_a < 0)
+		return NULL;
+	pos_b = frame_pos (cap, json_object_get_int_member (params, "b"), FALSE, error);
+	if (pos_b < 0)
+		return NULL;
+	self->view_frame = (gint64) lrg_profiler_capture_get_frame_index (cap, (guint) pos_a);
+	self->compare_frame = (gint64) lrg_profiler_capture_get_frame_index (cap, (guint) pos_b);
+	rows = prof_compare_rows (cap, (guint) pos_a, (guint) pos_b);
+	json_builder_begin_object (b);
+	json_builder_set_member_name (b, "a");
+	json_builder_begin_object (b);
+	json_builder_set_member_name (b, "index");
+	json_builder_add_int_value (b, self->view_frame);
+	json_builder_set_member_name (b, "duration_ms");
+	json_builder_add_double_value (b, (gdouble) lrg_profiler_capture_get_frame_duration_us (cap, (guint) pos_a) / 1000.0);
+	json_builder_end_object (b);
+	json_builder_set_member_name (b, "b");
+	json_builder_begin_object (b);
+	json_builder_set_member_name (b, "index");
+	json_builder_add_int_value (b, self->compare_frame);
+	json_builder_set_member_name (b, "duration_ms");
+	json_builder_add_double_value (b, (gdouble) lrg_profiler_capture_get_frame_duration_us (cap, (guint) pos_b) / 1000.0);
+	json_builder_end_object (b);
+	json_builder_set_member_name (b, "sections");
+	json_builder_begin_array (b);
+	for (i = 0; i < rows->len; i++)
+	{
+		ProfCmp *row = &g_array_index (rows, ProfCmp, i);
+
+		json_builder_begin_object (b);
+		json_builder_set_member_name (b, "name");
+		json_builder_add_string_value (b, row->name);
+		json_builder_set_member_name (b, "a_ms");
+		json_builder_add_double_value (b, row->a_ms);
+		json_builder_set_member_name (b, "b_ms");
+		json_builder_add_double_value (b, row->b_ms);
+		json_builder_set_member_name (b, "delta_ms");
+		json_builder_add_double_value (b, row->delta_ms);
+		json_builder_set_member_name (b, "a_calls");
+		json_builder_add_int_value (b, (gint64) row->a_calls);
+		json_builder_set_member_name (b, "b_calls");
+		json_builder_add_int_value (b, (gint64) row->b_calls);
+		json_builder_end_object (b);
+	}
+	json_builder_end_array (b);
+	json_builder_end_object (b);
+	return json_builder_get_root (b);
+}
+
+static JsonNode *
+m_profiler_view (LrgEditorServer *server,
+                 JsonObject      *params,
+                 gpointer         user_data,
+                 GError         **error)
+{
+	LrgEditorProfilerPanel *self = LRG_EDITOR_PROFILER_PANEL (user_data);
+	g_autoptr(JsonBuilder)  b = json_builder_new ();
+	gint                    mode;
+
+	(void) server;
+	if (params != NULL && json_object_has_member (params, "mode"))
+	{
+		mode = prof_mode_from (json_object_get_string_member (params, "mode"));
+		if (mode < 0)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+			             "mode must be timeline, flame, table or compare");
+			return NULL;
+		}
+		prof_set_mode (self, mode);
+	}
+	if (params != NULL && json_object_has_member (params, "frame"))
+		self->view_frame = json_object_get_int_member (params, "frame");
+	if (params != NULL && json_object_has_member (params, "compare"))
+		self->compare_frame = json_object_get_int_member (params, "compare");
+	if (params != NULL && json_object_has_member (params, "show") &&
+	    json_object_get_boolean_member (params, "show") && self->app != NULL)
+		editor_app_show_panel (self->app, "profiler");
+	json_builder_begin_object (b);
+	json_builder_set_member_name (b, "mode");
+	json_builder_add_string_value (b, prof_mode_nick (self->mode));
+	json_builder_set_member_name (b, "frame");
+	if (self->view_frame < 0)
+		json_builder_add_null_value (b);
+	else
+		json_builder_add_int_value (b, self->view_frame);
+	json_builder_set_member_name (b, "compare");
+	if (self->compare_frame < 0)
+		json_builder_add_null_value (b);
+	else
+		json_builder_add_int_value (b, self->compare_frame);
+	json_builder_set_member_name (b, "source");
+	json_builder_add_string_value (b, self->held != NULL ? "capture" : "live");
+	json_builder_end_object (b);
+	return json_builder_get_root (b);
+}
+
+static void a_prof_capture (gpointer d)
+{
+	LrgEditorProfilerPanel *self = LRG_EDITOR_PROFILER_PANEL (d);
+
+	g_clear_object (&self->held);
+	self->held = lrg_profiler_capture (self->profiler, 120);
+	self->view_frame = -1;
+}
+
+static void a_mode_timeline (gpointer d) { prof_set_mode (LRG_EDITOR_PROFILER_PANEL (d), 0); }
+static void a_mode_flame (gpointer d) { prof_set_mode (LRG_EDITOR_PROFILER_PANEL (d), 1); }
+static void a_mode_table (gpointer d) { prof_set_mode (LRG_EDITOR_PROFILER_PANEL (d), 2); }
+static void a_mode_compare (gpointer d) { prof_set_mode (LRG_EDITOR_PROFILER_PANEL (d), 3); }
+
+/* --------------------------------------------------------------------------
  * Widget
  * -------------------------------------------------------------------------- */
 
@@ -635,21 +1611,43 @@ lrg_editor_profiler_panel_layout_children (LrgContainer *container)
 	gfloat                  h = lrg_widget_get_height (LRG_WIDGET (self));
 	gfloat                  pad = MAX (4.0f, lrg_theme_get_metric (theme, LRG_THEME_METRIC_PADDING_Y));
 	gfloat                  gap = MAX (4.0f, lrg_theme_get_metric (theme, LRG_THEME_METRIC_SPACING) * 0.75f);
-	gfloat                  pw, ph, y = pad, gh;
+	gfloat                  pw, ph, y = pad, gh, lh, avail, inner;
 
 	/* Children are added one by one during construction */
-	if (self->toolbar == NULL || self->graph == NULL || self->table == NULL)
+	if (self->toolbar == NULL || self->graph == NULL || self->table == NULL || self->lanes == NULL)
 		return;
 
-	/* toolbar | graph (up to GRAPH_HEIGHT, at most 45%) | table */
+	/* toolbar | graph (timeline only) | lanes | table.
+	 * The graph keeps a real height in the default timeline mode so
+	 * the hover test still lands on profiler-graph. */
 	editor_panel_fit_toolbar (self->toolbar, w - pad * 2.0f);
 	lrg_widget_get_preferred_size (self->toolbar, &pw, &ph);
-	lrg_widget_place_in_slot (self->toolbar, pad, y, MAX (0.0f, w - pad * 2.0f), ph);
+	inner = MAX (0.0f, w - pad * 2.0f);
+	lrg_widget_place_in_slot (self->toolbar, pad, y, inner, ph);
 	y += ph + gap;
-	gh = MIN (GRAPH_HEIGHT, MAX (40.0f, (h - y) * 0.45f));
-	lrg_widget_place_in_slot (self->graph, pad, y, MAX (0.0f, w - pad * 2.0f), gh);
-	y += gh + gap;
-	lrg_widget_place_in_slot (LRG_WIDGET (self->table), pad, y, MAX (0.0f, w - pad * 2.0f), MAX (0.0f, h - y - pad));
+	avail = MAX (0.0f, h - y - pad);
+	gh = 0.0f;
+	lh = 0.0f;
+	if (self->mode == 0)
+	{
+		gh = MIN (GRAPH_HEIGHT, MAX (40.0f, avail * 0.42f));
+		if (gh > avail)
+			gh = avail;
+		lh = MIN (120.0f, MAX (36.0f, (avail - gh) * 0.45f));
+		if (gh + lh > avail)
+			lh = MAX (0.0f, avail - gh);
+	}
+	else if (self->mode != 2)
+	{
+		lh = MIN (GRAPH_HEIGHT + 80.0f, MAX (80.0f, avail * 0.55f));
+		if (lh > avail)
+			lh = avail;
+	}
+	lrg_widget_place_in_slot (self->graph, pad, y, inner, gh);
+	y += (gh > 0.0f) ? gh + gap : 0.0f;
+	lrg_widget_place_in_slot (self->lanes, pad, y, inner, lh);
+	y += (lh > 0.0f) ? lh + gap : 0.0f;
+	lrg_widget_place_in_slot (LRG_WIDGET (self->table), pad, y, inner, MAX (0.0f, h - y - pad));
 }
 
 static void
@@ -670,6 +1668,9 @@ lrg_editor_profiler_panel_dispose (GObject *object)
 	if (self->profiler != NULL && self->we_enabled)
 		lrg_profiler_set_enabled (self->profiler, FALSE);
 	self->we_enabled = FALSE;
+	g_clear_object (&self->held);
+	g_clear_object (&self->live_snap);
+	g_clear_object (&self->debugger);
 	g_clear_object (&self->profiler);
 	g_clear_weak_pointer (&self->app);
 	G_OBJECT_CLASS (lrg_editor_profiler_panel_parent_class)->dispose (object);
@@ -710,6 +1711,8 @@ lrg_editor_profiler_panel_init (LrgEditorProfilerPanel *self)
 	guint      i;
 
 	self->hovered = -1;
+	self->view_frame = -1;
+	self->compare_frame = -1;
 	self->rows = g_list_store_new (LRG_TYPE_EDITOR_PROFILER_ROW);
 
 	/* Toolbar: status | pause | clear | readout */
@@ -725,6 +1728,22 @@ lrg_editor_profiler_panel_init (LrgEditorProfilerPanel *self)
 	chip = editor_chip_new ("profiler-clear", LRG_ICON_TRASH, "Clear", on_clear, self);
 	editor_chip_set_tint (chip, LRG_THEME_COLOR_DANGER);
 	add_to (self->toolbar, chip);
+	{
+		static const struct { const gchar *name; const gchar *label; LrgIcon icon; } modes[4] = {
+			{ "profiler-mode-timeline", "Timeline", LRG_ICON_CLOCK },
+			{ "profiler-mode-flame", "Flame", LRG_ICON_MENU },
+			{ "profiler-mode-table", "Table", LRG_ICON_FILE },
+			{ "profiler-mode-compare", "Compare", LRG_ICON_PLUS }
+		};
+		guint mi;
+
+		for (mi = 0; mi < 4; mi++)
+		{
+			self->mode_chips[mi] = editor_chip_new (modes[mi].name, modes[mi].icon, modes[mi].label, on_mode, self);
+			add_to (self->toolbar, self->mode_chips[mi]);
+		}
+		editor_chip_set_checked (self->mode_chips[0], TRUE);
+	}
 	spacer = LRG_WIDGET (lrg_label_new (""));
 	lrg_widget_set_fill_weight (spacer, 1.0f);
 	add_to (self->toolbar, spacer);
@@ -741,6 +1760,16 @@ lrg_editor_profiler_panel_init (LrgEditorProfilerPanel *self)
 	lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (self->graph), &graph_funcs, self, NULL);
 	lrg_container_add_child (LRG_CONTAINER (self), self->graph);
 	g_object_unref (self->graph);
+
+	{
+		static const LrgCustomWidgetFuncs lane_funcs = { NULL, lanes_paint, NULL, NULL, { NULL } };
+
+		self->lanes = LRG_WIDGET (lrg_custom_widget_new ());
+		lrg_widget_set_name (self->lanes, "profiler-lanes");
+		lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (self->lanes), &lane_funcs, self, NULL);
+		lrg_container_add_child (LRG_CONTAINER (self), self->lanes);
+		g_object_unref (self->lanes);
+	}
 
 	/* Sections */
 	self->table = lrg_table_new ();
@@ -794,8 +1823,36 @@ lrg_editor_profiler_panel_new (LrgEditorApp *app)
 	                        NULL, self);
 	lrg_editor_actions_add (actions, "profiler.show-panel", "Profiler Panel", "Profiler", NULL, a_profiler_show, NULL,
 	                        NULL, self);
+	lrg_editor_actions_add (actions, "profiler.capture", "Capture Profiler", "Profiler", NULL, a_prof_capture, NULL,
+	                        NULL, self);
+	lrg_editor_actions_add (actions, "profiler.view-timeline", "Profiler Timeline", "Profiler", NULL, a_mode_timeline,
+	                        NULL, NULL, self);
+	lrg_editor_actions_add (actions, "profiler.view-flame", "Profiler Flame Graph", "Profiler", NULL, a_mode_flame,
+	                        NULL, NULL, self);
+	lrg_editor_actions_add (actions, "profiler.view-table", "Profiler Table", "Profiler", NULL, a_mode_table, NULL,
+	                        NULL, self);
+	lrg_editor_actions_add (actions, "profiler.view-compare", "Profiler Compare", "Profiler", NULL, a_mode_compare,
+	                        NULL, NULL, self);
 	lrg_editor_server_register_method (lrg_editor_app_get_server (app), "profiler.sample", m_profiler_sample, self,
 	                                   NULL);
+	lrg_editor_server_register_method (lrg_editor_app_get_server (app), "profiler.set", m_profiler_set, self, NULL);
+	lrg_editor_server_register_method (lrg_editor_app_get_server (app), "profiler.capture", m_profiler_capture, self,
+	                                   NULL);
+	lrg_editor_server_register_method (lrg_editor_app_get_server (app), "profiler.save", m_profiler_save, self, NULL);
+	lrg_editor_server_register_method (lrg_editor_app_get_server (app), "profiler.load", m_profiler_load, self, NULL);
+	lrg_editor_server_register_method (lrg_editor_app_get_server (app), "profiler.frames", m_profiler_frames, self,
+	                                   NULL);
+	lrg_editor_server_register_method (lrg_editor_app_get_server (app), "profiler.frame", m_profiler_frame, self, NULL);
+	lrg_editor_server_register_method (lrg_editor_app_get_server (app), "profiler.compare", m_profiler_compare, self,
+	                                   NULL);
+	lrg_editor_server_register_method (lrg_editor_app_get_server (app), "profiler.view", m_profiler_view, self, NULL);
+
+	/* The frame debugger registers frame.* here. The shell docks this
+	 * same instance (a second new() would replace the IPC methods).
+	 * own_panel takes the ref it unrefs; this panel keeps its own. */
+	self->debugger = lrg_editor_frame_debugger_new (app);
+	editor_app_own_panel (app, "frame", "Frame Debugger", "eye",
+	                      g_object_ref (LRG_WIDGET (self->debugger)));
 	return self;
 }
 
@@ -869,4 +1926,18 @@ lrg_editor_profiler_panel_get_hovered_frame (LrgEditorProfilerPanel *self)
 {
 	g_return_val_if_fail (LRG_IS_EDITOR_PROFILER_PANEL (self), -1);
 	return self->hovered;
+}
+
+LrgProfilerCapture *
+lrg_editor_profiler_panel_get_capture (LrgEditorProfilerPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_PROFILER_PANEL (self), NULL);
+	return self->held;
+}
+
+const gchar *
+lrg_editor_profiler_panel_get_view_mode (LrgEditorProfilerPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_PROFILER_PANEL (self), "timeline");
+	return prof_mode_nick (self->mode);
 }

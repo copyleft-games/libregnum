@@ -1,0 +1,211 @@
+#+title: LrgNodePhysics
+#+description: The node physics block of .rlevel and .rprefab files: LrgNodePhysics (body settings), LrgNodePhysicsShape (collision shapes) and LrgNodePhysicsJoint (joints), how they serialize and how instantiation turns them into physics components
+#+authors: Zach Podbielniak
+#+categories: libregnum level physics
+#+created: 2026-11-07T08:30:00-05:00
+#+updated: 2026-11-07T09:30:00-05:00
+#+version: 0.9.0
+
+* LrgNodePhysics
+:PROPERTIES:
+:CUSTOM_ID: node-physics
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Runtime Level]]* > Node Physics
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: node-physics-overview
+:END:
+=src/level/lrg-node-physics.h= (0.9.0 M5) holds the authored description of a node's physics body: the =physics:= block of a node in a =.rlevel= or =.rprefab= file. Three final GObjects, plain property bags with =G_PARAM_EXPLICIT_NOTIFY= properties so inspectors can edit them:
+
+| Type                   | What                                                                               |
+|------------------------+------------------------------------------------------------------------------------|
+| =LrgNodePhysics=       | the body: =body-kind=, =mass=, =layer=, =friction=, =restitution=, =linear-damping=, =angular-damping=, =gravity-factor=, =ccd=, plus ordered lists of shapes and joints |
+| =LrgNodePhysicsShape=  | one collision shape: =kind= (#LrgCollider3DKind), =half-extent-x/y/z=, =radius=, =half-height=, =offset-x/y/z=, =rotation-x/y/z= (degrees), =trigger=, =friction= / =restitution= overrides (-1: the body's), =layer=, =mesh= |
+| =LrgNodePhysicsJoint=  | one joint: =kind= (#LrgJointKind), =target= (node GUID), =anchor-x/y/z=, =axis-x/y/z=, =limits-enabled=, =limit-min=, =limit-max=, =spring-frequency=, =spring-damping=, =motor-velocity=, =motor-max-force=, =break-force= |
+
+A node holds one (=lrg_node_get_physics()= / =lrg_node_set_physics()=, property =LrgNode:physics=, a reference held, =NULL= for no body). =lrg_node_copy_state()= deep-copies it (undo snapshots, play-in-editor restore, prefab clones) and =lrg_node_state_equal()= compares it with =lrg_node_physics_equal()=.
+
+** Prefabs
+:PROPERTIES:
+:CUSTOM_ID: node-physics-prefabs
+:END:
+- *Joint targets follow new GUIDs.* Every prefab path that gives nodes new GUIDs rewrites the joint targets it knows a new GUID for: =lrg_prefab_clone()= / =lrg_prefab_instantiate()= and =lrg_prefab_regenerate_guids()= through their old-to-new table, =lrg_prefab_instantiate_linked()=, =lrg_prefab_sync_instance()= and =lrg_prefab_instantiate_reference()= through the link (source GUID to instance GUID). A joint inside a prefab to another node of the same prefab therefore points at the instance's node; targets outside the prefab are kept.
+- *The block is one override.* =lrg_prefab_compute_overrides()= records an instance's edited block as the path =physics= (=GUID:physics= below the root); joint targets are compared through the link, so the remapped targets of an unedited instance are not an override. A sync keeps an overridden block; without the override it copies the source block (targets localized). =lrg_prefab_apply_overrides_to_source()= writes the block back with the targets translated to source GUIDs. =lrg_prefab_diff_node_state()= (no link) compares the blocks as they are.
+
+** Format
+:PROPERTIES:
+:CUSTOM_ID: node-physics-format
+:END:
+The YAML schema with every key and default is in [[file:../../editor/yaml-format.org::#physics][.rlevel Format > Physics Block]]. Writing is deterministic (fixed key order, defaults left out where noted), so a load / save round trip is byte stable (=tests/test-physics-bodies.c=, =/physics-bodies/level-round-trip=).
+
+** Instantiation
+:PROPERTIES:
+:CUSTOM_ID: node-physics-instantiate
+:END:
+=lrg_level_instantiate_3d()= (and =lrg_level_instantiate_node_3d()=, =lrg_level_load_world3d()=) turn the block into components on the node's entity, after the visual component and before the registry and script components:
+
+1. =lrg_world3d_ensure_physics()= on the target world, which by then carries the project's =physics:= block: before the nodes, instantiation finds the level's =project.ryaml= (walking up from the base directory, then the asset manager's project root) and gives it to the world with =lrg_world3d_load_physics_project()=, unless the world already has settings (=lrg_world3d_set_physics_settings()=) or a physics world. The world therefore simulates with the project's gravity, step, solver iterations, sleep threshold and layer table, and the body's =layer= names resolve against the project's layers;
+2. an =LrgRigidBodyComponent= of =body-kind=, configured with =lrg_node_physics_apply()=;
+3. one =LrgColliderComponent3D= per shape, in order (=lrg_node_physics_shape_apply()=);
+4. one =LrgJointComponent= per joint, in order (=lrg_node_physics_joint_apply()=); targets resolve by GUID once the target entity exists.
+
+The 2D path (=lrg_level_instantiate()=) ignores the block.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: node-physics-api
+:END:
+*** LrgNode
+:PROPERTIES:
+:CUSTOM_ID: node-physics-api-node
+:END:
+| Function | Notes |
+|----------+-------|
+| =lrg_node_get_physics (self)= | transfer none, nullable |
+| =lrg_node_set_physics (self, physics)= | reference taken; NULL removes the body |
+
+*** LrgNodePhysics
+:PROPERTIES:
+:CUSTOM_ID: node-physics-api-body
+:END:
+| Function | Notes |
+|----------+-------|
+| =lrg_node_physics_new (kind)= | transfer full, the component defaults |
+| =lrg_node_physics_copy ()= | deep copy, transfer full |
+| =lrg_node_physics_equal (a, b)= | nullable arguments; field by field |
+| =lrg_node_physics_get_body_kind ()= |  |
+| =lrg_node_physics_set_body_kind (kind)= |  |
+| =lrg_node_physics_get_mass ()= |  |
+| =lrg_node_physics_set_mass (mass)= | clamped to 0.001 |
+| =lrg_node_physics_get_layer ()= |  |
+| =lrg_node_physics_set_layer (layer)= | NULL / empty: layer 0 |
+| =lrg_node_physics_get_friction ()= |  |
+| =lrg_node_physics_set_friction (friction)= |  |
+| =lrg_node_physics_get_restitution ()= |  |
+| =lrg_node_physics_set_restitution (restitution)= |  |
+| =lrg_node_physics_get_damping (linear, angular)= |  |
+| =lrg_node_physics_set_damping (linear, angular)= |  |
+| =lrg_node_physics_get_gravity_factor ()= |  |
+| =lrg_node_physics_set_gravity_factor (factor)= |  |
+| =lrg_node_physics_get_ccd ()= |  |
+| =lrg_node_physics_set_ccd (ccd)= |  |
+| =lrg_node_physics_get_shapes ()= | transfer none, element-type LrgNodePhysicsShape |
+| =lrg_node_physics_add_shape (shape)= | reference taken |
+| =lrg_node_physics_remove_shape_at (index)= |  |
+| =lrg_node_physics_get_joints ()= | transfer none, element-type LrgNodePhysicsJoint |
+| =lrg_node_physics_add_joint (joint)= | reference taken |
+| =lrg_node_physics_remove_joint_at (index)= |  |
+| =lrg_node_physics_apply (body)= | copies the description into the runtime component |
+
+*** LrgNodePhysicsShape
+:PROPERTIES:
+:CUSTOM_ID: node-physics-api-shape
+:END:
+| Function | Notes |
+|----------+-------|
+| =lrg_node_physics_shape_new (kind)= | transfer full, the component defaults |
+| =lrg_node_physics_shape_copy ()= | deep copy, transfer full |
+| =lrg_node_physics_shape_equal (a, b)= | nullable arguments; field by field |
+| =lrg_node_physics_shape_get_kind ()= |  |
+| =lrg_node_physics_shape_set_kind (kind)= |  |
+| =lrg_node_physics_shape_get_half_extents (out)= |  |
+| =lrg_node_physics_shape_set_half_extents (hx, hy, hz)= | clamped to 0.001 |
+| =lrg_node_physics_shape_get_radius ()= |  |
+| =lrg_node_physics_shape_set_radius (radius)= |  |
+| =lrg_node_physics_shape_get_half_height ()= |  |
+| =lrg_node_physics_shape_set_half_height (half_height)= |  |
+| =lrg_node_physics_shape_get_offset (out)= |  |
+| =lrg_node_physics_shape_set_offset (x, y, z)= |  |
+| =lrg_node_physics_shape_get_rotation (out)= |  |
+| =lrg_node_physics_shape_set_rotation (x, y, z)= | Euler degrees |
+| =lrg_node_physics_shape_get_trigger ()= |  |
+| =lrg_node_physics_shape_set_trigger (trigger)= |  |
+| =lrg_node_physics_shape_get_friction ()= |  |
+| =lrg_node_physics_shape_set_friction (friction)= | negative: the body's |
+| =lrg_node_physics_shape_get_restitution ()= |  |
+| =lrg_node_physics_shape_set_restitution (restitution)= | negative: the body's |
+| =lrg_node_physics_shape_get_layer ()= |  |
+| =lrg_node_physics_shape_set_layer (layer)= |  |
+| =lrg_node_physics_shape_get_mesh ()= |  |
+| =lrg_node_physics_shape_set_mesh (mesh)= | NULL: the node's own model |
+| =lrg_node_physics_shape_apply (collider)= | copies the description into the runtime component |
+
+*** LrgNodePhysicsJoint
+:PROPERTIES:
+:CUSTOM_ID: node-physics-api-joint
+:END:
+| Function | Notes |
+|----------+-------|
+| =lrg_node_physics_joint_new (kind)= | transfer full, the component defaults |
+| =lrg_node_physics_joint_copy ()= | deep copy, transfer full |
+| =lrg_node_physics_joint_equal (a, b)= | nullable arguments; field by field |
+| =lrg_node_physics_joint_get_kind ()= |  |
+| =lrg_node_physics_joint_set_kind (kind)= |  |
+| =lrg_node_physics_joint_get_target ()= |  |
+| =lrg_node_physics_joint_set_target (guid)= | node GUID, NULL: the world |
+| =lrg_node_physics_joint_get_anchor (out)= |  |
+| =lrg_node_physics_joint_set_anchor (x, y, z)= |  |
+| =lrg_node_physics_joint_get_axis (out)= |  |
+| =lrg_node_physics_joint_set_axis (x, y, z)= | normalised; zero ignored |
+| =lrg_node_physics_joint_get_limits (min, max)= | returns whether limits are enabled |
+| =lrg_node_physics_joint_set_limits (enabled, min, max)= |  |
+| =lrg_node_physics_joint_get_spring (frequency, damping)= |  |
+| =lrg_node_physics_joint_set_spring (frequency, damping)= |  |
+| =lrg_node_physics_joint_get_motor (velocity, max_force)= |  |
+| =lrg_node_physics_joint_set_motor (velocity, max_force)= | max force 0: off |
+| =lrg_node_physics_joint_get_break_force ()= |  |
+| =lrg_node_physics_joint_set_break_force (force)= |  |
+| =lrg_node_physics_joint_apply (joint)= | copies the description into the runtime component |
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: node-physics-example
+:END:
+#+begin_src C
+/* a crate with a box body and a trigger sphere around it */
+g_autoptr(LrgNode)             crate = lrg_node_new ("crate");
+g_autoptr(LrgNodePhysics)      phys = lrg_node_physics_new (LRG_DYNAMICS_BODY_DYNAMIC);
+g_autoptr(LrgNodePhysicsShape) box = lrg_node_physics_shape_new (LRG_COLLIDER3D_BOX);
+g_autoptr(LrgNodePhysicsShape) zone = lrg_node_physics_shape_new (LRG_COLLIDER3D_SPHERE);
+
+lrg_node_physics_set_mass (phys, 20.0f);
+lrg_node_physics_set_layer (phys, "debris");
+lrg_node_physics_shape_set_half_extents (box, 0.5f, 0.5f, 0.5f);
+lrg_node_physics_add_shape (phys, box);
+lrg_node_physics_shape_set_radius (zone, 2.0f);
+lrg_node_physics_shape_set_trigger (zone, TRUE);
+lrg_node_physics_add_shape (phys, zone);
+lrg_node_set_physics (crate, phys);
+lrg_level_add_node (level, crate, NULL);   /* saved under the node as physics: */
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: node-physics-performance
+:END:
+The descriptions are small objects; copies are deep (one object per shape and joint). Nothing is simulated until instantiation.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: node-physics-pitfalls
+:END:
+- =layer= is a name resolved at runtime against the project's layer table (the one of the =project.ryaml= above the level, or the default table without a project); a typo is a warning and layer 0, not a load error.
+- A level instantiated outside its project directory (copied elsewhere, built in memory with no base directory) finds no =project.ryaml= and runs with the defaults; pass the project directory as the base directory, set the asset manager's project root, or call =lrg_world3d_load_physics_project()= first.
+- Edit a copy (=lrg_node_physics_copy()=) when the same object may be shared by an undo snapshot.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: node-physics-editor
+:END:
+The Physics panel edits the block of the selected node (body, shapes, joints, fit to mesh; every change one undo step), the viewport draws collider and joint gizmos with drag handles and a Physics overlay (authored shapes while authoring, the play world's debug draw while playing), the inspector shows a summary and the hierarchy a badge; scripts and agents use the =physics.*= IPC methods. See [[file:../../editor/physics.org][Physics in Levels]]. Layers, the collide matrix and the world settings are edited in Project Settings > Physics; play-in-editor and the game both run with them ([[file:../physics/physics-layers.org::#runtime][The block at runtime]]).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: node-physics-see-also
+:END:
+- [[file:../world3d/components.org::#physics-components][Physics components]]
+- [[file:../../editor/yaml-format.org::#physics][.rlevel physics block]]
+- [[file:../../guides/physics.org::#levels][Physics guide: levels and prefabs]]

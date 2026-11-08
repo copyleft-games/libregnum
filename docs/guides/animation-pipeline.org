@@ -1,0 +1,335 @@
+#+title: Animation pipeline
+#+description: From a glTF character to an animated entity: skins and clips import into LrgSkeleton / LrgAnimationClip, a .ranim graph decides what plays, LrgAnimatorComponent3D drives the skinned model; sequences and 2D skeletons on top
+#+version: 0.9.0
+
+* Animation pipeline
+:PROPERTIES:
+:CUSTOM_ID: animation-pipeline
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > Guides > Animation pipeline
+#+end_quote
+
+This guide follows a character from the DCC tool to the screen:
+
+#+begin_example
+ hero.glb ──LrgGltfAnimation──▶ LrgSkeleton (bind pose, inverse binds)
+    │                          LrgAnimationClip × n (TRS + morph weight channels)
+    │                          LrgSkinnedMesh / GrlModel (what is drawn)
+    ▼
+ hero.ranim ──LrgAnimGraph──▶ parameters, layers of state machines,
+                               blend trees, transitions, root motion, IK goals
+    ▼
+ LrgEntity3D
+   ├─ LrgSkinnedModelComponent   (draws; takes a skinning palette)
+   └─ LrgAnimatorComponent3D     (runs the graph each update: blend, IK,
+                                  palette -> skinned model, root motion -> entity)
+#+end_example
+
+Each step has a module page with the full API; this page is the order of work and the decisions in between. Sections marked with their milestone owner were written with those modules: importing (glTF skins, clips, morph targets, retargeting), the sequencer and 2D skeletons.
+
+** The pieces
+:PROPERTIES:
+:CUSTOM_ID: pieces
+:END:
+| Piece | Module page | Role |
+|-+-+-|
+| =LrgGltfAnimation=, =lrg_gltf_load_skeleton()=, =lrg_gltf_load_clips()= | [[file:../modules/animation/gltf-animation.org][glTF animation]] | import skins, clips, morph targets |
+| =LrgSkeleton=, =LrgBone=, =LrgBonePose= | [[file:../modules/animation/skeleton.org][skeleton]] | hierarchy, bind pose, local/world poses, inverse binds |
+| =LrgAnimationClip= | [[file:../modules/animation/clip.org][clip]] | keyed tracks per bone, events |
+| =LrgRetargeter= | [[file:../modules/animation/retargeter.org][retargeter]] | play one skeleton's clips on another |
+| =LrgAnimGraph= (.ranim) | [[file:../modules/animation/anim-graph.org][animation graph]] | what plays when: parameters, layers, states, blend trees, transitions, root motion, IK |
+| =LrgAnimationStateMachine=, =LrgBlendTree=, =LrgAnimationLayer=, =LrgIKGoal= | [[file:../modules/animation/state-machine.org][state machine]], [[file:../modules/animation/blend-tree.org][blend tree]], [[file:../modules/animation/layers.org][layers]], [[file:../modules/animation/ik-solver.org][IK]] | the graph's runtime objects |
+| =LrgSkinnedModelComponent= | [[file:../modules/world3d/components.org::#skinned-model][components]] | draws the character with a palette |
+| =LrgAnimatorComponent3D= | [[file:../modules/world3d/components.org::#animator][components]] | runs the graph on the entity |
+| =LrgSequence=, =LrgSequencePlayer= | [[file:../modules/animation/sequence.org][sequence]] | authored cinematics on top |
+| =LrgSkeleton2D= | [[file:../modules/animation/skeleton2d.org][2D skeleton]] | the 2D counterpart |
+
+** Step 1: import (ANIMIMPORT)
+:PROPERTIES:
+:CUSTOM_ID: step-import
+:END:
+The import sections below (glTF and retargeting) are maintained with the importer and retargeter modules. The result of this step: an =LrgSkeleton= whose bone i is skin joint i, one =LrgAnimationClip= per glTF animation (bone and track names match), and the mesh to draw.
+** Importing from glTF
+:PROPERTIES:
+:CUSTOM_ID: importing-from-gltf
+:END:
+Every animated character starts as a glTF file (=.glb= or =.gltf=) exported from the DCC tool. =LrgGltfAnimation= ([[file:../modules/animation/gltf-animation.org][reference]]) turns it into engine data without a graphics context:
+
+#+begin_src C
+g_autoptr(GError)           error = NULL;
+g_autoptr(LrgGltfAnimation) gltf = lrg_gltf_animation_new_from_file ("chars/hero.glb", &error);
+g_autoptr(LrgSkeleton)      skeleton = lrg_gltf_animation_create_skeleton (gltf, 0, &error);
+g_autoptr(LrgSkinnedMesh)   body = lrg_gltf_animation_create_skinned_mesh (gltf, 0, &error);
+g_autoptr(GPtrArray)        clips = lrg_gltf_animation_create_clips (gltf, &error);
+#+end_src
+
+What you get, and the contracts the rest of the pipeline relies on:
+- *Skeleton* - bone /i/ is joint /i/ of the skin, which is also bone /i/ of the skinned mesh; parents are the nearest joint ancestors; bind pose = node rest transform, with a non-joint =Armature= parent's transform (Blender's Z-up rotation and unit scale) folded into the root joint; inverse bind matrices from the skin.
+- *Clips* - one per glTF animation, named after it (="clip_<i>"= when unnamed), loop mode repeat. Each animated node is a track named like its bone; the file's translation/rotation/scale channels are kept exactly (step, linear and cubic spline, no resampling); missing components come from the node's rest pose. ="weights"= channels become morph weight channels targeting the node's name.
+- *Mesh* - all primitives of the skin merged into one =LrgSkinnedMesh= with the inverse binds set and morph targets attached (group = node name).
+- *Names are the glue* - bones, tracks and morph groups share =lrg_gltf_animation_get_node_name()=, so =LrgAnimator=, the state machine, blend trees and =.ranim= files bind clips to the skeleton by bone name, and weight channels find their morph group by name.
+
+The two one-liners =lrg_gltf_load_skeleton (path, skin, &error)= and =lrg_gltf_load_clips (path, &error)= load a skeleton or every clip of a file; to pick one clip by name use =lrg_gltf_animation_find_clip()= then =lrg_gltf_animation_create_clip()=.
+
+Per frame, after the animation graph has posed the skeleton:
+
+#+begin_src C
+lrg_skeleton_calculate_world_poses (skeleton);
+lrg_skinned_mesh_apply_skeleton (body, skeleton);              /* the bone palette */
+for (guint ch = 0; ch < lrg_animation_clip_get_weights_channel_count (clip); ch++)
+{
+	gfloat w[64];
+	guint  n = MIN (lrg_animation_clip_get_weights_channel_width (clip, ch), 64);
+
+	lrg_animation_clip_sample_weights (clip, ch, time, w);
+	lrg_skinned_mesh_set_morph_group_weights (body, lrg_animation_clip_get_weights_channel_target (clip, ch), w, n);
+}
+lrg_skinned_mesh_draw (body, &model);
+#+end_src
+
+Checklist for exporting from Blender: apply scale on the armature (non-uniform armature scale is approximated), keep the root motion on the root bone not the armature object, export "Shape Key" names (Blender writes =extras.targetNames=), at most four influences per vertex (only =JOINTS_0=/=WEIGHTS_0= are read) and 65535 vertices per skin.
+
+** Sharing clips between characters (retargeting)
+:PROPERTIES:
+:CUSTOM_ID: sharing-clips-between-characters
+:END:
+A clip made for one skeleton plays on another through a bone map and a retargeter ([[file:../modules/animation/retargeter.org][reference]]):
+
+#+begin_src C
+g_autoptr(LrgBoneMap)    map = lrg_bone_map_new_from_file ("chars/goblin.rbonemap", &error);
+g_autoptr(LrgRetargeter) rt = lrg_retargeter_new (mocap_skeleton, goblin_skeleton, map);
+g_autoptr(LrgAnimationClip) walk = lrg_retargeter_retarget_clip (rt, mocap_walk, &error);
+#+end_src
+
+- The =.rbonemap= YAML holds name rules (=strip_prefixes=, =ignore_case=, =normalize_separators=, =normalize_sides=) and explicit =bones: {source: target}= pairs; =lrg_bone_map_auto_fill()= proposes pairs from the rules.
+- The retargeter aligns the two *rest poses* in skeleton space: each target bone turns by its source bone's rotation change from rest, so rigs with different bone axes, rest angles (T-pose vs A-pose) and proportions work; both should face the same way.
+- Translation follows =LrgRetargetTranslationMode= (default: the root bone only, scaled by the ratio of hip heights).
+- Bake once at load (=retarget_clip()=, linear channels at =sample-rate= fps) and treat the result like any clip: it goes into the =.ranim= graph and the animator component unchanged. Live retargeting (=retarget_skeleton()=) is for previews.
+
+** Step 2: author the graph (.ranim)
+:PROPERTIES:
+:CUSTOM_ID: step-graph
+:END:
+The graph lists the clips it uses (by key, with the glTF file and animation they come from), the parameters gameplay sets, and one state machine per layer. Start small: one base layer with an idle state and a locomotion blend tree, then add a jump, then an upper-body layer.
+
+#+begin_src yaml
+version: 1
+name: hero
+clips:
+  idle: {source: hero.glb, animation: Idle}
+  walk: {source: hero.glb, animation: Walk}
+  run:  {source: hero.glb, animation: Run}
+  jump: {source: hero.glb, animation: Jump}
+  wave: {source: hero.glb, animation: Wave}
+parameters:
+  - {name: speed, type: float}
+  - {name: jump, type: trigger}
+  - {name: waving, type: bool}
+root_motion: {bone: root, mode: xz, rotation: false, apply: true}
+layers:
+  - name: base
+    default: locomotion
+    states:
+      - name: locomotion
+        blend_tree:
+          type: 1d
+          parameter: speed
+          children:
+            - {clip: idle, threshold: 0}
+            - {clip: walk, threshold: 1.5}
+            - {clip: run, threshold: 4}
+      - {name: jump, clip: jump}
+    any_state:
+      - {to: jump, duration: 0.1, conditions: [{parameter: jump}]}
+    transitions:
+      - {from: jump, to: locomotion, duration: 0.2, exit_time: 1}
+  - name: upper
+    mask: [spine]
+    states: [{name: none, clip: idle}, {name: wave, clip: wave}]
+    transitions:
+      - {from: none, to: wave, duration: 0.3, conditions: [{parameter: waving}]}
+      - {from: wave, to: none, duration: 0.3, conditions: [{parameter: waving, op: '==', value: false}]}
+ik:
+  - {name: look, type: look_at, bones: [head], weight: 0.8}
+  - {name: l_foot, type: foot, bones: [l_thigh, l_shin], effector: l_foot, pole: [-0.1, 0.5, 1], ray_up: 0.5, ray_down: 0.5, align: true}
+  - {name: r_foot, type: foot, bones: [r_thigh, r_shin], effector: r_foot, pole: [0.1, 0.5, 1], ray_up: 0.5, ray_down: 0.5, align: true}
+#+end_src
+
+Decisions on the way:
+- *Blend tree or states?* Continuous motion along a parameter (speed, direction, lean) is a blend tree; distinct actions are states. A 2D strafe set is a =2d_directional= tree over (=dir_x=, =dir_y=) with idle at the origin.
+- *Exit times.* =exit_time: 1= leaves a one-shot when it ends; an exit time below 1 is a moment in each loop (leave the turn-in-place clip on the foot plant).
+- *Interruption.* A long transition the player can cancel needs =interruption: destination= (the target's transitions may cut in); the blend restarts from the pose of the moment.
+- *Root motion or not.* Clips authored travelling forward (=root= moves) with =mode: xz= give exact foot contact; a controller-driven character keeps =apply: false= and reads the motion to move itself, or uses in-place clips and no root motion.
+- *Layers.* Override layers with a mask for upper-body actions over locomotion; additive layers (difference from the bind pose) for breathing, recoil, leaning.
+
+The loader is strict (wrong types, unknown values, missing references are errors with the key path) and keeps unknown keys, so the editor can store node positions in the file. The full schema is in [[file:../modules/animation/anim-graph.org::#format][the graph's format section]].
+
+** Step 3: put it on an entity
+:PROPERTIES:
+:CUSTOM_ID: step-entity
+:END:
+#+begin_src c
+g_autoptr(GError)         error = NULL;
+g_autoptr(LrgEntity3D)    hero = lrg_entity3d_new_with_name ("hero");
+g_autoptr(LrgSkeleton)    skeleton = lrg_gltf_load_skeleton ("chars/hero.glb", 0, &error);
+LrgSkinnedModelComponent *body = lrg_skinned_model_component_new_with_model ("chars/hero.glb", NULL);
+LrgAnimatorComponent3D   *anim = lrg_animator_component3d_new ();
+
+lrg_skinned_model_component_set_asset_manager (body, assets);
+lrg_skinned_model_component_set_skeleton (body, skeleton);      /* the palette's skeleton */
+lrg_animator_component3d_set_graph_path (anim, "chars/hero.ranim");
+lrg_animator_component3d_set_raycast_func (anim, ground_ray, physics, NULL);
+lrg_entity3d_add_component (hero, LRG_COMPONENT (body));
+lrg_entity3d_add_component (hero, LRG_COMPONENT (anim));
+g_object_unref (body);
+g_object_unref (anim);
+lrg_world3d_add_entity (world, hero);
+#+end_src
+
+Every =lrg_world3d_step()= the animator advances the graph, blends, runs IK, sends the palette to the skinned model (the model is CPU-skinned with it when drawn; an =LrgSkinnedMesh= is GPU-skinned) and moves the entity by the root motion. Several characters sharing a .ranim each load their own graph (=graph-path=) or get =lrg_anim_graph_duplicate()= of one loaded graph; the clips are shared.
+
+** Step 4: drive it from gameplay
+:PROPERTIES:
+:CUSTOM_ID: step-gameplay
+:END:
+#+begin_src c
+static void
+on_footstep (LrgAnimatorComponent3D *anim, const gchar *layer, const gchar *state,
+             LrgAnimationEvent *event, gpointer user_data)
+{
+	play_sound (user_data, "footstep");
+}
+
+g_signal_connect (anim, "event::footstep", G_CALLBACK (on_footstep), audio);
+
+/* per frame */
+lrg_animator_component3d_set_float (anim, "speed", controller_speed);
+if (input_jump)
+	lrg_animator_component3d_set_trigger (anim, "jump");
+lrg_animator_component3d_set_bool (anim, "waving", npc_nearby);
+lrg_animator_component3d_set_ik_target (anim, "look", npc_head[0], npc_head[1], npc_head[2]);
+#+end_src
+
+Clip events are added to the clips (=lrg_animation_clip_add_event()=, or imported); a blend tree fires only its dominant clip's events. =state-changed= tells gameplay when a layer enters a state (for example to enable a hitbox while =attack= plays).
+
+** Checking the result
+:PROPERTIES:
+:CUSTOM_ID: checking
+:END:
+- =lrg_anim_graph_get_missing_clips()= lists clip keys without a clip; =lrg_anim_graph_validate_skeleton()= checks masks, the root motion bone and IK bones against the skeleton.
+- =lrg_animator_component3d_get_current_state()= per layer, =lrg_animation_state_machine_get_active_transition()= / =get_transition_progress()= for the blend in progress.
+- =lrg_animator_component3d_evaluate (anim, 0)= re-poses without moving time (scrubbing, tests).
+- =tests/test-anim-graph.c= builds a 16-bone stick figure with procedural clips and checks every stage, including a GPU render of the figure mid-blend and with IK.
+
+** Sequencer: cinematics on top of the pipeline
+:PROPERTIES:
+:CUSTOM_ID: sequencer
+:END:
+The animator component plays a character's gameplay animation (state machine, blend trees, IK). A /sequence/ (=.rseq=, [[file:../modules/animation/sequence.org][Sequences]]) choreographs a whole scene: it moves entities, keys component properties, cuts between cameras, starts sounds, emits gameplay events and places animation clips on characters, all on one timeline.
+
+*** Where it sits
+:PROPERTIES:
+:CUSTOM_ID: sequencer-where
+:END:
+#+begin_example
+glTF ──► LrgSkeleton + LrgAnimationClip ──► .ranim ──► LrgAnimatorComponent3D ──► skinned mesh palette
+                         │                                     ▲
+                         └──► LrgSequencePlayer ── animation-sample (handled = TRUE) ─┘
+                                   │   (default: sample the clip onto a bound LrgSkeleton)
+                                   ├── transform / property tracks ──► LrgEntity3D, components
+                                   ├── camera cuts ──► lrg_world3d_set_active_camera()
+                                   ├── audio ──► LrgAudioSourceComponent
+                                   └── events ──► "event" signal ──► gameplay
+#+end_example
+
+*** Steps
+:PROPERTIES:
+:CUSTOM_ID: sequencer-steps
+:END:
+1. Instantiate the level (=lrg_level_instantiate_3d()=): entities keep their node GUIDs, which is what sequence tracks bind to.
+2. Load or build the sequence (=lrg_sequence_new_from_file()=), or convert a level timeline (=lrg_sequence_new_from_timeline()=).
+3. Play it from an entity with an =LrgSequenceComponent= (=sequence-path=, =autoplay=), or drive an =LrgSequencePlayer= yourself with =lrg_sequence_player_advance()= each frame.
+4. Characters: either let the animator component play the clips (connect =animation-sample= and return =TRUE=), or bind the character's skeleton (=lrg_sequence_player_bind_skeleton()=) and register its clips (=lrg_sequence_player_load_clips()= with the same glTF), then upload the pose with =lrg_skinned_mesh_apply_skeleton()=. Bone tracks (bind-pose offsets) layer over the clips, e.g. a head turn during a walk.
+5. Gameplay listens to =event= (crossing in either direction, with =reverse=), =finished= and =camera-cut=.
+
+#+begin_src C
+LrgSequencePlayer *player = lrg_sequence_component_get_player (director_seq);
+
+lrg_sequence_player_bind_skeleton (player, HERO_GUID, hero_skeleton);
+lrg_sequence_player_load_clips (player, "models/hero.glb", NULL);
+g_signal_connect (player, "event", G_CALLBACK (on_cinematic_event), game);
+#+end_src
+
+*** Choosing between a timeline, a sequence and the animator
+:PROPERTIES:
+:CUSTOM_ID: sequencer-choosing
+:END:
+| Need | Use |
+|------+-----|
+| A looping prop animation keyed in the level | level timeline (=LrgTimeline=), Bézier keys since 0.9.0 |
+| A character reacting to input | =LrgAnimatorComponent3D= with a =.ranim= graph |
+| A scripted scene: several actors, cameras, sound, events | =LrgSequence= |
+| A pose tweak on top of whatever plays | a bone track (timeline =bone.NAME.*= channels or a sequence bone track) |
+
+** 2D skeletal animation
+:PROPERTIES:
+:CUSTOM_ID: skeletal-2d
+:END:
+The 2D pipeline is separate from the glTF one: no import step, our own =.rskel2d= format, CPU skinning, and an ECS component for =LrgGameObject= in an =LrgWorld= (not =LrgEntity3D=). Spine and DragonBones files are not imported (proprietary or restrictively licensed formats); rigs are authored in code, in YAML, or with the editor's 2D rigging tools (next editor wave).
+
+*** The pieces
+:PROPERTIES:
+:CUSTOM_ID: skeletal-2d-pieces
+:END:
+| Piece | Type | Page |
+|-------+------+------|
+| Bones, slots, skins, setup pose, the =.rskel2d= file | =LrgSkeleton2D= | [[file:../modules/animation/skeleton2d.org][skeleton2d.org]] |
+| Deformable image meshes (vertices, UVs into an atlas region, up to 4 weights) | =LrgSkinnedSprite= | [[file:../modules/graphics/skinned-sprite.org][skinned-sprite.org]] |
+| Clips: bone translate/rotate/scale, slot colour, attachment swaps, draw order, events; linear/stepped/Bézier keys | =LrgSkeleton2DClip= | [[file:../modules/animation/skeleton2d.org::#clips][skeleton2d.org#clips]] |
+| Playback on a game object: play, crossfade, events, finished, flip, speed | =LrgSkeleton2DComponent= | [[file:../modules/ecs/components/skeleton2d-component.org][skeleton2d-component.org]] |
+
+*** From images to a playing character
+:PROPERTIES:
+:CUSTOM_ID: skeletal-2d-steps
+:END:
+1. *Cut the art* into parts (torso, head, upper and lower limbs) in one atlas image. Each part becomes an attachment: a quad (=lrg_skinned_sprite_new_quad()=) for rigid parts, a strip or grid (=lrg_skinned_sprite_new_grid()=) for parts that bend. Give it =image= and =region= (pixels in the atlas).
+2. *Build the bones* in the setup pose (=lrg_skeleton2d_add_bone()=, parents first; y down, degrees clockwise, length along local +X). Place the meshes in setup space: where the parts sit when the character stands in its rest pose.
+3. *Slots* decide draw order (back to front) and which bone carries a rigid part: =lrg_skeleton2d_add_slot()=, then =lrg_skeleton2d_set_attachment()= into the =default= skin (variants go in more skins).
+4. *Weights*: =lrg_skeleton2d_compute_auto_weights()= on bending meshes (falloff 3 .. 4, two influences, one or two smoothing passes), then fix by hand with =lrg_skinned_sprite_set_weights()= where needed.
+5. *Clips*: key offsets from the setup pose (=lrg_skeleton2d_clip_add_rotate_key()= etc.), attachment swaps for blinks or hand shapes, draw-order keys when a limb passes in front, events for footsteps; =lrg_skeleton2d_add_clip()=.
+6. *Save* with =lrg_skeleton2d_save_to_file()= (deterministic, diff-friendly) and from then on edit the YAML or regenerate it.
+7. *Play*: an =LrgGameObject= with an =LrgSkeleton2DComponent= (=skeleton-path=, =clip=), =lrg_skeleton2d_component_crossfade()= between states, the =event= signal for gameplay hooks. Textures load on the first draw; =lrg_world_draw()= draws the rig with its game object.
+
+#+begin_src C
+LrgGameObject          *hero = lrg_game_object_new_at (320, 400);
+LrgSkeleton2DComponent *rig = lrg_skeleton2d_component_new ();
+
+g_object_set (rig, "skeleton-path", "assets/hero.rskel2d", "clip", "idle", NULL);
+lrg_game_object_add_component (hero, LRG_COMPONENT (rig));
+lrg_world_add_object (world, hero);
+
+/* on input */
+lrg_skeleton2d_component_crossfade (rig, "run", 0.15f, TRUE);
+
+/* frame */
+lrg_world_update (world, dt);
+lrg_world_draw (world);
+#+end_src
+
+*** What differs from the 3D path
+:PROPERTIES:
+:CUSTOM_ID: skeletal-2d-vs-3d
+:END:
+- Clips are keyed by *name* and store offsets from the setup pose, so they survive re-rigging and play on any skeleton with the same bone names (no retargeter needed between rigs that share names).
+- No state machine yet: the component mixes two clips (current + fading out). Layer more by hand: reset, apply a full-body clip, apply a partial clip (=lrg_skeleton2d_clip_apply()= only touches keyed channels).
+- Skinning is CPU only (about 25 .. 40 ns per vertex at four influences); 2D characters are small, and exact deformed positions stay available for picking (=lrg_skinned_sprite_get_deformed_bounds()=).
+- Performance, pitfalls and the planned editor tools are on the [[file:../modules/animation/skeleton2d.org][LrgSkeleton2D page]].
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../modules/animation/index.org][Animation module index]]
+- [[file:rendering-pipeline.org][Rendering pipeline]] (where skinned items are drawn)
+- [[file:custom-components.org][Custom components]]

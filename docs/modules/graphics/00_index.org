@@ -1,6 +1,15 @@
 #+title: Graphics documentation index
 
 - [[file:index.org][Graphics module guide]]
+- [[file:material.org][Material assets (.rmat) and instances]]
+- [[file:shader-asset.org][Shader assets (.rshader)]]
+- [[file:shader-graph.org][Shader graphs (.rshadergraph)]]
 - [[file:static-batch.org][Static batching API]]
 - [[file:aux-uv-contract.org][Auxiliary UV integration and verification contract]]
 - [[file:upstream-merge-verification.org][Upstream merge resolution, fresh verification and native cleanup findings]]
+- [[file:skinned-sprite.org][LrgSkinnedSprite]] - deformable 2D sprite meshes
+- [[file:uv-unwrap.org][LrgUvUnwrap / LrgUvMesh]] - lightmap UV2 chart unwrapper, headless CPU mesh, renderer primitives, rect packer
+- *[[file:terrain-asset.org][LrgTerrainAsset]]* - .rterrain terrain: chunk grid, height/splat/hole sidecars, LOD, edits, splat bake, heightfield physics; LrgTerrainComponent (0.9.0)
+- *[[file:terrain-brush.org][LrgTerrainBrush]]* - sculpt, smooth, flatten, noise, paint, holes and foliage brushes with undo records (0.9.0)
+- *[[file:foliage.org][LrgFoliage]]* - scattered mesh/billboard/grass layers with density maps and slope/height rules (0.9.0)
+- *[[file:water-body.org][LrgWaterBody]]* - .rwater planes, lakes and rivers; LrgWaterComponent (0.9.0)

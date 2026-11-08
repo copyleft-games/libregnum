@@ -172,7 +172,9 @@ lrg_particle_billboard_renderer_build (LrgParticleBillboardRenderer *self,
  *
  * Draws the system's active particles through rlgl's batch with the
  * system's blend mode (additive, alpha or multiply), depth testing on and
- * depth writes off.  Presentation only: needs a window.
+ * depth writes off.  Presentation only: needs a window.  Nothing is
+ * drawn when the system's #LrgParticleSystem:layer is outside
+ * lrg_render_layers_get_active_mask().
  *
  * Since: 1.0
  */
@@ -181,6 +183,26 @@ void
 lrg_particle_billboard_renderer_draw (LrgParticleBillboardRenderer *self,
                                       LrgParticleSystem            *system,
                                       GrlCamera3D                  *camera);
+
+/**
+ * lrg_particle_billboard_renderer_draw_view:
+ * @self: an #LrgParticleBillboardRenderer
+ * @system: the system to draw
+ * @eye: (array fixed-size=3): the camera position
+ * @up: (array fixed-size=3): the camera's up direction
+ *
+ * lrg_particle_billboard_renderer_draw() with an explicit eye and up
+ * vector instead of a camera: for drawing inside a renderer pass that
+ * has no #GrlCamera3D (an #LrgWorld3DRenderer custom draw).
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_particle_billboard_renderer_draw_view (LrgParticleBillboardRenderer *self,
+                                           LrgParticleSystem            *system,
+                                           const gfloat                 *eye,
+                                           const gfloat                 *up);
 
 /**
  * lrg_particle_billboard_renderer_release_gpu:

@@ -2,75 +2,96 @@
 :PROPERTIES:
 :CUSTOM_ID: post-processing-module
 :END:
-The Post-Processing module provides a flexible effect pipeline for screen-space visual effects like bloom, color grading, anti-aliasing, and accessibility filters.
+The post-processing module runs screen-space effects over a finished frame: the scene is captured into an offscreen (HDR when available) target, a chain of shader passes runs over it, and the result is composited into the window or a render texture. Looks can be authored as data (=.rpost= post stacks) and blended for post volumes.
 
 ** Overview
 :PROPERTIES:
 :CUSTOM_ID: overview
 :END:
-Post-processing effects are applied after the scene is rendered, modifying the final image before display:
+- *LrgPostProcessor* runs the chain: capture targets (RGBA16F, RGBA8 fallback), ping-pong passes, composite, resize, quality tier ([[file:post-processor.org][post-processor.org]]).
+- *LrgPostEffect* is the base class of every effect, with the apply contract and helpers to write your own ([[file:post-effect.org][post-effect.org]]).
+- *LrgPostStack* is a look as data: the =.rpost= format, building into a processor, blending two looks by weight ([[file:post-stack.org][post-stack.org]]).
+- *Built-in effects*: bloom, tonemap, vignette, colour grade, FXAA, film grain, screen shake, heat haze ([[file:effects.org][effects.org]]), the colour-blindness filter ([[file:accessibility.org][accessibility.org]]), sharpen ([[file:sharpen.org][sharpen.org]]) and palettize ([[file:palettize.org][palettize.org]]).
+- *LrgColorLut* is a 3D colour lookup table (=.cube=) that [[file:effects.org::#lrgcolorgrade][LrgColorGrade]] applies after its grade ([[file:color-lut.org][color-lut.org]]).
 
-- *LrgPostEffect* - Base class for all effects (derivable)
-- *LrgPostProcessor* - Manages the effect chain and render targets
-- *LrgColorLut* - 3D colour lookup tables (=.cube= files) that [[file:effects.org][LrgColorGrade]] applies after its grade; see [[file:color-lut.org][color-lut.org]]
-
-** Quick Start
+** Quick start
 :PROPERTIES:
 :CUSTOM_ID: quick-start
 :END:
 #+begin_src C
-/* Create post-processor (window size) */
-g_autoptr(LrgPostProcessor) processor = lrg_post_processor_new (800, 600);
+g_autoptr(GError)           error = NULL;
+g_autoptr(LrgPostProcessor) post = lrg_post_processor_new (GetRenderWidth (), GetRenderHeight ());
+g_autoptr(LrgPostStack)     look = lrg_post_stack_new_from_file ("looks/default.rpost", &error);
 
-/* Add effects */
-lrg_post_processor_add_effect (processor, LRG_POST_EFFECT (lrg_bloom_new ()));
-lrg_post_processor_add_effect (processor, LRG_POST_EFFECT (lrg_vignette_new ()));
-lrg_post_processor_add_effect (processor, LRG_POST_EFFECT (lrg_fxaa_new ()));
+if (look == NULL || !lrg_post_stack_build (look, post, &error))
+	g_warning ("%s", error->message);
+lrg_post_processor_set_auto_resize (post, TRUE);
 
-/* In game loop */
-lrg_post_processor_begin_capture (processor);
-/* ... render scene ... */
-lrg_post_processor_end_capture (processor);
-lrg_post_processor_render (processor, delta_time);
+/* each frame */
+BeginDrawing ();
+lrg_post_processor_begin_capture (post);
+ClearBackground (BLACK);
+draw_scene ();
+lrg_post_processor_end_capture (post);
+lrg_post_processor_render (post, GetFrameTime ());
+draw_hud ();
+EndDrawing ();
+
+/* at exit, before CloseWindow () */
+lrg_post_processor_release (post);
+#+end_src
+with =looks/default.rpost=:
+#+begin_src yaml
+version: 1
+effects:
+  - type: bloom
+    params: { threshold: 1.0, intensity: 0.8 }
+  - type: tonemap
+    params: { operator: aces }
+  - type: vignette
+    params: { intensity: 0.3 }
+  - type: fxaa
 #+end_src
 
-** Effect Pipeline
+** Pipeline
 :PROPERTIES:
 :CUSTOM_ID: effect-pipeline
 :END:
-Effects are applied in priority order:
+1. *Capture*: =begin_capture()= binds the processor's target 0; the scene draws into it; =end_capture()= rebinds the previous target.
+2. *Chain*: every enabled effect, lowest priority first, reads the previous image and writes the other ping-pong target, blending off (HDR values and alpha pass through).
+3. *Composite*: =render()= draws the result over the bound target, alpha blended and scaled to it.
 
-1. *Capture* - Scene is rendered to an offscreen texture
-2. *Chain* - Effects are applied sequentially (low priority first)
-3. *Output* - Final result is displayed on screen
+Renderers that own their scene target call =lrg_post_processor_process()= instead and draw the returned texture themselves.
 
-Each effect reads from one texture and writes to another, ping-ponging through the chain.
-
-** Built-in Effects
+** Built-in effects
 :PROPERTIES:
 :CUSTOM_ID: built-in-effects
 :END:
-| Effect              | Description       | Use Case              |
-|---------------------+-------------------+-----------------------|
-| LrgBloom            | Bright area glow  | Fire, magic, lights   |
-| LrgVignette         | Edge darkening    | Focus, cinematic look |
-| LrgColorGrade       | Color adjustments | Mood, style           |
-| LrgHeatHaze         | Horizon shimmer   | Deserts, hot days     |
-| LrgFxaa             | Anti-aliasing     | Smooth edges          |
-| LrgFilmGrain        | Film texture      | Retro, stylized       |
-| LrgScreenShake      | Camera shake      | Impacts, explosions   |
-| LrgColorblindFilter | Accessibility     | Color correction      |
-| LrgPalettize        | Palette, dither   | Retro 8-bit look      |
+| Effect | Type name | Look | Use |
+|--------+-----------+------+-----|
+| =LrgBloom= | =bloom= | Glow around bright areas | Fire, magic, emissives, sun glints |
+| =LrgTonemap= | =tonemap= | HDR to display (ACES, filmic, Reinhard) + exposure | Any HDR scene |
+| =LrgVignette= | =vignette= | Darker/tinted edges | Focus, cinematic, low health |
+| =LrgColorGrade= | =color-grade= | Exposure, white balance, lift/gamma/gain, LUT | Mood, style |
+| =LrgFxaa= | =fxaa= | Smoothed edges | Anti-aliasing |
+| =LrgFilmGrain= | =film-grain= | Animated grain | Film, horror, retro |
+| =LrgScreenShake= | =screen-shake= | Trauma-driven shake | Impacts, explosions |
+| =LrgHeatHaze= | =heat-haze= | Horizon shimmer | Deserts, hot days |
+| =LrgColorblindFilter= | =colorblind-filter= | Daltonize/simulate | Accessibility |
+| =LrgSharpen= | =sharpen= | Contrast-adaptive sharpening | After upscaling or TAA |
+| =LrgPalettize= | =palettize= | Palette, ordered dither | Retro 8-bit look |
 
 ** Files
 :PROPERTIES:
 :CUSTOM_ID: files
 :END:
-| File                       | Description               |
-|----------------------------+---------------------------|
-| [[file:post-effect.org]]    | LrgPostEffect base class  |
+| File | Description |
+|------+-------------|
 | [[file:post-processor.org]] | LrgPostProcessor pipeline |
-| [[file:effects.org]]        | Built-in effect types     |
-| [[file:accessibility.org]]  | Colorblind filter         |
-| [[file:sharpen.org]]        | Contrast-adaptive sharpening |
-| [[file:palettize.org]]      | Palettize and dither      |
+| [[file:post-effect.org]] | LrgPostEffect base class, writing effects |
+| [[file:post-stack.org]] | LrgPostStack and the =.rpost= format |
+| [[file:effects.org]] | Built-in effects and their parameters |
+| [[file:accessibility.org]] | Colour-blindness filter |
+| [[file:sharpen.org]] | Contrast-adaptive sharpening |
+| [[file:palettize.org]] | Palettize and dither |
+| [[file:color-lut.org]] | Colour lookup tables |

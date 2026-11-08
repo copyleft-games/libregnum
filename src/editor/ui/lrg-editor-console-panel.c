@@ -25,6 +25,11 @@
  * exactly as the 0.8.0 console did, so everything the IPC server offers
  * is also available interactively. Up / Down walk the command history.
  *
+ * The language chip switches the line to a Lua, Python or Gjs REPL
+ * (one history each). A trailing backslash continues the chunk. The
+ * panel owns the session's LrgEditorScriptApi: it registers script.*,
+ * reloads editor_scripts/ and ticks run-in-editor bindings.
+ *
  * History: one row per undo step and per redo step, rebuilt when the
  * editor changes; a click jumps with lrg_editor_jump_to_history().
  *
@@ -43,6 +48,7 @@
 #include "../../ui/lrg-hbox.h"
 #include "../../ui/lrg-list-view.h"
 #include "../../ui/lrg-text-input.h"
+#include "../../ui/lrg-file-dialog.h"
 #include "../../ui/lrg-custom-widget.h"
 #include "../../ui/lrg-ui-event.h"
 #include "../../paint/lrg-paint-list.h"
@@ -585,6 +591,7 @@ struct _LrgEditorConsoleRow
 	gchar   *folded;   /* casefolded message + domain, for the search */
 	gchar   *file;
 	gint     line;
+	gint     column;
 	gchar   *guid;
 };
 
@@ -949,6 +956,17 @@ struct _LrgEditorConsolePanel
 	/* Command history */
 	GPtrArray              *history;
 	gint                    history_pos;  /* -1: editing a new line */
+
+	/* Script REPL. Language NONE is the command line. */
+	LrgEditorScriptApi     *scripts;
+	LrgWidget              *lang_chip;
+	LrgScriptLanguage       repl_language;
+	GPtrArray              *repl_history[4]; /* Lua, Python, Gjs; [0] unused */
+	gint                    repl_history_pos[4];
+	GString                *repl_buffer;  /* trailing-\ continuation */
+	gchar                  *repl_output;
+	GString                *repl_capture; /* non-NULL only during repl() */
+	gulong                  menu_changed_id;
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorConsolePanel, lrg_editor_console_panel, LRG_TYPE_CONTAINER)
@@ -1362,6 +1380,274 @@ console_execute (LrgEditorConsolePanel *self,
 	}
 }
 
+/* --------------------------------------------------------------------------
+ * Script REPL
+ * -------------------------------------------------------------------------- */
+
+static const gchar *
+repl_language_name (LrgScriptLanguage language)
+{
+	if (language == LRG_SCRIPT_LANGUAGE_LUA)
+		return "Lua";
+	if (language == LRG_SCRIPT_LANGUAGE_PYTHON)
+		return "Python";
+	if (language == LRG_SCRIPT_LANGUAGE_GJS)
+		return "Gjs";
+	return "Cmd";
+}
+
+static void
+repl_update_placeholder (LrgEditorConsolePanel *self)
+{
+	const gchar      *name;
+	g_autofree gchar *text = NULL;
+
+	name = repl_language_name (self->repl_language);
+	if (self->lang_chip != NULL)
+		editor_chip_set_label (self->lang_chip, name);
+	if (self->command == NULL)
+		return;
+	if (self->repl_language == LRG_SCRIPT_LANGUAGE_NONE)
+	{
+		lrg_text_input_set_placeholder (self->command, CONSOLE_PLACEHOLDER);
+		return;
+	}
+	if (self->repl_buffer != NULL && self->repl_buffer->len > 0)
+		text = g_strdup_printf ("%s (continuation)", name);
+	else
+		text = g_strdup_printf ("%s REPL", name);
+	lrg_text_input_set_placeholder (self->command, text);
+}
+
+static void
+on_repl_output (LrgEditorScriptApi *api,
+                const gchar        *line,
+                gpointer            user_data)
+{
+	LrgEditorConsolePanel *self = LRG_EDITOR_CONSOLE_PANEL (user_data);
+
+	(void) api;
+	if (self->repl_capture == NULL || line == NULL)
+		return;
+	if (self->repl_capture->len > 0)
+		g_string_append_c (self->repl_capture, '\n');
+	g_string_append (self->repl_capture, line);
+}
+
+static void
+on_lang_chip (LrgWidget *chip,
+              gpointer   user_data)
+{
+	LrgEditorConsolePanel *self = LRG_EDITOR_CONSOLE_PANEL (user_data);
+	LrgScriptLanguage      next = LRG_SCRIPT_LANGUAGE_NONE;
+
+	(void) chip;
+	if (self->repl_language == LRG_SCRIPT_LANGUAGE_NONE)
+		next = LRG_SCRIPT_LANGUAGE_LUA;
+	else if (self->repl_language == LRG_SCRIPT_LANGUAGE_LUA)
+		next = LRG_SCRIPT_LANGUAGE_PYTHON;
+	else if (self->repl_language == LRG_SCRIPT_LANGUAGE_PYTHON)
+		next = LRG_SCRIPT_LANGUAGE_GJS;
+	lrg_editor_console_panel_set_repl_language (self, next);
+}
+
+static gboolean
+repl_history_step (LrgEditorConsolePanel *self,
+                   gint                   dir)
+{
+	GPtrArray *hist;
+	gint       len;
+	gint      *pos;
+
+	if (self->repl_language <= LRG_SCRIPT_LANGUAGE_NONE ||
+	    self->repl_language > LRG_SCRIPT_LANGUAGE_GJS)
+		return TRUE;
+	hist = self->repl_history[self->repl_language];
+	pos = &self->repl_history_pos[self->repl_language];
+	len = (gint) hist->len;
+	if (len == 0)
+		return TRUE;
+	if (*pos < 0)
+		*pos = (dir < 0) ? len - 1 : -1;
+	else
+		*pos = CLAMP (*pos + dir, -1, len);
+	if (*pos >= len)
+		*pos = -1;
+	lrg_text_input_set_text (self->command,
+	                         *pos >= 0 ? (const gchar *) g_ptr_array_index (hist, *pos) : "");
+	lrg_text_input_set_cursor_position (self->command,
+	                                    (gint) g_utf8_strlen (lrg_text_input_get_text (self->command), -1));
+	return TRUE;
+}
+
+static void
+repl_remember (LrgEditorConsolePanel *self,
+               const gchar           *code)
+{
+	GPtrArray *hist;
+
+	if (self->repl_language <= LRG_SCRIPT_LANGUAGE_NONE ||
+	    self->repl_language > LRG_SCRIPT_LANGUAGE_GJS)
+		return;
+	hist = self->repl_history[self->repl_language];
+	if (hist->len == 0 || g_strcmp0 ((const gchar *) g_ptr_array_index (hist, hist->len - 1), code) != 0)
+		g_ptr_array_add (hist, g_strdup (code));
+	if (hist->len > CONSOLE_HISTORY_MAX)
+		g_ptr_array_remove_index (hist, 0);
+	self->repl_history_pos[self->repl_language] = -1;
+}
+
+/* A trailing backslash continues the chunk; the backslash itself is dropped. */
+static gboolean
+repl_line_continues (const gchar *line,
+                     gchar      **kept)
+{
+	gsize n;
+
+	n = strlen (line);
+	if (n == 0 || line[n - 1] != '\\')
+		return FALSE;
+	*kept = g_strndup (line, n - 1);
+	return TRUE;
+}
+
+static void
+repl_submit (LrgEditorConsolePanel *self,
+             const gchar           *line)
+{
+	g_autofree gchar *kept = NULL;
+	g_autofree gchar *code = NULL;
+	g_autofree gchar *result = NULL;
+	g_autoptr(GError) error = NULL;
+
+	if (self->repl_buffer == NULL)
+		self->repl_buffer = g_string_new ("");
+	if (repl_line_continues (line, &kept))
+	{
+		g_string_append (self->repl_buffer, kept);
+		g_string_append_c (self->repl_buffer, '\n');
+		repl_update_placeholder (self);
+		return;
+	}
+	g_string_append (self->repl_buffer, line);
+	code = g_string_free (self->repl_buffer, FALSE);
+	self->repl_buffer = g_string_new ("");
+	repl_remember (self, code);
+	repl_update_placeholder (self);
+	if (!lrg_editor_console_panel_repl (self, code, &result, &error))
+		lrg_editor_log_append (self->log, G_LOG_LEVEL_WARNING, "script",
+		                       (error != NULL) ? error->message : "REPL failed");
+	else if (result != NULL && *result != '\0')
+		lrg_editor_log_append (self->log, G_LOG_LEVEL_MESSAGE, "script", result);
+}
+
+static void
+mirror_scripts_menu (LrgEditorConsolePanel *self)
+{
+	GMenu      *dest;
+	GMenuModel *src;
+	gint        n;
+	gint        i;
+
+	if (self->app == NULL || self->scripts == NULL)
+		return;
+	dest = (GMenu *) g_object_get_data (G_OBJECT (self->app), "lrg-editor-scripts-menu");
+	if (!G_IS_MENU (dest))
+		return;
+	src = lrg_editor_script_api_get_menu (self->scripts);
+	if (src == NULL)
+		return;
+	while (g_menu_model_get_n_items (G_MENU_MODEL (dest)) > 0)
+		g_menu_remove (dest, 0);
+	n = g_menu_model_get_n_items (src);
+	for (i = 0; i < n; i++)
+	{
+		g_autoptr(GMenuItem) item = g_menu_item_new_from_model (src, i);
+
+		if (item != NULL)
+			g_menu_append_item (dest, item);
+	}
+}
+
+static void
+on_scripts_menu_changed (GMenuModel *model,
+                         gint        position,
+                         gint        removed,
+                         gint        added,
+                         gpointer    user_data)
+{
+	(void) model;
+	(void) position;
+	(void) removed;
+	(void) added;
+	mirror_scripts_menu (LRG_EDITOR_CONSOLE_PANEL (user_data));
+}
+
+static void
+on_script_file_chosen (GObject      *source,
+                       GAsyncResult *result,
+                       gpointer      user_data)
+{
+	LrgFileDialog         *dialog = LRG_FILE_DIALOG (source);
+	LrgEditorConsolePanel *self = LRG_EDITOR_CONSOLE_PANEL (user_data);
+	g_autoptr(GError)      error = NULL;
+	g_autoptr(GFile)       file = NULL;
+	g_autofree gchar      *path = NULL;
+
+	file = lrg_file_dialog_open_finish (dialog, result, &error);
+	if (file == NULL)
+	{
+		if (error != NULL &&
+		    !g_error_matches (error, LRG_FILE_DIALOG_ERROR, LRG_FILE_DIALOG_ERROR_DISMISSED) &&
+		    !g_error_matches (error, LRG_FILE_DIALOG_ERROR, LRG_FILE_DIALOG_ERROR_CANCELLED) &&
+		    self->log != NULL)
+			lrg_editor_log_append (self->log, G_LOG_LEVEL_WARNING, "script", error->message);
+	}
+	else
+	{
+		path = g_file_get_path (file);
+		if (self->scripts == NULL || path == NULL ||
+		    !lrg_editor_script_api_run_file (self->scripts, path, LRG_SCRIPT_LANGUAGE_NONE, NULL, &error))
+		{
+			const gchar *msg = (error != NULL) ? error->message : "Could not run script";
+
+			if (self->log != NULL)
+				lrg_editor_log_append (self->log, G_LOG_LEVEL_WARNING, "script", msg);
+		}
+	}
+	g_object_unref (dialog);
+	g_object_unref (self);
+}
+
+static void
+a_script_run (gpointer data)
+{
+	LrgEditorConsolePanel *self = LRG_EDITOR_CONSOLE_PANEL (data);
+	LrgFileDialog         *dialog;
+	LrgWidget             *parent;
+
+	if (self->app == NULL)
+		return;
+	editor_app_show_panel (self->app, "console");
+	dialog = lrg_file_dialog_new ();
+	lrg_file_dialog_set_title (dialog, "Run Script");
+	lrg_file_dialog_set_prefer_native (dialog, FALSE);
+	parent = LRG_WIDGET (self);
+	if (self->app->canvas != NULL)
+		parent = LRG_WIDGET (self->app->canvas);
+	g_object_ref (self);
+	lrg_file_dialog_open (dialog, parent, NULL, on_script_file_chosen, self);
+}
+
+static void
+a_script_reload (gpointer data)
+{
+	LrgEditorConsolePanel *self = LRG_EDITOR_CONSOLE_PANEL (data);
+
+	if (self->scripts != NULL)
+		lrg_editor_script_api_reload_tools (self->scripts);
+}
+
 static void
 on_command_submitted (LrgTextInput *input,
                       gpointer      user_data)
@@ -1370,7 +1656,10 @@ on_command_submitted (LrgTextInput *input,
 	g_autofree gchar      *line = g_strdup (lrg_text_input_get_text (input));
 
 	lrg_text_input_set_text (input, "");
-	console_execute (self, line);
+	if (self->repl_language != LRG_SCRIPT_LANGUAGE_NONE)
+		repl_submit (self, line);
+	else
+		console_execute (self, line);
 	console_sync (self);
 }
 
@@ -1419,9 +1708,11 @@ lrg_editor_console_panel_handle_event (LrgWidget        *widget,
 		GrlKey key = lrg_ui_event_get_key (event);
 
 		if (key == GRL_KEY_UP)
-			return console_history_step (self, -1);
+			return (self->repl_language != LRG_SCRIPT_LANGUAGE_NONE)
+			       ? repl_history_step (self, -1) : console_history_step (self, -1);
 		if (key == GRL_KEY_DOWN)
-			return console_history_step (self, 1);
+			return (self->repl_language != LRG_SCRIPT_LANGUAGE_NONE)
+			       ? repl_history_step (self, 1) : console_history_step (self, 1);
 	}
 	return LRG_WIDGET_CLASS (lrg_editor_console_panel_parent_class)->handle_event (widget, event);
 }
@@ -1430,9 +1721,22 @@ static gboolean
 lrg_editor_console_panel_step (LrgWidget *widget,
                                gfloat     delta_time)
 {
+	LrgEditorConsolePanel *self = LRG_EDITOR_CONSOLE_PANEL (widget);
+
+	/* Tool scripts and run-in-editor bindings follow the open project.
+	 * Play mode owns the scripts; authoring ticks them. */
+	if (self->scripts != NULL && self->app != NULL)
+	{
+		lrg_editor_script_api_set_project_dir (self->scripts,
+		                                       lrg_editor_app_get_project_dir (self->app));
+		if (lrg_editor_app_is_playing (self->app))
+			lrg_editor_script_api_stop_editor_scripts (self->scripts);
+		else
+			lrg_editor_script_api_tick (self->scripts, delta_time);
+	}
 	/* Visible panels poll the ring each frame (records arrive from any
 	 * thread; polling needs no main-loop iteration) */
-	console_sync (LRG_EDITOR_CONSOLE_PANEL (widget));
+	console_sync (self);
 	return FALSE;
 }
 
@@ -1450,6 +1754,12 @@ lrg_editor_console_panel_dispose (GObject *object)
 {
 	LrgEditorConsolePanel *self = LRG_EDITOR_CONSOLE_PANEL (object);
 
+	if (self->menu_changed_id != 0 && self->scripts != NULL)
+	{
+		g_signal_handler_disconnect (lrg_editor_script_api_get_menu (self->scripts),
+		                             self->menu_changed_id);
+		self->menu_changed_id = 0;
+	}
 	g_clear_weak_pointer (&self->app);
 	G_OBJECT_CLASS (lrg_editor_console_panel_parent_class)->dispose (object);
 }
@@ -1463,6 +1773,13 @@ lrg_editor_console_panel_finalize (GObject *object)
 	g_clear_object (&self->shown);
 	g_clear_pointer (&self->rows, g_ptr_array_unref);
 	g_clear_pointer (&self->history, g_ptr_array_unref);
+	g_clear_pointer (&self->repl_history[LRG_SCRIPT_LANGUAGE_LUA], g_ptr_array_unref);
+	g_clear_pointer (&self->repl_history[LRG_SCRIPT_LANGUAGE_PYTHON], g_ptr_array_unref);
+	g_clear_pointer (&self->repl_history[LRG_SCRIPT_LANGUAGE_GJS], g_ptr_array_unref);
+	if (self->repl_buffer != NULL)
+		g_string_free (self->repl_buffer, TRUE);
+	g_free (self->repl_output);
+	g_clear_object (&self->scripts);
 	g_free (self->search_text);
 	g_free (self->needle);
 	G_OBJECT_CLASS (lrg_editor_console_panel_parent_class)->finalize (object);
@@ -1505,6 +1822,15 @@ lrg_editor_console_panel_init (LrgEditorConsolePanel *self)
 	self->shown = g_list_store_new (LRG_TYPE_EDITOR_CONSOLE_ROW);
 	self->history = g_ptr_array_new_with_free_func (g_free);
 	self->history_pos = -1;
+	self->repl_history[LRG_SCRIPT_LANGUAGE_LUA] = g_ptr_array_new_with_free_func (g_free);
+	self->repl_history[LRG_SCRIPT_LANGUAGE_PYTHON] = g_ptr_array_new_with_free_func (g_free);
+	self->repl_history[LRG_SCRIPT_LANGUAGE_GJS] = g_ptr_array_new_with_free_func (g_free);
+	self->repl_history_pos[LRG_SCRIPT_LANGUAGE_LUA] = -1;
+	self->repl_history_pos[LRG_SCRIPT_LANGUAGE_PYTHON] = -1;
+	self->repl_history_pos[LRG_SCRIPT_LANGUAGE_GJS] = -1;
+	self->repl_buffer = g_string_new ("");
+	self->repl_output = g_strdup ("");
+	self->repl_language = LRG_SCRIPT_LANGUAGE_NONE;
 	self->levels = LRG_EDITOR_CONSOLE_LEVEL_ERROR | LRG_EDITOR_CONSOLE_LEVEL_WARNING |
 	               LRG_EDITOR_CONSOLE_LEVEL_MESSAGE;
 	self->autoscroll = TRUE;
@@ -1548,10 +1874,12 @@ lrg_editor_console_panel_init (LrgEditorConsolePanel *self)
 	lrg_container_add_child (LRG_CONTAINER (self), LRG_WIDGET (self->list));
 	g_object_unref (self->list);
 
-	/* Command line: a chevron prompt, the input, Run */
+	/* Command line: language chip, the input, Run. One row. */
 	self->cmdbar = LRG_WIDGET (lrg_hbox_new ());
 	lrg_widget_set_name (self->cmdbar, "console-cmdbar");
 	lrg_container_set_spacing (LRG_CONTAINER (self->cmdbar), 6.0f);
+	self->lang_chip = editor_chip_new ("console-language", LRG_ICON_GEAR, "Cmd", on_lang_chip, self);
+	add_to (self->cmdbar, self->lang_chip);
 	self->command = lrg_text_input_new_with_placeholder (CONSOLE_PLACEHOLDER);
 	lrg_widget_set_name (LRG_WIDGET (self->command), "console-command");
 	lrg_widget_set_fill_weight (LRG_WIDGET (self->command), 1.0f);
@@ -1605,6 +1933,21 @@ lrg_editor_console_panel_new (LrgEditorApp *app)
 	lrg_editor_actions_add (actions, "console.clear", "Clear Log", "Console", NULL, a_console_clear, NULL, NULL, self);
 	lrg_editor_actions_add (actions, "console.focus", "Focus Command Line", "Console", NULL, a_console_focus,
 	                        NULL, NULL, self);
+	lrg_editor_actions_add (actions, "script.run", "Run Script...", "Scripts", NULL, a_script_run,
+	                        NULL, NULL, self);
+	lrg_editor_actions_add (actions, "script.reload", "Reload Tool Scripts", "Scripts", NULL, a_script_reload,
+	                        NULL, NULL, self);
+
+	self->scripts = lrg_editor_script_api_new (lrg_editor_app_get_editor (app));
+	lrg_editor_script_api_set_server (self->scripts, lrg_editor_app_get_server (app));
+	lrg_editor_script_api_set_actions (self->scripts, actions);
+	lrg_editor_script_api_set_log (self->scripts, self->log);
+	lrg_editor_script_api_set_project_dir (self->scripts, lrg_editor_app_get_project_dir (app));
+	lrg_editor_script_api_register_methods (self->scripts, lrg_editor_app_get_server (app));
+	self->menu_changed_id = g_signal_connect (lrg_editor_script_api_get_menu (self->scripts),
+	                                          "items-changed",
+	                                          G_CALLBACK (on_scripts_menu_changed), self);
+	mirror_scripts_menu (self);
 
 	/* Right-click menu on the log */
 	{
@@ -1744,6 +2087,93 @@ lrg_editor_console_panel_get_level_count (LrgEditorConsolePanel  *self,
 	if (level & LRG_EDITOR_CONSOLE_LEVEL_DEBUG)
 		mask |= G_LOG_LEVEL_DEBUG;
 	return lrg_editor_log_count_level (self->log, mask);
+}
+
+LrgEditorScriptApi *
+lrg_editor_console_panel_get_script_api (LrgEditorConsolePanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_CONSOLE_PANEL (self), NULL);
+
+	return self->scripts;
+}
+
+void
+lrg_editor_console_panel_set_repl_language (LrgEditorConsolePanel *self,
+                                            LrgScriptLanguage      language)
+{
+	g_return_if_fail (LRG_IS_EDITOR_CONSOLE_PANEL (self));
+
+	if (language != LRG_SCRIPT_LANGUAGE_NONE &&
+	    language != LRG_SCRIPT_LANGUAGE_LUA &&
+	    language != LRG_SCRIPT_LANGUAGE_PYTHON &&
+	    language != LRG_SCRIPT_LANGUAGE_GJS)
+		language = LRG_SCRIPT_LANGUAGE_NONE;
+	if (language == self->repl_language)
+		return;
+	if (self->repl_buffer != NULL)
+		g_string_truncate (self->repl_buffer, 0);
+	self->repl_language = language;
+	repl_update_placeholder (self);
+}
+
+LrgScriptLanguage
+lrg_editor_console_panel_get_repl_language (LrgEditorConsolePanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_CONSOLE_PANEL (self), LRG_SCRIPT_LANGUAGE_NONE);
+
+	return self->repl_language;
+}
+
+gboolean
+lrg_editor_console_panel_repl (LrgEditorConsolePanel *self,
+                               const gchar           *code,
+                               gchar                **result,
+                               GError               **error)
+{
+	gulong   id;
+	gboolean ok;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_CONSOLE_PANEL (self), FALSE);
+	g_return_val_if_fail (code != NULL, FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	if (result != NULL)
+		*result = NULL;
+	g_free (self->repl_output);
+	self->repl_output = g_strdup ("");
+	if (self->scripts == NULL || self->repl_language == LRG_SCRIPT_LANGUAGE_NONE)
+	{
+		g_set_error_literal (error, LRG_SCRIPTING_ERROR, LRG_SCRIPTING_ERROR_UNSUPPORTED,
+		                     "No REPL language selected");
+		return FALSE;
+	}
+	self->repl_capture = g_string_new ("");
+	id = g_signal_connect (self->scripts, "output", G_CALLBACK (on_repl_output), self);
+	ok = lrg_editor_script_api_run_string (self->scripts, self->repl_language, code, "REPL",
+	                                       result, error);
+	g_signal_handler_disconnect (self->scripts, id);
+	g_free (self->repl_output);
+	self->repl_output = g_string_free (self->repl_capture, FALSE);
+	self->repl_capture = NULL;
+	return ok;
+}
+
+const gchar *
+lrg_editor_console_panel_get_repl_buffer (LrgEditorConsolePanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_CONSOLE_PANEL (self), "");
+
+	if (self->repl_buffer == NULL)
+		return "";
+	return self->repl_buffer->str;
+}
+
+const gchar *
+lrg_editor_console_panel_get_repl_output (LrgEditorConsolePanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_CONSOLE_PANEL (self), "");
+
+	return (self->repl_output != NULL) ? self->repl_output : "";
 }
 
 /* ==========================================================================
@@ -2046,6 +2476,8 @@ problems_sync (LrgEditorProblemsPanel *self,
 		row->message = g_strdup (p->message);
 		row->guid = g_strdup (p->node_guid);
 		row->file = g_strdup (p->file);
+		row->line = p->line;
+		row->column = p->column;
 		row->text = g_strdup_printf ("%-7s %s%s%s", lrg_editor_problem_severity_to_string (p->severity),
 		                             p->node_path != NULL ? p->node_path : "", p->node_path != NULL ? ": " : "",
 		                             p->message);
@@ -2211,11 +2643,37 @@ lrg_editor_problems_panel_get_n_rows (LrgEditorProblemsPanel *self)
 	return g_list_model_get_n_items (G_LIST_MODEL (self->rows));
 }
 
-/* Opens @file at line 1: code.open when the code panel registered it. */
+gboolean
+lrg_editor_problems_panel_get_row_location (LrgEditorProblemsPanel *self,
+                                            guint                   index,
+                                            gint                   *line,
+                                            gint                   *column)
+{
+	g_autoptr(LrgEditorConsoleRow) row = NULL;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_PROBLEMS_PANEL (self), FALSE);
+
+	problems_sync (self, FALSE);
+	if (index >= g_list_model_get_n_items (G_LIST_MODEL (self->rows)))
+		return FALSE;
+	row = g_list_model_get_item (G_LIST_MODEL (self->rows), index);
+	if (line != NULL)
+		*line = row->line;
+	if (column != NULL)
+		*column = row->column;
+	return TRUE;
+}
+
+/* Opens @file at its diagnostic line: code.open when the code panel
+ * registered it, otherwise the external editor. */
 static void
 problems_open_file (LrgEditorApp *app,
-                    const gchar  *file)
+                    const gchar  *file,
+                    gint          line,
+                    gint          column)
 {
+	gint     use_line = (line > 0) ? line : 1;
+	gint     use_column = (column > 0) ? column : 1;
 	GList   *methods = lrg_editor_server_list_methods (app->server);
 	gboolean has_code_open = g_list_find_custom (methods, "code.open", (GCompareFunc) g_strcmp0) != NULL;
 
@@ -2238,7 +2696,7 @@ problems_open_file (LrgEditorApp *app,
 		json_builder_set_member_name (b, "path");
 		json_builder_add_string_value (b, file);
 		json_builder_set_member_name (b, "line");
-		json_builder_add_int_value (b, 1);
+		json_builder_add_int_value (b, use_line);
 		json_builder_end_object (b);
 		json_builder_end_object (b);
 		root = json_builder_get_root (b);
@@ -2248,7 +2706,7 @@ problems_open_file (LrgEditorApp *app,
 		if (reply != NULL && strstr (reply, "\"error\"") == NULL)
 			return;
 	}
-	editor_app_open_file (app, file, 1, 1);
+	editor_app_open_file (app, file, use_line, use_column);
 }
 
 void
@@ -2281,7 +2739,7 @@ lrg_editor_problems_panel_activate_row (LrgEditorProblemsPanel *self,
 
 		if (g_file_test (abs, G_FILE_TEST_EXISTS))
 		{
-			problems_open_file (app, row->file);
+			problems_open_file (app, row->file, row->line, row->column);
 			return;
 		}
 	}

@@ -11,6 +11,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "net/lrg-net-peer.h"
+#include "lrg-net-buffer-private.h"
 
 /**
  * LrgNetPeer:
@@ -416,6 +417,14 @@ lrg_net_peer_update_rtt (LrgNetPeer *self,
                          guint       rtt_ms)
 {
     g_return_if_fail (LRG_IS_NET_PEER (self));
+
+    /* Every sample counts for LrgNetStats, also an unchanged one */
+    if (_lrg_net_stats_hooks_active ())
+    {
+        g_autofree gchar *stats_peer = g_strdup_printf ("%s:%u", self->address, self->port);
+
+        _lrg_net_stats_hook_rtt (stats_peer, (gdouble) rtt_ms);
+    }
 
     if (self->rtt == rtt_ms)
         return;

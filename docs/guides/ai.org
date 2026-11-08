@@ -1,0 +1,225 @@
+#+title: AI: behaviour trees, state machines and decisions
+#+description: How libregnum's AI pieces fit: .rbt behaviour trees, .rfsm logic state machines, the shared blackboard and binding registry, LrgAiComponent, and LLM-backed decisions, with a worked enemy
+#+authors: Zach Podbielniak
+#+categories: libregnum guides ai
+#+created: 2026-11-07T00:00:00-05:00
+#+updated: 2026-11-07T00:00:00-05:00
+#+version: 1.0
+
+* AI in libregnum
+:PROPERTIES:
+:CUSTOM_ID: ai
+:END:
+libregnum has three layers of game AI that share one data model, the blackboard:
+
+| Layer | Use it for | Asset | Runtime |
+|-------+------------+-------+---------|
+| Behaviour trees | moment-to-moment behaviour: pick a target, attack, flee, patrol | [[file:../modules/ai/bt-asset.org][.rbt]] (=LrgBtAsset=) | =LrgBehaviorTree= / =LrgBtRunner= |
+| Logic state machines | modes and gameplay logic: alert levels, boss phases, doors, quest steps | [[file:../modules/ai/logic-machine.org][.rfsm]] (=LrgLogicMachine=) | the machine itself |
+| Decisions | judgments only a reader of text can make: "does this quest want that creature dead?" | requests in code | [[file:../modules/ai/decision.org][LrgDecisionBrain]] over a decision model |
+
+[[file:../modules/ai/ai-component.org][LrgAiComponent]] runs a tree, a machine or both on an entity, and decisions write their answers into the same blackboard, where trees and machines branch on them.
+
+** The shared pieces
+:PROPERTIES:
+:CUSTOM_ID: shared
+:END:
+*** The blackboard
+:PROPERTIES:
+:CUSTOM_ID: blackboard
+:END:
+=LrgBlackboard= is the agent's memory: typed keys (int, float, bool, string, object, pointer) the game writes (inputs: "target", "health") and the AI reads and writes (outputs: "mode", "next_waypoint"). Both file formats declare the keys they use in a =blackboard:= schema (=LrgBlackboardSchema=) with defaults; loading checks that nodes and conditions name declared keys. Comparisons (=lrg_blackboard_test()= with =LrgBlackboardOp=) have one meaning everywhere: in =check= and =guard= nodes, in =when:= conditions and in C. See [[file:../modules/ai/blackboard.org][blackboard.org]].
+
+*** The binding registry
+:PROPERTIES:
+:CUSTOM_ID: registry
+:END:
+Files name behaviour; C provides it. =lrg_bt_register_action (name, func, data, destroy)= and =lrg_bt_register_condition()= put C functions in a process-wide registry that both formats use (=action: melee_attack= in a tree leaf or a state's =enter:= list). Script functions bind the same way through any =LrgScripting= backend (=script: flee=), called with =(blackboard, delta, params...)=. Missing bindings fail loudly at build/start, or, for tools previewing a game's assets without its code, run as failing leaves (=allow-unbound=).
+
+** Choosing between a tree and a machine
+:PROPERTIES:
+:CUSTOM_ID: choosing
+:END:
+- A *tree* re-decides every tick from priorities: the first branch whose conditions hold wins. It is good when the agent should always do "the best thing now" and when behaviours compose (patrol is a subtree reused by every guard).
+- A *machine* remembers where it is: it changes state only on events, timers or conditions, and every state has explicit entry and exit work. It is good for modes with hysteresis (stay alert for 5 s after losing the player), for scripted sequences and for non-character logic (doors, traps, quests).
+- *Both*: the machine owns the mode (=idle=, =alert=, =combat=) and writes it to the blackboard; the tree reads the mode and does the moment-to-moment work. =LrgAiComponent= updates the machine first in each step, so the tree sees this step's mode.
+
+** A worked enemy
+:PROPERTIES:
+:CUSTOM_ID: worked-example
+:END:
+*** The mood machine
+:PROPERTIES:
+:CUSTOM_ID: example-machine
+:END:
+#+begin_src yaml
+# ai/kobold-mood.rfsm
+name: kobold-mood
+blackboard:
+- {name: mode, type: string, default: "calm"}
+- {name: target_visible, type: bool}
+- {name: hp, type: float, default: 30}
+initial: calm
+transitions:                              # any state
+- {to: dead, when: [{key: hp, op: le, value: 0}]}
+states:
+- name: calm
+  enter: [{set: mode, value: "calm"}]
+  transitions: [{to: alert, when: [{key: target_visible}]}, {to: alert, event: hurt}]
+- name: alert
+  enter: [{set: mode, value: "alert"}, {action: shout}]
+  transitions:
+  - {to: calm, after: 5.0, when: [{key: target_visible, op: unset}]}
+  - {to: flee, when: [{key: hp, op: lt, value: 8}]}
+- name: flee
+  enter: [{set: mode, value: "flee"}]
+  transitions: [{to: alert, when: [{key: hp, op: ge, value: 15}]}]
+- name: dead
+  enter: [{set: mode, value: "dead"}, {action: play_death}]
+#+end_src
+
+*** The behaviour tree
+:PROPERTIES:
+:CUSTOM_ID: example-tree
+:END:
+#+begin_src yaml
+# ai/kobold.rbt
+name: kobold
+blackboard:
+- {name: mode, type: string}
+- {name: target, type: object}
+- {name: hp, type: float}
+subtrees:
+  wander: {path: common/wander.rbt}
+root:
+  type: selector
+  id: root
+  children:
+  - type: guard                       # reactive: drops the moment mode changes
+    id: when_fleeing
+    key: mode
+    value: "flee"
+    child: {type: action, id: run, action: flee_from, params: {speed: 7.5}}
+  - type: guard
+    id: when_alert
+    key: mode
+    value: "alert"
+    child:
+      type: sequence
+      id: fight
+      children:
+      - {type: check, id: has_target, key: target}
+      - {type: action, id: close_in, action: move_to_target, params: {stop_at: 1.5}}
+      - type: cooldown
+        id: swing_cd
+        seconds: 1.2
+        child: {type: action, id: swing, action: melee_attack, params: {damage: 4}}
+  - {type: subtree, id: wandering, ref: wander}
+#+end_src
+
+*** The game side
+:PROPERTIES:
+:CUSTOM_ID: example-c
+:END:
+#+begin_src C
+static LrgBTStatus
+melee_attack (LrgBlackboard *bb,
+              gfloat         dt,
+              GVariant      *params,
+              gpointer       user_data)
+{
+	LrgEntity3D *self = lrg_blackboard_get_pointer (bb, LRG_AI_COMPONENT_OWNER_KEY);
+	GObject     *target = lrg_blackboard_get_object (bb, "target");
+
+	if (target == NULL)
+		return LRG_BT_STATUS_FAILURE;
+	game_hit (self, target, (gint) lrg_bt_params_get_int (params, "damage", 1));
+	return LRG_BT_STATUS_SUCCESS;
+}
+
+static LrgBTStatus
+move_to_target (LrgBlackboard *bb,
+                gfloat         dt,
+                GVariant      *params,
+                gpointer       user_data)
+{
+	LrgEntity3D *self = lrg_blackboard_get_pointer (bb, LRG_AI_COMPONENT_OWNER_KEY);
+	gfloat       stop_at = (gfloat) lrg_bt_params_get_double (params, "stop_at", 1.0);
+
+	/* arrived: done; otherwise keep the action running */
+	return game_step_towards_target (self, stop_at, dt) ? LRG_BT_STATUS_SUCCESS : LRG_BT_STATUS_RUNNING;
+}
+
+void
+game_register_ai (void)
+{
+	lrg_bt_register_action ("melee_attack", melee_attack, NULL, NULL);
+	lrg_bt_register_action ("move_to_target", move_to_target, NULL, NULL);
+	lrg_bt_register_action ("flee_from", flee_from, NULL, NULL);
+	lrg_bt_register_action ("shout", shout, NULL, NULL);
+	lrg_bt_register_action ("play_death", play_death, NULL, NULL);
+}
+
+LrgEntity3D *
+game_spawn_kobold (LrgWorld3D *world)
+{
+	LrgEntity3D    *kobold = lrg_entity3d_new_with_name ("kobold");
+	LrgAiComponent *ai = lrg_ai_component_new ();
+
+	lrg_ai_component_set_tree_path (ai, "ai/kobold.rbt");
+	lrg_ai_component_set_machine_path (ai, "ai/kobold-mood.rfsm");
+	lrg_ai_component_set_tick_interval (ai, 0.1f);
+	lrg_entity3d_add_component (kobold, LRG_COMPONENT (ai));
+	lrg_world3d_add_entity (world, kobold);
+	return kobold;
+}
+
+/* each frame, the senses feed the blackboard */
+void
+game_sense (LrgEntity3D *kobold, LrgAiComponent *ai, LrgEntity3D *player)
+{
+	LrgBlackboard *bb = lrg_ai_component_get_blackboard (ai);
+	gboolean       visible = game_can_see (kobold, player);
+
+	lrg_blackboard_set_bool (bb, "target_visible", visible);
+	if (visible)
+		lrg_blackboard_set_object (bb, "target", G_OBJECT (player));
+	lrg_blackboard_set_float (bb, "hp", game_hp (kobold));
+}
+#+end_src
+
+*** Adding a decision
+:PROPERTIES:
+:CUSTOM_ID: example-decision
+:END:
+Some questions are about meaning, not numbers: whether this NPC's dialogue made it hostile, whether a quest objective names this creature. Ask an =LrgDecisionBrain= with the agent's blackboard set, and branch on the answer it writes (=TOPIC.ID= keys):
+
+#+begin_src C
+lrg_decision_brain_set_blackboard (brain, lrg_ai_component_get_blackboard (ai));
+lrg_decision_request_add_noul (request, "hostile", "Did the player's last line threaten the kobold?", NULL, NULL, &error);
+lrg_decision_request_set_state_text (request, last_dialogue_line);
+lrg_decision_brain_ask (brain, "talk", request, NULL, &error);   /* answered later; "talk.hostile" appears */
+#+end_src
+
+and in the tree, the judgment condition (C) or a =check= on the written key; in the machine, =when: [{key: "talk.hostile", op: gt, value: 0.7}]= on the probability.
+
+** Debugging
+:PROPERTIES:
+:CUSTOM_ID: debugging
+:END:
+- =lrg_ai_component_dup_debug_state()= prints the tree's last tick (every node: status, visited), the machine's active chain with timers, the last transition and queued events, and the blackboard.
+- =LrgBtRunner::ticked=, =LrgLogicMachine::transitioned= and =LrgAiComponent::state-changed= are the hooks for logs and overlays.
+- =lrg_decision_brain_dup_topic_state()= shows a decision topic's request, last answer, latency and counts; =lrg_decision_brain_set_journal()= logs every decision.
+- Determinism: given the same blackboard inputs and deltas, trees and machines produce the same states (the test suites replay sessions and compare every debug state); feed AI from the fixed update (=use-fixed-update=) when replays must match.
+
+** Performance at a glance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+On one core of an i7-1280P (=taskset=): a 65-node tree ticks in 2.9 µs (5.1 µs with the runner's debug bookkeeping), a two-level machine updates in 0.94 µs. Building a 65-node runner takes 0.31 ms: build at spawn, not per frame. For crowds, =tick-interval= of 0.1-0.2 s divides the cost accordingly. Details: [[file:../modules/ai/bt-asset.org#performance][trees]], [[file:../modules/ai/logic-machine.org#performance][machines]].
+
+** Editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The BT editor with live state, the state-machine editor and the AI panel (live blackboards, events, the decisions inspector) are described in [[file:../editor/ai.org][AI in the Editor]]. They read the running component during play-in-editor (=lrg_ai_component_get_runner()=, =lrg_ai_component_get_machine()=, the brain's topic API); a level attaches trees and machines with an =ai= component (=tree-path=, =machine-path=).

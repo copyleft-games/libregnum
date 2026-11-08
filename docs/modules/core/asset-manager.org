@@ -78,7 +78,16 @@ Asset types: Textures, Fonts, Sounds, Music, 3D Models and their skeletal animat
 :PROPERTIES:
 :CUSTOM_ID: complete-api-reference
 :END:
-See =/var/home/zach/Source/Projects/libregnum/src/core/lrg-asset-manager.h= for full function signatures.
+The GIR comments in =src/core/lrg-asset-manager.h= are the full reference (ownership, nullability). Beyond the loaders above:
+
+| Function | Description |
+|----------+-------------|
+| =lrg_asset_manager_set_data_loader (self, loader)= / =lrg_asset_manager_get_data_loader (self)= | The =LrgDataLoader= used for YAML definitions (transfer none on get) |
+| =lrg_asset_manager_load_asset (self, name, error)= | Extension dispatch (see [[#definition-assets][Definition assets]]); =guid:= names dispatch on the file they resolve to |
+| =lrg_asset_manager_load_object()=, =lrg_asset_manager_reload_object()=, =lrg_asset_manager_watch_object()=, =lrg_asset_manager_unwatch_object()= | Validated YAML definitions, explicit and monitored reload |
+| =lrg_asset_manager_add_object_dependency= / =lrg_asset_manager_remove_object_dependency (self, name, dependency)= | Explicit definition dependency links (remove returns whether a link existed) |
+| Projects and guids (0.9.0) | See [[#guid-references][Guid references]] |
+| Import settings (0.9.0) | See [[#import-settings][Runtime import settings]] |
 
 ** Example
 :PROPERTIES:
@@ -180,8 +189,12 @@ if (bear != NULL && clips != NULL)
 #+end_src
 
 * Definition assets and live reload
+:PROPERTIES:
+:CUSTOM_ID: definition-assets
+:END:
 
 =lrg_asset_manager_load_asset()= dispatches by extension and caches the result.
+Since 0.9.0 fonts take the sidecar's size and audio files honour the sidecar's stream/sample mode (see [[#import-settings][Runtime import settings]]); without a sidecar the rules below apply unchanged.
 It supports textures (=.png=, =.jpg=, =.bmp=, =.tga=, =.gif=, =.qoi=, =.dds=, =.ktx=, =.pkm=, =.pvr=, =.astc= and =.pep=), fonts (size 32), WAV sounds, streaming OGG/MP3/FLAC/XM/MOD
 music, and typed YAML definitions. =.pep= is raylib 6.2's pixel-art palette format; graylib (0.7.1+) decodes it losslessly, since raylib 6.2's own loader is unsafe and stays disabled. Unknown extensions return
 =G_IO_ERROR_NOT_SUPPORTED=. Use a specific loader to choose another font size
@@ -280,3 +293,161 @@ constructs standalone definitions before commit; constructors must not mutate
 the asset manager or expect staged replacements to be visible. GPU resources,
 arbitrary live-object migration, and transactional file writes are outside
 this YAML dependency mechanism.
+
+
+* Projects and guid references
+:PROPERTIES:
+:CUSTOM_ID: guid-references
+:END:
+Since 0.9.0 every loader of =LrgAssetManager= (=load_texture=, =load_font=, =load_sound=, =load_music=, =load_audio=, =load_model=, =load_model_animations=, =load_object=, =load_asset=, =resolve_path=, =unload=, =is_cached=) accepts an asset reference by guid, =guid:<uuid>= (=LRG_ASSET_GUID_PREFIX=), wherever it accepts a path. The guid is the one the editor shows for the asset: the =guid:= of its =.meta= sidecar, or for a file without a sidecar its legacy guid (=lrg_asset_meta_compute_legacy_guid()= of its path relative to the asset directory). References by guid survive renames and moves done in the editor, which carries the sidecar along. =.rlevel= files may name visual assets and prefab sources by guid, and the level serializer resolves prefab sources through the index (see [[file:../level/prefabs-runtime.org::#prefabs-runtime-resolution][Prefabs at Runtime]]).
+
+** The guid index
+:PROPERTIES:
+:CUSTOM_ID: guid-index
+:END:
+The manager keeps an index from guid to the canonical absolute path of the asset. It is built on first use by scanning the *asset directories* with exactly the rules of the editor's =LrgAssetDatabase= scan, so the editor and the runtime agree on every guid:
+
+- every regular file below each asset directory is an asset, except =.meta= sidecars; =.git=, =.hg= and =.svn= directories are skipped;
+- names are visited in sorted order, directories in the order they were added;
+- a readable sidecar with a =guid:= gives the guid; a missing, unreadable or guid-less sidecar gives the legacy guid;
+- when two files claim the same guid (an asset copied with its sidecar outside the editor) the first one wins. (The editor then gives the second a fresh guid in memory and writes it on its next sidecar save; until then the runtime does not know that guid.)
+
+Asset directories come from =lrg_asset_manager_add_asset_dir()= or from the project (below). With none, the search paths are indexed instead (lowest priority first). A lookup that misses in a cached index, or finds a file that no longer exists, rebuilds the index once from disk; =lrg_asset_manager_rebuild_guid_index()= rebuilds it explicitly (after adding assets while the game runs).
+
+** Projects
+:PROPERTIES:
+:CUSTOM_ID: projects
+:END:
+=lrg_asset_manager_set_project_root (manager, root)= (the =project-root= property) makes the manager project-aware:
+
+1. =root= becomes the lowest-priority search path, so the project-relative paths the editor writes into levels resolve; mod search paths added later still override;
+2. if =root/project.ryaml= exists, its =asset_dirs= (relative to the root) become the guid index directories, and its =apply_import_settings= key (also =apply-import-settings=, default true) sets the import policy; without a manifest the root itself is the asset directory;
+3. the index is rebuilt lazily. Setting another root (or %NULL) first removes the previous root's search path and asset directories.
+
+#+begin_src yaml
+project:
+  name: my-game
+  asset_dirs: [assets, levels]
+  apply_import_settings: true     # optional, default true
+#+end_src
+
+** Cached index file
+:PROPERTIES:
+:CUSTOM_ID: guid-index-cache
+:END:
+A shipped game can skip the scan: =lrg_asset_manager_save_guid_index (manager, path, error)= writes the index (sorted by guid, paths relative to the project root when inside it), and =lrg_asset_manager_load_guid_index (manager, path, error)= replaces the index with it (relative entries resolve against the project root, else the index file's directory). A stale cache heals itself: the first lookup that misses or finds a moved file rebuilds from disk.
+
+#+begin_src yaml
+version: 1                        # LRG_ASSET_GUID_INDEX_VERSION
+assets:
+  11111111-2222-4333-8444-555555555555: assets/textures/crate.png
+  9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08: assets/plain.txt   # legacy guid
+#+end_src
+
+Errors: an unreadable file is the parser's error; a document that is not a mapping, or has no =assets:= mapping, is =G_IO_ERROR_INVALID_DATA=.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: guid-api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_asset_manager_set_project_root (self, root)= / =lrg_asset_manager_get_project_root (self)= | The project directory (nullable; canonical on get, transfer none) |
+| =lrg_asset_manager_add_asset_dir (self, dir)= | Adds a guid index directory (relative to the project root when one is set); duplicates are ignored |
+| =lrg_asset_manager_get_asset_dirs (self)= | The absolute index directories (transfer none, element-type filename) |
+| =lrg_asset_manager_clear_asset_dirs (self)= | Removes all index directories and empties the index |
+| =lrg_asset_manager_rebuild_guid_index (self)= | Scans now; returns the number of indexed guids |
+| =lrg_asset_manager_get_guid_index_size (self)= | Indexed guids (0 before the first build) |
+| =lrg_asset_manager_resolve_guid (self, guid)= | Canonical absolute path of a guid (with or without =guid:=), or %NULL (transfer full) |
+| =lrg_asset_manager_lookup_guid (self, name)= | The reverse: the guid of the file a name or path resolves to, or %NULL outside the asset directories (transfer full) |
+| =lrg_asset_manager_resolve_reference (self, ref)= | Any reference (=guid:=, search-path name, absolute path) to a canonical existing path, or %NULL (transfer full) |
+| =lrg_asset_manager_save_guid_index (self, path, error)= / =lrg_asset_manager_load_guid_index (self, path, error)= | The cached index file |
+| =LRG_ASSET_GUID_PREFIX=, =LRG_ASSET_GUID_INDEX_VERSION= | ="guid:"= and the index file version (1) |
+
+#+begin_src c
+g_autoptr(LrgAssetManager) assets = lrg_asset_manager_new ();
+g_autofree gchar          *path = NULL;
+GrlTexture                *tex;
+
+lrg_asset_manager_set_project_root (assets, "/opt/my-game");
+
+/* Both spellings share one cache entry. */
+tex = lrg_asset_manager_load_texture (assets, "guid:11111111-2222-4333-8444-555555555555", &error);
+path = lrg_asset_manager_resolve_guid (assets, "11111111-2222-4333-8444-555555555555");
+g_assert (lrg_asset_manager_load_texture (assets, path, &error) == tex);
+#+end_src
+
+** Materials
+:PROPERTIES:
+:CUSTOM_ID: materials
+:END:
+Since 0.9.0 =.rmat= files are an asset type. =lrg_asset_manager_load_material (self, name, error)= resolves =name= (=guid:=, search-path name or absolute path) with =lrg_asset_manager_resolve_reference()=, loads it with =lrg_material_new_from_file()= with the manager as the material's asset manager, and caches it under the canonical path (transfer none): every spelling and the guid share one =LrgMaterial=, and instances naming it as =parent:= share it too. Loading is headless; the material's textures load on first use through =lrg_asset_manager_load_texture()=, so their import settings apply. =lrg_asset_manager_load_asset()= dispatches =.rmat= here; =lrg_asset_manager_unload()=, =lrg_asset_manager_unload_all()= and =lrg_asset_manager_is_cached()= cover the cache; =lrg_asset_manager_get_material_cache_size()= counts it. A missing file fails with =LRG_ASSET_MANAGER_ERROR_NOT_FOUND=, a bad one with the =LRG_MATERIAL_ERROR= of the loader. Materials hold the manager weakly. See [[file:../graphics/material.org][LrgMaterial]].
+
+* Runtime import settings
+:PROPERTIES:
+:CUSTOM_ID: import-settings
+:END:
+The editor stores per-asset importer settings in the =.meta= sidecar (see [[file:../../editor/projects-and-assets.org::#import-settings][Import Settings]]). Since 0.9.0 the loaders apply them at load time, so a game shows assets the way the editor's asset inspector configured them. The sidecar reader, =LrgAssetMeta= (=core/lrg-asset-meta.h=), moved from the editor into the core module for this, so it works with =BUILD_EDITOR=0=; =lrg_asset_meta_classify()= is the extension table both sides share.
+
+Settings apply only when the asset has a sidecar and the =apply-import-settings= property is %TRUE (the default; also the project key =apply_import_settings=). Assets without a sidecar load exactly as before. Changing the policy does not touch cached assets; unload them to reload.
+
+| Importer | Setting | Applied at runtime |
+|----------+---------+--------------------|
+| texture | =max-size= (0 = none) | The image is downscaled on the CPU (aspect kept, longest edge = max-size) before the upload |
+| texture | =mipmaps= | =grl_texture_gen_mipmaps()= after the upload (also forced by the =trilinear= filter) |
+| texture | =filter= (=point=, =bilinear=, =trilinear=) | =grl_texture_set_filter()=; note that a sidecar defaults to =bilinear= while a texture without one keeps raylib's point filter |
+| texture | =wrap= (=repeat=, =clamp=, =mirror=) | =grl_texture_set_wrap()= (=mirror= is =GRL_TEXTURE_WRAP_MIRROR_REPEAT=) |
+| texture | =srgb= | Recorded only: the GL 3.3 renderer has no sRGB texture formats; materials read it with =lrg_asset_manager_get_asset_meta()= |
+| model | =scale= | Uniform scale folded into the model transform (=grl_model_set_transform()=), after the file's own transform |
+| model | =up-axis= (=y=, =z=) | =z= adds a -90 degree rotation about X so the file's +Z becomes +Y |
+| model | =generate-normals= | Smooth (indexed meshes) or flat (unindexed) area-weighted normals recomputed on the CPU; the GPU normal buffer is updated or created |
+| model | =import-animations= | Not used by the loaders (animation clips load on request with =lrg_asset_manager_load_model_animations()=) |
+| model | =lod-levels=, =lod-ratios=, =lod-screen-sizes=, =lod-max-error=, =lod-lock-border=, =lod-hysteresis=, =lod-fade-duration= | Not applied by =lrg_asset_manager_load_model()= (it returns the full model, which level 0 of the chain shares); =LrgLodComponent= with =mesh-asset= + =asset-manager= reads them through =lrg_asset_manager_get_asset_meta()= and builds the chain with =lrg_lod_group_new_from_model_with_meta()= (see [[file:../graphics/lod-group.org::#meta-keys][LOD import keys]]) |
+| audio | =mode= (=stream=, =sample=) | =lrg_asset_manager_load_audio()= and =lrg_asset_manager_load_asset()= return a =GrlMusic= for =stream=, a =GrlSound= for =sample=, whatever the extension |
+| audio | =volume= | =grl_sound_set_volume()= / =grl_music_set_volume()= |
+| audio | =loop= | =grl_music_set_looping()= for streams; raylib sounds cannot loop, so players of samples read it from the sidecar |
+| font | =size= | Used when =lrg_asset_manager_load_font()= gets =size <= 0= and by =lrg_asset_manager_load_asset()= (32 without a sidecar) |
+| font | =codepoints= | The glyph set rasterised (when the sidecar sets the key; raylib's 32..126 otherwise) |
+
+| Function | Description |
+|----------+-------------|
+| =lrg_asset_manager_set_apply_import_settings (self, apply)= / =lrg_asset_manager_get_apply_import_settings (self)= | The =apply-import-settings= property (default %TRUE) |
+| =lrg_asset_manager_get_asset_meta (self, name)= | The sidecar of the file a reference resolves to, or %NULL (transfer full) |
+| =lrg_asset_manager_load_audio (self, name, error)= | A cached =GrlSound= or =GrlMusic= chosen by the sidecar's =mode= (transfer none); without a sidecar =.wav= is a sound and other formats stream |
+
+#+begin_src c
+/* A footstep sample and a music stream, each as its sidecar says. */
+GObject *step = lrg_asset_manager_load_audio (assets, "audio/step.wav", &error);
+GObject *theme = lrg_asset_manager_load_asset (assets, "guid:6c1f...", &error);
+
+if (GRL_IS_MUSIC (theme))
+	grl_music_play (GRL_MUSIC (theme));
+
+/* A setting the GPU object cannot carry. */
+g_autoptr(LrgAssetMeta) meta = lrg_asset_manager_get_asset_meta (assets, "textures/normal.png");
+gboolean srgb = meta != NULL ? lrg_asset_meta_get_texture_srgb (meta) : TRUE;
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: import-settings-performance
+:END:
+- Reading a sidecar costs one small YAML parse per load (not per cache hit).
+- =max-size= decodes the image on the CPU and resizes it before the upload; it saves VRAM, not load time. Shrink source art for faster loads.
+- =generate-normals= walks every triangle of every mesh once at load.
+- The guid index scan reads every sidecar of the asset directories; for large projects ship a cached index (=lrg_asset_manager_save_guid_index()=) and load it at startup.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: import-settings-pitfalls
+:END:
+- A sidecar without a =filter= key means =bilinear=, not raylib's default point filter: pixel art needs =filter: point=.
+- The editor viewport (=lrgeditor=) loads meshes itself; until it uses the manager, model =scale= and =up-axis= show at runtime but not in the editor viewport.
+- =lrg_asset_manager_load_font()= used to reject =size <= 0=; it now means "the sidecar's size".
+- guid names resolve through the index, which covers only the asset directories: an asset outside them is reachable by path only.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: import-settings-editor
+:END:
+Edit import settings in the Assets panel's import inspector (it writes the sidecar); copy an asset's guid there to reference it as =guid:<uuid>=. The editor's =LrgAssetDatabase= and this index produce the same guids for the same files, which =tests/test-runtime-import-settings.c= checks.

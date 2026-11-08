@@ -1,0 +1,135 @@
+#+title: Terrain, foliage and water
+#+description: Building a landscape in libregnum 0.9.0: .rterrain assets, brushes, splat layers, foliage scatter, water bodies, components, levels and physics
+
+* Terrain, foliage and water
+:PROPERTIES:
+:CUSTOM_ID: terrain-guide
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > Guides > Terrain, foliage and water
+#+end_quote
+
+This guide walks through building an outdoor landscape with the 0.9.0 terrain family: an [[file:../modules/graphics/terrain-asset.org][LrgTerrainAsset]] (=.rterrain=) sculpted and painted with [[file:../modules/graphics/terrain-brush.org][LrgTerrainBrush]], a forest and grass from [[file:../modules/graphics/foliage.org][LrgFoliage]] scatter layers, a lake from an [[file:../modules/graphics/water-body.org][LrgWaterBody]] (=.rwater=), and the components that draw them and give the ground collision. Everything below runs headless except drawing.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+| Piece | Type | File | Drawn by |
+|-------+------+------+----------|
+| Heights, surface layers, holes, LOD | =LrgTerrainAsset= | =.rterrain= + PNG / raw sidecars | =LrgTerrainComponent= (mesh items, baked splat albedo) |
+| Sculpt and paint | =LrgTerrainBrush= | edits the asset | - |
+| Trees, props, grass | =LrgFoliage= (inside the asset) | =foliage:= block + density PNGs | =LrgTerrainComponent= (or =LrgFoliageComponent=) |
+| Lakes, rivers, sea | =LrgWaterBody= | =.rwater= | =LrgWaterComponent= (=LrgWaterSurface=) |
+| Collision | heightfield =LrgPhysicsShape= | built from the asset | =LrgTerrainComponent= (static body) |
+
+** Step 1: a terrain asset
+:PROPERTIES:
+:CUSTOM_ID: step-asset
+:END:
+Pick the size from chunks: =lrg_terrain_asset_new (32, 32.0f, 8, 8)= is 8 x 8 chunks of 32 x 32 one-unit cells, 256 x 256 units, 257 x 257 height samples. Chunks are the unit of culling, LOD and re-meshing; 32 or 64 cells per chunk is a good default. Add surface layers (=lrg_terrain_asset_add_layer()=) with a texture or colour and a tiling.
+
+** Step 2: sculpt
+:PROPERTIES:
+:CUSTOM_ID: step-sculpt
+:END:
+Brushes work in asset-local units. Large constant-falloff noise for the base, raise for hills, flatten for a lake basin, a few whole-terrain smooth passes:
+
+#+begin_src C
+g_autoptr(LrgTerrainBrush) b = lrg_terrain_brush_new (LRG_TERRAIN_BRUSH_NOISE);
+
+lrg_terrain_brush_set_falloff (b, LRG_TERRAIN_BRUSH_FALLOFF_CONSTANT);
+lrg_terrain_brush_set_radius (b, 400.0f);
+lrg_terrain_brush_set_noise_scale (b, 60.0f);
+lrg_terrain_brush_set_strength (b, 5.0f);
+lrg_terrain_edit_free (lrg_terrain_brush_apply (b, t, 128.0f, 128.0f, 1.0f));
+
+lrg_terrain_brush_set_op (b, LRG_TERRAIN_BRUSH_RAISE);
+lrg_terrain_brush_set_falloff (b, LRG_TERRAIN_BRUSH_FALLOFF_SMOOTH);
+lrg_terrain_brush_set_radius (b, 45.0f);
+lrg_terrain_brush_set_strength (b, 14.0f);
+lrg_terrain_edit_free (lrg_terrain_brush_apply (b, t, 60.0f, 200.0f, 1.0f));
+
+lrg_terrain_brush_set_op (b, LRG_TERRAIN_BRUSH_FLATTEN);
+lrg_terrain_brush_set_target_height (b, -4.0f);
+lrg_terrain_brush_set_radius (b, 42.0f);
+lrg_terrain_edit_free (lrg_terrain_brush_apply (b, t, 140.0f, 150.0f, 1.0f));
+#+end_src
+
+** Step 3: paint
+:PROPERTIES:
+:CUSTOM_ID: step-paint
+:END:
+Paint layers by slope and height with the paint brush (weights stay normalised), or set weights directly with =lrg_terrain_asset_set_weights()= from your own rules. =lrg_terrain_asset_sample_normal()= gives the slope (rock where =n[1] < 0.82=, about 35 degrees), =lrg_terrain_asset_sample_height()= the height (sand below the water line). For a tile look use =LRG_TERRAIN_SPLAT_MODE_IDS= and =lrg_terrain_asset_set_cell_material()=.
+
+** Step 4: foliage
+:PROPERTIES:
+:CUSTOM_ID: step-foliage
+:END:
+Add layers to =lrg_terrain_asset_get_foliage()=: a =builtin:conifer= mesh layer at 0.006 per square unit between heights 2 and 30 on slopes up to 32 degrees with =material_density= 0 on rock and sand, a =builtin:broadleaf= layer lower down, a grass layer at 3 per square unit fading out at 40 .. 60 units. Paint the density maps with the foliage brushes to clear paths and clearings. Instances are placed deterministically and only dirty patches re-scatter.
+
+** Step 5: water
+:PROPERTIES:
+:CUSTOM_ID: step-water
+:END:
+A lake is a polygon at a level: =lrg_water_body_new (LRG_WATER_BODY_LAKE)=, points around the basin, =level= at the shoreline height. Give its entity the position of the body's origin. Shore foam comes from the band along the outline (and from depth when you build the surface with a ground function). Keep foliage out with the layers' height range.
+
+** Step 6: in a world
+:PROPERTIES:
+:CUSTOM_ID: step-world
+:END:
+#+begin_src C
+g_autoptr(LrgTerrainComponent) tc = lrg_terrain_component_new_with_asset (t);
+g_autoptr(LrgWaterComponent)   wc = lrg_water_component_new ();
+
+lrg_entity3d_set_position_xyz (ground, -128.0f, 0.0f, -128.0f);
+lrg_entity3d_add_component (ground, LRG_COMPONENT (tc));
+lrg_water_component_set_body (wc, lake);
+lrg_entity3d_set_position_xyz (lake_entity, 12.0f, 0.0f, 22.0f);
+lrg_entity3d_add_component (lake_entity, LRG_COMPONENT (wc));
+lrg_world3d_ensure_physics (world);   /* the terrain gets a heightfield body */
+#+end_src
+
+The renderer needs nothing else: chunks are mesh items (lit, shadowed, layered, culled), foliage and water are transparent-category custom items. Characters and rigid bodies collide with the heightfield; =lrg_terrain_component_height_at()= and =lrg_water_component_level_at()= answer gameplay queries.
+
+** Step 7: save and load
+:PROPERTIES:
+:CUSTOM_ID: step-save
+:END:
+=lrg_terrain_asset_save_to_file (t, "levels/valley.rterrain", &error)= writes the document and its sidecars next to it; =lrg_water_body_save_to_file()= the lake. In a level, a node of kind =terrain= with the =.rterrain= as its asset, and a node of kind =water= with the =.rwater=, turn into the two components at instantiation.
+
+** In the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+Everything above is also a few clicks in lrgeditor ([[file:../editor/terrain.org][Terrain and Water in the Editor]]): Create > Terrain writes a flat =.rterrain= and adds the node; the Terrain panel's tools sculpt (raise, lower, flatten, smooth, noise), paint surface layers, cut and fill holes and paint foliage density with the cursor ring in the viewport, one undo step per stroke; its lists edit the surface and foliage layers; Create > Water adds a lake whose outline points are viewport handles and whose =.rwater= opens in the water editor with a live preview. Saving the level writes the terrain and water files. Scripted, the same steps are:
+
+#+begin_src sh
+lrgeditorctl call terrain.create '{"name": "Valley"}'
+lrgeditorctl call terrain.stroke '{"tool": "noise", "points": [[0,0]], "radius": 200, "falloff": "constant", "strength": 6}'
+lrgeditorctl call terrain.stroke '{"tool": "flatten", "points": [[12,24]], "radius": 20, "strength": 60, "target_height": -3}'
+lrgeditorctl call terrain.add_foliage '{"name": "pines", "kind": "mesh", "density": 0.02, "height": [-1, 40]}'
+lrgeditorctl call terrain.create '{"kind": "water", "name": "Lake"}'
+lrgeditorctl save
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Measured on the showcase of =tests/test-terrain-asset.c= (the scene of this guide: 8 x 8 chunks of 32 cells, 4 layers, 126 933 foliage instances, a lake), release build, =taskset -c 2=: build + sculpt + paint 64 ms, foliage scatter 113 ms, splat bake 23 ms per 256-texel chunk (1.5 s for all 64 on first draw), =lrg_world3d_collect_render()= 0.04 ms per frame with cached meshes. Budget the bake: lower =bake_resolution= or pre-warm behind a loading screen.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Foliage and water are drawn in the transparent pass: no shadows from foliage, no SSAO on it.
+- The splat bake is albedo only (layer materials are kept, not bound).
+- PNG16 heights are quantised; use =r32= when exact heights matter.
+- Holes lose collision only where every cell around a sample is a hole.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+[[file:../modules/graphics/terrain-asset.org][LrgTerrainAsset]], [[file:../modules/graphics/terrain-brush.org][LrgTerrainBrush]], [[file:../modules/graphics/foliage.org][LrgFoliage]], [[file:../modules/graphics/water-body.org][LrgWaterBody]], [[file:rendering-pipeline.org][Rendering pipeline]], [[file:physics.org][Physics]].

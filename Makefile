@@ -33,8 +33,12 @@ PUBLIC_HEADERS := \
 	src/core/lrg-engine.h \
 	src/core/lrg-registry.h \
 	src/core/lrg-data-loader.h \
+	src/core/lrg-math3d.h \
+	src/core/lrg-color-gradient.h \
+	src/core/lrg-asset-meta.h \
 	src/core/lrg-asset-manager.h \
 	src/core/lrg-asset-pack.h \
+	src/core/lrg-pack-writer.h \
 	src/core/lrg-event.h \
 	src/core/lrg-event-listener.h \
 	src/core/lrg-event-bus.h \
@@ -74,14 +78,30 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-skinned-mesh.h \
 	src/graphics/lrg-billboard-batch.h \
 	src/graphics/lrg-terrain.h \
+	src/graphics/lrg-terrain-asset.h \
+	src/graphics/lrg-terrain-brush.h \
+	src/graphics/lrg-foliage.h \
+	src/graphics/lrg-water-body.h \
 	src/graphics/lrg-sky-dome.h \
 	src/graphics/lrg-sky-bodies.h \
 	src/graphics/lrg-light-set.h \
+	src/graphics/lrg-uv-unwrap.h \
+	src/graphics/lrg-skinned-sprite.h \
+	src/graphics/lrg-material.h \
+	src/graphics/lrg-shader-asset.h \
+	src/graphics/lrg-shader-graph.h \
+	src/graphics/lrg-hdr-image.h \
+	src/graphics/lrg-depth-prepass.h \
+	src/graphics/lrg-ssao.h \
+	src/graphics/lrg-decal.h \
+	src/graphics/lrg-mesh-simplify.h \
+	src/graphics/lrg-lod-group.h \
 	src/graphics/lrg-texture-sampling.h \
 	src/ecs/lrg-component.h \
 	src/ecs/lrg-game-object.h \
 	src/ecs/lrg-world.h \
 	src/ecs/components/lrg-sprite-component.h \
+	src/ecs/components/lrg-skeleton2d-component.h \
 	src/ecs/components/lrg-collider-component.h \
 	src/ecs/components/lrg-transform-component.h \
 	src/ecs/components/lrg-animator-component.h \
@@ -129,6 +149,7 @@ PUBLIC_HEADERS := \
 	src/paint/lrg-paint-icons.h \
 	src/paint/lrg-paint-font.h \
 	src/ui/lrg-ui-event.h \
+	src/ui/lrg-ui-author.h \
 	src/ui/lrg-widget.h \
 	src/ui/lrg-container.h \
 	src/ui/lrg-label.h \
@@ -196,12 +217,14 @@ PUBLIC_HEADERS := \
 	src/ui/lrg-drop-target.h \
 	src/ui/lrg-property-source.h \
 	src/ui/lrg-property-grid.h \
+	src/ui/lrg-inspector-nested.h \
 	src/ui/lrg-vector-edit.h \
 	src/ui/lrg-curve-edit.h \
 	src/ui/lrg-gradient-edit.h \
 	src/tilemap/lrg-tileset.h \
 	src/tilemap/lrg-tilemap-layer.h \
 	src/tilemap/lrg-tilemap.h \
+	src/tilemap/lrg-rule-tile.h \
 	src/save/lrg-saveable.h \
 	src/save/lrg-save-context.h \
 	src/save/lrg-save-game.h \
@@ -247,6 +270,7 @@ PUBLIC_HEADERS := \
 	src/audio/lrg-audio-manager.h \
 	src/audio/lrg-wave-data.h \
 	src/audio/lrg-audio-mixer.h \
+	src/audio/lrg-mixer-asset.h \
 	src/audio/lrg-procedural-audio.h \
 	src/audio/lrg-midi-synth.h \
 	src/audio/lrg-audio-effect.h \
@@ -269,10 +293,13 @@ PUBLIC_HEADERS := \
 	src/i18n/lrg-locale.h \
 	src/i18n/lrg-csv.h \
 	src/i18n/lrg-localization.h \
+	src/i18n/lrg-po.h \
 	src/pathfinding/lrg-nav-cell.h \
 	src/pathfinding/lrg-path.h \
 	src/pathfinding/lrg-nav-grid.h \
 	src/pathfinding/lrg-pathfinder.h \
+	src/pathfinding/lrg-nav-bake.h \
+	src/pathfinding/lrg-nav-agent.h \
 	src/pathfinding/lrg-nav-mesh.h \
 	src/pathfinding/lrg-nav-poly-mesh.h \
 	src/pathfinding/lrg-nav-poly-mesh-cache.h \
@@ -292,6 +319,8 @@ PUBLIC_HEADERS := \
 	src/ai/lrg-bt-decorator.h \
 	src/ai/lrg-bt-leaf.h \
 	src/ai/lrg-behavior-tree.h \
+	src/ai/lrg-bt-asset.h \
+	src/ai/lrg-logic-machine.h \
 	src/ai/lrg-decision.h \
 	src/ai/lrg-decider.h \
 	src/ai/lrg-decision-brain.h \
@@ -306,7 +335,21 @@ PUBLIC_HEADERS := \
 	src/physics/lrg-collision-model.h \
 	src/physics/lrg-character-controller.h \
 	src/physics/lrg-dynamics.h \
+	src/physics/lrg-physics-shape.h \
+	src/physics/lrg-collide.h \
+	src/physics/lrg-broadphase.h \
+	src/physics/lrg-physics-layers.h \
+	src/physics/lrg-contact-solver.h \
+	src/physics/lrg-island.h \
+	src/physics/lrg-joint.h \
+	src/physics/lrg-ragdoll.h \
+	src/physics/lrg-cloth.h \
+	src/physics/lrg-fracture.h \
 	src/debug/lrg-profiler.h \
+	src/debug/lrg-gpu-timer.h \
+	src/debug/lrg-frame-capture.h \
+	src/debug/lrg-memory-profiler.h \
+	src/debug/lrg-debug-draw.h \
 	src/debug/lrg-debug-console.h \
 	src/debug/lrg-debug-overlay.h \
 	src/debug/lrg-inspector.h \
@@ -358,6 +401,7 @@ PUBLIC_HEADERS := \
 	src/net/lrg-net-peer.h \
 	src/net/lrg-net-server.h \
 	src/net/lrg-net-client.h \
+	src/net/lrg-net-stats.h \
 	src/replay/lrg-state-buffer.h \
 	src/replay/lrg-sim-stateful.h \
 	src/replay/lrg-input-snapshot.h \
@@ -374,6 +418,35 @@ PUBLIC_HEADERS := \
 	src/world3d/lrg-portal.h \
 	src/world3d/lrg-sector.h \
 	src/world3d/lrg-level3d.h \
+	src/world3d/lrg-entity3d.h \
+	src/world3d/lrg-world3d.h \
+	src/world3d/lrg-world3d-renderer.h \
+	src/world3d/components/lrg-mesh-renderer-component.h \
+	src/world3d/components/lrg-light-component.h \
+	src/world3d/components/lrg-camera-component.h \
+	src/world3d/components/lrg-audio-source-component.h \
+	src/world3d/components/lrg-audio-listener-component.h \
+	src/world3d/components/lrg-billboard-component.h \
+	src/world3d/components/lrg-tilemap-component.h \
+	src/world3d/components/lrg-spawn-component.h \
+	src/world3d/components/lrg-trigger-component.h \
+	src/world3d/components/lrg-skinned-model-component.h \
+	src/world3d/components/lrg-decal-component.h \
+	src/world3d/components/lrg-lod-component.h \
+	src/world3d/components/lrg-animator-component3d.h \
+	src/world3d/components/lrg-sequence-component.h \
+	src/world3d/components/lrg-rigid-body-component.h \
+	src/world3d/components/lrg-collider-component3d.h \
+	src/world3d/components/lrg-joint-component.h \
+	src/world3d/components/lrg-cloth-component.h \
+	src/world3d/components/lrg-destructible-component.h \
+	src/world3d/components/lrg-nav-agent-component.h \
+	src/world3d/components/lrg-ai-component.h \
+	src/world3d/components/lrg-particle-component.h \
+	src/world3d/components/lrg-terrain-component.h \
+	src/world3d/components/lrg-foliage-component.h \
+	src/world3d/components/lrg-water-component.h \
+	src/world3d/components/lrg-reflection-probe-component.h \
 	src/world3d/lrg-portal-system.h \
 	src/scene/lrg-material3d.h \
 	src/scene/lrg-scene-object.h \
@@ -390,6 +463,11 @@ PUBLIC_HEADERS := \
 	src/scripting/lrg-script-host.h \
 	src/scripting/lrg-script-task.h \
 	src/scripting/lrg-script-scheduler.h \
+	src/scripting/lrg-script-debugger.h \
+	src/scripting/lrg-script-reloader.h \
+	src/scripting/lrg-dap-server.h \
+	src/scripting/lrg-scripting-graph.h \
+	src/scripting/lrg-vscript-program.h \
 	src/scripting/lrg-script-task-callback.h \
 	src/settings/lrg-settings-group.h \
 	src/settings/lrg-graphics-settings.h \
@@ -458,9 +536,14 @@ PUBLIC_HEADERS := \
 	src/particles/lrg-particle-emitter.h \
 	src/particles/lrg-particle-force.h \
 	src/particles/lrg-particle-system.h \
+	src/particles/lrg-particle-asset.h \
+	src/particles/lrg-particle-ribbon-renderer.h \
+	src/particles/lrg-particle-mesh-renderer.h \
+	src/particles/lrg-gpu-particles.h \
 	src/particles/lrg-particle-billboard-renderer.h \
 	src/postprocess/lrg-post-effect.h \
 	src/postprocess/lrg-post-processor.h \
+	src/postprocess/lrg-post-stack.h \
 	src/postprocess/effects/lrg-vignette.h \
 	src/postprocess/effects/lrg-heat-haze.h \
 	src/postprocess/effects/lrg-bloom.h \
@@ -472,9 +555,16 @@ PUBLIC_HEADERS := \
 	src/postprocess/lrg-color-lut.h \
 	src/postprocess/effects/lrg-palettize.h \
 	src/postprocess/effects/lrg-fxaa.h \
+	src/postprocess/effects/lrg-tonemap.h \
 	src/animation/lrg-bone-pose.h \
 	src/animation/lrg-bone.h \
 	src/animation/lrg-skeleton.h \
+	src/animation/lrg-gltf-animation.h \
+	src/animation/lrg-retargeter.h \
+	src/animation/lrg-anim-graph.h \
+	src/animation/lrg-sequence.h \
+	src/animation/lrg-sequence-player.h \
+	src/animation/lrg-skeleton2d.h \
 	src/animation/lrg-animation-keyframe.h \
 	src/animation/lrg-animation-event.h \
 	src/animation/lrg-animation-clip.h \
@@ -522,6 +612,7 @@ PUBLIC_HEADERS := \
 	src/atlas/lrg-atlas-region.h \
 	src/atlas/lrg-texture-atlas.h \
 	src/atlas/lrg-sprite-sheet.h \
+	src/atlas/lrg-sprite-animation.h \
 	src/atlas/lrg-nine-slice.h \
 	src/atlas/lrg-atlas-packer.h \
 	src/tutorial/lrg-tutorial-step.h \
@@ -536,6 +627,7 @@ PUBLIC_HEADERS := \
 	src/weather/lrg-fog.h \
 	src/weather/lrg-lightning.h \
 	src/weather/lrg-weather.h \
+	src/weather/lrg-weather-asset.h \
 	src/weather/lrg-day-night-cycle.h \
 	src/weather/lrg-weather-manager.h \
 	src/weather/lrg-celestial.h \
@@ -550,6 +642,13 @@ PUBLIC_HEADERS := \
 	src/lighting/lrg-directional-light2d.h \
 	src/lighting/lrg-shadow-map.h \
 	src/lighting/lrg-shadow-renderer.h \
+	src/lighting/lrg-lightmap3d.h \
+	src/lighting/lrg-probe-grid.h \
+	src/lighting/lrg-lightmap-baker.h \
+	src/lighting/lrg-bake-bvh.h \
+	src/lighting/lrg-environment.h \
+	src/lighting/lrg-reflection-probe.h \
+	src/lighting/lrg-volumetric-fog.h \
 	src/lighting/lrg-lightmap.h \
 	src/lighting/lrg-light-probe.h \
 	src/lighting/lrg-lighting-manager.h \
@@ -739,8 +838,12 @@ SOURCES := \
 	src/core/lrg-engine.c \
 	src/core/lrg-registry.c \
 	src/core/lrg-data-loader.c \
+	src/core/lrg-math3d.c \
+	src/core/lrg-color-gradient.c \
+	src/core/lrg-asset-meta.c \
 	src/core/lrg-asset-manager.c \
 	src/core/lrg-asset-pack.c \
+	src/core/lrg-pack-writer.c \
 	src/core/lrg-event.c \
 	src/core/lrg-event-listener.c \
 	src/core/lrg-event-bus.c \
@@ -780,14 +883,30 @@ SOURCES := \
 	src/graphics/lrg-skinned-mesh.c \
 	src/graphics/lrg-billboard-batch.c \
 	src/graphics/lrg-terrain.c \
+	src/graphics/lrg-terrain-asset.c \
+	src/graphics/lrg-terrain-brush.c \
+	src/graphics/lrg-foliage.c \
+	src/graphics/lrg-water-body.c \
 	src/graphics/lrg-sky-dome.c \
 	src/graphics/lrg-sky-bodies.c \
 	src/graphics/lrg-light-set.c \
+	src/graphics/lrg-uv-unwrap.c \
+	src/graphics/lrg-skinned-sprite.c \
+	src/graphics/lrg-material.c \
+	src/graphics/lrg-shader-asset.c \
+	src/graphics/lrg-shader-graph.c \
+	src/graphics/lrg-hdr-image.c \
+	src/graphics/lrg-depth-prepass.c \
+	src/graphics/lrg-ssao.c \
+	src/graphics/lrg-decal.c \
+	src/graphics/lrg-mesh-simplify.c \
+	src/graphics/lrg-lod-group.c \
 	src/graphics/lrg-texture-sampling.c \
 	src/ecs/lrg-component.c \
 	src/ecs/lrg-game-object.c \
 	src/ecs/lrg-world.c \
 	src/ecs/components/lrg-sprite-component.c \
+	src/ecs/components/lrg-skeleton2d-component.c \
 	src/ecs/components/lrg-collider-component.c \
 	src/ecs/components/lrg-transform-component.c \
 	src/ecs/components/lrg-animator-component.c \
@@ -836,6 +955,7 @@ SOURCES := \
 	src/paint/lrg-paint-icons.c \
 	src/paint/lrg-paint-font.c \
 	src/ui/lrg-ui-event.c \
+	src/ui/lrg-ui-author.c \
 	src/ui/lrg-widget.c \
 	src/ui/lrg-container.c \
 	src/ui/lrg-label.c \
@@ -903,12 +1023,14 @@ SOURCES := \
 	src/ui/lrg-drop-target.c \
 	src/ui/lrg-property-source.c \
 	src/ui/lrg-property-grid.c \
+	src/ui/lrg-inspector-nested.c \
 	src/ui/lrg-vector-edit.c \
 	src/ui/lrg-curve-edit.c \
 	src/ui/lrg-gradient-edit.c \
 	src/tilemap/lrg-tileset.c \
 	src/tilemap/lrg-tilemap-layer.c \
 	src/tilemap/lrg-tilemap.c \
+	src/tilemap/lrg-rule-tile.c \
 	src/save/lrg-saveable.c \
 	src/save/lrg-save-context.c \
 	src/save/lrg-save-game.c \
@@ -954,6 +1076,7 @@ SOURCES := \
 	src/audio/lrg-audio-manager.c \
 	src/audio/lrg-wave-data.c \
 	src/audio/lrg-audio-mixer.c \
+	src/audio/lrg-mixer-asset.c \
 	src/audio/lrg-procedural-audio.c \
 	src/audio/lrg-midi-synth.c \
 	src/audio/lrg-midi-synth-vendor.c \
@@ -978,10 +1101,13 @@ SOURCES := \
 	src/i18n/lrg-locale.c \
 	src/i18n/lrg-csv.c \
 	src/i18n/lrg-localization.c \
+	src/i18n/lrg-po.c \
 	src/pathfinding/lrg-nav-cell.c \
 	src/pathfinding/lrg-path.c \
 	src/pathfinding/lrg-nav-grid.c \
 	src/pathfinding/lrg-pathfinder.c \
+	src/pathfinding/lrg-nav-bake.c \
+	src/pathfinding/lrg-nav-agent.c \
 	src/pathfinding/lrg-nav-mesh.c \
 	src/pathfinding/lrg-nav-poly-mesh.c \
 	src/pathfinding/lrg-nav-poly-mesh-cache.c \
@@ -1001,6 +1127,8 @@ SOURCES := \
 	src/ai/lrg-bt-decorator.c \
 	src/ai/lrg-bt-leaf.c \
 	src/ai/lrg-behavior-tree.c \
+	src/ai/lrg-bt-asset.c \
+	src/ai/lrg-logic-machine.c \
 	src/ai/lrg-decision.c \
 	src/ai/lrg-decider.c \
 	src/ai/lrg-decision-brain.c \
@@ -1015,7 +1143,21 @@ SOURCES := \
 	src/physics/lrg-collision-model.c \
 	src/physics/lrg-character-controller.c \
 	src/physics/lrg-dynamics.c \
+	src/physics/lrg-physics-shape.c \
+	src/physics/lrg-collide.c \
+	src/physics/lrg-broadphase.c \
+	src/physics/lrg-physics-layers.c \
+	src/physics/lrg-contact-solver.c \
+	src/physics/lrg-island.c \
+	src/physics/lrg-joint.c \
+	src/physics/lrg-ragdoll.c \
+	src/physics/lrg-cloth.c \
+	src/physics/lrg-fracture.c \
 	src/debug/lrg-profiler.c \
+	src/debug/lrg-gpu-timer.c \
+	src/debug/lrg-frame-capture.c \
+	src/debug/lrg-memory-profiler.c \
+	src/debug/lrg-debug-draw.c \
 	src/debug/lrg-debug-console.c \
 	src/debug/lrg-debug-overlay.c \
 	src/debug/lrg-inspector.c \
@@ -1069,6 +1211,7 @@ SOURCES := \
 	src/net/lrg-net-peer.c \
 	src/net/lrg-net-server.c \
 	src/net/lrg-net-client.c \
+	src/net/lrg-net-stats.c \
 	src/replay/lrg-state-buffer.c \
 	src/replay/lrg-sim-stateful.c \
 	src/replay/lrg-input-snapshot.c \
@@ -1085,6 +1228,35 @@ SOURCES := \
 	src/world3d/lrg-portal.c \
 	src/world3d/lrg-sector.c \
 	src/world3d/lrg-level3d.c \
+	src/world3d/lrg-entity3d.c \
+	src/world3d/lrg-world3d.c \
+	src/world3d/lrg-world3d-renderer.c \
+	src/world3d/components/lrg-mesh-renderer-component.c \
+	src/world3d/components/lrg-light-component.c \
+	src/world3d/components/lrg-camera-component.c \
+	src/world3d/components/lrg-audio-source-component.c \
+	src/world3d/components/lrg-audio-listener-component.c \
+	src/world3d/components/lrg-billboard-component.c \
+	src/world3d/components/lrg-tilemap-component.c \
+	src/world3d/components/lrg-spawn-component.c \
+	src/world3d/components/lrg-trigger-component.c \
+	src/world3d/components/lrg-skinned-model-component.c \
+	src/world3d/components/lrg-decal-component.c \
+	src/world3d/components/lrg-lod-component.c \
+	src/world3d/components/lrg-animator-component3d.c \
+	src/world3d/components/lrg-sequence-component.c \
+	src/world3d/components/lrg-rigid-body-component.c \
+	src/world3d/components/lrg-collider-component3d.c \
+	src/world3d/components/lrg-joint-component.c \
+	src/world3d/components/lrg-cloth-component.c \
+	src/world3d/components/lrg-destructible-component.c \
+	src/world3d/components/lrg-nav-agent-component.c \
+	src/world3d/components/lrg-ai-component.c \
+	src/world3d/components/lrg-particle-component.c \
+	src/world3d/components/lrg-terrain-component.c \
+	src/world3d/components/lrg-foliage-component.c \
+	src/world3d/components/lrg-water-component.c \
+	src/world3d/components/lrg-reflection-probe-component.c \
 	src/world3d/lrg-portal-system.c \
 	src/scene/lrg-material3d.c \
 	src/scene/lrg-scene-object.c \
@@ -1101,6 +1273,11 @@ SOURCES := \
 	src/scripting/lrg-script-host.c \
 	src/scripting/lrg-script-task.c \
 	src/scripting/lrg-script-scheduler.c \
+	src/scripting/lrg-script-debugger.c \
+	src/scripting/lrg-script-reloader.c \
+	src/scripting/lrg-dap-server.c \
+	src/scripting/lrg-scripting-graph.c \
+	src/scripting/lrg-vscript-program.c \
 	src/scripting/lrg-script-task-callback.c \
 	src/settings/lrg-settings-group.c \
 	src/settings/lrg-graphics-settings.c \
@@ -1169,9 +1346,14 @@ SOURCES := \
 	src/particles/lrg-particle-emitter.c \
 	src/particles/lrg-particle-force.c \
 	src/particles/lrg-particle-system.c \
+	src/particles/lrg-particle-asset.c \
+	src/particles/lrg-particle-ribbon-renderer.c \
+	src/particles/lrg-particle-mesh-renderer.c \
+	src/particles/lrg-gpu-particles.c \
 	src/particles/lrg-particle-billboard-renderer.c \
 	src/postprocess/lrg-post-effect.c \
 	src/postprocess/lrg-post-processor.c \
+	src/postprocess/lrg-post-stack.c \
 	src/postprocess/effects/lrg-vignette.c \
 	src/postprocess/effects/lrg-heat-haze.c \
 	src/postprocess/effects/lrg-bloom.c \
@@ -1183,9 +1365,16 @@ SOURCES := \
 	src/postprocess/lrg-color-lut.c \
 	src/postprocess/effects/lrg-palettize.c \
 	src/postprocess/effects/lrg-fxaa.c \
+	src/postprocess/effects/lrg-tonemap.c \
 	src/animation/lrg-bone-pose.c \
 	src/animation/lrg-bone.c \
 	src/animation/lrg-skeleton.c \
+	src/animation/lrg-gltf-animation.c \
+	src/animation/lrg-retargeter.c \
+	src/animation/lrg-anim-graph.c \
+	src/animation/lrg-sequence.c \
+	src/animation/lrg-sequence-player.c \
+	src/animation/lrg-skeleton2d.c \
 	src/animation/lrg-animation-keyframe.c \
 	src/animation/lrg-animation-event.c \
 	src/animation/lrg-animation-clip.c \
@@ -1234,6 +1423,7 @@ SOURCES := \
 	src/atlas/lrg-atlas-region.c \
 	src/atlas/lrg-texture-atlas.c \
 	src/atlas/lrg-sprite-sheet.c \
+	src/atlas/lrg-sprite-animation.c \
 	src/atlas/lrg-nine-slice.c \
 	src/atlas/lrg-atlas-packer.c \
 	src/tutorial/lrg-tutorial-step.c \
@@ -1248,6 +1438,7 @@ SOURCES := \
 	src/weather/lrg-fog.c \
 	src/weather/lrg-lightning.c \
 	src/weather/lrg-weather.c \
+	src/weather/lrg-weather-asset.c \
 	src/weather/lrg-day-night-cycle.c \
 	src/weather/lrg-weather-manager.c \
 	src/weather/lrg-celestial.c \
@@ -1262,6 +1453,13 @@ SOURCES := \
 	src/lighting/lrg-directional-light2d.c \
 	src/lighting/lrg-shadow-map.c \
 	src/lighting/lrg-shadow-renderer.c \
+	src/lighting/lrg-lightmap3d.c \
+	src/lighting/lrg-probe-grid.c \
+	src/lighting/lrg-lightmap-baker.c \
+	src/lighting/lrg-bake-bvh.c \
+	src/lighting/lrg-environment.c \
+	src/lighting/lrg-reflection-probe.c \
+	src/lighting/lrg-volumetric-fog.c \
 	src/lighting/lrg-lightmap.c \
 	src/lighting/lrg-light-probe.c \
 	src/lighting/lrg-lighting-manager.c \
@@ -1558,9 +1756,41 @@ SOURCES += \
 	src/gui/lrg-gui-dock.c \
 	src/gui/lrg-gui-raylib.c
 
-# Editor / level authoring module (conditional on BUILD_EDITOR=1)
-ifeq ($(BUILD_EDITOR),1)
+# Runtime level module (always built since 0.9.0): the .rlevel/.rprefab data
+# model (LrgLevel, LrgNode, LrgNodeVisual, LrgNodeTilemap, LrgTimeline,
+# LrgComponentDesc, LrgScriptBinding), the YAML serializer, prefab
+# resolution/linking and lrg_level_instantiate().  Games load levels with
+# BUILD_EDITOR=0; the editor (below) only adds the authoring layer.
 PUBLIC_HEADERS += \
+	src/level/lrg-component-desc.h \
+	src/level/lrg-script-binding.h \
+	src/level/lrg-node-visual.h \
+	src/level/lrg-node-physics.h \
+	src/level/lrg-node-tilemap.h \
+	src/level/lrg-timeline.h \
+	src/level/lrg-node.h \
+	src/level/lrg-level.h \
+	src/level/lrg-level-serializer.h \
+	src/level/lrg-level-stream.h \
+	src/level/lrg-level-instantiate.h \
+	src/level/lrg-prefab.h
+SOURCES += \
+	src/level/lrg-component-desc.c \
+	src/level/lrg-script-binding.c \
+	src/level/lrg-node-visual.c \
+	src/level/lrg-node-physics.c \
+	src/level/lrg-node-tilemap.c \
+	src/level/lrg-timeline.c \
+	src/level/lrg-node.c \
+	src/level/lrg-level.c \
+	src/level/lrg-level-serializer.c \
+	src/level/lrg-level-stream.c \
+	src/level/lrg-level-instantiate.c \
+	src/level/lrg-prefab.c
+
+# Old src/editor/ paths of the headers above (thin "#include ../level/..."
+# forwarders kept for source compatibility).  Never GIR-scanned.
+LRG_LEVEL_COMPAT_HEADERS := \
 	src/editor/lrg-component-desc.h \
 	src/editor/lrg-script-binding.h \
 	src/editor/lrg-node-visual.h \
@@ -1569,8 +1799,17 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-node.h \
 	src/editor/lrg-level.h \
 	src/editor/lrg-level-serializer.h \
-	src/editor/lrg-scene-import.h \
 	src/editor/lrg-level-instantiate.h \
+	src/editor/lrg-prefab.h \
+	src/editor/lrg-asset-meta.h
+
+# Editor / level authoring module (conditional on BUILD_EDITOR=1)
+ifeq ($(BUILD_EDITOR),1)
+# Compatibility forwarding headers for the types that moved to src/level/ in
+# 0.9.0: installed at their old editor/ path, excluded from the GIR scan.
+PUBLIC_HEADERS += $(LRG_LEVEL_COMPAT_HEADERS)
+PUBLIC_HEADERS += \
+	src/editor/lrg-scene-import.h \
 	src/editor/lrg-editor-command.h \
 	src/editor/lrg-editor-selection.h \
 	src/editor/lrg-editor.h \
@@ -1592,25 +1831,27 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-editor-view-state.h \
 	src/editor/lrg-editor-play-session.h \
 	src/editor/lrg-editor-viewport-nav.h \
-	src/editor/lrg-asset-meta.h \
 	src/editor/lrg-editor-vcs.h \
+	src/editor/lrg-transform-tools.h \
+	src/editor/lrg-level-merge.h \
+	src/editor/lrg-collab.h \
+	src/editor/lrg-editor-scenes.h \
+	src/editor/lrg-game-view.h \
 	src/editor/lrg-editor-document.h \
+	src/editor/lrg-lsp-client.h \
+	src/editor/lrg-editor-script-api.h \
 	src/editor/lrg-editor-settings-migrate.h \
 	src/editor/lrg-editor-node-model.h \
 	src/editor/lrg-editor-node-source.h \
 	src/editor/lrg-asset-source.h \
-	src/editor/lrg-prefab.h
+	src/editor/lrg-asset-refs.h \
+	src/editor/lrg-asset-importer.h \
+	src/editor/lrg-editor-plugin.h \
+	src/editor/lrg-project-config.h \
+	src/editor/lrg-project-template.h \
+	src/editor/lrg-editor-export.h
 SOURCES += \
-	src/editor/lrg-component-desc.c \
-	src/editor/lrg-script-binding.c \
-	src/editor/lrg-node-visual.c \
-	src/editor/lrg-node-tilemap.c \
-	src/editor/lrg-timeline.c \
-	src/editor/lrg-node.c \
-	src/editor/lrg-level.c \
-	src/editor/lrg-level-serializer.c \
 	src/editor/lrg-scene-import.c \
-	src/editor/lrg-level-instantiate.c \
 	src/editor/lrg-editor-command.c \
 	src/editor/lrg-editor-selection.c \
 	src/editor/lrg-editor.c \
@@ -1629,17 +1870,30 @@ SOURCES += \
 	src/editor/lrg-editor-validate.c \
 	src/editor/lrg-asset-database.c \
 	src/editor/lrg-project.c \
+	src/editor/lrg-asset-refs.c \
+	src/editor/lrg-asset-importer.c \
+	src/editor/lrg-fbx-ufbx.c \
+	deps/ufbx/ufbx.c \
+	src/editor/lrg-editor-plugin.c \
+	src/editor/lrg-project-config.c \
+	src/editor/lrg-project-template.c \
+	src/editor/lrg-editor-export.c \
 	src/editor/lrg-editor-view-state.c \
 	src/editor/lrg-editor-play-session.c \
 	src/editor/lrg-editor-viewport-nav.c \
-	src/editor/lrg-asset-meta.c \
 	src/editor/lrg-editor-vcs.c \
+	src/editor/lrg-transform-tools.c \
+	src/editor/lrg-level-merge.c \
+	src/editor/lrg-collab.c \
+	src/editor/lrg-editor-scenes.c \
+	src/editor/lrg-game-view.c \
 	src/editor/lrg-editor-document.c \
+	src/editor/lrg-lsp-client.c \
+	src/editor/lrg-editor-script-api.c \
 	src/editor/lrg-editor-settings-migrate.c \
 	src/editor/lrg-editor-node-model.c \
 	src/editor/lrg-editor-node-source.c \
-	src/editor/lrg-asset-source.c \
-	src/editor/lrg-prefab.c
+	src/editor/lrg-asset-source.c
 ifeq ($(BUILD_EDITOR_UI),1)
 PUBLIC_HEADERS += \
 	src/editor/ui/data/lrg-editor-data-editor.h \
@@ -1665,7 +1919,37 @@ PUBLIC_HEADERS += \
 	src/editor/ui/lrg-editor-timeline-panel.h \
 	src/editor/ui/lrg-editor-profiler-panel.h \
 	src/editor/ui/lrg-editor-code-panel.h \
+	src/editor/ui/lrg-editor-shader-graph-editor.h \
+	src/editor/ui/lrg-editor-environment-panel.h \
+	src/editor/ui/lrg-editor-bake-panel.h \
+	src/editor/ui/lrg-editor-physics-panel.h \
+	src/editor/ui/data/lrg-editor-physics-asset-editor.h \
+	src/editor/ui/lrg-editor-nav-panel.h \
+	src/editor/ui/lrg-editor-ai-debug-panel.h \
+	src/editor/ui/lrg-editor-terrain-panel.h \
+	src/editor/ui/lrg-editor-mixer-panel.h \
+	src/editor/ui/lrg-editor-debug-panel.h \
+	src/editor/ui/lrg-editor-frame-debugger.h \
+	src/editor/ui/lrg-editor-memory-panel.h \
+	src/editor/ui/lrg-editor-network-panel.h \
+	src/editor/ui/data/lrg-editor-bt-editor.h \
+	src/editor/ui/data/lrg-editor-fsm-editor.h \
+	src/editor/ui/data/lrg-editor-particle-editor.h \
+	src/editor/ui/data/lrg-editor-weather-editor.h \
+	src/editor/ui/data/lrg-editor-water-editor.h \
+	src/editor/ui/data/lrg-editor-mixer-editor.h \
+	src/editor/ui/data/lrg-editor-vscript-editor.h \
+	src/editor/ui/data/lrg-editor-blocks-editor.h \
+	src/editor/ui/data/lrg-editor-tileset-editor.h \
+	src/editor/ui/data/lrg-editor-sprite-editor.h \
+	src/editor/ui/lrg-editor-sequencer-panel.h \
+	src/editor/ui/data/lrg-editor-anim-graph-editor.h \
+	src/editor/ui/data/lrg-editor-bone-map-editor.h \
+	src/editor/ui/data/lrg-editor-skeleton2d-editor.h \
+	src/editor/ui/data/lrg-editor-material-editor.h \
+	src/editor/ui/data/lrg-editor-post-stack-editor.h \
 	src/editor/ui/lrg-editor-sources-panel.h \
+	src/editor/ui/lrg-editor-m10-panels.h \
 	src/editor/ui/lrg-editor-palette.h \
 	src/editor/ui/lrg-editor-preferences.h \
 	src/editor/ui/lrg-editor-app.h
@@ -1694,7 +1978,37 @@ SOURCES += \
 	src/editor/ui/lrg-editor-timeline-panel.c \
 	src/editor/ui/lrg-editor-profiler-panel.c \
 	src/editor/ui/lrg-editor-code-panel.c \
+	src/editor/ui/lrg-editor-shader-graph-editor.c \
+	src/editor/ui/lrg-editor-environment-panel.c \
+	src/editor/ui/lrg-editor-bake-panel.c \
+	src/editor/ui/lrg-editor-physics-panel.c \
+	src/editor/ui/data/lrg-editor-physics-asset-editor.c \
+	src/editor/ui/lrg-editor-nav-panel.c \
+	src/editor/ui/lrg-editor-ai-debug-panel.c \
+	src/editor/ui/lrg-editor-terrain-panel.c \
+	src/editor/ui/lrg-editor-mixer-panel.c \
+	src/editor/ui/lrg-editor-debug-panel.c \
+	src/editor/ui/lrg-editor-frame-debugger.c \
+	src/editor/ui/lrg-editor-memory-panel.c \
+	src/editor/ui/lrg-editor-network-panel.c \
+	src/editor/ui/data/lrg-editor-bt-editor.c \
+	src/editor/ui/data/lrg-editor-fsm-editor.c \
+	src/editor/ui/data/lrg-editor-particle-editor.c \
+	src/editor/ui/data/lrg-editor-weather-editor.c \
+	src/editor/ui/data/lrg-editor-water-editor.c \
+	src/editor/ui/data/lrg-editor-mixer-editor.c \
+	src/editor/ui/data/lrg-editor-vscript-editor.c \
+	src/editor/ui/data/lrg-editor-blocks-editor.c \
+	src/editor/ui/data/lrg-editor-tileset-editor.c \
+	src/editor/ui/data/lrg-editor-sprite-editor.c \
+	src/editor/ui/lrg-editor-sequencer-panel.c \
+	src/editor/ui/data/lrg-editor-anim-graph-editor.c \
+	src/editor/ui/data/lrg-editor-bone-map-editor.c \
+	src/editor/ui/data/lrg-editor-skeleton2d-editor.c \
+	src/editor/ui/data/lrg-editor-material-editor.c \
+	src/editor/ui/data/lrg-editor-post-stack-editor.c \
 	src/editor/ui/lrg-editor-sources-panel.c \
+	src/editor/ui/lrg-editor-m10-panels.c \
 	src/editor/ui/lrg-editor-palette.c \
 	src/editor/ui/lrg-editor-preferences.c \
 	src/editor/ui/lrg-editor-app-actions.c \
@@ -1796,6 +2110,7 @@ ifeq ($(BUILD_GIR),1)
 endif
 ifeq ($(BUILD_SHARED),1)
 	@$(MAKE) --no-print-directory lrgldr
+	@$(MAKE) --no-print-directory lrgpack
 ifeq ($(BUILD_EDITOR_UI),1)
 	@$(MAKE) --no-print-directory lrgeditor
 endif
@@ -2030,6 +2345,7 @@ endif
 # authors use the editor types + the LrgScripting base / manager / component +
 # the LrgScriptLanguage enum, all of which remain introspectable.
 GIR_EXCLUDE := \
+	$(LRG_LEVEL_COMPAT_HEADERS) \
 	src/audio/lrg-midi-synth-vendor.c \
 	src/scripting/lrg-scripting-gi.h \
 	src/scripting/lrg-scripting-gi.c \
@@ -2171,6 +2487,17 @@ $(LRGLDR_BIN): src/launcher/lrgldr.c $(LIBOUTDIR)/$(LIB_SHARED)
 	@$(MKDIR_P) $(dir $@)
 	@$(CC) $(LRGLDR_CFLAGS) -o $@ $< $(LRGLDR_LIBS)
 
+# lrgpack: project packer. Same shared-library linkage as lrgldr.
+LRGPACK_BIN := $(BUILDDIR)/lrgpack$(EXE_EXT)
+
+.PHONY: lrgpack
+lrgpack: lib-shared $(LRGPACK_BIN)
+
+$(LRGPACK_BIN): src/launcher/lrgpack.c $(LIBOUTDIR)/$(LIB_SHARED)
+	$(call print_link,lrgpack)
+	@$(MKDIR_P) $(dir $@)
+	@$(CC) $(LRGLDR_CFLAGS) -o $@ $< $(LRGLDR_LIBS)
+
 # =============================================================================
 # lrgeditor (the level / scene / world editor application)
 # =============================================================================
@@ -2305,7 +2632,7 @@ uninstall-skills:
 test-emacs: lrgeditor
 	@if command -v emacs >/dev/null 2>&1; then \
 		emacs -Q --batch -L editors/emacs --eval '(setq byte-compile-error-on-warn t)' \
-			-f batch-byte-compile editors/emacs/libregnum.el editors/emacs/libregnum-tests.el && \
+			-f batch-byte-compile editors/emacs/libregnum.el editors/emacs/libregnum-tests.el editors/emacs/libregnum-dape.el && \
 		LRG_EDITOR=$(LRG_EDITOR_BIN) emacs -Q --batch -L editors/emacs -l libregnum-tests.el \
 			-f ert-run-tests-batch-and-exit < /dev/null; \
 		status=$$?; rm -f editors/emacs/*.elc; exit $$status; \
@@ -2356,8 +2683,19 @@ $(REEL_CLI_BIN): src/reel-cli/lrg-reel-cli.c $(LIBOUTDIR)/$(LIB_SHARED)
 
 # Every public symbol of the paint, spring and retained UI modules must
 # be mentioned somewhere under docs/ (org pages)
-DOCS_CHECK_HEADERS := $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween/lrg-spring.h \
-	$(wildcard src/editor/*.h) $(wildcard src/editor/ui/*.h) $(wildcard src/editor/ui/data/*.h)
+DOCS_CHECK_HEADERS := src/scripting/lrg-script-debugger.h src/scripting/lrg-script-reloader.h src/scripting/lrg-dap-server.h src/scripting/lrg-scripting-graph.h src/scripting/lrg-vscript-program.h src/debug/lrg-gpu-timer.h src/debug/lrg-frame-capture.h src/debug/lrg-memory-profiler.h src/net/lrg-net-stats.h $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween/lrg-spring.h src/i18n/lrg-po.h \
+	$(filter-out %-private.h,$(wildcard src/level/*.h)) src/core/lrg-math3d.h \
+	$(wildcard src/editor/*.h) $(wildcard src/editor/ui/*.h) $(wildcard src/editor/ui/data/*.h) \
+	src/debug/lrg-debug-draw.h src/graphics/lrg-camera.h src/graphics/lrg-static-batch.h src/graphics/lrg-billboard-batch.h src/graphics/lrg-terrain.h src/lighting/lrg-shadow-renderer.h src/particles/lrg-particle-system.h src/particles/lrg-particle-billboard-renderer.h \
+	src/world3d/lrg-entity3d.h src/world3d/lrg-world3d.h src/ecs/lrg-component.h \
+	$(wildcard src/world3d/components/*.h) \
+	src/core/lrg-asset-meta.h src/core/lrg-pack-writer.h src/core/lrg-asset-manager.h \
+	$(wildcard src/ai/*.h) \
+	src/graphics/lrg-light-set.h src/scene/lrg-material3d.h src/postprocess/lrg-post-processor.h src/postprocess/lrg-post-effect.h \
+	src/pathfinding/lrg-nav-bake.h src/pathfinding/lrg-nav-agent.h src/ai/lrg-bt-asset.h src/ai/lrg-logic-machine.h src/particles/lrg-particle-asset.h src/particles/lrg-particle-ribbon-renderer.h src/particles/lrg-particle-mesh-renderer.h src/particles/lrg-gpu-particles.h src/core/lrg-color-gradient.h src/weather/lrg-weather-asset.h src/graphics/lrg-terrain-asset.h src/graphics/lrg-terrain-brush.h src/graphics/lrg-foliage.h src/graphics/lrg-water-body.h src/audio/lrg-mixer-asset.h src/tilemap/lrg-rule-tile.h src/atlas/lrg-sprite-animation.h src/world3d/components/lrg-nav-agent-component.h src/world3d/components/lrg-ai-component.h src/world3d/components/lrg-particle-component.h src/world3d/components/lrg-terrain-component.h src/world3d/components/lrg-foliage-component.h src/world3d/components/lrg-water-component.h \
+	src/physics/lrg-dynamics.h src/physics/lrg-physics-shape.h src/physics/lrg-collide.h src/physics/lrg-broadphase.h src/physics/lrg-physics-layers.h src/physics/lrg-contact-solver.h src/physics/lrg-island.h src/physics/lrg-joint.h src/physics/lrg-ragdoll.h src/physics/lrg-cloth.h src/physics/lrg-fracture.h src/world3d/components/lrg-rigid-body-component.h src/world3d/components/lrg-collider-component3d.h src/world3d/components/lrg-joint-component.h src/world3d/components/lrg-cloth-component.h src/world3d/components/lrg-destructible-component.h \
+	src/lighting/lrg-lightmap3d.h src/lighting/lrg-probe-grid.h src/lighting/lrg-lightmap-baker.h src/lighting/lrg-bake-bvh.h src/graphics/lrg-uv-unwrap.h src/graphics/lrg-skinned-sprite.h src/animation/lrg-gltf-animation.h src/animation/lrg-retargeter.h src/animation/lrg-anim-graph.h src/animation/lrg-sequence.h src/animation/lrg-sequence-player.h src/animation/lrg-skeleton2d.h src/world3d/components/lrg-animator-component3d.h src/world3d/components/lrg-sequence-component.h src/ecs/components/lrg-skeleton2d-component.h \
+	src/graphics/lrg-material.h src/graphics/lrg-shader-asset.h src/graphics/lrg-shader-graph.h src/graphics/lrg-hdr-image.h src/graphics/lrg-depth-prepass.h src/graphics/lrg-ssao.h src/graphics/lrg-decal.h src/graphics/lrg-mesh-simplify.h src/graphics/lrg-lod-group.h src/lighting/lrg-environment.h src/lighting/lrg-reflection-probe.h src/lighting/lrg-volumetric-fog.h src/postprocess/lrg-post-stack.h src/world3d/components/lrg-decal-component.h src/world3d/components/lrg-lod-component.h
 
 docs-check:
 	@build-aux/docs-check.sh -d docs $(DOCS_CHECK_HEADERS)
@@ -2415,8 +2753,10 @@ endif
 	# Install the generic loader binary (needs the shared library)
 ifeq ($(BUILD_SHARED),1)
 	@$(MAKE) --no-print-directory lrgldr
+	@$(MAKE) --no-print-directory lrgpack
 	@$(MKDIR_P) $(DESTDIR)$(BINDIR)
 	$(INSTALL_PROGRAM) $(LRGLDR_BIN) $(DESTDIR)$(BINDIR)/
+	$(INSTALL_PROGRAM) $(LRGPACK_BIN) $(DESTDIR)$(BINDIR)/
 ifeq ($(BUILD_EDITOR_UI),1)
 	@$(MAKE) --no-print-directory lrgeditor
 	$(INSTALL_PROGRAM) $(LRG_EDITOR_BIN) $(DESTDIR)$(BINDIR)/
@@ -2464,6 +2804,7 @@ uninstall:
 	$(RMDIR) $(DESTDIR)$(INCLUDEDIR)/libregnum
 	$(RM) $(DESTDIR)$(PKGCONFIGDIR)/$(PC_FILE)
 	$(RM) $(DESTDIR)$(BINDIR)/lrgldr$(EXE_EXT)
+	$(RM) $(DESTDIR)$(BINDIR)/lrgpack$(EXE_EXT)
 	$(RM) $(DESTDIR)$(BINDIR)/lrgeditor$(EXE_EXT)
 	$(RM) $(DESTDIR)$(DATADIR)/emacs/site-lisp/libregnum.el
 	$(RM) $(DESTDIR)$(DATADIR)/libregnum/editor/themes/catppuccin-macchiato.yaml $(DESTDIR)$(DATADIR)/libregnum/editor/themes/catppuccin-frappe.yaml
@@ -2527,6 +2868,21 @@ $(OBJDIR)/src/%.o: src/%.c | $(OBJDIR)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -MMD -MP -c -o $@ $<
 
+# Vendored ufbx is C99 (MIT, deps/ufbx/LICENSE). The wrapper includes
+# ufbx.h, so it cannot be gnu89 either. -std=gnu11 is last so it wins
+# over BASE_CFLAGS, and -w is last so the third-party translation unit
+# is not held to -Werror. Do not append these to LIB_CFLAGS: a target
+# that references $(LIB_CFLAGS) in its own LIB_CFLAGS assignment recurses.
+$(OBJDIR)/src/editor/lrg-fbx-ufbx.o: src/editor/lrg-fbx-ufbx.c | $(OBJDIR)
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -std=gnu11 -w -I$(CURDIR)/deps/ufbx -MMD -MP -c -o $@ $<
+
+$(OBJDIR)/deps/ufbx/ufbx.o: deps/ufbx/ufbx.c | $(OBJDIR)
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -std=gnu11 -w -I$(CURDIR)/deps/ufbx -MMD -MP -c -o $@ $<
+
 # Header dependencies: the compiler writes one .d file per object (-MMD -MP
 # above, system headers left out), so editing a header (a private one included)
 # rebuilds every object that includes it.
@@ -2581,7 +2937,7 @@ $(OBJDIR)/src/core/lrg-data-loader.o: src/core/lrg-data-loader.c src/core/lrg-da
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
-$(OBJDIR)/src/core/lrg-asset-manager.o: src/core/lrg-asset-manager.c src/core/lrg-asset-manager.h
+$(OBJDIR)/src/core/lrg-asset-manager.o: src/core/lrg-asset-manager.c src/core/lrg-asset-manager.h src/core/lrg-asset-meta.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<

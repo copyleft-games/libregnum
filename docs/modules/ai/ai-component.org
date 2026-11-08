@@ -1,0 +1,141 @@
+#+title: LrgAiComponent
+#+description: The AI component: runs a .rbt behaviour tree and/or a .rfsm logic state machine on an LrgEntity3D or an LrgGameObject over one shared blackboard
+#+authors: Zach Podbielniak
+#+categories: libregnum ai components
+#+created: 2026-11-07T00:00:00-05:00
+#+updated: 2026-11-07T00:00:00-05:00
+#+version: 1.0
+
+* LrgAiComponent
+:PROPERTIES:
+:CUSTOM_ID: ai-component
+:END:
+=LrgAiComponent= (=src/world3d/components/lrg-ai-component.h=) gives an entity a brain: a [[file:bt-asset.org][.rbt behaviour tree]], a [[file:logic-machine.org][.rfsm logic state machine]], or both, over one blackboard the component owns. It is an =LrgComponent=, so the same component works on a 3D =LrgEntity3D= (frame or fixed update) and on a 2D =LrgGameObject= (frame update): there is no separate 2D class.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Lifecycle
+:PROPERTIES:
+:CUSTOM_ID: lifecycle
+:END:
+1. *Attach.* The owner is stored in the blackboard under =LRG_AI_COMPONENT_OWNER_KEY= (="owner"=) as a plain pointer (no reference: the blackboard must not keep its entity alive). Bound C actions find their entity with =lrg_blackboard_get_pointer (bb, LRG_AI_COMPONENT_OWNER_KEY)=.
+2. *First step: start.* Files given by path (=tree-path=, =machine-path=) are loaded; the scripting context is resolved (=scripting=, else the context of an =LrgScriptComponent= on the same owner, waited for up to two updates while it loads); an =LrgBtRunner= is built for the tree and the machine is started, both on the component's blackboard (schema defaults are written for keys it lacks). A failure is logged once with the file and the error and that half stays off until =lrg_ai_component_restart()=.
+3. *Every step.* With =tick-interval= 0 every update steps; otherwise time accumulates and a step runs (with the accumulated time as its delta) once it reaches the interval. A step updates the machine first (so its =enter:= and =update:= writes are visible to the tree the same step), then ticks the tree; a root that completes emits =tree-completed=, a machine transition =state-changed=.
+4. *Detach.* The runner is dropped, the machine stopped (its =exit:= actions run), the owner key removed.
+
+=use-fixed-update= moves stepping to the =LrgWorld3D= fixed update (=LrgComponentClass.fixed_update=) for deterministic steps; only entity owners get fixed updates. =running= pauses and resumes without losing state. =lrg_ai_component_step()= steps by hand (tests, tools, owners outside a world).
+
+*** Trees and machines
+:PROPERTIES:
+:CUSTOM_ID: trees-and-machines
+:END:
+- A tree asset is shared freely (=tree= property or =lrg_ai_component_new_with_tree()=): the component builds its own runner from it.
+- A machine object *is* its runtime: =machine= / =lrg_ai_component_new_with_machine()= run that instance, so give every component its own (=machine-path= loads a fresh one per component; =lrg_logic_machine_duplicate()= copies one).
+- Setting a tree, machine or path drops the current runner or stops the machine; the next step rebuilds.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property | Type | Default | Meaning |
+|----------+------+---------+---------|
+| =tree= | =LrgBtAsset= | =NULL= | the tree asset |
+| =tree-path= | string | =NULL= | a =.rbt= loaded on the next step |
+| =machine= | =LrgLogicMachine= | =NULL= | the machine run by this component |
+| =machine-path= | string | =NULL= | a =.rfsm= loaded on the next step |
+| =scripting= | =LrgScripting= | =NULL= | context for =script:= entries (=NULL=: the owner's script component's) |
+| =tick-interval= | float | 0 | seconds between steps (0: every update) |
+| =use-fixed-update= | bool | false | step in the fixed update |
+| =running= | bool | true | false pauses |
+| =blackboard= | =LrgBlackboard= | (own) | read-only: the shared blackboard |
+
+All writable properties are =G_PARAM_EXPLICIT_NOTIFY=, so level files and the registry set them by name (=tree-path=, =machine-path=, =tick-interval=, =use-fixed-update=, =running=).
+
+*Signals:* =tree-completed (LrgAiComponent *self, LrgBTStatus status)= when a tick ends with the root done (success or failure; the tree restarts on the next tick) and =state-changed (LrgAiComponent *self, const gchar *from, const gchar *to)= when the machine takes a transition, both =G_SIGNAL_RUN_LAST=.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_ai_component_new (void)= | an empty component |
+| =lrg_ai_component_new_with_tree (tree)= | running a tree asset |
+| =lrg_ai_component_new_with_machine (machine)= | running a machine instance |
+| =lrg_ai_component_get_tree=, =lrg_ai_component_set_tree= | |
+| =lrg_ai_component_get_tree_path=, =lrg_ai_component_set_tree_path= | |
+| =lrg_ai_component_get_machine=, =lrg_ai_component_set_machine= | |
+| =lrg_ai_component_get_machine_path=, =lrg_ai_component_set_machine_path= | |
+| =lrg_ai_component_get_scripting=, =lrg_ai_component_set_scripting= | |
+| =lrg_ai_component_get_tick_interval=, =lrg_ai_component_set_tick_interval= | |
+| =lrg_ai_component_get_use_fixed_update=, =lrg_ai_component_set_use_fixed_update= | |
+| =lrg_ai_component_get_running=, =lrg_ai_component_set_running= | |
+| =LrgBlackboard *lrg_ai_component_get_blackboard (self)= | inputs and outputs |
+| =LrgBtRunner *lrg_ai_component_get_runner (self)= | the tree's live state (=NULL= before the first step) |
+| =void lrg_ai_component_send_event (self, event)= | queue an event on the machine |
+| =const gchar *lrg_ai_component_get_current_node (self)= | the tree's current node id |
+| =const gchar *lrg_ai_component_get_current_state (self)= | the machine's innermost state |
+| =void lrg_ai_component_restart (self)= | drop and rebuild on the next step (reloading files) |
+| =void lrg_ai_component_step (self, delta_time)= | step by hand |
+| =gchar *lrg_ai_component_dup_debug_state (self)= | =tree:=, =machine:= and =blackboard:= as YAML |
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+/* game start: bindings the files use */
+lrg_bt_register_action ("melee_attack", melee_attack, NULL, NULL);
+lrg_bt_register_condition ("in_range", in_range, NULL, NULL);
+
+/* per enemy */
+LrgEntity3D    *enemy = lrg_entity3d_new_with_name ("kobold");
+LrgAiComponent *ai = lrg_ai_component_new ();
+
+lrg_ai_component_set_tree_path (ai, "ai/kobold.rbt");
+lrg_ai_component_set_machine_path (ai, "ai/kobold-mood.rfsm");
+lrg_ai_component_set_tick_interval (ai, 0.1f);          /* think at 10 Hz */
+lrg_entity3d_add_component (enemy, LRG_COMPONENT (ai));
+g_signal_connect (ai, "state-changed", G_CALLBACK (on_mood_changed), NULL);
+lrg_world3d_add_entity (world, enemy);
+
+/* the game feeds the blackboard, the AI reads it */
+lrg_blackboard_set_object (lrg_ai_component_get_blackboard (ai), "target", G_OBJECT (player));
+lrg_ai_component_send_event (ai, "hurt");
+#+end_src
+
+In a level, the component is a registry component with properties:
+
+#+begin_src yaml
+components:
+- type: ai                  # registry name
+  props:
+    tree-path: ai/kobold.rbt
+    machine-path: ai/kobold-mood.rfsm
+    tick-interval: 0.1
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+A step costs the machine update plus the runner tick ([[file:bt-asset.org#performance][tree numbers]], [[file:logic-machine.org#performance][machine numbers]]): a few microseconds for typical trees. =tick-interval= is the main lever for crowds: 100 agents at 10 Hz cost a tenth of 100 agents every frame, and steps accumulate time so timers stay correct.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Register bindings before the first step*, not after: the runner binds when it is built.
+- *Do not share a machine object* between components; share paths or duplicate.
+- *The owner key is a pointer.* Read it with =lrg_blackboard_get_pointer()=; =lrg_blackboard_get_object()= returns =NULL= for it.
+- *Fixed update needs a world.* =use-fixed-update= on an =LrgGameObject= owner never steps; call =lrg_ai_component_step()= yourself or use the frame update.
+- *Paths are opened as given*, like =LrgAnimatorComponent3D:graph-path=: a relative path resolves against the process's working directory (run games from the project root, or pass absolute paths). Subtree paths inside a =.rbt= resolve against that file's directory.
+- *Errors are logged once.* A bad path or a missing binding disables that half until =lrg_ai_component_restart()= (after fixing the file or registering the binding).
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The component's properties are plain GObject properties, so the inspector edits =tree-path=, =machine-path=, =tick-interval= and =use-fixed-update= like any component's. The AI panel and the tree / machine editors ([[file:../../editor/ai.org][AI in the Editor]]) read the running component during play-in-editor: =lrg_ai_component_get_runner()= for the BT view, =lrg_ai_component_get_machine()= for the state-machine view, =lrg_ai_component_get_blackboard()= with =lrg_blackboard_get_serial()= for a blackboard panel, and =lrg_ai_component_dup_debug_state()= as one IPC payload.

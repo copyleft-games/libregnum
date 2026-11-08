@@ -1,0 +1,211 @@
+#+title: Material Editor
+#+description: The lrgeditor tool for .rmat material assets: live lit preview, PBR property grid, instances with override markers and revert, the uniform inspector of custom shading, variants, assignment to nodes, thumbnails and the material.* IPC methods
+#+authors: Zach Podbielniak
+#+categories: libregnum editor materials rendering
+#+created: 2026-11-07T00:00:00-05:00
+#+updated: 2026-11-07T00:00:00-05:00
+#+version: 0.9.0
+
+* Material Editor
+:PROPERTIES:
+:CUSTOM_ID: material-editor
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Material Editor
+#+end_quote
+
+The material editor (=LrgEditorMaterialEditor=, =src/editor/ui/data/lrg-editor-material-editor.{h,c}=, since 0.9.0) edits =.rmat= material assets (the format is described in [[file:../modules/graphics/material.org::#rmat-format][LrgMaterial: the .rmat format]]). It is one of the [[file:data-editors.org][data editors]]: it sits on an =LrgEditorDocument= of format =LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL=, so it has the shared toolbar (title with a dirty dot, Save, Revert, Validate, the issue chip), the "changed on disk" banner, the issues list and its own undo history, separate from the level's.
+
+#+begin_example
++------------------------------------------------------------------------------+
+| (*) base.rmat .  Material   [Save][Revert][Validate] (0) [Assign][Variant][Revert All 3] |
++-------------------------------------+----------------------------------------+
+| ( sphere . lit . PBR . instance )   | v Material                             |
+|                                     |   Name          crate_red              |
+|              .-"""-.                |   Parent        crate.rmat        [..] |
+|             /  ___  \   gradient    |   Shading       lit               [v]  |
+|            |  (   )  |  sky + IBL   | v Surface                              |
+|             \       /               | | Base colour   [#ff2010ff]            |  <- override bar
+|              '-...-'                |   Metallic      ====o-------  0.25     |  <- inherited (default)
+|                                     | v Emission  v Textures  v Render state |
+|   ( Sphere | Cube | Plane | Rotate )| v Uniforms (custom shading only)       |
++-------------------------------------+----------------------------------------+
+#+end_example
+
+** Opening a material
+:PROPERTIES:
+:CUSTOM_ID: material-editor-open
+:END:
+- Double click a =.rmat= in the [[file:editor-app.org::#editor-panel-assets][Assets panel]] (tiles show the material on a lit sphere), use the =material.open= IPC method, or call =lrg_editor_material_editor_open (app, path, &error)= (=lrg_editor_data_editor_open()= works too: the data editor registry maps =LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL= to this type).
+- =lrg_editor_document_detect_format()= recognises =.rmat= by its extension alone, and =lrg_editor_data_editor_can_open()= accepts it.
+- The tab docks next to the other data editors with the id =data:<absolute path>=; a file that is already open is presented.
+- =lrg_editor_material_editor_new (app, document)= builds an editor without docking it (embedding, tests).
+
+** The preview
+:PROPERTIES:
+:CUSTOM_ID: material-editor-preview
+:END:
+The left half is a live 3D preview drawn with the engine's own lit pipeline, so what you see is what =LrgWorld3DRenderer= draws:
+
+- *Mesh*: a UV sphere, a cube or a plane (the Sphere / Cube / Plane chips, =lrg_editor_material_editor_set_preview_shape()= with =LrgEditorMaterialPreviewShape=: =LRG_EDITOR_MATERIAL_PREVIEW_SPHERE=, =LRG_EDITOR_MATERIAL_PREVIEW_CUBE=, =LRG_EDITOR_MATERIAL_PREVIEW_PLANE=; the GType is =lrg_editor_material_preview_shape_get_type()=). Tangents are generated, so normal maps work.
+- *Rotate* (on by default, =lrg_editor_material_editor_set_preview_rotate()=) turns the mesh slowly; dragging in the preview orbits the camera either way.
+- *Lighting*: an =LrgLightSet= with a warm key sun, a cool rim point light and a soft ambient, plus image based lighting from a small baked gradient =LrgEnvironment= (32 px cubemap, so the bake is cheap even on software GL). The sky is drawn behind the mesh.
+- *Shading*: lit materials draw with the light set's GGX program; unlit ones with the same program (=mapFlags= bit 32); custom materials compile their =.rshader= (resolved through the material's references) and draw with it, the light set bound when the shader is lit. A shader that does not compile keeps the lit look and shows an issue.
+- The caption names the mesh, the shading model and whether the material is an instance.
+- =lrg_editor_material_editor_render_preview (self, size)= renders the current view into a =GrlImage= (needs a window, outside =BeginDrawing()=).
+
+Textures and parents load through a private =LrgAssetManager= that follows the project (=guid:= references resolve, import settings apply, every texture is uploaded once), and the material is re-parsed from the document text after every edit, so the preview follows each slider tick.
+
+** The property grid
+:PROPERTIES:
+:CUSTOM_ID: material-editor-grid
+:END:
+Every key of the =.rmat= format is a row. The grid reads and writes YAML paths of the document; a missing key shows the value the material resolves (the parent chain, else the engine default).
+
+| Section | Rows (YAML key) | Editor |
+|---------+-----------------+--------|
+| Material | Name (=name=), Parent (=parent=), Shading (=shading_model=), Shader (=shader=) | text; reference picker of =.rmat= / =.rshader= files; =lit unlit custom= |
+| Surface | Base colour (=base_color=), Metallic, Roughness, Occlusion (=occlusion_strength=), Normal scale (=normal_scale=, 0..8), Height scale (=height_scale=) | colour picker (RGBA, written as a 4-number sequence); sliders |
+| Emission | Colour (=emission_color=, RGB), Strength (=emission_strength=, 0..1000) | colour picker; spin |
+| Textures | Albedo, Normal, ORM, Emission, Height, Metallic / gloss (=textures.<slot>=) | asset references: pick from the project's images or drop a texture from the Assets panel |
+| Render state | Blend (=render_state.blend=), Alpha cutoff (=alpha_cutoff=), Cull, Depth test, Depth write, Double sided, Queue (=render_queue=) | combo boxes and checkboxes |
+| Uniforms | one row per custom uniform (=uniforms.<name>=) | see [[#material-editor-uniforms][the uniform inspector]] |
+
+- References dropped from the Assets panel arrive project-relative and are stored relative to the material's folder (like =LrgMaterial= resolves them); =guid:= references are kept as they are.
+- Each grid gesture (a slider drag, a colour pick, typing in a field) is *one* undo step of the document: the gesture is wrapped in a document group (colours and vectors are sequences, so per-path merging would not be enough). A cancelled gesture (Escape) leaves no step behind.
+- Ctrl+Z / Ctrl+Shift+Z inside the tab undo and redo the material, never the level.
+
+** Instances and overrides
+:PROPERTIES:
+:CUSTOM_ID: material-editor-instances
+:END:
+A material with =parent:= is an instance ([[file:../modules/graphics/material.org::#instances][LrgMaterial instances]]). In its editor:
+
+- Every key the file sets itself is an *override*: its row has the grid's override look (accent bar, bold label); every other row shows the inherited value with the default look. =lrg_editor_material_editor_is_overridden (self, "metallic")= and =lrg_editor_material_editor_list_overrides()= give the same answer (dotted keys such as =base_color=, =textures.albedo=, =render_state.blend=, =uniforms.tint=).
+- *Reset* on a row (the grid's context menu) removes the key, so the value is inherited again: =lrg_editor_material_editor_revert_key()=.
+- *Revert All* (toolbar, shown only for instances, with the override count as its badge) removes every override in one undo step, including emptied =textures:= / =render_state:= / =uniforms:= mappings: =lrg_editor_material_editor_revert_all()=.
+- When the parent is open in another material editor, its *unsaved* state is the parent of the preview, so editing a base shows at once in every open variant. Saving a material drops its cached parse, so instances opened later (and thumbnails) read the new file.
+
+** The uniform inspector
+:PROPERTIES:
+:CUSTOM_ID: material-editor-uniforms
+:END:
+With =shading_model: custom= and a =shader:= that loads, the Uniforms section lists the shader asset's described uniforms ([[file:../modules/graphics/shader-asset.org][LrgShaderAsset]]) in their declaration order:
+
+| =.rshader= uniform | Row | Written as |
+|--------------------+-----+-----------|
+| =float= | slider over its =range= (default 0..max(1, 4 x default)), step 1/100 of the range | ={ type: float, value: 0.5 }= |
+| =int= | spin box over its =range= | ={ type: int, value: 3 }= |
+| =bool= | checkbox | ={ type: int, value: 1 }= |
+| =color=, or =vec3= / =vec4= with =hint: color= | colour picker | ={ type: color, value: [r, g, b, a] }= (=vec3=: three numbers) |
+| =vec2=, =vec3=, =vec4= | vector editor | ={ type: vecN, value: [...] }= |
+| =sampler2D= | texture reference (default: the uniform's default texture) | ={ type: texture, value: path }= |
+| =hint: hidden= | not shown | |
+
+Values the material does not set show the shader's default. Uniform entries of the file that the shader does not describe (or every entry when the shading model is not custom) are still listed, typed by their YAML (a number, 2 / 3 numbers, 4 numbers as a colour, a string as a texture). Changing the shading model or the shader rebuilds the section on the next frame.
+
+** Toolbar
+:PROPERTIES:
+:CUSTOM_ID: material-editor-toolbar
+:END:
+| Chip | Name | Effect |
+|------+------+--------|
+| Assign | =material-assign= | Assigns this material to every selected primitive or mesh node (each through =lrg_editor_material_editor_assign_to_node()=) |
+| Variant | =material-variant= | Writes =<stem>_variant.rmat= next to the file (an instance with no overrides) and opens it |
+| Revert All | =material-revert-all= | Instances only: removes every override (one undo step) |
+
+** Validation
+:PROPERTIES:
+:CUSTOM_ID: material-editor-validation
+:END:
+Besides the document's YAML parse, validation (on open, save, the Validate chip and half a second after an edit) reports, at the line of the key:
+
+- the =LrgMaterial= loader's error (unknown nicks, wrong component counts, a parent that does not resolve, a parent loop) as an error;
+- a texture reference that does not resolve as a warning;
+- custom shading without =shader:= as a warning, a shader that does not exist or does not load as an error.
+
+** Files, variants and assignment
+:PROPERTIES:
+:CUSTOM_ID: material-editor-files
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_material_editor_create (app, path, parent, shading_model, &error)= | Writes a new =.rmat= (=G_IO_ERROR_EXISTS= when it exists): a mid-grey dielectric, or an instance of =parent= |
+| =lrg_editor_material_editor_create_shader (app, path, lit, &error)= | Writes a starter =.rshader= (=tint= colour, =stripes= and =roughness= sliders) and its =.frag= stage, for custom materials |
+| =lrg_editor_material_editor_suggest_variant_path (path)= | =<stem>_variant.rmat= next to =path=, numbered when taken |
+| =lrg_editor_material_editor_create_variant (app, path, dest, &error)= | Writes an instance of =path= with =parent:= relative to the variant's folder; returns the variant's path |
+| =lrg_editor_material_editor_assign_to_node (app, node_ref, path, &error)= | Sets the node visual's =material-ref= (the asset's =guid:= when the project database knows one, else its project-relative path) as one undoable level edit; =G_IO_ERROR_NOT_SUPPORTED= for nodes without a primitive or mesh visual. The viewport's material drop calls it |
+| =lrg_editor_material_editor_render_thumbnail (app, path, size)= | The material on a sphere with the preview lighting (the Assets panel's material tiles); uses the open editor's unsaved state when the file is open |
+
+** Using it from C
+:PROPERTIES:
+:CUSTOM_ID: material-editor-c
+:END:
+#+begin_src c
+g_autoptr(GError)        error = NULL;
+LrgEditorMaterialEditor *ed;
+
+/* a base material and a red variant of it */
+lrg_editor_material_editor_create (app, "materials/crate.rmat", NULL, "lit", &error);
+g_autofree gchar *red = lrg_editor_material_editor_create_variant (app, "materials/crate.rmat", NULL, &error);
+
+ed = lrg_editor_material_editor_open (app, red, &error);
+lrg_editor_material_editor_set_key (ed, "base_color", "[1, 0.1, 0.1, 1]", &error);   /* an override */
+lrg_editor_material_editor_set_key (ed, "render_state.blend", "alpha", &error);
+g_assert_true (lrg_editor_material_editor_is_overridden (ed, "base_color"));
+lrg_editor_material_editor_revert_key (ed, "render_state.blend");                    /* inherit again */
+lrg_editor_material_editor_set_preview_shape (ed, LRG_EDITOR_MATERIAL_PREVIEW_CUBE);
+lrg_editor_data_editor_save (LRG_EDITOR_DATA_EDITOR (ed), &error);
+
+/* put it on a node of the level */
+lrg_editor_material_editor_assign_to_node (app, "Props/Crate", red, &error);
+#+end_src
+
+The preview material is available as =lrg_editor_material_editor_get_material()= (replaced after every edit; do not keep it). =lrg_editor_material_editor_get_preview_shape()= and =lrg_editor_material_editor_get_preview_rotate()= read the preview state, =lrg_editor_material_editor_install (app)= registers the IPC methods (the Assets panel does it at startup).
+
+** IPC methods
+:PROPERTIES:
+:CUSTOM_ID: material-editor-ipc
+:END:
+| Method | Params | Result |
+|--------+--------+--------|
+| =material.open= | =path= | ={path, panel}=; opens or presents the tab |
+| =material.create= | =path=, =parent?=, =shading_model?= (=lit unlit custom=) | ={path}= |
+| =material.create_variant= | =path=, =dest?= | ={path}= of the variant |
+| =material.get= | =path= | every effective value: ={path, name, parent, shading_model, shader, base_color, metallic, roughness, occlusion_strength, normal_scale, emission_color, emission_strength, alpha_cutoff, height_scale, blend_mode, cull_mode, depth_test, depth_write, double_sided, render_queue, textures, uniforms, overrides}= (the open editor's unsaved state when open) |
+| =material.set= | =path=, =key= (dotted =.rmat= key; =blend=, =cull=, =depth_test=, =depth_write=, =double_sided= also work for =render_state.*=), =value= (any JSON, written as YAML) | ={path, key, dirty}=; one undo step; opens the editor when needed |
+| =material.revert= | =path=, =key= | ={path, key, reverted}= |
+| =material.save= | =path= | ={path}= |
+| =material.preview= | =path=, =shape?= (=sphere cube plane=), =rotate?= | ={path, shape, rotate}= |
+| =material.assign= | =node= (guid or name path), =path= | ={node, material}= (the reference written) |
+| =material.list= | | ={editors: [{path, dirty}]}= |
+
+Errors: a missing parameter is =invalid-params=, a missing file or node =not-found=, anything else =failed=. The full protocol is in [[file:ipc-protocol.org::#material-methods][IPC protocol: material, shader and shader graph methods]].
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: material-editor-performance
+:END:
+- The preview renders every frame while its tab is visible, at the panel's size (one mesh and the sky); hidden tabs do not step, so they cost nothing.
+- Re-parsing the material on every edit is cheap (a few hundred bytes of YAML); textures and parents come from the preview's =LrgAssetManager= cache, so a slider drag never touches the disk or re-uploads textures.
+- The environment is baked once per window (32 px cubemap).
+- Thumbnails are rendered one per frame from the Assets panel's =step()= and re-rendered only when the file's modification time changes.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: material-editor-pitfalls
+:END:
+- Colours are written as sequences; an edit rewrites the whole sequence (in block style). Comments on the key are kept by the document, but a flow sequence becomes a block one.
+- An instance's =name:= is never inherited and never counts as an override.
+- A texture missing on disk only warns (the material still loads, the slot draws white).
+- The preview needs a window; headless (tests, =--headless=) the grid, validation and IPC work and the preview draws nothing.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: material-editor-see-also
+:END:
+- [[file:../modules/graphics/material.org][LrgMaterial]] - the =.rmat= format and the runtime API
+- [[file:shader-graph-editor.org][Shader graph editor]] - node-based user shaders
+- [[file:../modules/graphics/shader-asset.org][LrgShaderAsset]] - user shaders and uniform descriptions
+- [[file:data-editors.org][Data editors]] - the document model the editor sits on
+- [[file:editor-app.org::#editor-panel-assets][Assets panel]] and [[file:editor-app.org::#editor-panel-code][Code editor]]

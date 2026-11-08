@@ -1,0 +1,229 @@
+#+title: Lighting Bake in the Editor
+#+description: Baking lightmaps and probe grids from lrgeditor in 0.9.0: the Lighting panel (settings, async bake with phase progress and cancel, results, atlas pages, light at cursor, save and clear), static lighting rows in the inspector, probe-volume nodes, the viewport showing baked lighting while authoring, the bake.* IPC methods, lrgeditorctl and MCP
+#+authors: Zach Podbielniak
+#+categories: libregnum editor lighting lightmap probes bake
+#+created: 2026-11-07T00:00:00-05:00
+#+updated: 2026-11-07T00:00:00-05:00
+#+version: 0.9.0
+
+* Lighting Bake in the Editor
+:PROPERTIES:
+:CUSTOM_ID: editor-bake
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Lighting Bake
+#+end_quote
+
+The lighting bake computes the light that bounces around the static parts of a 3D level once, offline, and stores it as lightmaps (=.rlightmap= with =.hdr= pages, [[file:../modules/lighting/lightmap3d.org][LrgLightmap3D]]) and boxes of spherical-harmonic light probes (=.rprobes=, [[file:../modules/lighting/probe-grid.org][LrgProbeGrid]]). The engine side (the data, the lit shader and the CPU path tracer, [[file:../modules/lighting/lightmap-baker.org][LrgLightmapBaker]]) is described in the [[file:../guides/lighting-bake.org][Lighting bake guide]]. This page is about doing it from =lrgeditor=: marking what takes part, placing probe volumes, baking, looking at the result and keeping it with the level.
+
+| Tool | Where | What it edits | Source |
+|------+-------+---------------+--------|
+| Lighting panel | Tab next to the Inspector (View > Panels > Lighting) | the level's =lighting:= block (settings and references), the bake files | =src/editor/ui/lrg-editor-bake-panel.{h,c}= |
+| Inspector "Lighting" rows | Inspector > Visual, on primitives, meshes and lights | the node's =static_lighting=, =lightmap_scale=, =bake_mode= params | =src/editor/lrg-editor-node-source.c= |
+| Probe volumes | Create > Probe Volume; a node kind | the node's =extents_*=, =spacing=, =resolution= params | =src/level/lrg-node-visual.h=, =src/level/lrg-level-instantiate.c= |
+| Probe volume gizmo | Viewport, selected probe volume | the extents | =src/editor/ui/lrg-editor-gizmo-paint.c= |
+| Baked lighting in the viewport | Every viewport while authoring | nothing (a view; the eye chip toggles it) | =src/editor/ui/lrg-editor-scene-renderer.c= |
+| =bake.*= IPC, =lrgeditorctl bake=, MCP =bake_*= | scripts and agents | as the panel | the panel file, =src/editorctl/= |
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: editor-bake-concepts
+:END:
+- *Static geometry.* Only nodes whose visual has =static_lighting: true= (primitives and mesh assets) take part: they block and bounce light and get a lightmap entry, keyed by the node's GUID. =lightmap_scale= scales their lightmap resolution relative to the bake's =texels_per_unit=; 0 keeps them out of the atlas (they are then lit by probes but still cast and bounce).
+- *Light modes.* A light's =bake_mode= is =realtime= (ignored by the bake), =mixed= (its bounce is baked, its direct light stays realtime) or =baked= (direct and bounce baked into lightmaps; the realtime renderer skips it on lightmapped draws, but still lights dynamic objects with it).
+- *Probe volumes.* A =probe-volume= node is an axis-aligned box of probes. The bake fills one =.rprobes= per volume; at runtime everything inside the box that has no lightmap entry (characters, moving props, =lightmap_scale: 0= objects) takes its indirect light from the probes. Without any volume and with =auto_probe_volume= on, the baker covers the static geometry with one box.
+- *The =lighting:= block.* =lightmap:= and =probes:= name the bake files (relative to the level file, or =guid:= references); =settings:= holds the bake settings. The panel edits all of it with undo; the bake files themselves are not undone (undo only drops the references).
+- *What you see.* While authoring, the viewport applies the level's bake the way a game does (the same =LrgWorld3DRenderer= per-item binding), so a bake shows up at once; Play shows it through the runtime world.
+
+** The workflow
+:PROPERTIES:
+:CUSTOM_ID: editor-bake-workflow
+:END:
+1. Select static geometry and tick *Static lighting* in the inspector's Lighting group; raise *Lightmap scale* on surfaces close to the camera, set it to 0 on small clutter.
+2. Select each light and set *Bake mode*: =baked= for static fill lights and lamps, =mixed= for the sun and lights whose shadows must follow moving objects.
+3. Create > Probe Volume and size it over the playable space with the gizmo's extent handles (or the Extents rows). *Spacing* 0 uses the panel's probe spacing.
+4. Open the Lighting panel, set the settings for a preview bake (=texels_per_unit= 4, =samples= 32), press *Bake*. The bar shows the phase (collecting the scene, tracing lightmaps, denoising and stitching, baking probes) and the chip turns into *Cancel*.
+5. When it finishes the viewport shows the result. With *auto save* (the default) and a level that has a file, the panel writes =<level>.rlightmap= (and its =.hdr= pages) and =<level>-<n>.rprobes= next to the level and points =lighting:= at them, as one undo step. An unsaved level keeps the result in memory (status *Unsaved*) until *Save*.
+6. Iterate, then raise =samples= (256 .. 1024) and =texels_per_unit= for the final bake. Save the level: the references are part of it.
+
+#+begin_src yaml
+# what the panel writes into the .rlevel
+lighting:
+  lightmap: room.rlightmap
+  probes: [room-0.rprobes]
+  settings: { texels_per_unit: 8, samples: 256, bounces: 2, probe_spacing: 1.5 }
+nodes:
+  - name: Floor
+    visual:
+      kind: primitive
+      primitive: cube
+      params: { static_lighting: true, lightmap_scale: 1.0 }
+  - name: Lamp
+    transform: { location: [0.0, 2.5, 0.0] }
+    visual:
+      kind: light
+      params: { light_type: point, range: 8.0, bake_mode: baked }
+  - name: Probes
+    transform: { location: [0.0, 1.5, 0.0] }
+    visual:
+      kind: probe-volume
+      params: { extents_x: 3.0, extents_y: 1.5, extents_z: 3.0, spacing: 1.5 }
+#+end_src
+
+** The Lighting panel
+:PROPERTIES:
+:CUSTOM_ID: editor-bake-panel
+:END:
+Top to bottom:
+
+- *Header.* The title, a status pill (=Not baked=, =Baking=, =Unsaved=, =Baked=, =Cancelled=, =Bake failed=), the *Bake* / *Cancel* chip, *Save* (enabled while a result is not on disk), the eye chip (show or hide the baked lighting in the viewports) and *Clear*.
+- *Progress.* While a bake runs: a progress bar (0 .. 1 over all phases) and the phase with its percentage; a failed bake shows the error here.
+- *Summary.* Four tiles: objects, texels, probes and seconds of the last bake (or the entries and probes of the level's saved bake).
+- *Atlas.* The current atlas page, tone mapped, with its size; the arrows step through the pages. Each object's chart is a block of the page; dark gutters between charts are normal.
+- *Light at cursor.* *Sample* evaluates the bake at the surface under the active viewport's centre (aim with the viewport camera): a swatch and the linear irradiance / pi values, the number a lightmap texel there would hold. It runs the baker's estimator at one point (=lrg_lightmap_baker_evaluate()=) with the current settings, so it also works before baking.
+- *Settings.* A property grid over =LrgLightmapBakeSettings=: texels per unit, samples, bounces, max lightmap size, padding, denoise, probe spacing, probe samples, auto probe volume, seed, threads, light radius, sun angle (see [[file:../guides/lighting-bake.org::#lighting-bake-settings][Bake settings]]). Every change is written into =lighting: settings:= as one undo step; a slider drag is one step.
+
+Actions (menu, palette, shortcuts editor): =bake.show= (View), =bake.start=, =bake.cancel=, =bake.save=, =bake.clear= (Level), =bake.toggle-preview= (View, checked while the viewport shows baked lighting).
+
+*** How a bake collects the level
+:PROPERTIES:
+:CUSTOM_ID: editor-bake-collect
+:END:
+The panel instantiates the open level into a private =LrgWorld3D= (=lrg_level_instantiate_3d_with_base_dir()= with the level's directory, the play session's rule), gives every static mesh renderer the =GrlModel= the viewport draws (so the baker unwraps exactly that geometry; without a window it hands the resolved file to the baker, which reads glTF headless), steps the world once so lights register, drops the world's old lightmap and grids, and passes it to an =LrgLightmapBaker= with the panel's settings (=lrg_lightmap_baker_add_world()=). Each visible probe-volume node becomes a volume (=lrg_lightmap_baker_add_probe_volume()= with =lrg_node_visual_get_probe_volume()=). The bake runs on the baker's thread pool (=lrg_lightmap_baker_bake_async()=); progress is delivered on the main context, so the editor stays interactive. The baker's scene stays with the panel for *Light at cursor*.
+
+*** Saving, undo and clearing
+:PROPERTIES:
+:CUSTOM_ID: editor-bake-save
+:END:
+=lrg_editor_bake_panel_save()= writes the files and replaces =lighting: lightmap:= / =probes:= (the settings stay) in one command labelled "Bake Lighting". References are relative to the level's directory when the files are inside it. Undo restores the previous references (the viewport goes back to the previous bake or to realtime lighting); redo puts the new ones back. The files remain on disk either way: a later bake overwrites them. *Clear* drops the references and the unsaved result (one undo step, "Clear Baked Lighting"); the settings and files stay.
+
+The undo target is a private object whose one property is the whole =lighting:= block as a string, recorded as a set-property command; it holds the level, so undo works even after the panel is closed.
+
+** Inspector rows
+:PROPERTIES:
+:CUSTOM_ID: editor-bake-inspector
+:END:
+The visual section lists these rows even when the param is unset (with their default), in a *Lighting* group:
+
+| Node kind | Row | Param | Type / range | Runtime property |
+|-----------+-----+-------+--------------+------------------|
+| primitive, mesh asset | Static lighting | =static_lighting= | boolean, default false | =LrgMeshRendererComponent:static-lighting= |
+| primitive, mesh asset | Lightmap scale | =lightmap_scale= | 0 .. 16, default 1 | =LrgMeshRendererComponent:lightmap-scale= |
+| light | Bake mode | =bake_mode= | =realtime=, =mixed=, =baked= | =LrgLightComponent:bake-mode= |
+
+Probe volumes list *Extents X/Y/Z* (half sizes, default 5), *Spacing* (0 = the panel's probe spacing) and *Resolution* (probes per axis, 0 = from the spacing) under Parameters.
+
+** Probe volumes
+:PROPERTIES:
+:CUSTOM_ID: editor-bake-probe-volumes
+:END:
+=LRG_NODE_VISUAL_PROBE_VOLUME= (YAML kind =probe-volume=, Create > Probe Volume, hierarchy icon: a lattice of dots in a box) is a box of probes centred on the node, aligned with the world axes (the node's rotation and scale are ignored, like a reflection probe). Its layout comes from =lrg_node_visual_get_probe_volume()=: bounds = position ± extents; probes per axis = =resolution= when set (clamped 2 .. 64), else floor (2 x extent / spacing) + 1 (the baker's rule), with spacing = the node's =spacing=, else the level's =probe_spacing= setting, else 2.
+
+- *Viewport.* The box is drawn as a wire box and each probe as a small cube (up to 4096 per volume), coloured by the baked grid's irradiance towards +Y when the level has a grid baked for that box (grey before a bake, or when the layout changed since). Probes hold indirect light only, so the colours are shown with a gain.
+- *Gizmo.* Selected, it has the three extent handles of the reflection-probe gizmo (=LRG_EDITOR_VOLUME_HANDLE_EXTENT_X= .. =_Z=, dragging writes =extents_*= as one undo step).
+- *Runtime.* =lrg_level_instantiate_3d()= turns each probe-volume node into an unbaked =LrgProbeGrid= on the world (every probe invalid, so renderers ignore it), which =lrg_lightmap_baker_add_world()= bakes as a volume; a game that bakes at runtime therefore needs no extra code. When the level already lists baked grids (=lighting: probes:=) the volumes are not added: the baked grids stand for them.
+
+** Baked lighting in the viewport
+:PROPERTIES:
+:CUSTOM_ID: editor-bake-viewport
+:END:
+While authoring, =LrgEditorSceneRenderer= keeps a private =LrgWorld3D= holding the level's lightmap and probe grids (loaded from the =lighting:= references, or the panel's unsaved result through =lrg_editor_scene_renderer_set_baked_override()=). Every geometry item of the node walk gets a bare =LrgEntity3D= of that world carrying the node's GUID, which is all the runtime renderer needs to bind the item's lightmap entry, else the probe grid around its centre. The world reloads when the references or the level's directory change, or after =lrg_editor_scene_renderer_reload_lighting()= (files rewritten under the same names). Light nodes pass their =bake_mode= on, so =baked= lights are not added twice on lightmapped geometry. =lrg_editor_scene_renderer_set_show_baked()= (the eye chip, =bake.preview=, action =bake.toggle-preview=) turns the bake off to compare with realtime lighting. =lrg_editor_scene_renderer_get_baked_lightmap()= and =lrg_editor_scene_renderer_get_baked_probe_grids()= return what is applied. The panel reaches the app's renderer through =lrg_editor_app_get_scene_renderer()=.
+
+Primitives and glTF models without a second UV set draw the exact mesh the baker unwrapped when they are lightmapped (the renderer fix of 0.9.0 M3, see [[file:../guides/lighting-bake.org::#lighting-bake-pitfalls][the guide]] and the [[file:../guides/rendering-pipeline.org][rendering pipeline]]), so lightmaps look the same in the viewport, in Play and in the game.
+
+** IPC
+:PROPERTIES:
+:CUSTOM_ID: editor-bake-ipc
+:END:
+Registered by the panel; see [[file:ipc-protocol.org::#ipc-bake][IPC Protocol > Lighting bake methods]] for every parameter and result. =bake.get=, =bake.set=, =bake.start=, =bake.progress=, =bake.cancel=, =bake.save=, =bake.clear=, =bake.evaluate=, =bake.preview=, =bake.show=.
+
+#+begin_src sh
+lrgeditorctl bake set texels_per_unit 4
+lrgeditorctl bake set samples 64
+lrgeditorctl bake start --wait          # prints bake.get when done; exits 1 on failure or cancel
+lrgeditorctl bake evaluate 0 0.01 0 0 1 0
+lrgeditorctl bake preview off           # compare with realtime lighting
+lrgeditorctl bake clear
+#+end_src
+
+MCP tools: =bake_get= and =bake_progress= and =bake_evaluate= (read-only), =bake_set=, =bake_start=, =bake_cancel=, =bake_save=, =bake_clear= (destructive), =bake_preview=, =bake_show=.
+
+** C API
+:PROPERTIES:
+:CUSTOM_ID: editor-bake-api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_bake_panel_new (app)= | creates the panel, its actions and =bake.*= methods (the window does this) |
+| =lrg_editor_bake_panel_find (app)= | the app's panel |
+| =lrg_editor_bake_panel_get_settings (panel)= | the =LrgLightmapBakeSettings= mirroring =lighting: settings:= (setting a property is an undoable edit) |
+| =lrg_editor_bake_panel_get_grid (panel)= | its property grid |
+| =lrg_editor_bake_panel_set_setting (panel, key, value, &error)= | one setting, one undo step (=_= or =-= names; clamped) |
+| =lrg_editor_bake_panel_reset_settings (panel)= | drops every setting key |
+| =lrg_editor_bake_panel_bake (panel, &error)= | starts an async bake; =G_IO_ERROR_BUSY= while one runs, an error when nothing is static |
+| =lrg_editor_bake_panel_cancel (panel)= | cancels it |
+| =lrg_editor_bake_panel_get_baking=, =lrg_editor_bake_panel_get_progress=, =lrg_editor_bake_panel_get_phase=, =lrg_editor_bake_panel_get_error= | state (=idle prepare lightmaps postprocess probes done cancelled failed=) |
+| =lrg_editor_bake_panel_get_lightmap=, =lrg_editor_bake_panel_get_probe_grids=, =lrg_editor_bake_panel_has_unsaved= | the last result |
+| =lrg_editor_bake_panel_set_auto_save=, =lrg_editor_bake_panel_get_auto_save= | save finished bakes next to saved levels (default on) |
+| =lrg_editor_bake_panel_save (panel, dir, &error)= | writes the files and the references (one undo step) |
+| =lrg_editor_bake_panel_clear (panel)= | drops the references and the unsaved result |
+| =lrg_editor_bake_panel_evaluate (panel, p, n, rgb)= | the light at a point |
+| =lrg_editor_bake_panel_sample_cursor (panel, p, n, rgb)= | the light under the active viewport's centre |
+| =lrg_editor_bake_panel_set_page=, =lrg_editor_bake_panel_get_page= | the atlas page the preview shows |
+| =LRG_EDITOR_BAKE_PANEL_ID= | the dock id, ="bake"= |
+| =lrg_node_visual_get_probe_volume (visual, world, spacing, min, max, n)= | a probe volume's box and probe counts |
+| =lrg_editor_scene_renderer_set_show_baked=, =lrg_editor_scene_renderer_get_show_baked= | baked lighting in the authoring view |
+| =lrg_editor_scene_renderer_set_baked_override= | show an unsaved bake |
+| =lrg_editor_scene_renderer_reload_lighting= | reload the bake files |
+| =lrg_editor_scene_renderer_get_baked_lightmap=, =lrg_editor_scene_renderer_get_baked_probe_grids= | what the view applies |
+
+#+begin_src C
+/* bake the open level from a plugin or a test, then keep it */
+static void
+on_done (LrgEditorBakePanel *panel)
+{
+	g_autoptr(GError) error = NULL;
+
+	if (lrg_editor_bake_panel_has_unsaved (panel) && !lrg_editor_bake_panel_save (panel, NULL, &error))
+		g_warning ("bake not saved: %s", error->message);
+}
+
+LrgEditorBakePanel *panel = lrg_editor_bake_panel_find (app);
+g_autoptr(GError)   error = NULL;
+
+lrg_editor_bake_panel_set_setting (panel, "samples", 256, NULL);
+if (!lrg_editor_bake_panel_bake (panel, &error))
+	g_warning ("%s", error->message);
+/* the bake runs on worker threads; poll get_baking () from a timeout or
+ * wait for bake.progress over IPC, then call on_done () */
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: editor-bake-performance
+:END:
+- The bake runs on all cores (=threads= 0) off the main thread; the editor redraws while it runs. Bake time grows with texels x samples x (bounces + lights + 2): iterate at =texels_per_unit= 2 .. 4 and =samples= 16 .. 64 (a room bakes in well under a second), raise both for the final bake.
+- The viewport loads the =.rlightmap= pages once per change of references; drawing a lightmapped primitive or model costs the same as before (one cached, uploaded mesh per primitive shape and size, and per model).
+- Light at cursor builds the baker's scene once (BVH) and then costs one texel estimate per sample.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: editor-bake-pitfalls
+:END:
+- "Nothing to bake": no node has =static_lighting= on.
+- Moving, scaling or re-meshing static geometry invalidates its bake (the viewport keeps showing the old lightmap until the next bake). Duplicated nodes get new GUIDs and have no entry until the next bake (they fall back to probes).
+- Probe dots stay grey after a bake when the volume's layout changed since (extents, spacing or resolution): bake again.
+- The level must be saved for auto save; otherwise use *Save* with a directory (=bake.save dir=), or save the level first.
+- Undo does not delete bake files; delete stale =.rlightmap= / =.hdr= / =.rprobes= files by hand when a level is renamed.
+- Mesh assets bake the geometry the viewport loaded; a model whose file changed needs a reload (the asset panel's reimport) before baking.
+- The faint straight lines sometimes visible on large walls after a bake come from the realtime part of the lighting (a =mixed= light's shadow-map and cone edges), not from lightmap charts: compare with the eye chip and with the light's =bake_mode= set to =baked=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: editor-bake-see-also
+:END:
+- [[file:../guides/lighting-bake.org][Lighting bake guide]] - modes, settings, the runtime path
+- [[file:../modules/lighting/lightmap-baker.org][LrgLightmapBaker]], [[file:../modules/lighting/lightmap3d.org][LrgLightmap3D]], [[file:../modules/lighting/probe-grid.org][LrgProbeGrid]], [[file:../modules/graphics/uv-unwrap.org][LrgUvUnwrap]]
+- [[file:environment.org][Level Look]] - the environment (sky) the bake samples
+- [[file:yaml-format.org::#lighting][.rlevel lighting: block]]
+- [[file:lrgeditorctl.org::#verbs-0-9-0-m34][lrgeditorctl bake]]

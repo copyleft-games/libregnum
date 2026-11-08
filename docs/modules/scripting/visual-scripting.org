@@ -1,0 +1,94 @@
+#+title: Visual Scripting
+#+description: The .rvscript program format, the node catalogue and LrgScriptingGraph
+#+authors: Zach Podbielniak
+#+categories: libregnum scripting
+#+created: 2026-11-07T18:40:00-05:00
+#+updated: 2026-11-07T18:40:00-05:00
+#+version: 1.0
+
+* Visual Scripting
+:PROPERTIES:
+:CUSTOM_ID: visual-scripting
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Scripting]]* > Visual Scripting
+#+end_quote
+
+A visual script is an =LrgVscriptProgram= stored as a =.rvscript= YAML file (format version =LRG_VSCRIPT_FORMAT_VERSION=, which is 1). The same file is a node graph or a stack of blocks: =view= is =LRG_VSCRIPT_VIEW_GRAPH= or =LRG_VSCRIPT_VIEW_BLOCKS=. The editor opens either view of the one document. The runtime is =LrgScriptingGraph=, a =LrgScripting= backend that loads the program text and dispatches events.
+
+A program holds one main graph and any number of named subgraphs. A graph holds nodes, links and comment frames. A link runs from an output pin of one node to an input pin of another. Pins are either exec pins (the order things happen: an event's =then= output leads to the next statement) or typed data pins (values pulled from pure nodes, from literals, or from the cached outputs of statements). The main graph's name is the empty string. =lrg_vscript_program_get_graph()= with =NULL= or =""= returns it, and so does =lrg_vscript_program_get_main()=.
+
+** Files and errors
+:PROPERTIES:
+:CUSTOM_ID: files
+:END:
+
+=lrg_vscript_program_new()= is an empty program. =lrg_vscript_program_new_from_data()= parses text (length -1 means nul-terminated). =lrg_vscript_program_new_from_file()= reads a path. Failures are =LRG_VSCRIPT_ERROR= (=lrg_vscript_error_quark()=, =lrg_vscript_error_get_type()=): =PARSE= (not YAML or the wrong shape), =INVALID= (a bad value or reference), =IO=, =NOT_FOUND= (no such node, pin, graph or variable), =RUNTIME=, =BUDGET= (an event used more than =LRG_VSCRIPT_DEFAULT_STEP_BUDGET= steps, 100000, unless the program set another budget) and =UNSUPPORTED= (this build has no GObject-Introspection runtime, or a GI argument type that does not map). Parse errors name the key path, for example =nodes[2].x=.
+
+=lrg_vscript_program_to_data()= writes the canonical text. A load then a save of a file that was already saved writes the same bytes. Keys the format does not know are kept and written back. =lrg_vscript_program_save_to_file()= writes that text. =lrg_vscript_program_duplicate()= is a deep copy.
+
+** Program fields
+:PROPERTIES:
+:CUSTOM_ID: program-fields
+:END:
+
+=lrg_vscript_program_get_name()= / =lrg_vscript_program_set_name()= and =lrg_vscript_program_get_description()= / =lrg_vscript_program_set_description()= are the document title and blurb. =lrg_vscript_program_get_view()= / =lrg_vscript_program_set_view()= select the editor (=lrg_vscript_view_get_type()=). =lrg_vscript_program_get_seed()= / =lrg_vscript_program_set_seed()= seed =math.random= and anything else that draws from the program stream. =lrg_vscript_program_get_step_budget()= / =lrg_vscript_program_set_step_budget()= cap one event dispatch. =lrg_vscript_program_get_fixed_step()= / =lrg_vscript_program_set_fixed_step()= are the seconds =event.fixed_update= accumulates. =lrg_vscript_program_get_base_dir()= / =lrg_vscript_program_set_base_dir()= are the directory relative paths inside the program resolve against.
+
+** Graphs, nodes, links, comments
+:PROPERTIES:
+:CUSTOM_ID: graphs
+:END:
+
+=lrg_vscript_program_add_subgraph()= creates a named graph with =subgraph.input= and =subgraph.output= nodes. =lrg_vscript_program_remove_subgraph()= drops one. =lrg_vscript_program_dup_subgraph_names()= lists them (transfer full, free with =g_strfreev=). =lrg_vscript_graph_get_name()= is =""= for the main graph.
+
+=lrg_vscript_graph_get_n_nodes()=, =lrg_vscript_graph_get_nth_node()= and =lrg_vscript_graph_get_node()= read nodes. =lrg_vscript_graph_create_node()= adds a catalogue kind at =x=, =y= (transfer none; =NULL= id allocates one from the kind). =lrg_vscript_node_new()= builds a node that =lrg_vscript_graph_add_node()= then inserts. =lrg_vscript_graph_remove_node()= drops the node and every link that touches it. =lrg_vscript_graph_rename_node()= changes an id and rewrites links. =lrg_vscript_graph_dup_free_id()= is a free id for a prefix.
+
+=lrg_vscript_node_get_id()= and =lrg_vscript_node_get_kind()= identify a node. =lrg_vscript_node_get_position()= / =lrg_vscript_node_set_position()= are the canvas point. Parameters are a vardict: =lrg_vscript_node_get_param()=, =lrg_vscript_node_get_param_string()=, =lrg_vscript_node_set_param()= (a floating =GVariant= is consumed; =NULL= removes the key) and =lrg_vscript_node_dup_param_keys()=. Literal inputs of unlinked data pins use =lrg_vscript_node_get_input()=, =lrg_vscript_node_set_input()= and =lrg_vscript_node_dup_input_keys()=. A linked input ignores its literal.
+
+Pins are =LrgVscriptPin= (=lrg_vscript_pin_get_type()=, =lrg_vscript_pin_new()=, =lrg_vscript_pin_copy()=, =lrg_vscript_pin_free()=). Direction is =LRG_VSCRIPT_PIN_INPUT= or =LRG_VSCRIPT_PIN_OUTPUT= (=lrg_vscript_pin_direction_get_type()=). =lrg_vscript_program_dup_node_pins()= returns the pins of one node, inputs first, in a =GPtrArray= that frees with =lrg_vscript_pin_free=. Pins depend on the kind and on the node's parameters, so they are computed, not stored as the file's source of truth.
+
+Links are =LrgVscriptLink= (=lrg_vscript_link_get_type()=, =lrg_vscript_link_new()=, =lrg_vscript_link_copy()=, =lrg_vscript_link_free()=). =lrg_vscript_graph_get_links()= is transfer none. =lrg_vscript_graph_add_link()= inserts without checking pins. =lrg_vscript_program_connect()= checks that both pins exist, that exec meets exec and data meets a compatible data type, that the link does not close a data loop, and it replaces the previous link into a data input or out of an exec output. =lrg_vscript_graph_remove_link()= takes the four ids. =lrg_vscript_graph_find_link_into()= and =lrg_vscript_graph_find_link_from()= search.
+
+Comments are =LrgVscriptComment= (=lrg_vscript_comment_get_type()=, =lrg_vscript_comment_new()=, =lrg_vscript_comment_copy()=, =lrg_vscript_comment_free()=). Public fields are =id=, =text=, =x=, =y=, =width=, =height= and =color=. =lrg_vscript_graph_add_comment()= copies the struct and returns the id (transfer none); free the original. =lrg_vscript_graph_get_comments()=, =lrg_vscript_graph_get_comment()= and =lrg_vscript_graph_remove_comment()= complete the set.
+
+A subgraph's interface is =lrg_vscript_graph_get_interface()= (transfer none; the main graph has none). =lrg_vscript_graph_set_interface_pin()= adds a pin, or removes it when the type is =NULL=.
+
+** Catalogue
+:PROPERTIES:
+:CUSTOM_ID: catalogue
+:END:
+
+Kinds come from a fixed table. =lrg_vscript_node_types_list()= returns the type strings. =lrg_vscript_node_type_exists()=, =lrg_vscript_node_type_get_title()=, =lrg_vscript_node_type_get_category()=, =lrg_vscript_node_type_get_description()=, =lrg_vscript_node_type_is_event()= and =lrg_vscript_node_type_is_pure()= describe one kind.
+
+Events (=Events=): =event.start= (once, when the script loads; output =then=), =event.update= and =event.fixed_update= (exec =then= plus =dt=), =event.custom= (matched by name), =event.signal=, =event.input=. Flow: =flow.branch= (exec in, bool =condition=, exec =true= and =false=), =flow.sequence=, =flow.while=, =flow.for=, =flow.for_each=, =flow.delay=, =flow.wait_frames=. Values: =value.bool=, =value.int=, =value.float=, =value.string=, =value.list=, =value.self=. Variables: =var.get= (pure) and =var.set=. Math is pure (=math.add= is =a= and =b= in, =result= out, and the rest of the arithmetic, trigonometry, clamp, lerp and seeded random family follows the same shape). Logic and comparison nodes are pure and their result is a bool. =debug.log= takes exec, a =text= value of any type, and continues on =then=.
+
+GObject-Introspection calls are catalogue kinds that name a loaded function, method or constructor. =lrg_vscript_gi_available()= is true when this build can search typelibs. =lrg_vscript_gi_search()= returns strings =Namespace.Type.method= or =Namespace.function= from the loaded repositories (GLib, GObject, Gio, Libregnum, Graylib). A build without the GI runtime reports unavailable and does not invent results.
+
+** Variables and validation
+:PROPERTIES:
+:CUSTOM_ID: variables
+:END:
+
+=lrg_vscript_program_set_variable()= sets a name, a type (=bool=, =int=, =float=, =string=, =object=, =list=, =any=) and a default. A floating default is consumed; =NULL= stores the zero of that type. =lrg_vscript_program_remove_variable()= drops one. =lrg_vscript_program_dup_variable_names()=, =lrg_vscript_program_get_variable_type()= and =lrg_vscript_program_get_variable_default()= (transfer none) read them back.
+
+=lrg_vscript_program_validate()= returns true when no issue has error severity. The optional out-parameter is a =GPtrArray= of =LrgVscriptIssue= (=lrg_vscript_issue_get_type()=, =lrg_vscript_issue_copy()=, =lrg_vscript_issue_free()=) with free func =lrg_vscript_issue_free=. Fields are severity (=lrg_vscript_severity_get_type()=: info, warning, error), graph, node (nullable), path and message.
+
+** Running a program
+:PROPERTIES:
+:CUSTOM_ID: runtime
+:END:
+
+=lrg_scripting_graph_new()= is the backend. =lrg_scripting_load_string()= on it parses the text, adopts the program and dispatches =event.start=. Do not dispatch start a second time. =load_string= leaves the instance path =NULL=, so path breakpoints do not fire; =lrg_scripting_load_file()= sets the path that =lrg_scripting_graph_get_path()= returns. =lrg_scripting_call_function()= with ="update"= takes one double =dt= (otherwise the fixed step), advances the clock, resumes fibers, and dispatches =event.update= and =event.fixed_update= as the clock requires. A custom event name matches =event.custom=. A paused graph returns false with the message =paused=.
+
+=lrg_scripting_graph_get_program()= is the live program (transfer none). =lrg_scripting_graph_dup_log()= is the =debug.log= lines, oldest first. =lrg_scripting_graph_get_steps()= is the step count of the last dispatch, not a running total. =lrg_scripting_graph_get_hit()= is how many times that node id has executed. =lrg_scripting_graph_dup_active()= is the node ids executed in the recent window. =lrg_scripting_graph_dup_variables()= is an =a{sv}= of the current variables (transfer full). Object-typed values are omitted. Hash order is undefined. =lrg_scripting_graph_dup_instances()= is every live graph (transfer full; unref each =LrgScriptingGraph=).
+
+=lrg_scripting_graph_set_breakpoint()= writes the static table (a =NULL= graph means the path and node id) and also updates a live instance whose path matches. =lrg_scripting_graph_get_breakpoint()= reads that flag. =lrg_scripting_graph_is_paused()= and =lrg_scripting_graph_get_paused_node()= describe the stop. =lrg_scripting_graph_continue()= resumes.
+
+The interpreter does not read the wall clock. Pass =dt= yourself. =math.random= draws from the program seed, so the same program and the same calls produce the same log.
+
+** Symbol index
+:PROPERTIES:
+:CUSTOM_ID: symbol-index
+:END:
+
+Every public function of =lrg-vscript-program.h=, =lrg-scripting-graph.h=, =lrg-editor-vscript-editor.h= and =lrg-editor-blocks-editor.h= is named in this page or in [[file:../../editor/visual-scripting.org][the editor page]]. The editor entry points (=lrg_editor_vscript_editor_new=, =lrg_editor_vscript_editor_install=, =lrg_editor_vscript_editor_open=, =lrg_editor_vscript_editor_create=, =lrg_editor_vscript_editor_get_program=, =lrg_editor_vscript_editor_get_canvas=, =lrg_editor_vscript_editor_get_blocks=, =lrg_editor_blocks_editor_new=) are specified there. The blocks type is a =GObject= stub; the blocks view of a =.rvscript= is =LrgEditorVscriptEditor=, not that stub.

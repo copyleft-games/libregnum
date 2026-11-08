@@ -2,120 +2,79 @@
 :PROPERTIES:
 :CUSTOM_ID: lrgparticle
 :END:
-=LrgParticle= is a GBoxed type representing a single particle's state including position, velocity, lifetime, color, and size.
+=LrgParticle= (=particles/lrg-particle.h=) is a plain boxed struct holding one particle's state: position, velocity, colour, size, rotation, lifetime and, since 0.9.0, the start values and identity the module stack uses. Systems keep particles in a fixed pool (=LrgParticlePool=) and hand them to emitters, forces, modules, renderers and =lrg_particle_system_foreach_active()= callbacks by pointer; read and write the fields directly.
 
 ** Structure
 :PROPERTIES:
 :CUSTOM_ID: structure
 :END:
 #+begin_src C
-typedef struct _LrgParticle LrgParticle;
-
 struct _LrgParticle
 {
-    /* Position */
-    gfloat x, y, z;
+    gfloat   position_x, position_y, position_z;   /* world space */
+    gfloat   velocity_x, velocity_y, velocity_z;   /* units per second */
+    gfloat   color_r, color_g, color_b, color_a;   /* 0 .. 1 */
+    gfloat   size;                                 /* world units (billboard side, mesh scale) */
+    gfloat   rotation;                             /* radians */
+    gfloat   rotation_velocity;                    /* radians per second */
+    gfloat   life;                                 /* seconds left */
+    gfloat   max_life;                             /* seconds at birth */
+    gfloat   age;                                  /* seconds since birth */
+    gboolean alive;
 
-    /* Velocity */
-    gfloat vx, vy, vz;
-
-    /* Lifetime */
-    gfloat life;         /* Current life remaining */
-    gfloat max_life;     /* Total lifetime */
-
-    /* Appearance */
-    guint8 r, g, b, a;   /* Color */
-    gfloat size;         /* Size multiplier */
-    gfloat rotation;     /* Rotation in radians */
-    gfloat angular_vel;  /* Angular velocity */
+    /* module stack data (0.9.0) */
+    gfloat   start_size;                           /* size after the init stage */
+    gfloat   start_color_r, start_color_g, start_color_b, start_color_a;
+    gfloat   start_rotation_velocity;
+    gfloat   random;                               /* per-particle number in [0, 1) from the system's generator */
+    guint32  id;                                   /* spawn serial in its system, from 1 */
+    guint32  collisions;                           /* hits so far */
 };
 #+end_src
+
+The over-life modules compute values from the start fields and the normalized age (=age / max_life=), so they never compound; ribbons key trails on =id= and connect particles in its order; the mesh renderer derives a stable tumble axis from =random=.
 
 ** Functions
 :PROPERTIES:
 :CUSTOM_ID: functions
 :END:
-*** Creation
-:PROPERTIES:
-:CUSTOM_ID: creation
-:END:
-#+begin_src C
-LrgParticle *lrg_particle_new (void);
-LrgParticle *lrg_particle_copy (const LrgParticle *particle);
-void lrg_particle_free (LrgParticle *particle);
-#+end_src
-
-*** State Management
-:PROPERTIES:
-:CUSTOM_ID: state-management
-:END:
-#+begin_src C
-void lrg_particle_reset (LrgParticle *particle);
-gboolean lrg_particle_is_alive (const LrgParticle *particle);
-gfloat lrg_particle_get_normalized_life (const LrgParticle *particle);
-#+end_src
-
-*** Properties
-:PROPERTIES:
-:CUSTOM_ID: properties
-:END:
-#+begin_src C
-/* Position */
-void lrg_particle_get_position (const LrgParticle *particle,
-                                gfloat *x, gfloat *y, gfloat *z);
-void lrg_particle_set_position (LrgParticle *particle,
-                                gfloat x, gfloat y, gfloat z);
-
-/* Velocity */
-void lrg_particle_get_velocity (const LrgParticle *particle,
-                                gfloat *vx, gfloat *vy, gfloat *vz);
-void lrg_particle_set_velocity (LrgParticle *particle,
-                                gfloat vx, gfloat vy, gfloat vz);
-
-/* Color */
-void lrg_particle_get_color (const LrgParticle *particle,
-                             guint8 *r, guint8 *g, guint8 *b, guint8 *a);
-void lrg_particle_set_color (LrgParticle *particle,
-                             guint8 r, guint8 g, guint8 b, guint8 a);
-
-/* Size */
-gfloat lrg_particle_get_size (const LrgParticle *particle);
-void lrg_particle_set_size (LrgParticle *particle, gfloat size);
-
-/* Lifetime */
-void lrg_particle_set_lifetime (LrgParticle *particle, gfloat lifetime);
-gfloat lrg_particle_get_life_remaining (const LrgParticle *particle);
-#+end_src
+| Function | Description |
+|----------+-------------|
+| =lrg_particle_get_type ()= | the boxed =GType= (=LRG_TYPE_PARTICLE=) |
+| =lrg_particle_new ()= | a zeroed, dead particle (transfer full) |
+| =lrg_particle_new_at (x, y, z, life)= | a live particle at a position |
+| =lrg_particle_copy (self)=, =lrg_particle_free (self)= | boxed copy / free (=g_autoptr (LrgParticle)= works) |
+| =lrg_particle_reset (self)= | default values (white, size 1, start values reset), dead |
+| =lrg_particle_spawn (self, x, y, z, life)= | defaults at a position, alive with =life= (> 0) seconds |
+| =lrg_particle_update (self, dt)= | integrates position and rotation, ages, kills at the end of life; %TRUE while alive |
+| =lrg_particle_is_alive (self)=, =lrg_particle_kill (self)= | state |
+| =lrg_particle_get_normalized_age (self)= | =age / max_life=, 0 .. 1 |
+| =lrg_particle_set_velocity (self, vx, vy, vz)=, =lrg_particle_set_color (self, r, g, b, a)= | setters |
+| =lrg_particle_apply_force (self, fx, fy, fz, dt)= | =velocity += force * dt= |
 
 ** Usage
 :PROPERTIES:
 :CUSTOM_ID: usage
 :END:
 #+begin_src C
-/* Manual particle creation (usually done by emitter) */
-LrgParticle *p = lrg_particle_new ();
-lrg_particle_set_position (p, 100.0f, 200.0f, 0.0f);
-lrg_particle_set_velocity (p, 10.0f, -50.0f, 0.0f);
-lrg_particle_set_color (p, 255, 128, 0, 255);
-lrg_particle_set_lifetime (p, 2.0f);
+static void
+count_hot (const LrgParticle *p,
+           gpointer           user_data)
+{
+	if (p->color_r > 0.9f && lrg_particle_get_normalized_age (p) < 0.5f)
+		(*(guint *) user_data)++;
+}
 
-/* Check life progress (0.0 = born, 1.0 = dead) */
-gfloat progress = lrg_particle_get_normalized_life (p);
-
-/* Fade out based on life */
-guint8 alpha = (guint8)(255 * (1.0f - progress));
-lrg_particle_set_color (p, 255, 128, 0, alpha);
-
-lrg_particle_free (p);
+guint hot = 0;
+lrg_particle_system_foreach_active (system, count_hot, &hot);
 #+end_src
 
 ** Memory Management
 :PROPERTIES:
 :CUSTOM_ID: memory-management
 :END:
-Use =g_autoptr= for automatic cleanup:
+Particles inside a system belong to its pool; never free them. Stand-alone particles (tests, tools) use =g_autoptr=:
 
 #+begin_src C
-g_autoptr(LrgParticle) particle = lrg_particle_new ();
-/* Automatically freed at end of scope */
+g_autoptr(LrgParticle) particle = lrg_particle_new_at (0.0f, 1.0f, 0.0f, 2.0f);
 #+end_src

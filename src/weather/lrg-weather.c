@@ -8,6 +8,7 @@
  */
 
 #include "lrg-weather.h"
+#include "lrg-weather-asset.h"
 #include "../lrg-log.h"
 
 typedef struct
@@ -19,6 +20,8 @@ typedef struct
     guint8     ambient_r, ambient_g, ambient_b;
     gfloat     ambient_brightness;
     gfloat     wind_x, wind_y;
+    gfloat     effective_wind_x, effective_wind_y;
+    gboolean   has_wind_layers;
 } LrgWeatherPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgWeather, lrg_weather, G_TYPE_OBJECT)
@@ -103,6 +106,36 @@ lrg_weather_real_update (LrgWeather *self,
     {
         LrgWeatherEffect *effect = g_ptr_array_index (priv->effects, i);
         lrg_weather_effect_update (effect, delta_time);
+    }
+
+    /* Wind layers (LrgWeatherWind, from .rweather assets) add their
+     * current, intensity-scaled wind with gusts to the weather's own and
+     * the sum drives every other effect. Without wind layers the effects
+     * keep the wind lrg_weather_set_wind() gave them. */
+    priv->effective_wind_x = priv->wind_x;
+    priv->effective_wind_y = priv->wind_y;
+    priv->has_wind_layers = FALSE;
+    for (i = 0; i < priv->effects->len; i++)
+    {
+        LrgWeatherEffect *effect = g_ptr_array_index (priv->effects, i);
+        gfloat            wx, wy;
+
+        if (!LRG_IS_WEATHER_WIND (effect))
+            continue;
+        lrg_weather_wind_get_current (LRG_WEATHER_WIND (effect), &wx, &wy);
+        priv->effective_wind_x += wx;
+        priv->effective_wind_y += wy;
+        priv->has_wind_layers = TRUE;
+    }
+    if (priv->has_wind_layers)
+    {
+        for (i = 0; i < priv->effects->len; i++)
+        {
+            LrgWeatherEffect *effect = g_ptr_array_index (priv->effects, i);
+
+            if (!LRG_IS_WEATHER_WIND (effect))
+                lrg_weather_effect_set_wind (effect, priv->effective_wind_x, priv->effective_wind_y);
+        }
     }
 }
 
@@ -398,4 +431,20 @@ lrg_weather_render_overlay (LrgWeather *self,
 {
     g_return_if_fail (LRG_IS_WEATHER (self));
     render_pass (self, PASS_OVERLAY, NULL, width, height);
+}
+
+void
+lrg_weather_get_effective_wind (LrgWeather *self,
+                                gfloat     *wind_x,
+                                gfloat     *wind_y)
+{
+    LrgWeatherPrivate *priv;
+
+    g_return_if_fail (LRG_IS_WEATHER (self));
+
+    priv = lrg_weather_get_instance_private (self);
+    if (wind_x != NULL)
+        *wind_x = priv->has_wind_layers ? priv->effective_wind_x : priv->wind_x;
+    if (wind_y != NULL)
+        *wind_y = priv->has_wind_layers ? priv->effective_wind_y : priv->wind_y;
 }

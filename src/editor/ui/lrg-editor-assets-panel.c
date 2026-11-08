@@ -44,11 +44,67 @@
  *   EditorAssetsButton     a flat icon button of the toolbar
  *   EditorAssetMetaSource  LrgPropertySource over an asset's .meta
  *                          import settings (the Import Settings dialog)
+ *
+ * Rendering assets (0.9.0). Materials (.rmat), shaders (.rshader and
+ * their .glsl/.vert/.frag stages) and shader graphs (.rshadergraph) are
+ * not asset types of the database; the panel recognises them by
+ * extension (glyphs, type names, double-click). Material tiles show the
+ * material on a lit sphere, rendered through the material editor's
+ * preview (one per frame, from step(), outside drawing) and re-rendered
+ * when the file's modification time changes. The background menu
+ * creates new materials, shaders and shader graphs; the entry menu has
+ * Create Variant for prefabs and materials.
+ *
+ * Animation assets (0.9.0). Animation graphs (.ranim), bone maps
+ * (.rbonemap), sequences (.rseq), 2D skeletons (.rskel2d) and physics assets
+ * (.rphysasset) get glyphs, type names and New entries in the background
+ * menu ("New Physics Asset from Model" on a glTF model generates one part
+ * per bone of its skeleton); double-click opens
+ * them in their editors (sequences in the docked sequencer). glTF models
+ * get "Preview Animations..." in the entry menu: a dialog with the model
+ * on a turntable playing one of its clips (clip list, play / pause, scrub
+ * bar, track summary) and a slider per morph target; the `clip.*` IPC
+ * methods drive it and read clip data without UI.
+ *
+ * Gameplay and effect assets (0.9.0 M6/M7). Behaviour trees (.rbt),
+ * state machines (.rfsm), particle effects (.rparticles), weather
+ * (.rweather), mixers (.rmixer), tilesets (.rtileset), sprite sheets
+ * (.rsprite), water bodies (.rwater), navigation bake settings (.rnav)
+ * and terrains (.rterrain) get glyphs, type names and New entries
+ * (lrg_editor_assets_panel_create_asset(), also `asset.new` over IPC);
+ * "Slice Sprite Sheet" on an image writes an auto-sliced .rsprite next
+ * to it. Double-click opens them in their data editors; .rnav files go
+ * to the Navigation panel through the `nav.open-settings` action (the
+ * path is passed as the app's "lrg-editor-nav-settings-path" data).
  */
 
 #include "config.h"
 
+#define LRG_EDITOR_PANEL_INTERNAL
 #include "data/lrg-editor-data-editor.h"
+#include "data/lrg-editor-material-editor.h"
+#include "lrg-editor-shader-graph-editor.h"
+#include "data/lrg-editor-anim-graph-editor.h"
+#include "data/lrg-editor-bone-map-editor.h"
+#include "data/lrg-editor-skeleton2d-editor.h"
+#include "data/lrg-editor-physics-asset-editor.h"
+#include "data/lrg-editor-particle-editor.h"
+#include "data/lrg-editor-weather-editor.h"
+#include "data/lrg-editor-mixer-editor.h"
+#include "data/lrg-editor-bt-editor.h"
+#include "data/lrg-editor-fsm-editor.h"
+#include "data/lrg-editor-vscript-editor.h"
+#include "data/lrg-editor-water-editor.h"
+#include "lrg-editor-sequencer-panel.h"
+#include "../lrg-editor-document.h"
+#include "../../atlas/lrg-sprite-sheet.h"
+#include "../../atlas/lrg-sprite-animation.h"
+#include "../../graphics/lrg-terrain-asset.h"
+#include "../../animation/lrg-gltf-animation.h"
+#include "../../ui/lrg-slider.h"
+#include "../../ui/lrg-label.h"
+#include "../../ui/lrg-hbox.h"
+#include "../../ui/lrg-vbox.h"
 #include "lrg-editor-assets-panel.h"
 #include "lrg-editor-app-private.h"
 #include "../lrg-asset-meta.h"
@@ -67,7 +123,9 @@
 #include "../../paint/lrg-paint-icons.h"
 #include "../../text/lrg-font-manager.h"
 #include <glib/gstdio.h>
+#include <errno.h>
 #include <json-glib/json-glib.h>
+#include <raylib.h>
 #include <math.h>
 #include <string.h>
 
@@ -281,10 +339,16 @@ struct _LrgEditorAssetsPanel
 	gchar              *drop_hover;      /* folder a drop would move into */
 	GPtrArray          *dragging;        /* paths being dragged */
 
+	/* Material thumbnails: abs path -> MatThumb* */
+	GHashTable         *mat_thumbs;
+
 	/* Dialogs */
 	LrgDialog          *trash_dialog;    /* weak */
 	LrgDialog          *import_dialog;   /* weak */
 	GPtrArray          *trash_paths;
+
+	/* Clip preview dialog (glTF models) */
+	gpointer            clip;            /* ClipPreview* */
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorAssetsPanel, lrg_editor_assets_panel, LRG_TYPE_CONTAINER)
@@ -509,6 +573,177 @@ type_name (LrgAssetType type,
 	case LRG_ASSET_TYPE_SCENE:   return "Scene";
 	case LRG_ASSET_TYPE_CAD:     return "CAD";
 	default:                     return "File";
+	}
+}
+
+/* Rendering assets the database does not type, by extension. */
+typedef enum
+{
+	SPECIAL_NONE,
+	SPECIAL_MATERIAL,
+	SPECIAL_SHADER,
+	SPECIAL_SHADER_STAGE,
+	SPECIAL_SHADER_GRAPH,
+	SPECIAL_ANIM_GRAPH,
+	SPECIAL_BONE_MAP,
+	SPECIAL_SEQUENCE,
+	SPECIAL_SKELETON2D,
+	SPECIAL_PHYSICS_ASSET,
+	SPECIAL_BT,
+	SPECIAL_FSM,
+	SPECIAL_PARTICLES,
+	SPECIAL_WEATHER,
+	SPECIAL_MIXER,
+	SPECIAL_TILESET,
+	SPECIAL_SPRITE,
+	SPECIAL_WATER,
+	SPECIAL_NAV,
+	SPECIAL_TERRAIN,
+	SPECIAL_VSCRIPT
+} SpecialKind;
+
+/* The M6/M7 kinds by extension (glyph, type name) */
+static const struct
+{
+	SpecialKind  kind;
+	const gchar *extension;
+	const gchar *glyph;
+	const gchar *name;
+} special_assets[] = {
+	{ SPECIAL_BT, ".rbt", "BT", "Behaviour tree" },
+	{ SPECIAL_FSM, ".rfsm", "SM", "State machine" },
+	{ SPECIAL_PARTICLES, ".rparticles", "Fx", "Particle effect" },
+	{ SPECIAL_WEATHER, ".rweather", "Wx", "Weather" },
+	{ SPECIAL_MIXER, ".rmixer", "Mx", "Mixer" },
+	{ SPECIAL_TILESET, ".rtileset", "TS", "Tileset" },
+	{ SPECIAL_SPRITE, ".rsprite", "Sp", "Sprite sheet" },
+	{ SPECIAL_WATER, ".rwater", "Wa", "Water body" },
+	{ SPECIAL_NAV, ".rnav", "Nv", "Navigation settings" },
+	{ SPECIAL_TERRAIN, ".rterrain", "Tr", "Terrain" },
+	{ SPECIAL_VSCRIPT, ".rvscript", "VS", "Visual script" }
+};
+
+static gboolean open_nav_settings (LrgEditorApp *app, const gchar *path);
+
+static SpecialKind
+special_kind (const gchar *path)
+{
+	g_autofree gchar *lower = NULL;
+
+	if (path == NULL)
+		return SPECIAL_NONE;
+	lower = g_ascii_strdown (path, -1);
+	if (g_str_has_suffix (lower, ".rmat"))
+		return SPECIAL_MATERIAL;
+	if (g_str_has_suffix (lower, ".rshader"))
+		return SPECIAL_SHADER;
+	if (g_str_has_suffix (lower, ".rshadergraph"))
+		return SPECIAL_SHADER_GRAPH;
+	if (g_str_has_suffix (lower, ".ranim"))
+		return SPECIAL_ANIM_GRAPH;
+	if (g_str_has_suffix (lower, ".rbonemap"))
+		return SPECIAL_BONE_MAP;
+	if (g_str_has_suffix (lower, ".rseq"))
+		return SPECIAL_SEQUENCE;
+	if (g_str_has_suffix (lower, ".rskel2d"))
+		return SPECIAL_SKELETON2D;
+	if (g_str_has_suffix (lower, ".rphysasset"))
+		return SPECIAL_PHYSICS_ASSET;
+	{
+		guint i;
+
+		for (i = 0; i < G_N_ELEMENTS (special_assets); i++)
+		{
+			if (g_str_has_suffix (lower, special_assets[i].extension))
+				return special_assets[i].kind;
+		}
+	}
+	if (g_str_has_suffix (lower, ".glsl") || g_str_has_suffix (lower, ".vert") || g_str_has_suffix (lower, ".frag") ||
+	    g_str_has_suffix (lower, ".vs") || g_str_has_suffix (lower, ".fs"))
+		return SPECIAL_SHADER_STAGE;
+	return SPECIAL_NONE;
+}
+
+static const gchar *
+special_glyph (SpecialKind kind)
+{
+	switch (kind)
+	{
+	case SPECIAL_MATERIAL:     return "Mt";
+	case SPECIAL_SHADER:       return "Sh";
+	case SPECIAL_SHADER_STAGE: return "GL";
+	case SPECIAL_SHADER_GRAPH: return "SG";
+	case SPECIAL_ANIM_GRAPH:   return "AG";
+	case SPECIAL_BONE_MAP:     return "BM";
+	case SPECIAL_SEQUENCE:     return "Sq";
+	case SPECIAL_SKELETON2D:   return "2D";
+	case SPECIAL_PHYSICS_ASSET: return "Rd";
+	default:
+		{
+			guint i;
+
+			for (i = 0; i < G_N_ELEMENTS (special_assets); i++)
+			{
+				if (special_assets[i].kind == kind)
+					return special_assets[i].glyph;
+			}
+		}
+		return NULL;
+	}
+}
+
+static const gchar *
+special_name (SpecialKind kind)
+{
+	switch (kind)
+	{
+	case SPECIAL_MATERIAL:     return "Material";
+	case SPECIAL_SHADER:       return "Shader";
+	case SPECIAL_SHADER_STAGE: return "Shader stage";
+	case SPECIAL_SHADER_GRAPH: return "Shader graph";
+	case SPECIAL_ANIM_GRAPH:   return "Animation graph";
+	case SPECIAL_BONE_MAP:     return "Bone map";
+	case SPECIAL_SEQUENCE:     return "Sequence";
+	case SPECIAL_SKELETON2D:   return "2D skeleton";
+	case SPECIAL_PHYSICS_ASSET: return "Physics asset";
+	default:
+		{
+			guint i;
+
+			for (i = 0; i < G_N_ELEMENTS (special_assets); i++)
+			{
+				if (special_assets[i].kind == kind)
+					return special_assets[i].name;
+			}
+		}
+		return NULL;
+	}
+}
+
+static LrgThemeColor
+special_role (SpecialKind kind)
+{
+	switch (kind)
+	{
+	case SPECIAL_MATERIAL:     return LRG_THEME_COLOR_WARNING;
+	case SPECIAL_SHADER:
+	case SPECIAL_SHADER_STAGE: return LRG_THEME_COLOR_SUCCESS;
+	case SPECIAL_ANIM_GRAPH:
+	case SPECIAL_BONE_MAP:     return LRG_THEME_COLOR_LINK;
+	case SPECIAL_SEQUENCE:
+	case SPECIAL_SKELETON2D:   return LRG_THEME_COLOR_DANGER;
+	case SPECIAL_PHYSICS_ASSET: return LRG_THEME_COLOR_SUCCESS;
+	case SPECIAL_BT:
+	case SPECIAL_FSM:          return LRG_THEME_COLOR_LINK;
+	case SPECIAL_PARTICLES:
+	case SPECIAL_WEATHER:      return LRG_THEME_COLOR_WARNING;
+	case SPECIAL_MIXER:        return LRG_THEME_COLOR_DANGER;
+	case SPECIAL_TILESET:
+	case SPECIAL_SPRITE:       return LRG_THEME_COLOR_DANGER;
+	case SPECIAL_WATER:
+	case SPECIAL_NAV:
+	case SPECIAL_TERRAIN:      return LRG_THEME_COLOR_SUCCESS;
+	default:                   return LRG_THEME_COLOR_ACCENT;
 	}
 }
 
@@ -751,8 +986,10 @@ paint_type_glyph (LrgWidget       *widget,
                   gfloat           size,
                   gboolean         pending)
 {
-	const GrlColor *c = color_of (widget, type_role (item->type, item->is_dir));
-	const gchar    *glyph = type_glyph (item->type);
+	SpecialKind     special = item->is_dir ? SPECIAL_NONE : special_kind (item->path);
+	const GrlColor *c = color_of (widget, special != SPECIAL_NONE ? special_role (special)
+	                                                             : type_role (item->type, item->is_dir));
+	const gchar    *glyph = special != SPECIAL_NONE ? special_glyph (special) : type_glyph (item->type);
 	GrlColor        fill;
 
 	if (pending)
@@ -781,6 +1018,94 @@ paint_type_glyph (LrgWidget       *widget,
 	}
 	if (pending)
 		lrg_paint_list_pop_opacity (list);
+}
+
+/* ==========================================================================
+ * Material thumbnails
+ * ========================================================================== */
+
+#define MAT_THUMB_SIZE (128)
+
+typedef struct
+{
+	GrlTexture *tex;
+	gint64      mtime;      /* of the file when rendered; -1: queued */
+	gboolean    failed;
+} MatThumb;
+
+static void
+mat_thumb_free (gpointer data)
+{
+	MatThumb *t = data;
+
+	/* a texture whose context is gone is dropped without unloading */
+	if (t->tex != NULL && !IsWindowReady ())
+		(void) g_steal_pointer (&t->tex);
+	g_clear_object (&t->tex);
+	g_free (t);
+}
+
+static gint64
+file_mtime (const gchar *path)
+{
+	GStatBuf st;
+
+	return g_stat (path, &st) == 0 ? (gint64) st.st_mtime : -1;
+}
+
+/*
+ * material_thumbnail:
+ *
+ * The rendered sphere of a material, or NULL. A missing or stale one is
+ * queued (step() renders one per frame with a window); *pending says
+ * whether one is coming so the tile shows a dimmed glyph meanwhile.
+ */
+static GObject *
+material_thumbnail (LrgEditorAssetsPanel *self,
+                    const gchar          *path,
+                    gboolean             *pending)
+{
+	MatThumb *t = g_hash_table_lookup (self->mat_thumbs, path);
+
+	*pending = FALSE;
+	if (t == NULL)
+	{
+		t = g_new0 (MatThumb, 1);
+		t->mtime = -1;
+		g_hash_table_insert (self->mat_thumbs, g_strdup (path), t);
+	}
+	if (t->failed)
+		return NULL;
+	*pending = t->tex == NULL || t->mtime != file_mtime (path);
+	return t->tex != NULL ? G_OBJECT (t->tex) : NULL;
+}
+
+/* Renders the first stale material thumbnail (one per frame). */
+static void
+pump_material_thumbnails (LrgEditorAssetsPanel *self)
+{
+	GHashTableIter iter;
+	gpointer       key, value;
+
+	if (self->app == NULL || !IsWindowReady ())
+		return;
+	g_hash_table_iter_init (&iter, self->mat_thumbs);
+	while (g_hash_table_iter_next (&iter, &key, &value))
+	{
+		MatThumb             *t = value;
+		gint64                now = file_mtime (key);
+		g_autoptr(GrlImage)   img = NULL;
+
+		if (t->failed || (t->tex != NULL && t->mtime == now))
+			continue;
+		t->mtime = now;
+		img = lrg_editor_material_editor_render_thumbnail (self->app, key, MAT_THUMB_SIZE);
+		g_clear_object (&t->tex);
+		if (img != NULL)
+			t->tex = grl_texture_new_from_image (img);
+		t->failed = (t->tex == NULL);
+		return;
+	}
 }
 
 /* The grid tile: preview, name, git badge, drop highlight. */
@@ -813,7 +1138,9 @@ paint_grid_tile (EditorAssetTile *self,
 		gboolean pending = FALSE;
 		GObject *tex = NULL;
 
-		if (!item->is_dir && self->panel->app != NULL)
+		if (!item->is_dir && self->panel->app != NULL && special_kind (item->path) == SPECIAL_MATERIAL)
+			tex = material_thumbnail (self->panel, item->path, &pending);
+		else if (!item->is_dir && self->panel->app != NULL)
 			tex = editor_thumbnail_texture (self->panel->app, item->path, &pending);
 		if (tex != NULL)
 		{
@@ -1206,6 +1533,26 @@ setting_range (const gchar *key,
 		*min = 0.0001;
 		*max = 10000.0;
 	}
+	else if (g_strcmp0 (key, "lod-levels") == 0)
+	{
+		*min = 1.0;
+		*max = 8.0;
+	}
+	else if (g_strcmp0 (key, "lod-max-error") == 0)
+	{
+		*min = 0.0;
+		*max = 1.0;
+	}
+	else if (g_strcmp0 (key, "lod-hysteresis") == 0)
+	{
+		*min = 0.0;
+		*max = 0.9;
+	}
+	else if (g_strcmp0 (key, "lod-fade-duration") == 0)
+	{
+		*min = 0.0;
+		*max = 10.0;
+	}
 	else
 	{
 		*min = -1.0e9;
@@ -1225,6 +1572,20 @@ setting_label (const gchar *key)
 		return "Code points";
 	if (g_strcmp0 (key, "up-axis") == 0)
 		return "Up axis";
+	if (g_strcmp0 (key, "lod-levels") == 0)
+		return "LOD levels";
+	if (g_strcmp0 (key, "lod-ratios") == 0)
+		return "LOD ratios";
+	if (g_strcmp0 (key, "lod-screen-sizes") == 0)
+		return "LOD screen sizes";
+	if (g_strcmp0 (key, "lod-max-error") == 0)
+		return "LOD max error";
+	if (g_strcmp0 (key, "lod-lock-border") == 0)
+		return "LOD lock border";
+	if (g_strcmp0 (key, "lod-hysteresis") == 0)
+		return "LOD hysteresis";
+	if (g_strcmp0 (key, "lod-fade-duration") == 0)
+		return "LOD fade (s)";
 	return NULL;
 }
 
@@ -1951,9 +2312,19 @@ open_entry (LrgEditorAssetsPanel *self,
 		go_to (self, path);
 		return;
 	}
+	/* sequences open in the docked sequencer */
+	if (g_str_has_suffix (path, ".rseq") && lrg_editor_sequencer_panel_open_file (self->app, path, NULL))
+		return;
+	/* navigation bake settings open in the Navigation panel */
+	if (special_kind (path) == SPECIAL_NAV && open_nav_settings (self->app, path))
+		return;
 	/* data formats (input maps, locales, themes, ...) open in their editor;
 	 * a file that does not parse falls through to the usual handling */
 	if (lrg_editor_data_editor_can_open (path) && lrg_editor_data_editor_open (self->app, path, NULL) != NULL)
+		return;
+	/* shader documents and stages: the code panel compiles them on save */
+	if ((special_kind (path) == SPECIAL_SHADER || special_kind (path) == SPECIAL_SHADER_STAGE) &&
+	    open_in_code_panel (self, path))
 		return;
 	mode = lrg_editor_settings_get_script_editor (self->app->settings);
 	if (lrg_asset_database_classify (path) == LRG_ASSET_TYPE_SCRIPT && g_strcmp0 (mode, "internal") == 0 &&
@@ -2261,6 +2632,391 @@ new_level (LrgEditorAssetsPanel *self)
 		lrg_editor_assets_panel_begin_rename (self, path);
 		return;
 	}
+}
+
+/* A free "<stem>.<ext>", "<stem>2.<ext>", ... in the current folder. */
+static gchar *
+free_name (LrgEditorAssetsPanel *self,
+           const gchar          *stem,
+           const gchar          *ext)
+{
+	guint n;
+
+	for (n = 1; n < 1000; n++)
+	{
+		g_autofree gchar *name = (n == 1) ? g_strdup_printf ("%s.%s", stem, ext)
+		                                  : g_strdup_printf ("%s%u.%s", stem, n, ext);
+		gchar            *path = g_build_filename (self->dir, name, NULL);
+		g_autofree gchar *frag = NULL;
+
+		/* a shader also needs its .frag free */
+		if (g_strcmp0 (ext, "rshader") == 0)
+		{
+			g_autofree gchar *fname = (n == 1) ? g_strdup_printf ("%s.frag", stem)
+			                                   : g_strdup_printf ("%s%u.frag", stem, n);
+
+			frag = g_build_filename (self->dir, fname, NULL);
+		}
+		if (!g_file_test (path, G_FILE_TEST_EXISTS) && (frag == NULL || !g_file_test (frag, G_FILE_TEST_EXISTS)))
+			return path;
+		g_free (path);
+	}
+	return NULL;
+}
+
+/* New Material / Shader / Shader Graph: write it, list it, rename it. */
+static void
+new_render_asset (LrgEditorAssetsPanel *self,
+                  SpecialKind           kind)
+{
+	g_autofree gchar *path = NULL;
+	g_autoptr(GError) error = NULL;
+	gboolean          ok = FALSE;
+
+	if (self->dir == NULL)
+		return;
+	switch (kind)
+	{
+	case SPECIAL_MATERIAL:
+		path = free_name (self, "new_material", "rmat");
+		ok = path != NULL && lrg_editor_material_editor_create (self->app, path, NULL, NULL, &error);
+		break;
+	case SPECIAL_SHADER:
+		path = free_name (self, "new_shader", "rshader");
+		ok = path != NULL && lrg_editor_material_editor_create_shader (self->app, path, TRUE, &error);
+		break;
+	case SPECIAL_SHADER_GRAPH:
+		path = free_name (self, "new_shader_graph", "rshadergraph");
+		ok = path != NULL && lrg_editor_shader_graph_editor_create (self->app, path, "pbr", &error);
+		break;
+	default:
+		return;
+	}
+	if (!ok)
+	{
+		g_autofree gchar *msg = g_strdup_printf ("Cannot create the file: %s",
+		                                         error != NULL ? error->message : "no free name");
+
+		notify_user (self, EDITOR_NOTIFY_ERROR, msg);
+		return;
+	}
+	refresh_listing (self);
+	lrg_editor_assets_panel_begin_rename (self, path);
+}
+
+/* New Animation Graph / Bone Map / Sequence / 2D Skeleton. @model (a
+ * glTF file) seeds an animation graph with its clips. */
+static void
+new_anim_asset (LrgEditorAssetsPanel *self,
+                SpecialKind           kind,
+                const gchar          *model)
+{
+	g_autofree gchar *path = NULL;
+	g_autoptr(GError) error = NULL;
+	gboolean          ok = FALSE;
+
+	if (self->dir == NULL)
+		return;
+	switch (kind)
+	{
+	case SPECIAL_ANIM_GRAPH:
+		if (model != NULL)
+		{
+			g_autofree gchar *base = g_path_get_basename (model);
+			gchar            *dot = strrchr (base, '.');
+
+			if (dot != NULL)
+				*dot = '\0';
+			path = free_name (self, base, "ranim");
+		}
+		else
+			path = free_name (self, "new_anim_graph", "ranim");
+		ok = path != NULL && lrg_editor_anim_graph_editor_create (self->app, path, model, &error);
+		break;
+	case SPECIAL_BONE_MAP:
+		path = free_name (self, "new_bone_map", "rbonemap");
+		ok = path != NULL && lrg_editor_bone_map_editor_create (self->app, path, NULL, NULL, FALSE, NULL, &error);
+		break;
+	case SPECIAL_SEQUENCE:
+		path = free_name (self, "new_sequence", "rseq");
+		if (path != NULL)
+		{
+			LrgEditorSequencerPanel *seq = lrg_editor_sequencer_panel_find (self->app);
+
+			if (seq != NULL)
+				ok = lrg_editor_sequencer_panel_create (seq, path, &error);
+			else
+			{
+				/* no sequencer docked: write the format's skeleton */
+				g_autoptr(LrgEditorDocument) doc = lrg_editor_document_new (LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE);
+
+				ok = lrg_editor_document_save_as (doc, path, &error);
+			}
+		}
+		break;
+	case SPECIAL_SKELETON2D:
+		path = free_name (self, "new_skeleton", "rskel2d");
+		ok = path != NULL && lrg_editor_skeleton2d_editor_create (self->app, path, NULL, &error);
+		break;
+	case SPECIAL_PHYSICS_ASSET:
+		/* from a model: one part per bone of its skeleton (70 kg) */
+		if (model != NULL)
+		{
+			g_autofree gchar *base = g_path_get_basename (model);
+			gchar            *dot = strrchr (base, '.');
+
+			if (dot != NULL)
+				*dot = '\0';
+			path = free_name (self, base, "rphysasset");
+		}
+		else
+			path = free_name (self, "new_physics_asset", "rphysasset");
+		ok = path != NULL && lrg_editor_physics_asset_editor_create (self->app, path, model, 70.0f, 0.2f, NULL,
+		                                                             &error);
+		break;
+	default:
+		return;
+	}
+	if (!ok)
+	{
+		g_autofree gchar *msg = g_strdup_printf ("Cannot create the file: %s",
+		                                         error != NULL ? error->message : "no free name");
+
+		notify_user (self, EDITOR_NOTIFY_ERROR, msg);
+		return;
+	}
+	refresh_listing (self);
+	if (kind == SPECIAL_SEQUENCE)
+		lrg_editor_sequencer_panel_open_file (self->app, path, NULL);
+	lrg_editor_assets_panel_begin_rename (self, path);
+}
+
+/* ==========================================================================
+ * Gameplay and effect assets (M6/M7): New entries and Slice Sprite Sheet
+ * ========================================================================== */
+
+/*
+ * The New entries of the M6/M7 formats: the action name, the menu label,
+ * the `asset.new` kind (a document format nick, or "terrain"), the file
+ * stem and extension.
+ */
+static const struct
+{
+	const gchar *action;
+	const gchar *label;
+	const gchar *kind;
+	const gchar *stem;
+	const gchar *ext;
+} new_gameplay[] = {
+	{ "new-bt", "New Behaviour Tree", "bt", "new_behaviour_tree", "rbt" },
+	{ "new-fsm", "New State Machine", "fsm", "new_state_machine", "rfsm" },
+	{ "new-particles", "New Particle Effect", "particles", "new_particle_effect", "rparticles" },
+	{ "new-weather", "New Weather", "weather", "new_weather", "rweather" },
+	{ "new-mixer", "New Mixer", "mixer", "new_mixer", "rmixer" },
+	{ "new-tileset", "New Tileset", "tileset", "new_tileset", "rtileset" },
+	{ "new-sprite", "New Sprite Sheet", "sprite", "new_sprite", "rsprite" },
+	{ "new-water", "New Water Body", "water", "new_water", "rwater" },
+	{ "new-terrain", "New Terrain", "terrain", "new_terrain", "rterrain" },
+	{ "new-nav-settings", "New Navigation Settings", "nav-settings", "new_navigation", "rnav" },
+	{ "new-vscript", "New Visual Script", "vscript", "new_visual_script", "rvscript" }
+};
+
+/* The extension (without the dot) of an asset.new kind, or NULL. */
+static const gchar *
+kind_extension (const gchar *kind)
+{
+	guint i;
+
+	for (i = 0; i < G_N_ELEMENTS (new_gameplay); i++)
+	{
+		if (g_strcmp0 (new_gameplay[i].kind, kind) == 0)
+			return new_gameplay[i].ext;
+	}
+	return NULL;
+}
+
+/*
+ * write_sliced_sprite:
+ * A .rsprite at @path for @image: the image path relative to the file,
+ * frames auto-sliced from the image's opaque islands (bottom-centre
+ * pivots), no clips.  A file that cannot be read as an image still gets
+ * the reference, with no frames.
+ */
+static gboolean
+write_sliced_sprite (const gchar  *path,
+                     const gchar  *image,
+                     guint        *n_frames,
+                     GError      **error)
+{
+	g_autofree gchar *dir = g_path_get_dirname (path);
+	g_autofree gchar *base = g_path_get_basename (path);
+	g_autofree gchar *rel = NULL;
+	g_autoptr(LrgSpriteSheet) sheet = NULL;
+	g_autoptr(GrlImage) img = NULL;
+	gchar *dot;
+	guint frames = 0;
+
+	dot = strrchr (base, '.');
+	if (dot != NULL)
+		*dot = '\0';
+	sheet = lrg_sprite_sheet_new (base);
+
+	/* the image reference is relative to the .rsprite */
+	if (g_str_has_prefix (image, dir) && image[strlen (dir)] == G_DIR_SEPARATOR)
+		rel = g_strdup (image + strlen (dir) + 1);
+	else
+		rel = g_strdup (image);
+	lrg_sprite_sheet_set_texture_path (sheet, rel);
+
+	/* CPU decode only: no GL context needed */
+	img = grl_image_new_from_file (image);
+	if (img != NULL && grl_image_get_width (img) > 0)
+	{
+		gsize   size = 0;
+		guint8 *rgba = grl_image_get_pixels (img, &size);
+
+		if (rgba != NULL)
+			frames = lrg_sprite_sheet_slice_alpha (sheet, rgba, size, (guint) grl_image_get_width (img),
+			                                       (guint) grl_image_get_height (img), 8, 2, 0.5f, 1.0f);
+	}
+	if (n_frames != NULL)
+		*n_frames = frames;
+	return lrg_sprite_sheet_save_rsprite_to_file (sheet, path, error);
+}
+
+gboolean
+lrg_editor_assets_panel_create_asset (const gchar  *path,
+                                      const gchar  *kind,
+                                      const gchar  *image,
+                                      GError      **error)
+{
+	LrgEditorDocumentFormat format;
+	g_autofree gchar *dir = NULL;
+
+	g_return_val_if_fail (path != NULL, FALSE);
+	g_return_val_if_fail (kind != NULL, FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	if (g_file_test (path, G_FILE_TEST_EXISTS))
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_EXISTS, "%s already exists", path);
+		return FALSE;
+	}
+	dir = g_path_get_dirname (path);
+	if (g_mkdir_with_parents (dir, 0755) != 0)
+	{
+		g_set_error (error, G_IO_ERROR, g_io_error_from_errno (errno), "Cannot create %s: %s", dir,
+		             g_strerror (errno));
+		return FALSE;
+	}
+
+	/* --- a flat terrain: the .rterrain and its sidecars --- */
+	if (g_strcmp0 (kind, "terrain") == 0)
+	{
+		g_autoptr(LrgTerrainAsset) terrain = lrg_terrain_asset_new (64, 32.0f, 4, 4);
+
+		return lrg_terrain_asset_save_to_file (terrain, path, error);
+	}
+
+	/* --- a sprite sheet sliced from an image --- */
+	if (g_strcmp0 (kind, "sprite") == 0 && image != NULL)
+		return write_sliced_sprite (path, image, NULL, error);
+
+	/* --- every other kind is a document format's new file --- */
+	format = lrg_editor_document_format_from_string (kind);
+	if (format == LRG_EDITOR_DOCUMENT_FORMAT_UNKNOWN)
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		             "Unknown asset kind '%s' (a document format such as bt, fsm, particles, weather, "
+		             "mixer, tileset, sprite, water, nav-settings, terrain, or vscript)", kind);
+		return FALSE;
+	}
+	{
+		g_autoptr(LrgEditorDocument) doc = lrg_editor_document_new (format);
+
+		return lrg_editor_document_save_as (doc, path, error);
+	}
+}
+
+/* New Behaviour Tree / ... / New Terrain from the background menu. */
+static void
+new_gameplay_asset (LrgEditorAssetsPanel *self,
+                    guint                 index)
+{
+	g_autofree gchar *path = NULL;
+	g_autoptr(GError) error = NULL;
+
+	if (self->dir == NULL || index >= G_N_ELEMENTS (new_gameplay))
+		return;
+	path = free_name (self, new_gameplay[index].stem, new_gameplay[index].ext);
+	if (path == NULL || !lrg_editor_assets_panel_create_asset (path, new_gameplay[index].kind, NULL, &error))
+	{
+		g_autofree gchar *msg = g_strdup_printf ("Cannot create the file: %s",
+		                                         error != NULL ? error->message : "no free name");
+
+		notify_user (self, EDITOR_NOTIFY_ERROR, msg);
+		return;
+	}
+	refresh_listing (self);
+	lrg_editor_assets_panel_begin_rename (self, path);
+}
+
+/* Slice Sprite Sheet on an image: <image stem>.rsprite next to it. */
+static void
+slice_sprite_sheet (LrgEditorAssetsPanel *self,
+                    const gchar          *image)
+{
+	g_autofree gchar *dir = g_path_get_dirname (image);
+	g_autofree gchar *base = g_path_get_basename (image);
+	g_autofree gchar *path = NULL;
+	g_autofree gchar *saved_dir = NULL;
+	g_autoptr(GError) error = NULL;
+	gchar            *dot;
+	guint             frames = 0;
+
+	dot = strrchr (base, '.');
+	if (dot != NULL)
+		*dot = '\0';
+	/* free_name() works in the listed folder: point it at the image's */
+	saved_dir = g_strdup (self->dir);
+	g_free (self->dir);
+	self->dir = g_strdup (dir);
+	path = free_name (self, base, "rsprite");
+	g_free (self->dir);
+	self->dir = g_steal_pointer (&saved_dir);
+
+	if (path == NULL || !write_sliced_sprite (path, image, &frames, &error))
+	{
+		g_autofree gchar *msg = g_strdup_printf ("Cannot slice %s: %s", image,
+		                                         error != NULL ? error->message : "no free name");
+
+		notify_user (self, EDITOR_NOTIFY_ERROR, msg);
+		return;
+	}
+	{
+		g_autofree gchar *msg = g_strdup_printf ("Sliced %u frame(s) into %s", frames, path);
+
+		notify_user (self, EDITOR_NOTIFY_INFO, msg);
+	}
+	refresh_listing (self);
+	if (lrg_editor_data_editor_can_open (path) && self->app != NULL)
+		lrg_editor_data_editor_open (self->app, path, NULL);
+}
+
+/*
+ * open_nav_settings:
+ * A .rnav goes to the Navigation panel: the path rides on the app as
+ * "lrg-editor-nav-settings-path" for the `nav.open-settings` action.
+ * Returns FALSE when that action is not registered.
+ */
+static gboolean
+open_nav_settings (LrgEditorApp *app,
+                   const gchar  *path)
+{
+	if (app == NULL || !lrg_editor_actions_has (app->actions, "nav.open-settings"))
+		return FALSE;
+	g_object_set_data_full (G_OBJECT (app), "lrg-editor-nav-settings-path", g_strdup (path), g_free);
+	return lrg_editor_actions_activate (app->actions, "nav.open-settings");
 }
 
 /* Opens the desktop file manager on a folder. */
@@ -2655,6 +3411,131 @@ act_new_script (GSimpleAction *a, GVariant *p, gpointer user_data)
 }
 
 static void
+act_new_material (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	new_render_asset (user_data, SPECIAL_MATERIAL);
+}
+
+static void
+act_new_shader (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	new_render_asset (user_data, SPECIAL_SHADER);
+}
+
+static void
+act_new_shader_graph (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	new_render_asset (user_data, SPECIAL_SHADER_GRAPH);
+}
+
+static void
+act_new_anim_graph (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	new_anim_asset (user_data, SPECIAL_ANIM_GRAPH, NULL);
+}
+
+static void
+act_new_bone_map (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	new_anim_asset (user_data, SPECIAL_BONE_MAP, NULL);
+}
+
+static void
+act_new_sequence (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	new_anim_asset (user_data, SPECIAL_SEQUENCE, NULL);
+}
+
+static void
+act_new_skeleton2d (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	new_anim_asset (user_data, SPECIAL_SKELETON2D, NULL);
+}
+
+static void
+act_new_physics_asset (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	new_anim_asset (user_data, SPECIAL_PHYSICS_ASSET, NULL);
+}
+
+/* the New entries of the M6/M7 formats, one per row of new_gameplay[] */
+#define NEW_GAMEPLAY_ACTION(n, i) \
+	static void act_##n (GSimpleAction *a, GVariant *p, gpointer user_data) { new_gameplay_asset (user_data, i); }
+NEW_GAMEPLAY_ACTION (new_bt, 0)
+NEW_GAMEPLAY_ACTION (new_fsm, 1)
+NEW_GAMEPLAY_ACTION (new_particles, 2)
+NEW_GAMEPLAY_ACTION (new_weather, 3)
+NEW_GAMEPLAY_ACTION (new_mixer, 4)
+NEW_GAMEPLAY_ACTION (new_tileset, 5)
+NEW_GAMEPLAY_ACTION (new_sprite, 6)
+NEW_GAMEPLAY_ACTION (new_water, 7)
+NEW_GAMEPLAY_ACTION (new_terrain, 8)
+NEW_GAMEPLAY_ACTION (new_nav_settings, 9)
+NEW_GAMEPLAY_ACTION (new_vscript, 10)
+#undef NEW_GAMEPLAY_ACTION
+
+static void
+act_slice_sprite_sheet (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	LrgEditorAssetsPanel *self = user_data;
+	const gchar          *path = first_target (self);
+
+	if (path != NULL)
+		slice_sprite_sheet (self, path);
+}
+
+static void
+act_physics_asset_from_model (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	LrgEditorAssetsPanel *self = user_data;
+	const gchar          *path = first_target (self);
+
+	if (path != NULL)
+		new_anim_asset (self, SPECIAL_PHYSICS_ASSET, path);
+}
+
+static void
+act_anim_graph_from_model (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	LrgEditorAssetsPanel *self = user_data;
+	const gchar          *path = first_target (self);
+
+	if (path != NULL)
+		new_anim_asset (self, SPECIAL_ANIM_GRAPH, path);
+}
+
+static void
+act_preview_clips (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	LrgEditorAssetsPanel *self = user_data;
+	const gchar          *path = first_target (self);
+
+	if (path != NULL)
+		lrg_editor_assets_panel_preview_clips (self, path, NULL);
+}
+
+static void
+act_create_variant (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	LrgEditorAssetsPanel *self = user_data;
+	const gchar          *path = first_target (self);
+	g_autoptr(GError)     error = NULL;
+	g_autofree gchar     *variant = NULL;
+
+	if (path == NULL)
+		return;
+	variant = lrg_editor_assets_panel_create_variant (self, path, &error);
+	if (variant == NULL)
+	{
+		g_autofree gchar *msg = g_strdup_printf ("Cannot create a variant: %s", error->message);
+
+		notify_user (self, EDITOR_NOTIFY_ERROR, msg);
+		return;
+	}
+	lrg_editor_assets_panel_begin_rename (self, variant);
+}
+
+static void
 act_refresh (GSimpleAction *a, GVariant *p, gpointer user_data)
 {
 	lrg_editor_assets_panel_refresh (user_data);
@@ -2697,6 +3578,30 @@ static const GActionEntry action_entries[] = {
 	{ "new-folder", act_new_folder, NULL, NULL, NULL, { 0 } },
 	{ "new-level", act_new_level, NULL, NULL, NULL, { 0 } },
 	{ "new-script", act_new_script, NULL, NULL, NULL, { 0 } },
+	{ "new-material", act_new_material, NULL, NULL, NULL, { 0 } },
+	{ "new-shader", act_new_shader, NULL, NULL, NULL, { 0 } },
+	{ "new-shader-graph", act_new_shader_graph, NULL, NULL, NULL, { 0 } },
+	{ "new-anim-graph", act_new_anim_graph, NULL, NULL, NULL, { 0 } },
+	{ "new-bone-map", act_new_bone_map, NULL, NULL, NULL, { 0 } },
+	{ "new-sequence", act_new_sequence, NULL, NULL, NULL, { 0 } },
+	{ "new-skeleton2d", act_new_skeleton2d, NULL, NULL, NULL, { 0 } },
+	{ "anim-graph-from-model", act_anim_graph_from_model, NULL, NULL, NULL, { 0 } },
+	{ "new-physics-asset", act_new_physics_asset, NULL, NULL, NULL, { 0 } },
+	{ "physics-asset-from-model", act_physics_asset_from_model, NULL, NULL, NULL, { 0 } },
+	{ "new-bt", act_new_bt, NULL, NULL, NULL, { 0 } },
+	{ "new-fsm", act_new_fsm, NULL, NULL, NULL, { 0 } },
+	{ "new-particles", act_new_particles, NULL, NULL, NULL, { 0 } },
+	{ "new-weather", act_new_weather, NULL, NULL, NULL, { 0 } },
+	{ "new-mixer", act_new_mixer, NULL, NULL, NULL, { 0 } },
+	{ "new-tileset", act_new_tileset, NULL, NULL, NULL, { 0 } },
+	{ "new-sprite", act_new_sprite, NULL, NULL, NULL, { 0 } },
+	{ "new-water", act_new_water, NULL, NULL, NULL, { 0 } },
+	{ "new-terrain", act_new_terrain, NULL, NULL, NULL, { 0 } },
+	{ "new-nav-settings", act_new_nav_settings, NULL, NULL, NULL, { 0 } },
+	{ "new-vscript", act_new_vscript, NULL, NULL, NULL, { 0 } },
+	{ "slice-sprite-sheet", act_slice_sprite_sheet, NULL, NULL, NULL, { 0 } },
+	{ "preview-clips", act_preview_clips, NULL, NULL, NULL, { 0 } },
+	{ "create-variant", act_create_variant, NULL, NULL, NULL, { 0 } },
 	{ "refresh", act_refresh, NULL, NULL, NULL, { 0 } },
 	{ "clean-orphans", act_clean_orphans, NULL, NULL, NULL, { 0 } },
 	{ "grid-view", act_grid_view, NULL, "false", NULL, { 0 } },
@@ -2749,10 +3654,21 @@ build_entry_menu (LrgEditorAssetsPanel *self)
 		menu_add (open, "Place in Scene", "assets.place", NULL);
 	if (targets_have_settings (self))
 		menu_add (open, "Import Settings\xe2\x80\xa6", "assets.import-settings", NULL);
+	if (type == LRG_ASSET_TYPE_MODEL && first != NULL &&
+	    (g_str_has_suffix (first, ".glb") || g_str_has_suffix (first, ".gltf")))
+	{
+		menu_add (open, "Preview Animations\xe2\x80\xa6", "assets.preview-clips", NULL);
+		menu_add (open, "New Animation Graph from Model", "assets.anim-graph-from-model", NULL);
+		menu_add (open, "New Physics Asset from Model", "assets.physics-asset-from-model", NULL);
+	}
+	if (type == LRG_ASSET_TYPE_TEXTURE)
+		menu_add (open, "Slice Sprite Sheet", "assets.slice-sprite-sheet", NULL);
 
 	menu_add (edit, "Rename", "assets.rename", "F2");
 	if (!is_dir)
 		menu_add (edit, "Duplicate", "assets.duplicate", NULL);
+	if (type == LRG_ASSET_TYPE_PREFAB || (!is_dir && special_kind (first) == SPECIAL_MATERIAL))
+		menu_add (edit, "Create Variant", "assets.create-variant", NULL);
 	menu_add (edit, "Move to Trash", "assets.trash", "Delete");
 
 	menu_add (copy, "Copy Path", "assets.copy-path", NULL);
@@ -2772,6 +3688,9 @@ build_background_menu (LrgEditorAssetsPanel *self)
 {
 	GMenu            *menu = g_menu_new ();
 	g_autoptr(GMenu)  create = g_menu_new ();
+	g_autoptr(GMenu)  render = g_menu_new ();
+	g_autoptr(GMenu)  anim = g_menu_new ();
+	g_autoptr(GMenu)  gameplay = g_menu_new ();
 	g_autoptr(GMenu)  view = g_menu_new ();
 	LrgAssetDatabase *db = (self->root != NULL) ? get_db (self) : NULL;
 	GPtrArray        *orphans = (db != NULL) ? lrg_asset_database_get_orphaned_metas (db) : NULL;
@@ -2779,6 +3698,24 @@ build_background_menu (LrgEditorAssetsPanel *self)
 	menu_add (create, "New Folder", "assets.new-folder", NULL);
 	menu_add (create, "New Level", "assets.new-level", NULL);
 	menu_add (create, "New Script\xe2\x80\xa6", "assets.new-script", NULL);
+	menu_add (render, "New Material", "assets.new-material", NULL);
+	menu_add (render, "New Shader", "assets.new-shader", NULL);
+	menu_add (render, "New Shader Graph", "assets.new-shader-graph", NULL);
+	menu_add (anim, "New Animation Graph", "assets.new-anim-graph", NULL);
+	menu_add (anim, "New Bone Map", "assets.new-bone-map", NULL);
+	menu_add (anim, "New Sequence", "assets.new-sequence", NULL);
+	menu_add (anim, "New 2D Skeleton", "assets.new-skeleton2d", NULL);
+	menu_add (anim, "New Physics Asset", "assets.new-physics-asset", NULL);
+	{
+		guint i;
+
+		for (i = 0; i < G_N_ELEMENTS (new_gameplay); i++)
+		{
+			g_autofree gchar *action = g_strconcat ("assets.", new_gameplay[i].action, NULL);
+
+			menu_add (gameplay, new_gameplay[i].label, action, NULL);
+		}
+	}
 
 	menu_add (view, "Refresh", "assets.refresh", NULL);
 	menu_add (view, "Show in File Manager", "assets.show-in-file-manager", NULL);
@@ -2791,6 +3728,9 @@ build_background_menu (LrgEditorAssetsPanel *self)
 	}
 
 	g_menu_append_section (menu, NULL, G_MENU_MODEL (create));
+	g_menu_append_section (menu, NULL, G_MENU_MODEL (render));
+	g_menu_append_section (menu, NULL, G_MENU_MODEL (anim));
+	g_menu_append_section (menu, NULL, G_MENU_MODEL (gameplay));
 	g_menu_append_section (menu, NULL, G_MENU_MODEL (view));
 	return G_MENU_MODEL (menu);
 }
@@ -3228,7 +4168,9 @@ cell_type (LrgTable  *table,
 {
 	EditorAssetItem *it = EDITOR_ASSET_ITEM (item);
 
-	return g_strdup (type_name (it->type, it->is_dir));
+	SpecialKind      special = it->is_dir ? SPECIAL_NONE : special_kind (it->path);
+
+	return g_strdup (special != SPECIAL_NONE ? special_name (special) : type_name (it->type, it->is_dir));
 }
 
 static gchar *
@@ -3527,6 +4469,7 @@ lrg_editor_assets_panel_step (LrgWidget *widget,
 	sync_app (self);
 	if (self->dirty)
 		refresh_listing (self);
+	pump_material_thumbnails (self);
 
 	if (self->renaming != NULL)
 	{
@@ -3672,6 +4615,272 @@ lrg_editor_assets_panel_handle_event (LrgWidget        *widget,
 	default:
 		return FALSE;
 	}
+}
+
+/* ==========================================================================
+ * Clip preview (glTF models): a dialog with the model on a turntable
+ * ========================================================================== */
+
+typedef struct
+{
+	LrgDialog   *dialog;      /* weak: the dialog owns the widgets */
+	LrgWidget   *view;        /* weak */
+	LrgComboBox *combo;       /* weak */
+	LrgSlider   *scrub;       /* weak */
+	LrgLabel    *info;        /* weak */
+	gchar       *model;       /* absolute */
+	gboolean     syncing;
+} ClipPreview;
+
+static ClipPreview *
+clip_of (LrgEditorAssetsPanel *self)
+{
+	if (self->clip == NULL)
+		self->clip = g_new0 (ClipPreview, 1);
+	return self->clip;
+}
+
+static void
+clip_preview_free (LrgEditorAssetsPanel *self)
+{
+	ClipPreview *cp = self->clip;
+
+	if (cp == NULL)
+		return;
+	g_clear_weak_pointer (&cp->dialog);
+	g_clear_weak_pointer (&cp->view);
+	g_clear_weak_pointer (&cp->combo);
+	g_clear_weak_pointer (&cp->scrub);
+	g_clear_weak_pointer (&cp->info);
+	g_free (cp->model);
+	g_clear_pointer (&self->clip, g_free);
+}
+
+/* The clip the preview plays, or NULL. */
+static LrgAnimationClip *
+clip_current (ClipPreview *cp)
+{
+	GPtrArray *clips = cp->view != NULL ? editor_anim_view_get_clips (cp->view) : NULL;
+	gint       i = cp->view != NULL ? editor_anim_view_get_clip (cp->view) : -1;
+
+	return (clips != NULL && i >= 0 && (guint) i < clips->len) ? g_ptr_array_index (clips, i) : NULL;
+}
+
+/* "Walk · 1.00 s · 11 tracks · loop" under the view. */
+static void
+clip_update_info (ClipPreview *cp)
+{
+	LrgAnimationClip *clip = clip_current (cp);
+	g_autofree gchar *text = NULL;
+
+	if (cp->info == NULL)
+		return;
+	if (clip == NULL)
+		text = g_strdup ("This model has no animations");
+	else
+		text = g_strdup_printf ("%s  \xc2\xb7  %.2f s  \xc2\xb7  %u track(s)%s  \xc2\xb7  %u event(s)%s",
+		                        lrg_animation_clip_get_name (clip), lrg_animation_clip_get_duration (clip),
+		                        lrg_animation_clip_get_track_count (clip),
+		                        lrg_animation_clip_get_weights_channel_count (clip) > 0 ? " + morph weights" : "",
+		                        lrg_animation_clip_get_event_count (clip),
+		                        lrg_animation_clip_get_loop_mode (clip) == LRG_ANIMATION_LOOP_REPEAT ? "  \xc2\xb7  loops"
+		                                                                                             : "");
+	lrg_label_set_text (cp->info, text);
+}
+
+static void
+on_clip_pick (LrgComboBox *combo,
+              gpointer     user_data)
+{
+	ClipPreview *cp = user_data;
+
+	if (cp->syncing || cp->view == NULL)
+		return;
+	editor_anim_view_set_clip (cp->view, lrg_combo_box_get_selected (combo));
+	editor_anim_view_set_playing (cp->view, TRUE);
+	clip_update_info (cp);
+}
+
+static void
+on_clip_scrub (LrgSlider *slider,
+               gpointer   user_data)
+{
+	ClipPreview      *cp = user_data;
+	LrgAnimationClip *clip = clip_current (cp);
+
+	if (cp->syncing || clip == NULL)
+		return;
+	editor_anim_view_set_playing (cp->view, FALSE);
+	editor_anim_view_set_time (cp->view, (gfloat) lrg_slider_get_value (slider) * lrg_animation_clip_get_duration (clip));
+}
+
+static void
+on_clip_morph (LrgSlider *slider,
+               gpointer   user_data)
+{
+	ClipPreview *cp = user_data;
+
+	if (cp->view != NULL)
+		editor_anim_view_set_morph (cp->view, GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (slider), "morph")),
+		                            (gfloat) lrg_slider_get_value (slider));
+}
+
+gboolean
+lrg_editor_assets_panel_preview_clips (LrgEditorAssetsPanel *self,
+                                       const gchar          *path,
+                                       const gchar          *clip)
+{
+	ClipPreview      *cp;
+	g_autofree gchar *abs = NULL;
+	g_autofree gchar *base = NULL;
+	g_autofree gchar *title = NULL;
+	g_autoptr(GError) error = NULL;
+	LrgWidget        *root;
+	LrgWidget        *box, *row, *view;
+	LrgDialog        *dialog;
+	LrgSkinnedMesh   *mesh;
+	LrgMorphTargets  *targets;
+	GPtrArray        *clips;
+	guint             i;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_ASSETS_PANEL (self), FALSE);
+	g_return_val_if_fail (path != NULL, FALSE);
+	sync_app (self);
+	abs = abs_path (self, path);
+	root = lrg_widget_get_root (LRG_WIDGET (self));
+	if (abs == NULL || !g_file_test (abs, G_FILE_TEST_IS_REGULAR) || !LRG_IS_CANVAS (root))
+		return FALSE;
+	cp = clip_of (self);
+
+	/* the model in a turntable view, playing on its own */
+	view = editor_anim_view_new (self->app, "assets-clip-preview");
+	if (!editor_anim_view_set_model (view, abs, &error))
+	{
+		g_autofree gchar *msg = g_strdup_printf ("Cannot preview %s: %s", abs, error->message);
+
+		notify_user (self, EDITOR_NOTIFY_ERROR, msg);
+		g_object_ref_sink (view);
+		g_object_unref (view);
+		return FALSE;
+	}
+	if (cp->dialog != NULL)
+		lrg_dialog_close (cp->dialog);
+	g_free (cp->model);
+	cp->model = g_strdup (abs);
+	lrg_widget_set_min_size (view, 460.0f, 300.0f);
+	lrg_widget_set_fill_weight (view, 1.0f);
+	editor_anim_view_set_show_bones (view, FALSE);
+	editor_anim_view_set_caption (view, "turntable");
+
+	box = LRG_WIDGET (lrg_vbox_new ());
+	lrg_widget_set_name (box, "assets-clip-box");
+	lrg_container_set_spacing (LRG_CONTAINER (box), 6.0f);
+	lrg_container_add_child (LRG_CONTAINER (box), view);
+	g_set_weak_pointer (&cp->view, view);
+	g_object_unref (view);
+
+	/* clip list + scrub bar */
+	row = LRG_WIDGET (lrg_hbox_new ());
+	lrg_container_set_spacing (LRG_CONTAINER (row), 8.0f);
+	{
+		LrgComboBox *combo = lrg_combo_box_new ();
+		LrgSlider   *scrub = lrg_slider_new_with_range (0.0, 1.0, 0.0);
+
+		lrg_widget_set_name (LRG_WIDGET (combo), "assets-clip-list");
+		clips = editor_anim_view_get_clips (view);
+		cp->syncing = TRUE;
+		for (i = 0; clips != NULL && i < clips->len; i++)
+		{
+			const gchar *name = lrg_animation_clip_get_name (g_ptr_array_index (clips, i));
+
+			lrg_combo_box_append (combo, name);
+			if (g_strcmp0 (name, clip) == 0)
+				editor_anim_view_set_clip (view, (gint) i);
+		}
+		if (clips == NULL || clips->len == 0)
+			lrg_combo_box_append (combo, "(no clips)");
+		lrg_combo_box_set_selected (combo, MAX (editor_anim_view_get_clip (view), 0));
+		cp->syncing = FALSE;
+		g_signal_connect (combo, "changed", G_CALLBACK (on_clip_pick), cp);
+		lrg_widget_set_min_size (LRG_WIDGET (combo), 160.0f, 0.0f);
+		lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (combo));
+		g_set_weak_pointer (&cp->combo, combo);
+		g_object_unref (combo);
+		lrg_widget_set_name (LRG_WIDGET (scrub), "assets-clip-scrub");
+		lrg_widget_set_fill_weight (LRG_WIDGET (scrub), 1.0f);
+		g_signal_connect (scrub, "value-changed", G_CALLBACK (on_clip_scrub), cp);
+		lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (scrub));
+		g_set_weak_pointer (&cp->scrub, scrub);
+		g_object_unref (scrub);
+	}
+	lrg_container_add_child (LRG_CONTAINER (box), row);
+	g_object_unref (row);
+	{
+		LrgLabel *info = lrg_label_new ("");
+
+		lrg_widget_set_name (LRG_WIDGET (info), "assets-clip-info");
+		lrg_widget_add_class (LRG_WIDGET (info), "dim-label");
+		lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (info));
+		g_set_weak_pointer (&cp->info, info);
+		g_object_unref (info);
+	}
+
+	/* one slider per morph target */
+	mesh = editor_anim_view_get_mesh (view);
+	targets = mesh != NULL ? lrg_skinned_mesh_get_morph_targets (mesh) : NULL;
+	if (targets != NULL && lrg_morph_targets_get_target_count (targets) > 0)
+	{
+		const gfloat *w = lrg_skinned_mesh_get_morph_weights (mesh, NULL);
+		LrgLabel     *h = lrg_label_new ("MORPH TARGETS");
+
+		lrg_widget_add_class (LRG_WIDGET (h), "dim-label");
+		lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (h));
+		g_object_unref (h);
+		for (i = 0; i < lrg_morph_targets_get_target_count (targets); i++)
+		{
+			LrgWidget        *mrow = LRG_WIDGET (lrg_hbox_new ());
+			LrgLabel         *label = lrg_label_new (lrg_morph_targets_get_target_name (targets, i));
+			LrgSlider        *slider = lrg_slider_new_with_range (0.0, 1.0, 0.0);
+			g_autofree gchar *sname = g_strdup_printf ("assets-clip-morph-%u", i);
+
+			lrg_container_set_spacing (LRG_CONTAINER (mrow), 8.0f);
+			lrg_widget_set_min_size (LRG_WIDGET (label), 120.0f, 0.0f);
+			lrg_container_add_child (LRG_CONTAINER (mrow), LRG_WIDGET (label));
+			g_object_unref (label);
+			lrg_widget_set_name (LRG_WIDGET (slider), sname);
+			lrg_slider_set_value (slider, w != NULL ? w[i] : 0.0);
+			g_object_set_data (G_OBJECT (slider), "morph", GUINT_TO_POINTER (i));
+			g_signal_connect (slider, "value-changed", G_CALLBACK (on_clip_morph), cp);
+			lrg_widget_set_fill_weight (LRG_WIDGET (slider), 1.0f);
+			lrg_container_add_child (LRG_CONTAINER (mrow), LRG_WIDGET (slider));
+			g_object_unref (slider);
+			lrg_container_add_child (LRG_CONTAINER (box), mrow);
+			g_object_unref (mrow);
+		}
+	}
+
+	base = g_path_get_basename (abs);
+	title = g_strdup_printf ("Animations: %s", base);
+	dialog = lrg_dialog_new (title, "Drag to orbit, scroll to zoom. Pick a clip to play it; drag the bar to scrub.");
+	lrg_widget_set_name (LRG_WIDGET (dialog), "assets-clip-dialog");
+	lrg_dialog_set_content (dialog, box);
+	g_object_unref (box);
+	lrg_dialog_add_button (dialog, "Close", LRG_DIALOG_RESPONSE_CLOSE, TRUE);
+	g_set_weak_pointer (&cp->dialog, dialog);
+	lrg_dialog_present (dialog, LRG_CANVAS (root));
+	g_object_unref (dialog);
+	clip_update_info (cp);
+	return TRUE;
+}
+
+const gchar *
+lrg_editor_assets_panel_get_clip_preview_model (LrgEditorAssetsPanel *self)
+{
+	ClipPreview *cp;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_ASSETS_PANEL (self), NULL);
+	cp = self->clip;
+	return (cp != NULL && cp->dialog != NULL && cp->view != NULL) ? cp->model : NULL;
 }
 
 /* ==========================================================================
@@ -3935,6 +5144,85 @@ m_asset_duplicate (LrgEditorServer *server, JsonObject *params, gpointer user_da
 	return entry_json (self, done);
 }
 
+/*
+ * asset.new {kind, path?, name?, image?}: writes a new asset.  @path is
+ * the file (project relative or absolute, inside the project); without
+ * it the file is <name or the kind's default stem>.<ext> in the listed
+ * folder (a free name).  kind "sprite" with @image slices that image.
+ */
+static JsonNode *
+m_asset_new (LrgEditorServer *server, JsonObject *params, gpointer user_data, GError **error)
+{
+	LrgEditorAssetsPanel *self = method_panel (user_data, error);
+	const gchar          *kind = param_string (params, "kind");
+	const gchar          *p = param_string (params, "path");
+	const gchar          *name = param_string (params, "name");
+	const gchar          *image = param_string (params, "image");
+	g_autofree gchar     *path = NULL;
+	g_autofree gchar     *image_abs = NULL;
+	g_autoptr(GError)     cause = NULL;
+	JsonNode             *node;
+
+	if (self == NULL)
+		return NULL;
+	if (kind == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		                     "Missing string parameter 'kind'");
+		return NULL;
+	}
+	if (p != NULL)
+		path = abs_path (self, p);
+	else
+	{
+		const gchar *ext = kind_extension (kind);
+		LrgEditorDocumentFormat format = lrg_editor_document_format_from_string (kind);
+		const gchar *dext = lrg_editor_document_format_get_extension (format);
+		guint i;
+		const gchar *stem = name;
+
+		if (ext == NULL && dext != NULL)
+			ext = dext + 1;
+		for (i = 0; stem == NULL && i < G_N_ELEMENTS (new_gameplay); i++)
+		{
+			if (g_strcmp0 (new_gameplay[i].kind, kind) == 0)
+				stem = new_gameplay[i].stem;
+		}
+		if (ext == NULL)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+			             "Unknown asset kind '%s'; pass 'path' for a plain YAML format", kind);
+			return NULL;
+		}
+		path = free_name (self, stem != NULL ? stem : "new_asset", ext);
+	}
+	if (path == NULL || !path_is_under (path, self->root))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "'%s' is not a free path inside the project", p != NULL ? p : kind);
+		return NULL;
+	}
+	if (image != NULL)
+	{
+		image_abs = abs_path (self, image);
+		if (!g_file_test (image_abs, G_FILE_TEST_IS_REGULAR))
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+			             "No image '%s' in the project", image);
+			return NULL;
+		}
+	}
+	if (!lrg_editor_assets_panel_create_asset (path, kind, image_abs, &cause))
+	{
+		set_failed (error, cause, "Create failed");
+		return NULL;
+	}
+	refresh_listing (self);
+	node = entry_json (self, path);
+	json_object_set_string_member (json_node_get_object (node), "kind", kind);
+	return node;
+}
+
 /* asset.trash {path}: no confirmation (the caller asked) */
 static JsonNode *
 m_asset_trash (LrgEditorServer *server, JsonObject *params, gpointer user_data, GError **error)
@@ -3999,6 +5287,298 @@ m_asset_orphans (LrgEditorServer *server, JsonObject *params, gpointer user_data
 	return node;
 }
 
+/* --- clip.*: glTF clips without UI, and the preview dialog --- */
+
+/* The glTF file of params.model (project-relative or absolute). */
+static LrgGltfAnimation *
+clip_load (LrgEditorAssetsPanel  *self,
+           JsonObject            *params,
+           gchar                **out_abs,
+           GError               **error)
+{
+	const gchar       *model = param_string (params, "model");
+	g_autofree gchar  *abs = NULL;
+	g_autoptr(GError)  cause = NULL;
+	LrgGltfAnimation  *gltf;
+
+	if (model == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		                     "Missing string parameter 'model'");
+		return NULL;
+	}
+	abs = abs_path (self, model);
+	gltf = lrg_gltf_animation_new_from_file (abs, &cause);
+	if (gltf == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR,
+		                     g_error_matches (cause, G_FILE_ERROR, G_FILE_ERROR_NOENT) ? LRG_EDITOR_SERVER_ERROR_NOT_FOUND
+		                                                                              : LRG_EDITOR_SERVER_ERROR_FAILED,
+		                     cause->message);
+		return NULL;
+	}
+	if (out_abs != NULL)
+		*out_abs = g_steal_pointer (&abs);
+	return gltf;
+}
+
+static JsonNode *
+take_object (JsonObject *o)
+{
+	JsonNode *node = json_node_new (JSON_NODE_OBJECT);
+
+	json_node_take_object (node, o);
+	return node;
+}
+
+/* clip.list {model}: clips, bones of skin 0, morph targets */
+static JsonNode *
+m_clip_list (LrgEditorServer *server, JsonObject *params, gpointer user_data, GError **error)
+{
+	LrgEditorAssetsPanel        *self = method_panel (user_data, error);
+	g_autoptr(LrgGltfAnimation)  gltf = NULL;
+	g_autoptr(GPtrArray)         clips = NULL;
+	g_autoptr(LrgSkeleton)       skeleton = NULL;
+	g_autoptr(LrgSkinnedMesh)    mesh = NULL;
+	LrgMorphTargets             *targets;
+	JsonObject                  *o;
+	JsonArray                   *a;
+	guint                        i;
+
+	if (self == NULL || (gltf = clip_load (self, params, NULL, error)) == NULL)
+		return NULL;
+	o = json_object_new ();
+	clips = lrg_gltf_animation_create_clips (gltf, NULL);
+	a = json_array_new ();
+	for (i = 0; clips != NULL && i < clips->len; i++)
+	{
+		LrgAnimationClip *clip = g_ptr_array_index (clips, i);
+		JsonObject       *c = json_object_new ();
+
+		json_object_set_string_member (c, "name", lrg_animation_clip_get_name (clip));
+		json_object_set_double_member (c, "duration", lrg_animation_clip_get_duration (clip));
+		json_object_set_int_member (c, "tracks", lrg_animation_clip_get_track_count (clip));
+		json_object_set_boolean_member (c, "loop", lrg_animation_clip_get_loop_mode (clip) == LRG_ANIMATION_LOOP_REPEAT);
+		json_array_add_object_element (a, c);
+	}
+	json_object_set_array_member (o, "clips", a);
+	a = json_array_new ();
+	if (lrg_gltf_animation_get_skin_count (gltf) > 0)
+	{
+		skeleton = lrg_gltf_animation_create_skeleton (gltf, 0, NULL);
+		mesh = lrg_gltf_animation_create_skinned_mesh (gltf, 0, NULL);
+	}
+	else if (lrg_gltf_animation_get_mesh_count (gltf) > 0)
+		mesh = lrg_gltf_animation_create_mesh (gltf, 0, NULL);
+	for (i = 0; skeleton != NULL && i < lrg_skeleton_get_bone_count (skeleton); i++)
+		json_array_add_string_element (a, lrg_bone_get_name (lrg_skeleton_get_bone (skeleton, (gint) i)));
+	json_object_set_array_member (o, "bones", a);
+	a = json_array_new ();
+	targets = mesh != NULL ? lrg_skinned_mesh_get_morph_targets (mesh) : NULL;
+	for (i = 0; targets != NULL && i < lrg_morph_targets_get_target_count (targets); i++)
+	{
+		JsonObject   *m = json_object_new ();
+		const gfloat *w = lrg_skinned_mesh_get_morph_weights (mesh, NULL);
+
+		json_object_set_string_member (m, "name", lrg_morph_targets_get_target_name (targets, i));
+		json_object_set_string_member (m, "group", lrg_morph_targets_get_target_group (targets, i));
+		json_object_set_double_member (m, "weight", w != NULL ? w[i] : 0.0);
+		json_array_add_object_element (a, m);
+	}
+	json_object_set_array_member (o, "morph_targets", a);
+	return take_object (o);
+}
+
+/* clip.info {model, clip}: tracks and their channels, events */
+static JsonNode *
+m_clip_info (LrgEditorServer *server, JsonObject *params, gpointer user_data, GError **error)
+{
+	static const struct { LrgAnimationChannelPath path; const gchar *name; } paths[] = {
+		{ LRG_ANIMATION_CHANNEL_TRANSLATION, "translation" },
+		{ LRG_ANIMATION_CHANNEL_ROTATION, "rotation" },
+		{ LRG_ANIMATION_CHANNEL_SCALE, "scale" }
+	};
+	LrgEditorAssetsPanel        *self = method_panel (user_data, error);
+	g_autoptr(LrgGltfAnimation)  gltf = NULL;
+	g_autoptr(LrgAnimationClip)  clip = NULL;
+	const gchar                 *name = param_string (params, "clip");
+	JsonObject                  *o;
+	JsonArray                   *tracks, *events;
+	gint                         index;
+	guint                        t, k;
+
+	if (self == NULL || (gltf = clip_load (self, params, NULL, error)) == NULL)
+		return NULL;
+	index = name != NULL ? lrg_gltf_animation_find_clip (gltf, name) : -1;
+	if (index < 0 || (clip = lrg_gltf_animation_create_clip (gltf, (guint) index, NULL)) == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND, "No clip named '%s'",
+		             name != NULL ? name : "");
+		return NULL;
+	}
+	o = json_object_new ();
+	json_object_set_string_member (o, "name", lrg_animation_clip_get_name (clip));
+	json_object_set_double_member (o, "duration", lrg_animation_clip_get_duration (clip));
+	json_object_set_boolean_member (o, "loop", lrg_animation_clip_get_loop_mode (clip) == LRG_ANIMATION_LOOP_REPEAT);
+	tracks = json_array_new ();
+	for (t = 0; t < lrg_animation_clip_get_track_count (clip); t++)
+	{
+		JsonObject *tr = json_object_new ();
+		JsonArray  *channels = json_array_new ();
+
+		json_object_set_string_member (tr, "bone", lrg_animation_clip_get_track_bone_name (clip, t));
+		for (k = 0; k < G_N_ELEMENTS (paths); k++)
+		{
+			LrgAnimationInterpolation interp;
+			guint                     n = 0;
+			JsonObject               *ch;
+
+			if (!lrg_animation_clip_get_track_channel (clip, t, paths[k].path, &interp, &n, NULL, NULL))
+				continue;
+			ch = json_object_new ();
+			json_object_set_string_member (ch, "kind", paths[k].name);
+			json_object_set_string_member (ch, "interpolation",
+			                               interp == LRG_ANIMATION_INTERPOLATION_STEP ? "step"
+			                               : interp == LRG_ANIMATION_INTERPOLATION_CUBIC_SPLINE ? "cubic_spline"
+			                                                                                     : "linear");
+			json_object_set_int_member (ch, "keys", n);
+			json_array_add_object_element (channels, ch);
+		}
+		json_object_set_array_member (tr, "channels", channels);
+		json_array_add_object_element (tracks, tr);
+	}
+	json_object_set_array_member (o, "tracks", tracks);
+	events = json_array_new ();
+	for (k = 0; k < lrg_animation_clip_get_event_count (clip); k++)
+	{
+		const LrgAnimationEvent *ev = lrg_animation_clip_get_event (clip, k);
+		JsonObject              *e = json_object_new ();
+
+		json_object_set_double_member (e, "time", lrg_animation_event_get_time (ev));
+		json_object_set_string_member (e, "name", lrg_animation_event_get_name (ev));
+		json_array_add_object_element (events, e);
+	}
+	json_object_set_array_member (o, "events", events);
+	return take_object (o);
+}
+
+/* The clip preview's state as JSON. */
+static JsonNode *
+clip_preview_json (LrgEditorAssetsPanel *self)
+{
+	ClipPreview      *cp = self->clip;
+	LrgAnimationClip *clip = cp != NULL ? clip_current (cp) : NULL;
+	JsonObject       *o = json_object_new ();
+
+	json_object_set_string_member (o, "model", lrg_editor_assets_panel_get_clip_preview_model (self));
+	json_object_set_string_member (o, "clip", clip != NULL ? lrg_animation_clip_get_name (clip) : NULL);
+	json_object_set_double_member (o, "time", cp != NULL && cp->view != NULL ? editor_anim_view_get_time (cp->view) : 0.0);
+	json_object_set_boolean_member (o, "playing", cp != NULL && cp->view != NULL && editor_anim_view_get_playing (cp->view));
+	return take_object (o);
+}
+
+/* clip.preview {model, clip?, time?, play?}: opens (or drives) the dialog */
+static JsonNode *
+m_clip_preview (LrgEditorServer *server, JsonObject *params, gpointer user_data, GError **error)
+{
+	LrgEditorAssetsPanel *self = method_panel (user_data, error);
+	const gchar          *model = param_string (params, "model");
+	const gchar          *name = param_string (params, "clip");
+	g_autofree gchar     *abs = NULL;
+	ClipPreview          *cp;
+
+	if (self == NULL)
+		return NULL;
+	if (model == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		                     "Missing string parameter 'model'");
+		return NULL;
+	}
+	abs = abs_path (self, model);
+	cp = clip_of (self);
+	if ((cp->dialog == NULL || g_strcmp0 (cp->model, abs) != 0) &&
+	    !lrg_editor_assets_panel_preview_clips (self, model, name))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND, "Cannot preview '%s'", model);
+		return NULL;
+	}
+	if (name != NULL && cp->view != NULL)
+	{
+		GPtrArray *clips = editor_anim_view_get_clips (cp->view);
+		gint       found = -1;
+		guint      i;
+
+		for (i = 0; clips != NULL && i < clips->len; i++)
+			if (g_strcmp0 (lrg_animation_clip_get_name (g_ptr_array_index (clips, i)), name) == 0)
+				found = (gint) i;
+		if (found < 0)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND, "No clip named '%s'", name);
+			return NULL;
+		}
+		if (found != editor_anim_view_get_clip (cp->view))
+		{
+			editor_anim_view_set_clip (cp->view, found);
+			cp->syncing = TRUE;
+			if (cp->combo != NULL)
+				lrg_combo_box_set_selected (cp->combo, found);
+			cp->syncing = FALSE;
+			clip_update_info (cp);
+		}
+	}
+	if (cp->view != NULL && json_object_has_member (params, "time"))
+	{
+		editor_anim_view_set_playing (cp->view, FALSE);
+		editor_anim_view_set_time (cp->view, (gfloat) json_object_get_double_member (params, "time"));
+	}
+	if (cp->view != NULL && json_object_has_member (params, "play"))
+		editor_anim_view_set_playing (cp->view, param_bool (params, "play"));
+	return clip_preview_json (self);
+}
+
+/* clip.set_morph {model, target, weight}: a morph slider of the preview */
+static JsonNode *
+m_clip_set_morph (LrgEditorServer *server, JsonObject *params, gpointer user_data, GError **error)
+{
+	LrgEditorAssetsPanel *self = method_panel (user_data, error);
+	const gchar          *target = param_string (params, "target");
+	ClipPreview          *cp;
+	LrgSkinnedMesh       *mesh;
+	LrgMorphTargets      *targets;
+	gint                  index;
+	gdouble               weight;
+	JsonObject           *o;
+
+	if (self == NULL)
+		return NULL;
+	if (m_clip_preview (server, params, user_data, error) == NULL)
+		return NULL;
+	cp = self->clip;
+	mesh = cp != NULL && cp->view != NULL ? editor_anim_view_get_mesh (cp->view) : NULL;
+	targets = mesh != NULL ? lrg_skinned_mesh_get_morph_targets (mesh) : NULL;
+	index = (targets != NULL && target != NULL) ? lrg_morph_targets_find_target (targets, target) : -1;
+	if (index < 0 || !json_object_has_member (params, "weight"))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+		             "No morph target '%s' (or no weight given)", target != NULL ? target : "");
+		return NULL;
+	}
+	weight = CLAMP (json_object_get_double_member (params, "weight"), 0.0, 1.0);
+	editor_anim_view_set_morph (cp->view, (guint) index, (gfloat) weight);
+	{
+		g_autofree gchar *sname = g_strdup_printf ("assets-clip-morph-%d", index);
+		LrgWidget        *slider = cp->dialog != NULL ? lrg_widget_find (LRG_WIDGET (cp->dialog), sname) : NULL;
+
+		if (slider != NULL && LRG_IS_SLIDER (slider))
+			lrg_slider_set_value (LRG_SLIDER (slider), weight);
+	}
+	o = json_object_new ();
+	json_object_set_string_member (o, "target", target);
+	json_object_set_double_member (o, "weight", weight);
+	return take_object (o);
+}
+
 static void
 register_with_app (LrgEditorAssetsPanel *self)
 {
@@ -4019,7 +5599,12 @@ register_with_app (LrgEditorAssetsPanel *self)
 	lrg_editor_server_register_method (server, "asset.move", m_asset_move, app, NULL);
 	lrg_editor_server_register_method (server, "asset.duplicate", m_asset_duplicate, app, NULL);
 	lrg_editor_server_register_method (server, "asset.trash", m_asset_trash, app, NULL);
+	lrg_editor_server_register_method (server, "asset.new", m_asset_new, app, NULL);
 	lrg_editor_server_register_method (server, "asset.orphans", m_asset_orphans, app, NULL);
+	lrg_editor_server_register_method (server, "clip.list", m_clip_list, app, NULL);
+	lrg_editor_server_register_method (server, "clip.info", m_clip_info, app, NULL);
+	lrg_editor_server_register_method (server, "clip.preview", m_clip_preview, app, NULL);
+	lrg_editor_server_register_method (server, "clip.set_morph", m_clip_set_morph, app, NULL);
 }
 
 /* ==========================================================================
@@ -4100,6 +5685,7 @@ lrg_editor_assets_panel_dispose (GObject *object)
 	g_clear_object (&self->actions);
 	g_clear_weak_pointer (&self->trash_dialog);
 	g_clear_weak_pointer (&self->import_dialog);
+	clip_preview_free (self);
 	g_clear_weak_pointer (&self->app);
 	G_OBJECT_CLASS (lrg_editor_assets_panel_parent_class)->dispose (object);
 }
@@ -4122,6 +5708,7 @@ lrg_editor_assets_panel_finalize (GObject *object)
 	g_clear_pointer (&self->context, g_ptr_array_unref);
 	g_clear_pointer (&self->dragging, g_ptr_array_unref);
 	g_clear_pointer (&self->trash_paths, g_ptr_array_unref);
+	g_clear_pointer (&self->mat_thumbs, g_hash_table_unref);
 	G_OBJECT_CLASS (lrg_editor_assets_panel_parent_class)->finalize (object);
 }
 
@@ -4191,6 +5778,7 @@ lrg_editor_assets_panel_init (LrgEditorAssetsPanel *self)
 
 	self->grid = TRUE;
 	self->type_filter = LRG_ASSET_TYPE_UNKNOWN;
+	self->mat_thumbs = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, mat_thumb_free);
 	self->filter = g_strdup ("");
 	self->all = g_ptr_array_new_with_free_func (g_object_unref);
 	self->store = g_list_store_new (EDITOR_TYPE_ASSET_ITEM);
@@ -4304,6 +5892,19 @@ lrg_editor_assets_panel_new (LrgEditorApp *app)
 	self = g_object_new (LRG_TYPE_EDITOR_ASSETS_PANEL, NULL);
 	g_set_weak_pointer (&self->app, app);
 	lrg_editor_data_editor_install (app);     /* data.open for open_entry() */
+	lrg_editor_material_editor_install (app); /* material.* */
+	lrg_editor_shader_graph_editor_install (app); /* shadergraph.* */
+	lrg_editor_anim_graph_editor_install (app); /* anim.* */
+	lrg_editor_bone_map_editor_install (app); /* bonemap.* */
+	lrg_editor_skeleton2d_editor_install (app); /* skel2d.* */
+	lrg_editor_physics_asset_editor_install (app); /* physasset.*, physics.layers.* */
+	lrg_editor_particle_editor_install (app); /* particles.* */
+	lrg_editor_weather_editor_install (app); /* weather.* */
+	lrg_editor_mixer_editor_install (app); /* mixer.*, actions mixer.new / mixer.open */
+	lrg_editor_bt_editor_install (app); /* bt.* (and ai.*) */
+	lrg_editor_fsm_editor_install (app); /* fsm.* (and ai.*) */
+	lrg_editor_vscript_editor_install (app); /* vscript.* */
+	lrg_editor_water_editor_install (app); /* water.* (EDTERR) */
 	register_with_app (self);
 	sync_app (self);
 	update_context_menu (self, TRUE);
@@ -4639,4 +6240,40 @@ lrg_editor_assets_panel_show_import_settings (LrgEditorAssetsPanel *self,
 	lrg_dialog_present (dialog, LRG_CANVAS (root));
 	g_object_unref (dialog);
 	return TRUE;
+}
+
+gchar *
+lrg_editor_assets_panel_create_variant (LrgEditorAssetsPanel  *self,
+                                        const gchar           *path,
+                                        GError               **error)
+{
+	g_autofree gchar *abs = NULL;
+	gchar            *variant = NULL;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_ASSETS_PANEL (self), NULL);
+	g_return_val_if_fail (path != NULL, NULL);
+
+	if (self->app == NULL)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "The panel has no editor");
+		return NULL;
+	}
+	abs = editor_app_project_path (self->app, path);
+	if (special_kind (abs) == SPECIAL_MATERIAL)
+		variant = lrg_editor_material_editor_create_variant (self->app, abs, NULL, error);
+	else if (lrg_asset_database_classify (abs) == LRG_ASSET_TYPE_PREFAB)
+	{
+		/* an undoable editor command: undo removes the file again */
+		variant = lrg_editor_prefab_suggest_variant_path (abs);
+		if (!lrg_editor_create_prefab_variant (self->app->editor, abs, variant, error))
+			g_clear_pointer (&variant, g_free);
+	}
+	else
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "%s is neither a prefab nor a material", abs);
+	if (variant != NULL)
+	{
+		refresh_listing (self);
+		editor_app_set_status (self->app, "Created %s", variant);
+	}
+	return variant;
 }

@@ -56,3 +56,17 @@ Tests: =tests/test-accessibility-filters.c= (the nearest colour against a brute 
 :CUSTOM_ID: lrgcamera3d-aspect-override
 :END:
 A palettized retro view is often drawn at the original game's resolution and stretched: Daggerfall's 320 x 200 on a 4:3 screen has pixels 1.2 times as tall as wide.  raylib takes the projection's aspect from the target being drawn into, which would squash such a view; =lrg_camera3d_set_aspect()= (property =aspect=, 0 = the target's own, at most 16) loads the perspective frustum again with the given ratio, the same field of view and the cull distances, so the stretched picture is undistorted.  See [[file:../graphics/index.org][graphics]].
+
+** In a post stack
+:PROPERTIES:
+:CUSTOM_ID: palettize-post-stack
+:END:
+The type name is =palettize=. The palette is a special parameter: a list of ="#rrggbb"= strings (1 to 256); =dither=, =dither-strength= and =dither-scale= are ordinary parameters. A build only re-uploads the palette when it changes.
+#+begin_src yaml
+- type: palettize
+  params:
+    palette: ["#140c1c", "#442434", "#30346d", "#4e4a4e", "#854c30", "#346524", "#d04648", "#757161"]
+    dither: true
+    dither_strength: 0.6
+#+end_src
+See [[file:post-stack.org][post-stack.org]].

@@ -65,6 +65,21 @@ enum
 
 static guint signals[N_SIGNALS];
 
+/*
+ * stats_connected:
+ *
+ * Names the LrgNetStats peer ("host:port" of the server) once a
+ * connection is up and reports it connected.
+ */
+static void
+stats_connected (LrgNetClient *self)
+{
+    g_autofree gchar *peer = g_strdup_printf ("%s:%u", self->server_host, self->server_port);
+
+    _lrg_net_buffer_set_stats_peer (&self->buffer, peer);
+    _lrg_net_stats_hook_peer (peer, TRUE);
+}
+
 /* ==========================================================================
  * GObject Implementation
  * ========================================================================== */
@@ -388,6 +403,7 @@ lrg_net_client_connect (LrgNetClient  *self,
     g_object_ref (self->output);
 
     self->connected = TRUE;
+    stats_connected (self);
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_IS_CONNECTED]);
     g_signal_emit (self, signals[SIGNAL_CONNECTED], 0);
 
@@ -433,6 +449,7 @@ connect_ready (GObject *source, GAsyncResult *result, gpointer data)
         self->output = g_object_ref (g_io_stream_get_output_stream (G_IO_STREAM (self->connection)));
         self->connecting = FALSE;
         self->connected = TRUE;
+        stats_connected (self);
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_IS_CONNECTED]);
         g_signal_emit (self, signals[SIGNAL_CONNECTED], 0);
         dex_promise_resolve_boolean (request->promise, TRUE);
@@ -508,6 +525,8 @@ lrg_net_client_disconnect (LrgNetClient *self)
         g_clear_object (&self->connection);
     }
 
+    if (self->connected)
+        _lrg_net_stats_hook_peer (self->buffer.stats_peer, FALSE);
     self->connected = FALSE;
     g_byte_array_set_size (self->buffer.input, 0);
     g_byte_array_set_size (self->buffer.output, 0);

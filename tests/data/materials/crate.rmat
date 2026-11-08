@@ -1,0 +1,30 @@
+# A fully specified material: every section of the .rmat schema.
+version: 1
+name: crate
+shading_model: lit
+base_color: [0.8, 0.6, 0.4, 1.0]
+metallic: 0.25
+roughness: 0.75
+occlusion_strength: 0.5
+normal_scale: 2.0
+emission_color: [1.0, 0.5, 0.0]
+emission_strength: 3.0
+alpha_cutoff: 0.4
+height_scale: 0.1
+textures:
+  albedo: crate_albedo.png
+  normal: crate_normal.png
+  orm: null
+render_state:
+  blend: cutout
+  cull: front
+  depth_test: true
+  depth_write: false
+  double_sided: false
+render_queue: cutout
+uniforms:
+  wobble: { type: float, value: 0.5 }
+  tint: { type: color, value: [1.0, 0.0, 0.0, 1.0] }
+  offset: [0.25, 0.5]
+  noise: { type: texture, value: noise.png }
+editor_note: kept on save

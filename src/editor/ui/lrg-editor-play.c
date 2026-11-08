@@ -53,11 +53,11 @@ on_play_started (LrgEditorPlaySession *session,
                  gpointer              user_data)
 {
 	LrgEditorApp *self = LRG_EDITOR_APP (user_data);
-	LrgWorld     *world = lrg_editor_play_session_get_world (session);
 
 	timeline_play_begin (self);
 	lrg_editor_log_append (self->log, G_LOG_LEVEL_MESSAGE, "play", "Play started");
-	editor_app_set_status (self, "Playing (%u objects)", world != NULL ? lrg_world_get_object_count (world) : 0u);
+	/* 2D game objects or 3D entities, whichever world is playing */
+	editor_app_set_status (self, "Playing (%u objects)", lrg_editor_play_session_get_n_objects (session));
 	sync_play_state (self);
 }
 
@@ -143,7 +143,19 @@ editor_play_start (LrgEditorApp *self)
 		return;
 	/* A timeline preview must not leak into the play snapshot */
 	editor_timeline_end_preview (self);
+	/* the default engine's registry builds the level's registry components
+	 * (ai, light, audio-source, ...); lrgeditor never started the engine,
+	 * so without this every one of them was skipped (startup is
+	 * headless-safe and refcounted) */
+	if (lrg_engine_get_registry (lrg_engine_get_default ()) == NULL &&
+	    !lrg_engine_startup (lrg_engine_get_default (), &error))
+	{
+		editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Cannot play: %s", error->message);
+		return;
+	}
 	lrg_editor_play_session_set_engine (self->play, lrg_engine_get_default ());
+	/* the open project's physics settings and layers (NULL: none open) */
+	lrg_editor_play_session_set_project (self->play, self->project);
 	if (!lrg_editor_play_session_start (self->play, &error))
 		editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Cannot play: %s", error->message);
 }

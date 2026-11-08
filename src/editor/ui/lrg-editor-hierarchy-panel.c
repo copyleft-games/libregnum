@@ -32,7 +32,10 @@
  *   context menu     an LrgMenu over a GMenuModel built per popup from the
  *                    editor's actions ("editor.*") and the panel's own
  *                    group ("hierarchy.*", acting on the menu's node).
- *   live tab         a flat LrgTreeView over the play session's objects.
+ *   live tab         an LrgTreeView over the play session's live tree:
+ *                    the game objects of a 2D world (flat), the entity
+ *                    hierarchy of a 3D world (children through
+ *                    lrg_editor_play_session_get_live_children()).
  *   actions / IPC    node.rename and edit.find are replaced; the
  *                    hierarchy.* methods are registered. Both look the
  *                    panel up through the app, so they never outlive it.
@@ -55,6 +58,7 @@
 #include "../../paint/lrg-paint-list.h"
 #include "../../paint/lrg-paint-icons.h"
 #include "../../ecs/lrg-game-object.h"
+#include "../../world3d/lrg-entity3d.h"
 
 #define PANEL_KEY       "lrg-editor-hierarchy-panel"
 #define NODE_TYPE       "application/x-lrg-node"
@@ -305,17 +309,87 @@ paint_kind_glyph (LrgWidget    *widget,
 	{
 	case LRG_NODE_VISUAL_LIGHT:
 		{
-			gint i;
+			const GValue *lt = lrg_node_visual_get_param (v, "light_type");
+			const gchar  *type = (lt != NULL && G_VALUE_HOLDS_STRING (lt)) ? g_value_get_string (lt) : NULL;
+			gint          i;
 
 			c = *theme_color (widget, LRG_THEME_COLOR_WARNING);
-			lrg_paint_list_circle (list, cx, cy, r * 0.55f, &c);
-			for (i = 0; i < 8; i++)
+			if (g_strcmp0 (type, "spot") == 0 ||
+			    (type == NULL && lrg_node_visual_get_param_double (v, "spot_angle", 0.0) > 0.0))
 			{
-				gfloat a = (gfloat) i * (gfloat) G_PI / 4.0f;
+				/* spot: a lamp head and its widening beam */
+				GrlColor beam = c;
 
-				lrg_paint_list_line (list, cx + cosf (a) * r * 0.85f, cy + sinf (a) * r * 0.85f,
-				                     cx + cosf (a) * r * 1.25f, cy + sinf (a) * r * 1.25f, t, &c);
+				beam.a = (guint8) (beam.a / 3);
+				lrg_paint_list_triangle (list, cx, cy - r * 0.55f, cx + r * 1.2f, cy + r * 1.15f,
+				                         cx - r * 1.2f, cy + r * 1.15f, &beam);
+				lrg_paint_list_circle (list, cx, cy - r * 0.6f, r * 0.5f, &c);
+				lrg_paint_list_line (list, cx, cy - r * 0.55f, cx + r * 1.2f, cy + r * 1.15f, t, &c);
+				lrg_paint_list_line (list, cx, cy - r * 0.55f, cx - r * 1.2f, cy + r * 1.15f, t, &c);
 			}
+			else if (g_strcmp0 (type, "directional") == 0)
+			{
+				/* sun: a disc with parallel rays falling down-left */
+				lrg_paint_list_circle (list, cx + r * 0.35f, cy - r * 0.35f, r * 0.6f, &c);
+				for (i = 0; i < 3; i++)
+				{
+					gfloat o = ((gfloat) i - 1.0f) * r * 0.55f;
+
+					lrg_paint_list_line (list, cx - r * 0.2f + o, cy + r * 0.1f - o * 0.2f,
+					                     cx - r * 1.0f + o, cy + r * 1.1f - o * 0.2f, t, &c);
+				}
+			}
+			else
+			{
+				lrg_paint_list_circle (list, cx, cy, r * 0.55f, &c);
+				for (i = 0; i < 8; i++)
+				{
+					gfloat a = (gfloat) i * (gfloat) G_PI / 4.0f;
+
+					lrg_paint_list_line (list, cx + cosf (a) * r * 0.85f, cy + sinf (a) * r * 0.85f,
+					                     cx + cosf (a) * r * 1.25f, cy + sinf (a) * r * 1.25f, t, &c);
+				}
+			}
+		}
+		break;
+	case LRG_NODE_VISUAL_DECAL:
+		{
+			/* a projector: a square stamp with an arrow pressing into it */
+			GrlColor fill;
+
+			c.r = 0xf5; c.g = 0xc2; c.b = 0xe7; c.a = 0xff;
+			fill = c;
+			fill.a = 0x50;
+			lrg_paint_list_rect (list, cx - r * 1.1f, cy + r * 0.2f, r * 2.2f, r * 0.9f, r * 0.2f, &fill);
+			lrg_paint_list_border (list, cx - r * 1.1f, cy + r * 0.2f, r * 2.2f, r * 0.9f, r * 0.2f, t, &c);
+			lrg_paint_list_line (list, cx, cy - r * 1.15f, cx, cy + r * 0.05f, t, &c);
+			lrg_paint_list_triangle (list, cx - r * 0.45f, cy - r * 0.35f, cx + r * 0.45f, cy - r * 0.35f,
+			                         cx, cy + r * 0.15f, &c);
+		}
+		break;
+	case LRG_NODE_VISUAL_REFLECTION_PROBE:
+		{
+			/* a mirror ball in a box */
+			GrlColor hi;
+
+			c.r = 0x89; c.g = 0xdc; c.b = 0xeb; c.a = 0xff;
+			hi.r = 0xff; hi.g = 0xff; hi.b = 0xff; hi.a = 0xd0;
+			lrg_paint_list_border (list, cx - r * 1.15f, cy - r * 1.15f, r * 2.3f, r * 2.3f, r * 0.25f, t * 0.8f, &c);
+			lrg_paint_list_circle (list, cx, cy, r * 0.75f, &c);
+			lrg_paint_list_circle (list, cx - r * 0.25f, cy - r * 0.25f, r * 0.22f, &hi);
+		}
+		break;
+	case LRG_NODE_VISUAL_PROBE_VOLUME:
+		{
+			/* light probes (0.9.0 M3): a 3 x 3 lattice of dots in a box */
+			gint ix, iy;
+
+			c.r = 0xf9; c.g = 0xe2; c.b = 0xaf; c.a = 0xff;
+			lrg_paint_list_border (list, cx - r * 1.15f, cy - r * 1.15f, r * 2.3f, r * 2.3f, r * 0.25f, t * 0.8f, &c);
+			for (iy = -1; iy <= 1; iy++)
+				for (ix = -1; ix <= 1; ix++)
+					lrg_paint_list_circle (list, cx + (gfloat) ix * r * 0.6f, cy + (gfloat) iy * r * 0.6f,
+					                       r * (ix == 0 && iy == 0 ? 0.28f : 0.2f), &c);
 		}
 		break;
 	case LRG_NODE_VISUAL_CAMERA:
@@ -411,7 +485,7 @@ hierarchy_row_paint (LrgWidget    *widget,
 	LRG_WIDGET_CLASS (hierarchy_row_parent_class)->paint (widget, list);
 
 	/* Markers before the toggles: scripts (green dot), prefab link (chain),
-	 * overrides on a linked root (warning dot) */
+	 * overrides on a linked root (warning dot), the physics body and the nav-agent trail */
 	row_toggle_rect (self, 0, &tx, &ty, &ts);
 	mx = tx - 6.0f;
 	if (lrg_node_get_prefab_link (node) != NULL)
@@ -435,6 +509,59 @@ hierarchy_row_paint (LrgWidget    *widget,
 	{
 		mx -= h * 0.3f;
 		lrg_paint_list_circle (list, mx + h * 0.1f, y + h * 0.5f, h * 0.1f, theme_color (widget, LRG_THEME_COLOR_SUCCESS));
+	}
+	if (lrg_node_get_physics (node) != NULL)
+	{
+		/* Physics body (0.9.0 M5): a small ball resting on a ground
+		 * line, coloured like the physics debug draw (green dynamic,
+		 * blue kinematic, grey static) */
+		LrgNodePhysics *phys = lrg_node_get_physics (node);
+		GrlColor        c;
+		gfloat          cy = y + h * 0.5f;
+		gfloat          r = h * 0.14f;
+		gfloat          lw = MAX (1.0f, h * 0.06f);
+
+		switch (lrg_node_physics_get_body_kind (phys))
+		{
+		case LRG_DYNAMICS_BODY_STATIC:
+			c.r = 150; c.g = 150; c.b = 150; c.a = 255;
+			break;
+		case LRG_DYNAMICS_BODY_KINEMATIC:
+			c.r = 80; c.g = 140; c.b = 255; c.a = 255;
+			break;
+		case LRG_DYNAMICS_BODY_DYNAMIC:
+		default:
+			c.r = 80; c.g = 220; c.b = 110; c.a = 255;
+			break;
+		}
+		mx -= h * 0.5f;
+		lrg_paint_list_circle (list, mx + h * 0.25f, cy - r * 0.6f, r, &c);
+		lrg_paint_list_line (list, mx + h * 0.02f, cy + r * 0.9f, mx + h * 0.48f, cy + r * 0.9f, lw, &c);
+		if (lrg_node_physics_get_joints (phys)->len > 0)
+		{
+			/* a joint: a short link to the left */
+			lrg_paint_list_line (list, mx - h * 0.12f, cy - r * 0.6f, mx + h * 0.25f - r, cy - r * 0.6f, lw, &c);
+			lrg_paint_list_circle (list, mx - h * 0.12f, cy - r * 0.6f, r * 0.5f, &c);
+			mx -= h * 0.2f;
+		}
+	}
+	if (lrg_node_find_component (node, "nav-agent") != NULL)
+	{
+		/* Navigation agent (0.9.0 M6): a dotted trail ending in an
+		 * arrow head, cyan like the navigation overlay's links */
+		GrlColor c = { 60, 210, 230, 255 };
+		gfloat   cy = y + h * 0.5f;
+		gfloat   r = MAX (1.0f, h * 0.05f);
+		gfloat   lw = MAX (1.2f, h * 0.07f);
+		gfloat   tip;
+
+		mx -= h * 0.55f;
+		tip = mx + h * 0.48f;
+		lrg_paint_list_circle (list, mx + h * 0.04f, cy + h * 0.1f, r, &c);
+		lrg_paint_list_circle (list, mx + h * 0.16f, cy + h * 0.02f, r, &c);
+		lrg_paint_list_line (list, mx + h * 0.26f, cy - h * 0.04f, tip, cy - h * 0.04f, lw, &c);
+		lrg_paint_list_line (list, tip, cy - h * 0.04f, tip - h * 0.12f, cy - h * 0.16f, lw, &c);
+		lrg_paint_list_line (list, tip, cy - h * 0.04f, tip - h * 0.12f, cy + h * 0.08f, lw, &c);
 	}
 
 	/* Eye toggle: filled pupil when visible, ring when hidden; brighter
@@ -634,7 +761,8 @@ tree_bind_row (LrgTreeView *tree,
 	hierarchy_row_set_node (HIERARCHY_ROW (row), LRG_NODE (item));
 }
 
-/* Live tab rows: a label with the authoring node's name. */
+/* Live tab rows: a label with the authoring node's name (an entity the
+ * simulation spawned shows its own name). */
 static LrgWidget *
 live_create_row (LrgTreeView *tree,
                  gpointer     user_data)
@@ -645,6 +773,17 @@ live_create_row (LrgTreeView *tree,
 	return LRG_WIDGET (label);
 }
 
+/* Live tab hierarchy: entity children in 3D, a flat list in 2D. */
+static GListModel *
+live_children (LrgTreeView *tree,
+               GObject     *item,
+               gpointer     user_data)
+{
+	LrgEditorHierarchyPanel *self = LRG_EDITOR_HIERARCHY_PANEL (user_data);
+
+	return lrg_editor_play_session_get_live_children (self->play, item);
+}
+
 static void
 live_bind_row (LrgTreeView *tree,
                LrgWidget   *row,
@@ -653,11 +792,13 @@ live_bind_row (LrgTreeView *tree,
                gpointer     user_data)
 {
 	LrgEditorHierarchyPanel *self = LRG_EDITOR_HIERARCHY_PANEL (user_data);
-	LrgNode                 *node = lrg_editor_play_session_get_node_for_object (self->play, LRG_GAME_OBJECT (item));
+	LrgNode                 *node = lrg_editor_play_session_get_node_for_live (self->play, item);
 	g_autofree gchar        *text = NULL;
 
 	if (node != NULL && lrg_node_get_name (node) != NULL)
 		text = g_strdup (lrg_node_get_name (node));
+	else if (LRG_IS_ENTITY3D (item) && lrg_entity3d_get_name (LRG_ENTITY3D (item)) != NULL)
+		text = g_strdup (lrg_entity3d_get_name (LRG_ENTITY3D (item)));
 	else
 		text = g_strdup_printf ("%s %p", G_OBJECT_TYPE_NAME (item), (gpointer) item);
 	lrg_label_set_text (LRG_LABEL (row), text);
@@ -1980,6 +2121,21 @@ m_state (LrgEditorServer  *server,
 		json_builder_add_string_value (b, lrg_node_get_name (node));
 		json_builder_set_member_name (b, "depth");
 		json_builder_add_int_value (b, lrg_tree_view_get_depth (self->tree, i));
+		/* the physics badge: body kind nick, null without a body */
+		json_builder_set_member_name (b, "physics");
+		if (lrg_node_get_physics (node) != NULL)
+		{
+			g_autoptr(GEnumClass) kinds = g_type_class_ref (LRG_TYPE_DYNAMICS_BODY_KIND);
+			GEnumValue           *ev = g_enum_get_value (kinds,
+			                                             (gint) lrg_node_physics_get_body_kind (lrg_node_get_physics (node)));
+
+			json_builder_add_string_value (b, ev != NULL ? ev->value_nick : "unknown");
+		}
+		else
+			json_builder_add_null_value (b);
+		/* the navigation badge: a nav-agent component (0.9.0 M6) */
+		json_builder_set_member_name (b, "nav_agent");
+		json_builder_add_boolean_value (b, lrg_node_find_component (node, "nav-agent") != NULL);
 		json_builder_set_member_name (b, "expanded");
 		json_builder_add_boolean_value (b, lrg_tree_view_is_expanded (self->tree, G_OBJECT (node)));
 		json_builder_set_member_name (b, "selected");
@@ -2130,8 +2286,7 @@ lrg_editor_hierarchy_panel_paint (LrgWidget    *widget,
 	/* Info line: level name and count, or matches while filtering, or the
 	 * live object count */
 	if (self->show_live)
-		info = g_strdup_printf ("Live objects: %u",
-		                        g_list_model_get_n_items (lrg_editor_play_session_get_objects (self->play)));
+		info = g_strdup_printf ("Live objects: %u", lrg_editor_play_session_get_n_objects (self->play));
 	else if (lrg_editor_node_model_get_filter (self->model) != NULL)
 		info = g_strdup_printf ("%u match%s of %u nodes", lrg_editor_node_model_get_n_matches (self->model),
 		                        lrg_editor_node_model_get_n_matches (self->model) == 1 ? "" : "es",
@@ -2294,7 +2449,8 @@ lrg_editor_hierarchy_panel_class_init (LrgEditorHierarchyPanelClass *klass)
 	/**
 	 * LrgEditorHierarchyPanel::live-selected:
 	 * @self: the panel
-	 * @object: (nullable): the selected live #LrgGameObject, or %NULL
+	 * @object: (nullable): the selected live object (an #LrgGameObject
+	 *   of a 2D play world or an #LrgEntity3D of a 3D one), or %NULL
 	 *
 	 * Emitted when the selection on the Live tab changes, and with %NULL
 	 * when play stops. The inspector shows the object while it is set
@@ -2383,7 +2539,8 @@ lrg_editor_hierarchy_panel_new (LrgEditorApp *app)
 	self->live = lrg_tree_view_new ();
 	lrg_widget_set_name (LRG_WIDGET (self->live), "hierarchy-live");
 	lrg_tree_view_set_factory (self->live, live_create_row, live_bind_row, self, NULL);
-	lrg_tree_view_set_model (self->live, lrg_editor_play_session_get_objects (self->play));
+	lrg_tree_view_set_children_func (self->live, live_children, self, NULL);
+	lrg_tree_view_set_model (self->live, lrg_editor_play_session_get_live_model (self->play));
 	lrg_container_add_child (LRG_CONTAINER (self), LRG_WIDGET (self->live));
 	g_object_unref (self->live);
 	g_signal_connect (self->live, "selection-changed", G_CALLBACK (on_live_selection_changed), self);

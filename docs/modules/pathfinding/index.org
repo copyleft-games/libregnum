@@ -16,6 +16,8 @@ The module is built around four core components:
 - *LrgPath*: A boxed type representing a sequence of waypoints from start to goal
 - *LrgNavMesh*: continuous A* over pre-cleaned walkable triangles
 - *LrgNavPolyMesh*: a navigation mesh voxel-baked from a level's raw triangles for an agent
+- *LrgNavBake*: the =.rnav= bake settings of a level and the bake from an =LrgWorld3D= (0.9.0)
+- *LrgNavAgent* / *LrgNavCrowd*: agents that follow paths and avoid each other with ORCA; =LrgNavAgentComponent= puts them on entities (0.9.0)
 
 ** Key Features
 :PROPERTIES:
@@ -73,6 +75,8 @@ pathfinding/
 ├── lrg-nav-grid.h/.c       # Navigation grid GObject
 ├── lrg-nav-poly-mesh.h/.c  # Voxel-baked polygon navigation mesh
 ├── lrg-nav-level.h/.c      # Walk and sight queries of one level (doors)
+├── lrg-nav-bake.h/.c       # .rnav bake settings, baking from an LrgWorld3D (0.9.0)
+├── lrg-nav-agent.h/.c      # LrgNavAgent and LrgNavCrowd: paths, steering, ORCA (0.9.0)
 ├── lrg-path.h/.c           # Path result boxed type
 └── lrg-pathfinder.h/.c     # A* pathfinder GObject
 #+end_example
@@ -103,3 +107,15 @@ See [[file:nav-poly-mesh.org][Voxel-baked polygon navigation meshes]]: =LrgNavPo
 ** Level walk and sight queries
 
 See [[file:nav-level.org][Level walk and sight queries]]: =LrgNavLevel= bakes one level's triangles into a walk mesh (=LrgNavPolyMesh=) and a sight mesh (=LrgCollisionMesh=) with doors that are both (open, closed for door openers only, locked), paths that respect them, the doors a path crosses, walk rays, line of sight and an asynchronous bake for servers.
+
+** Bake settings and baking from a world (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: nav-bake
+:END:
+See [[file:nav-bake.org][Navigation bake settings]]: =LrgNavBake= is the =.rnav= file of a level (agent, voxels, region filtering, geometry sources and filters, area types with costs, off-mesh links) and bakes an =LrgNavPolyMesh= from an =LrgWorld3D='s mesh renderers and static colliders (closed shapes filled) or explicit triangles, through the bake cache.
+
+** Agents, crowds and avoidance (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: nav-agent
+:END:
+See [[file:nav-agent.org][Navigation agents and crowds]]: =LrgNavAgent= follows string-pulled paths with arrive steering and crosses off-mesh links; =LrgNavCrowd= steps many agents deterministically with ORCA (a port of RVO2) against each other and the mesh's walls; =LrgNavAgentComponent= drives =LrgEntity3D= entities through the world's crowd. The guide [[file:../../guides/navigation.org][Navigation]] walks through the whole pipeline.

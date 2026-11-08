@@ -1,0 +1,420 @@
+#+title: LrgAnimGraph - the .ranim animation graph
+#+description: The .ranim animation graph asset: typed parameters, layers of state machines with blend trees and sub-machines, transitions, root motion and an IK post-pass, plus the whole-skeleton pose utilities
+#+version: 0.9.0
+
+* LrgAnimGraph - Animation Graphs (.ranim)
+:PROPERTIES:
+:CUSTOM_ID: lrganimgraph
+:END:
+=LrgAnimGraph= is the animation graph of a character: what plays when. It is a data asset (a =.ranim= YAML file) and its own runtime at the same time: loading builds live [[file:state-machine.org][LrgAnimationStateMachine]], [[file:state-machine.org][LrgAnimationState]], [[file:blend-tree.org][LrgBlendTree]], [[file:layers.org][LrgAnimationLayer]], =LrgAnimationTransition= and [[file:ik-solver.org::#ik-goal][LrgIKGoal]] objects, and saving walks those objects, so a graph edited through the C API (or by the editor's state machine graph) is saved exactly as edited. [[file:../world3d/components.org::#animator][LrgAnimatorComponent3D]] runs a graph on an entity and drives its skinned model.
+
+A graph holds:
+- *parameters*: typed values (float, int, bool, trigger) shared by every layer, set by gameplay code;
+- *clips*: named clip slots, each optionally declaring the glTF file and animation it comes from;
+- *layers*: one state machine each (states playing a clip, a blend tree or a nested machine; transitions with conditions, exit times, blend durations, offsets and interruption; any-state transitions), blended over each other in order by weight, through a bone mask, as override or additive;
+- *root motion*: which bone carries the character's travel and whether it moves the entity;
+- *IK goals*: a post-pass of two-bone, CCD, FABRIK, look-at and foot placement solves on the blended pose.
+
+The whole runtime is built on the *pose utilities* (=lrg_anim_pose_*=): sample a clip into a full skeleton pose, blend, add, apply. They are public; use them to build your own evaluators.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Poses
+:PROPERTIES:
+:CUSTOM_ID: poses
+:END:
+A pose is an array of =LrgBonePose= local transforms where entry /i/ belongs to the bone whose index (=lrg_bone_get_index()=) is /i/. Skeletons from the glTF importer, =lrg_skeleton_copy()= and the tests number their bones 0..n-1, so /n/ = =lrg_skeleton_get_bone_count()=. Bones a clip does not animate take their *bind pose* (not the identity), so a clip that animates only the legs leaves the arms in their rest pose.
+
+Sampling is table driven: the first time a clip is sampled for a skeleton layout (the bone names in index order) it builds a bone-to-track table and caches it on the clip. Every character sharing the clip and every copy of a skeleton reuse the table; adding bones or tracks rebuilds it.
+
+*** Update and evaluate
+:PROPERTIES:
+:CUSTOM_ID: update-evaluate
+:END:
+A frame is two steps:
+1. =lrg_anim_graph_update (graph, dt)= advances every layer's machine: state times (scaled by state speed and its speed parameter), blend tree phases, transition progress; it fires the clip events the frame crossed (signal =event=) and picks transitions.
+2. =lrg_anim_graph_evaluate (graph, skeleton, poses, n, root_delta, root_yaw)= blends the layers into a pose and takes the root motion out of it. It does not touch the skeleton and does not run IK; =lrg_anim_pose_apply()= writes the pose and =lrg_ik_goal_apply()= runs a goal. The animator component does both.
+
+*** Layers
+:PROPERTIES:
+:CUSTOM_ID: layers
+:END:
+Evaluation starts from the bind pose. Each enabled layer, in order, samples its machine and blends it in:
+- *override* lerps (slerps) each bone toward the layer's pose by =weight= x mask factor;
+- *additive* adds the layer pose's difference from the bind pose, times =weight= x mask factor: translations add, rotations multiply by the weighted =inverse(bind) * layer= rotation, scales multiply by the weighted ratio.
+
+A *mask* lists bones; with =mask_recursive= (the default) a listed bone also covers its descendants (=spine= covers arms and head). Without a mask the layer covers every bone. A full-weight unmasked override base layer is sampled in place (no blend cost).
+
+*** States and their motion
+:PROPERTIES:
+:CUSTOM_ID: states
+:END:
+A state plays exactly one of:
+- a *clip* (by its key under =clips:=);
+- a *blend tree*: 1D (=1d=: linear between thresholds), 2D cartesian (=2d_cartesian=, gradient band interpolation) or 2D directional (=2d_directional=, gradient band interpolation in polar space: children on a circle blend by angle, a child at the origin blends by speed), or direct (=direct=: every child's weight comes from its own parameter). Children are clips or nested trees. With =sync= (the default) all children share one normalized phase and the cycle length is the weight-blended child length, so walk and run blended at any ratio keep their feet in step;
+- a nested *machine* (a sub-state machine: entering the state starts it at its default state, leaving stops it; it reads the parent's parameters; its events are forwarded).
+
+=speed= scales the state's clock, =speed_parameter= multiplies it by a numeric parameter (a run cycle driven by the character's ground speed), =mirror= reflects the clip across the YZ plane.
+
+*** Transitions
+:PROPERTIES:
+:CUSTOM_ID: transitions
+:END:
+A transition from the current state fires when all its *conditions* hold and, when it has an =exit_time=, the source's normalized time crossed it during this update. Normalized time is not wrapped (1.5 is half way through the second loop): an exit time below 1 is reached once per loop, at the moment the fractional time passes it; an exit time of 1 or more is reached once (=exit_time: 1= = "when the one-shot clip ends"). A state that sits still past its exit time (a finished one-shot) still exits.
+
+Checks happen in this order: *any-state* transitions (=any_state:=; they fire from whichever state is current, except into their own target unless =can_transition_to_self=), then the current state's transitions; within each list by =priority= (higher first), then file order.
+
+When a transition fires its *trigger* parameters are reset (consumed), the target state is entered (at =offset= x its duration), and the machine cross-fades current -> target over =duration= seconds (0 = cut). =state-entered= is emitted when the cross-fade ends; =transition-started= when it begins.
+
+*Interruption*: =interruption= says which transitions may cut into a cross-fade in progress: those leaving the =source=, the =destination=, or both in either order. An interrupted cross-fade freezes the pose the machine had last sampled and blends from that pose to the new target, so there is no pop.
+
+*** Parameters
+:PROPERTIES:
+:CUSTOM_ID: parameters
+:END:
+| type      | values                        | condition forms                                       |
+|-----------+-------------------------------+-------------------------------------------------------|
+| =float=   | double                        | =op= one of ==, !=, >, <, >=, <=; =value= a number    |
+| =int=     | int32                         | same, =value= an integer                              |
+| =bool=    | true/false                    | ={parameter: x}= (== true) or =op: '=='/'!='= + =value= |
+| =trigger= | true while raised             | ={parameter: x}= only; consumed by the transition     |
+
+All layers (and their sub-machines) share one table of parameter values. =lrg_anim_graph_start()= resets every parameter to its default.
+
+*** Root motion
+:PROPERTIES:
+:CUSTOM_ID: root-motion
+:END:
+With =root_motion.bone= set and =mode= =xz= or =xyz=, the bone's travel is measured per clip over exactly the interval the update played (a repeating clip adds one end-minus-start stride per loop crossed, so a 2 m stride clip that loops twice in a long frame reports 4 m), blended by blend tree weights and transition progress (base layer only), converted to model space with the bone's parent rotation, and *removed from the pose*: the bone keeps its bind position on the extracted axes (=xz= keeps the vertical motion of jumps and crouches in the pose). =rotation: true= does the same for the turn about +Y. The delta comes back from =lrg_anim_graph_evaluate()=; the animator component adds it to the entity (scaled and rotated into the entity's parent space) when =apply= is true.
+
+Pick a root bone (or a bone whose parents do not animate): the delta is rotated by the parent's current world rotation.
+
+*** IK post-pass
+:PROPERTIES:
+:CUSTOM_ID: ik
+:END:
+=ik:= lists [[file:ik-solver.org::#ik-goal][LrgIKGoal]]s run in order on the blended skeleton (world poses computed). Targets are world space and set at runtime (=lrg_animator_component3d_set_ik_target()=); the goal converts them with the character's model matrix. =weight= blends the solved rotations back toward the animated ones. Foot goals cast a ray (a callback you provide, usually your physics world) under the animated foot and move the foot by the ground's height relative to the character's ground plane, keeping lifted feet lifted, optionally turning the foot to the ground normal.
+
+** Format (.ranim)
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+A =.ranim= file is a YAML mapping. Keys and their defaults (a default is not written back):
+
+#+begin_src yaml
+version: 1                    # required to be <= 1 (LRG_ANIM_GRAPH_FORMAT_VERSION)
+name: hero                    # display name (optional)
+
+clips:                        # clip slots: key -> where it comes from
+  idle: {source: hero.glb, animation: Idle}   # glTF file (relative to the .ranim) + animation name
+  walk: {source: hero.glb, animation: Walk}
+  wave: {}                    # no source: bind it with lrg_anim_graph_set_clip()
+
+parameters:                   # declaration order is kept
+  - {name: speed, type: float}                 # default 0
+  - {name: grounded, type: bool, default: true}
+  - {name: jump, type: trigger}                # consumed by the transition it fires
+  - {name: weapon, type: int, default: 2}
+
+root_motion:                  # optional
+  bone: root                  # the bone carrying the travel
+  mode: xz                    # none | xz | xyz
+  rotation: false             # also extract the turn about +Y
+  apply: true                 # LrgAnimatorComponent3D moves the entity
+
+layers:                       # layer 0 is the base; later layers blend over it
+  - name: base
+    weight: 1                 # 0..1
+    blend: override           # override | additive
+    enabled: true
+    mask: [spine]             # optional bone list (no mask = every bone)
+    mask_recursive: true      # a masked bone covers its descendants
+    default: idle             # the start state (default: the first state)
+    states:
+      - name: idle
+        clip: idle            # one of clip | blend_tree | machine
+        speed: 1
+        speed_parameter: anim_rate   # optional numeric parameter multiplying speed
+        mirror: false
+      - name: locomotion
+        blend_tree:
+          type: 1d            # 1d | 2d_directional | 2d_cartesian | direct
+          parameter: speed    # numeric parameter (X for 2D); not for direct
+          parameter_y: turn   # 2D only
+          sync: true          # children share one phase
+          children:
+            - {clip: idle, threshold: 0}           # 1d: threshold
+            - {clip: walk, threshold: 1.5, speed: 1.2}
+            - {tree: {type: direct, children: [{clip: walk, parameter: lean}]}, threshold: 3}
+              # 2D children use position: [x, y]; direct children use parameter: <name> or weight: <number>
+      - name: air
+        machine:              # a nested state machine (same keys as a layer's machine)
+          default: rise
+          states: [{name: rise, clip: jump_up}, {name: fall, clip: fall}]
+          transitions: [{from: rise, to: fall, duration: 0.1, exit_time: 1}]
+    any_state:                # transitions that may fire from any state
+      - to: air
+        duration: 0.05
+        can_transition_to_self: false
+        conditions: [{parameter: jump}]
+    transitions:
+      - from: idle
+        to: locomotion
+        duration: 0.2         # seconds, 0..10 (default 0.25)
+        exit_time: 0.9        # optional normalized time (absent: no exit time)
+        offset: 0             # normalized start time of the target, 0..1
+        interruption: none    # none | source | destination | source_then_destination | destination_then_source
+        priority: 0           # higher first
+        conditions:           # all must hold
+          - {parameter: speed, op: '>', value: 0.1}
+          - {parameter: grounded}            # bool == true
+
+ik:                           # the post-pass, in order
+  - name: left_foot
+    type: foot                # two_bone | ccd | fabrik | look_at | foot
+    bones: [l_thigh, l_shin]  # root first: 2 for two_bone/foot, 1 for look_at, any for ccd/fabrik
+    effector: l_foot          # the bone that must reach the target (default: the last bone's tip)
+    pole: [0, 0.5, 1]         # model-space point the knee/elbow bends toward
+    target: [0, 0, 0]         # optional static world target
+    axis: [0, 1, 0]           # bone-local axis bones point along (look-at forward)
+    weight: 1
+    iterations: 10            # ccd/fabrik
+    tolerance: 0.001
+    enabled: true
+    ray_up: 0.5               # foot: probe start above the foot
+    ray_down: 0.5             # foot: probe reach below it
+    align: false              # foot: turn the foot to the ground normal
+#+end_src
+
+*** Strictness and unknown keys
+:PROPERTIES:
+:CUSTOM_ID: strict
+:END:
+Loading is strict: a wrong value type, an unknown enum value (the message lists the valid ones), a duplicate name (layer, state in one machine, parameter, IK goal), a reference to a missing state, parameter or clip key, a condition that does not fit its parameter's type and out-of-range numbers are errors in =LRG_ANIM_GRAPH_ERROR=. Messages start with the key path, for example =layers[0].transitions[2].conditions[0]: unknown parameter 'sped'=. A failed load leaves the graph unchanged.
+
+Keys the format does not know are kept with the object they were read on (graph, clip slot, parameter, root motion block, layer, nested machine, state, blend tree, blend tree child, transition, IK goal) and written back after the known keys, so files written by newer tools or carrying editor data (node positions) survive a round trip. Condition mappings are the exception: an unknown condition key is an error.
+
+*** Canonical output
+:PROPERTIES:
+:CUSTOM_ID: canonical
+:END:
+=lrg_anim_graph_to_data()= writes keys in a fixed order (the order of the schema above, unknown keys last), omits defaults, writes floats with =%.6g= and always writes =version=, a layer's =default=, a transition's =duration= and, for foot goals, =ray_up= / =ray_down=. A file the writer produced loads and writes back byte for byte (the tests check it). Hand-written files are normalised on their first save (flow mappings become block mappings, defaults disappear).
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Loading and saving
+:PROPERTIES:
+:CUSTOM_ID: api-io
+:END:
+| function | |
+|-+-|
+| =lrg_anim_graph_new()= | an empty graph |
+| =lrg_anim_graph_new_from_file (path, error)= / =lrg_anim_graph_new_from_data (data, length, error)= | parse; the base directory becomes the file's |
+| =lrg_anim_graph_load_from_file()= / =lrg_anim_graph_load_from_data()= | replace the contents (unchanged on error) |
+| =lrg_anim_graph_to_data (self, error)= / =lrg_anim_graph_save_to_file (self, path, error)= | canonical text from the live objects |
+| =lrg_anim_graph_duplicate (self, error)= | an independent copy sharing the bound clips and resolver (one per character) |
+| =lrg_anim_graph_get_name()= / =lrg_anim_graph_set_name()= | display name |
+| =lrg_anim_graph_get_base_dir()= / =lrg_anim_graph_set_base_dir()= | where clip sources resolve |
+| =lrg_anim_graph_validate (self, error)= | re-checks references (the loader's rules) after API edits |
+| =lrg_anim_graph_validate_skeleton (self, skeleton, error)= | masks, root motion bone and IK bones exist in a skeleton |
+| =LRG_ANIM_GRAPH_ERROR=, =lrg_anim_graph_error_quark()=, =LrgAnimGraphError= (=lrg_anim_graph_error_get_type()=) | =PARSE=, =VERSION=, =INVALID=, =REFERENCE=, =CLIP=, =IO= |
+| =LRG_ANIM_GRAPH_FORMAT_VERSION= | 1 |
+
+*** Parameters
+:PROPERTIES:
+:CUSTOM_ID: api-parameters
+:END:
+| function | |
+|-+-|
+| =lrg_anim_graph_add_parameter (self, name, type, default)= | declare (or redeclare); =LrgAnimParameterType= |
+| =lrg_anim_graph_remove_parameter()= | drop a declaration |
+| =lrg_anim_graph_get_parameter_count()= / =lrg_anim_graph_get_parameter_name()= | declaration order |
+| =lrg_anim_graph_get_parameter_type()= / =lrg_anim_graph_get_parameter_default()= | the declaration |
+| =lrg_anim_graph_set_float()= / =lrg_anim_graph_get_float()= | float values |
+| =lrg_anim_graph_set_int()= / =lrg_anim_graph_get_int()= | int values |
+| =lrg_anim_graph_set_bool()= / =lrg_anim_graph_get_bool()= | bool values (also reads triggers) |
+| =lrg_anim_graph_set_trigger()= / =lrg_anim_graph_reset_trigger()= | raise / lower a trigger |
+
+*** Clips
+:PROPERTIES:
+:CUSTOM_ID: api-clips
+:END:
+| function | |
+|-+-|
+| =lrg_anim_graph_declare_clip (self, name, source, animation)= | a clip slot |
+| =lrg_anim_graph_get_clip_count()= / =lrg_anim_graph_get_clip_name()= / =lrg_anim_graph_get_clip_source()= | the slots |
+| =lrg_anim_graph_set_clip (self, name, clip)= / =lrg_anim_graph_get_clip()= | bind a clip object to every state and child using the key |
+| =lrg_anim_graph_set_clip_resolver (self, func, data, destroy)= | custom loader (=LrgAnimClipResolveFunc=) |
+| =lrg_anim_graph_resolve_clips (self, error)= | load every slot with a source: by default =lrg_gltf_load_clips()= on the source (each file once), picking the animation by name |
+| =lrg_anim_graph_get_missing_clips()= | keys used but unbound (the editor's warnings) |
+
+*** Layers, root motion, IK goals
+:PROPERTIES:
+:CUSTOM_ID: api-layers
+:END:
+| function | |
+|-+-|
+| =lrg_anim_graph_add_layer()= / =lrg_anim_graph_remove_layer()= | layers (an added layer gets a machine and the shared parameters) |
+| =lrg_anim_graph_get_layer_count()= / =lrg_anim_graph_get_layer()= / =lrg_anim_graph_get_layer_by_name()= | lookup |
+| =lrg_anim_graph_get_machine()= | the base layer's machine |
+| =lrg_anim_graph_get_root_motion_bone()= / =lrg_anim_graph_set_root_motion_bone()= | the bone |
+| =lrg_anim_graph_get_root_motion_mode()= / =lrg_anim_graph_set_root_motion_mode()= | =LrgRootMotionMode= (=lrg_root_motion_mode_get_type()=): =NONE=, =XZ=, =XYZ= |
+| =lrg_anim_graph_get_root_motion_rotation()= / =lrg_anim_graph_set_root_motion_rotation()= | extract yaw too |
+| =lrg_anim_graph_get_apply_root_motion()= / =lrg_anim_graph_set_apply_root_motion()= | the component moves the entity |
+| =lrg_anim_graph_add_ik_goal()= / =lrg_anim_graph_remove_ik_goal()= | the post-pass |
+| =lrg_anim_graph_get_ik_goal_count()= / =lrg_anim_graph_get_ik_goal()= / =lrg_anim_graph_get_ik_goal_by_name()= | lookup |
+
+*** Runtime
+:PROPERTIES:
+:CUSTOM_ID: api-runtime
+:END:
+| function | |
+|-+-|
+| =lrg_anim_graph_start()= | defaults restored, every machine at its default state |
+| =lrg_anim_graph_is_started()= | |
+| =lrg_anim_graph_update (self, dt)= | advance (starts first if needed) |
+| =lrg_anim_graph_evaluate (self, skeleton, poses, n, root_delta, root_yaw)= | blend + root motion out |
+
+Signals: =event (layer_name, state_name, LrgAnimationEvent *event)= (detailed by the event name: connect to ="event::footstep"=) and =state-changed (layer_name, state_name)=.
+
+*** Pose utilities
+:PROPERTIES:
+:CUSTOM_ID: api-pose
+:END:
+| function | |
+|-+-|
+| =lrg_anim_pose_bind (skeleton, poses, n)= | the bind pose |
+| =lrg_anim_pose_sample_clip (clip, skeleton, time, poses, n)= | a clip at a time (loop mode applies), bind pose where it has no track |
+| =lrg_anim_pose_blend (dest, src, weight, bone_weights, n)= | override blend |
+| =lrg_anim_pose_add (dest, additive, reference, weight, bone_weights, n)= | additive blend |
+| =lrg_anim_pose_apply (skeleton, poses, n)= | write local poses, recompute world poses |
+| =lrg_anim_pose_clip_root_motion (clip, bone, t0, t1, translation, yaw)= | a bone's travel over an interval, loops counted |
+| =lrg_anim_pose_clip_events (clip, t0, t1)= | the events in (t0, t1], once per loop, in order |
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** Load, bind clips, run by hand
+:PROPERTIES:
+:CUSTOM_ID: example-run
+:END:
+#+begin_src c
+g_autoptr(GError)       error = NULL;
+g_autoptr(LrgAnimGraph) graph = lrg_anim_graph_new_from_file ("chars/hero.ranim", &error);
+g_autoptr(LrgSkeleton)  skeleton = lrg_gltf_load_skeleton ("chars/hero.glb", 0, &error);
+LrgBonePose            *poses;
+guint                   n;
+gfloat                  delta[3], yaw;
+
+if (graph == NULL || skeleton == NULL || !lrg_anim_graph_resolve_clips (graph, &error))
+	g_error ("%s", error->message);
+
+n = lrg_skeleton_get_bone_count (skeleton);
+poses = g_new (LrgBonePose, n);
+lrg_anim_graph_start (graph);
+
+/* every frame */
+lrg_anim_graph_set_float (graph, "speed", player_speed);
+if (jump_pressed)
+	lrg_anim_graph_set_trigger (graph, "jump");
+lrg_anim_graph_update (graph, dt);
+lrg_anim_graph_evaluate (graph, skeleton, poses, n, delta, &yaw);
+lrg_anim_pose_apply (skeleton, poses, n);
+/* ... palette: lrg_skinned_mesh_apply_skeleton (mesh, skeleton) */
+#+end_src
+
+*** Build a graph in code and save it
+:PROPERTIES:
+:CUSTOM_ID: example-build
+:END:
+#+begin_src c
+g_autoptr(LrgAnimGraph)             graph = lrg_anim_graph_new ();
+g_autoptr(LrgAnimationLayer)        base = lrg_animation_layer_new ("base");
+g_autoptr(LrgAnimationStateMachine) m = lrg_animation_state_machine_new ();
+g_autoptr(LrgAnimationState)        idle = lrg_animation_state_new ("idle");
+g_autoptr(LrgAnimationState)        run = lrg_animation_state_new ("run");
+g_autoptr(LrgAnimationTransition)   t = lrg_animation_transition_new ("idle", "run");
+
+lrg_anim_graph_add_parameter (graph, "speed", LRG_ANIM_PARAMETER_FLOAT, NULL);
+lrg_anim_graph_declare_clip (graph, "idle", "hero.glb", "Idle");
+lrg_anim_graph_declare_clip (graph, "run", "hero.glb", "Run");
+lrg_animation_state_set_clip_name (idle, "idle");
+lrg_animation_state_set_clip_name (run, "run");
+lrg_animation_state_machine_add_state (m, idle);
+lrg_animation_state_machine_add_state (m, run);
+lrg_animation_state_machine_set_default_state (m, "idle");
+lrg_animation_transition_add_condition (t, "speed", LRG_CONDITION_GREATER, g_variant_new_double (0.1));
+lrg_animation_transition_set_duration (t, 0.2f);
+lrg_animation_state_machine_add_transition (m, t);
+lrg_animation_layer_set_state_machine (base, m);
+lrg_anim_graph_add_layer (graph, base);
+
+if (!lrg_anim_graph_validate (graph, &error) || !lrg_anim_graph_save_to_file (graph, "hero.ranim", &error))
+	g_warning ("%s", error->message);
+#+end_src
+
+*** Footsteps
+:PROPERTIES:
+:CUSTOM_ID: example-events
+:END:
+#+begin_src c
+static void
+on_footstep (LrgAnimGraph *graph, const gchar *layer, const gchar *state,
+             LrgAnimationEvent *event, gpointer user_data)
+{
+	play_footstep_sound (lrg_animation_event_get_string (event, "surface", "stone"));
+}
+
+g_signal_connect (graph, "event::footstep", G_CALLBACK (on_footstep), NULL);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Measured with =tests/test-anim-graph -m perf -p /anim-graph/perf= pinned to one core (=taskset -c 2=), release build, x86_64: one full animator step (graph update, a 1D blend tree base layer at a 50/50 blend, a masked override layer mid cross-fade, palette for 16 bones) takes *17.3 µs*; with one two-bone IK goal *22.3 µs*. Costs scale with bones x weighted clips: a blend tree samples every child whose weight is above 1e-4, a cross-fade samples both states, a masked or partial layer samples the whole skeleton and blends it.
+
+- Clip sampling uses a cached bone-to-track table per clip and skeleton layout; sharing clips between characters is free.
+- A full-weight unmasked override base layer is sampled in place.
+- IK costs one world pose recomputation per bone a solver turns (FABRIK and CCD: per iteration); keep iterative chains short and iterations low, use two-bone for limbs.
+- Root motion samples the root track four times per clip and update.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- One graph per character: the runtime state (current states, times, parameter values) lives in the graph. Use =lrg_anim_graph_duplicate()=.
+- Bones must be numbered 0..n-1; poses are indexed by bone index.
+- Missing tracks fall back to the bind pose, not the identity: a clip authored against a different rest pose looks wrong on bones it does not key. Retarget it ([[file:retargeter.org][LrgRetargeter]]).
+- A trigger nobody consumes stays raised: reset it yourself if no transition can use it right now.
+- Exit time without conditions fires every loop (below 1) or once (1 and above); a repeating idle with =exit_time: 0.9= and no condition leaves after each loop.
+- Root motion is taken from the base layer only, and the delta is valid after =evaluate=; reading the pose of the root bone afterwards shows the bind position on the extracted axes.
+- Blend tree events come from the dominant clip only (the largest effective weight), so a walk/run blend fires one set of footsteps.
+- =mirror= only reflects transforms; it does not swap left/right bones.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The editor's animation graph editor ([[file:../../editor/animation-editor.org::#anim-graph-editor][Animation tools: graph editor]]) opens =.ranim= files:
+- one =LrgNodeGraph= canvas per machine (layer chips and breadcrumbs into nested machines); states are cards (positions kept as the unknown keys =editor_pos= / =editor_any_pos=), transitions are wires, any-state transitions leave an "Any State" card; re-wiring and deleting are document edits, one undo step each;
+- an inspector for states, blend trees (with a blend-space view built on =lrg_blend_tree_compute_weights()= / =lrg_blend_tree_get_child_weight()=, draggable to set the parameters) and transitions with a conditions editor;
+- a parameters column with live values (=lrg_anim_graph_set_*()= on the preview graph) and the clip slots, missing ones flagged from =lrg_anim_graph_get_missing_clips()=;
+- a live preview of a skinned model posed by =lrg_anim_graph_update()= / =lrg_anim_graph_evaluate()=, with the active state and the running transition (=lrg_animation_state_machine_get_active_transition()=, =lrg_animation_state_machine_get_transition_progress()=) highlighted;
+- validation from the loader, =lrg_anim_graph_get_missing_clips()= and =lrg_anim_graph_validate_skeleton()= against the preview model;
+- the inspector's Animator section and the viewport's IK Targets overlay (=lrg_ik_goal_get_last_target()=) for animators in the play world;
+- the =anim.*= IPC methods ([[file:../../editor/ipc-protocol.org::#ipc-animation][IPC: animation methods]]).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../../guides/animation-pipeline.org][Guide: the animation pipeline]] (glTF -> skeleton/clips -> .ranim -> animator component)
+- [[file:state-machine.org][State machine]], [[file:blend-tree.org][Blend trees]], [[file:layers.org][Layers]], [[file:ik-solver.org][IK]]
+- [[file:../world3d/components.org::#animator][LrgAnimatorComponent3D]]
+- [[file:gltf-animation.org][LrgGltfAnimation]], [[file:clip.org][LrgAnimationClip]], [[file:skeleton.org][LrgSkeleton]]

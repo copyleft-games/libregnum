@@ -1,0 +1,239 @@
+#+title: Lighting bake
+#+description: Baked global illumination for static 3D scenes: lightmaps, SH probe grids, light modes, the level lighting block and the runtime path; the baker's sections follow.
+
+* Lighting bake
+:PROPERTIES:
+:CUSTOM_ID: lighting-bake
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > Guides > Lighting bake
+#+end_quote
+
+Realtime lights give direct light and shadows; everything else (light bouncing off walls, a room lit by a window, the sky's light reaching under a roof) is expensive to compute per frame. The lighting bake computes it once, offline, for the parts of a level that never move, and stores it in two forms the lit shader reads at almost no cost:
+
+- *lightmaps* ([[file:../modules/lighting/lightmap3d.org][LrgLightmap3D]]): textures over the surfaces of static meshes, through each mesh's second UV set;
+- *probe grids* ([[file:../modules/lighting/probe-grid.org][LrgProbeGrid]]): boxes of L2 spherical-harmonic probes that light everything without a lightmap (characters, moving props).
+
+This guide covers the runtime side (0.9.0 M3, data and shader), the authoring flow and the baker ([[file:../modules/lighting/lightmap-baker.org][LrgLightmapBaker]]: running a bake, settings, what it computes, quality and speed).
+
+** The pieces
+:PROPERTIES:
+:CUSTOM_ID: lighting-bake-pieces
+:END:
+| Piece | Where | Role |
+|-+-+-|
+| =LrgMeshRendererComponent:static-lighting= (=static_lighting=) | node param on primitive / mesh visuals | the mesh takes part in the bake: it blocks and bounces light and gets a lightmap entry |
+| =LrgMeshRendererComponent:lightmap-scale= (=lightmap_scale=) | node param | its lightmap resolution relative to the bake's texels per unit; 0 = probe lit only |
+| =LrgLightComponent:bake-mode= (=bake_mode=) | node param on lights | =realtime=, =mixed= or =baked= |
+| =lighting:= block | the =.rlevel= | the lightmap and grid files, and the bake settings |
+| =LrgLightmap3D= / =.rlightmap= + =.hdr= | baker output | per-object baked irradiance |
+| =LrgProbeGrid= / =.rprobes= | baker output | SH irradiance for everything else |
+| =LRG_BAKED_GLSL= | the lit shader | reads one of them per draw |
+| =LrgWorld3DRenderer= | runtime | picks the lightmap entry or grid per item |
+
+** Light modes
+:PROPERTIES:
+:CUSTOM_ID: lighting-bake-modes
+:END:
+| Mode | Baked into lightmaps | Baked into probes | At runtime |
+|-+-+-+-|
+| =realtime= | nothing | nothing | lights everything |
+| =mixed= | its bounce | its bounce | lights everything (direct + shadows) |
+| =baked= | its direct light (soft shadows) and bounce | its bounce | lights everything *except* lightmapped draws |
+
+Pick =mixed= for the sun or any light whose shadows must follow moving objects, =baked= for static fill and practical lights (lamps, windows, emissive panels) to save their per-frame cost, =realtime= for lights that move or switch (a torch carried by the player, a flickering alarm). A baked light still lights dynamic objects at runtime so they match the scene; that is why probes never contain the direct part of baked lights.
+
+** The authoring flow
+:PROPERTIES:
+:CUSTOM_ID: lighting-bake-flow
+:END:
+1. Mark static geometry: =static_lighting: true= on its nodes (and mark the entities static for batching where they are not lightmapped). Give important surfaces a higher =lightmap_scale=, small clutter 0.
+2. Set the lights' =bake_mode=.
+3. Cover the playable space with probe volumes (one probe every 1 .. 4 units).
+4. Set the bake settings in =lighting: settings:= (=texels_per_unit=, =samples=, =bounces=, =max_lightmap_size=, =denoise=, =probe_spacing=).
+5. Bake: the baker writes =<level>.rlightmap= with its pages and one =.rprobes= per volume and fills =lighting: lightmap:= / =probes:=.
+6. Load the level: =lrg_level_load_world3d()= (or play-in-editor) puts them on the world and the renderer uses them.
+
+#+begin_src yaml
+lighting:
+  lightmap: town.rlightmap
+  probes: [town-0.rprobes]
+  settings: { texels_per_unit: 8, samples: 256, bounces: 2, max_lightmap_size: 1024, denoise: true, probe_spacing: 2 }
+nodes:
+  - name: Street
+    guid: 6f1c0e2a-0000-0000-0000-000000000001
+    visual:
+      kind: mesh-asset
+      asset: meshes/street.glb          # TEXCOORD_1 is the lightmap UV when present
+      params: { static_lighting: true, lightmap_scale: 2.0 }
+  - name: Lamp
+    guid: 6f1c0e2a-0000-0000-0000-000000000002
+    transform: { location: [4.0, 3.0, 0.0] }
+    visual:
+      kind: light
+      params: { light_type: point, range: 8.0, bake_mode: baked }
+#+end_src
+
+** The runtime path
+:PROPERTIES:
+:CUSTOM_ID: lighting-bake-runtime
+:END:
+1. =lrg_level_instantiate_3d()= loads =lighting: lightmap:= into =lrg_world3d_set_lightmap()= and each =probes:= file into =lrg_world3d_add_probe_grid()=; entities keep their node GUIDs.
+2. Each frame =LrgWorld3DRenderer= syncs the lights (with their modes) into its =LrgLightSet= and replays the items. For each lit item it binds:
+   - mode 1 (*lightmap*) when the item's entity GUID has an entry: the page texture and the entry's uv2 scale / offset;
+   - mode 2 (*probes*) otherwise, when a grid contains the item's centre (=lrg_world3d_find_probe_grid()=, the smallest box wins);
+   - nothing otherwise (the environment's IBL or the flat ambient, as before 0.9.0 M3).
+3. In the shader the baked value replaces only the *indirect diffuse* term: =kd x albedo x lrg_baked_diffuse(p, n)=. Specular reflections still come from the environment and reflection probes, SSAO and material occlusion still multiply it, and on lightmapped draws lights in =baked= mode (and a baked sun) are skipped.
+
+#+begin_src C
+/* a game: load and draw, nothing bake-specific */
+g_autoptr(LrgWorld3D)         world = lrg_world3d_new ();
+g_autoptr(LrgWorld3DRenderer) renderer = lrg_world3d_renderer_new ();
+g_autoptr(LrgLevel)           level = lrg_level_load_world3d ("levels/town.rlevel", world, &error);
+
+while (!WindowShouldClose ())
+{
+	lrg_world3d_step (world, GetFrameTime ());
+	BeginDrawing ();
+	lrg_world3d_renderer_render (renderer, world, NULL, NULL, 0, 0);
+	EndDrawing ();
+}
+#+end_src
+
+** Running a bake
+:PROPERTIES:
+:CUSTOM_ID: lighting-bake-baker
+:END:
+=LrgLightmapBaker= turns a world into those two outputs. It collects every mesh renderer with =static-lighting= (geometry, world matrix, material colours, =lightmap-scale=, GUID), every light that is not realtime, the world's environment as the sky and the world's probe grids as volumes, then path-traces on all cores:
+
+#+begin_src C
+static void
+baked (GObject *source, GAsyncResult *res, gpointer world)
+{
+	LrgLightmapBaker *baker = LRG_LIGHTMAP_BAKER (source);
+	g_autoptr(GError) error = NULL;
+	GPtrArray        *grids;
+	guint             i;
+
+	if (!lrg_lightmap_baker_bake_finish (baker, res, &error))
+		return;   /* cancelled or failed: the world keeps its old lighting */
+	lrg_world3d_set_lightmap (world, lrg_lightmap_baker_get_lightmap (baker));
+	lrg_world3d_clear_probe_grids (world);
+	grids = lrg_lightmap_baker_get_probe_grids (baker);
+	for (i = 0; i < grids->len; i++)
+		lrg_world3d_add_probe_grid (world, g_ptr_array_index (grids, i));
+	lrg_lightmap3d_save (lrg_lightmap_baker_get_lightmap (baker), "levels/town.rlightmap", &error);
+}
+
+/* the level is loaded and stepped once (lights register when entering the world) */
+LrgLightmapBaker *baker = lrg_lightmap_baker_new ();
+
+g_object_set (lrg_lightmap_baker_get_settings (baker), "texels-per-unit", 8.0f, "samples", 256, NULL);
+lrg_lightmap_baker_add_world (baker, world);
+g_signal_connect (baker, "progress", G_CALLBACK (show_progress), NULL);   /* (phase, 0 .. 1) on this main context */
+lrg_lightmap_baker_bake_async (baker, cancellable, baked, world);
+#+end_src
+
+=lrg_lightmap_baker_bake()= does the same synchronously (tools, tests). Meshes can also be added one by one (=lrg_lightmap_baker_add_mesh()= with an =LrgUvMesh=), with lights (=lrg_lightmap_baker_add_light()=), a sky (=lrg_lightmap_baker_set_environment()= / =set_sky_color()=) and boxes of probes (=lrg_lightmap_baker_add_probe_volume()=), without any world.
+
+** Bake settings
+:PROPERTIES:
+:CUSTOM_ID: lighting-bake-settings
+:END:
+The =lighting: settings:= keys are the properties of =LrgLightmapBakeSettings= with =_= for =-=; the bake records the values it used in the lightmap (=lrg_lightmap3d_get_setting()=).
+
+| Key | Default | Effect |
+|-+-+-|
+| =texels_per_unit= | 8 | lightmap resolution: texels per world unit along a surface (times =lightmap_scale=) |
+| =samples= | 64 | paths per texel: noise vs. time (64 preview, 256 - 1024 final) |
+| =bounces= | 2 | light reflections; 0 = baked direct light only |
+| =max_lightmap_size= | 1024 | atlas page edge; more objects make more pages (up to 64) |
+| =padding= | 2 | texels around each object in the atlas |
+| =denoise= | true | edge-preserving filter after tracing |
+| =probe_spacing= | 2 | probe distance in volumes without an explicit count |
+| =probe_samples= | 256 | rays per probe |
+| =auto_probe_volume= | true | without probe volumes, one around all static geometry |
+| =seed= | 1 | random seed: the same seed gives the same bake on any thread count |
+| =threads= | 0 | worker threads (0 = all processors) |
+| =light_radius= | 0.05 | default emitter radius of point / spot lights: shadow softness (a light's =source-radius= overrides it) |
+| =sun_angle= | 0.5 | angular radius of directional lights in degrees |
+
+** What the baker computes
+:PROPERTIES:
+:CUSTOM_ID: lighting-bake-what
+:END:
+- *Direct light* of =baked= lights with soft shadows (a shadow ray per sample to a random point of the light's sphere or sun disc), with the falloff and spot cone of the lit shader, so baked and realtime lights look the same.
+- *Emissive surfaces* (material emission x strength) light the scene like area lights, sampled directly, and *the sky* reaches every texel that sees it.
+- *Bounced light* of =baked= and =mixed= lights, emissive surfaces and the sky, up to =bounces= reflections, tinted by each surface's albedo (colour bleeding).
+- *Probes*: the same tracer around each probe, projected onto L2 SH (no direct light of any light: dynamic objects keep realtime lights).
+- Meshes without uv2 are unwrapped automatically ([[file:../modules/graphics/uv-unwrap.org][LrgUvUnwrap]]; the renderer draws the same unwrap, see the pitfalls); texels inside other geometry are detected and refilled; noise is filtered with a normal-, position- and variance-guided a-trous filter; the gutters are dilated and uv seams stitched so bilinear filtering shows no lines.
+
+Details, units and formulas: [[file:../modules/lighting/lightmap-baker.org::#lightmap-baker-concepts][the baker's concepts]].
+
+** Quality and speed
+:PROPERTIES:
+:CUSTOM_ID: lighting-bake-quality
+:END:
+- Bake time is about =texels x samples x (bounces + lights + 2)= ray queries. A 1600-triangle room at 8 texels per unit (16 000 texels) with 64 samples bakes in about 0.6 s on 20 threads of an i7-1280P, 2.8 s on one; at 16 texels per unit (54 000 texels) 1.3 s / 5.5 s (see [[file:../modules/lighting/lightmap-baker.org::#lightmap-baker-performance][the measurements]]).
+- Iterate with low =texels_per_unit= and =samples= and the denoiser on; raise both for the final bake.
+- Blotches in corners: more samples. Light leaking under walls: thicker geometry or a lower =texels_per_unit= mismatch at the junction (texels larger than the wall thickness straddle it). Stair-stepped shadow edges: raise =lightmap_scale= on that surface or a light's radius.
+- The same settings and seed reproduce the bake bit for bit, so lightmaps can be rebuilt in CI and diffed.
+
+** Units and conventions
+:PROPERTIES:
+:CUSTOM_ID: lighting-bake-units
+:END:
+- Lightmap texels and probe SH are *irradiance / pi in linear radiance*, the same scale as =LrgEnvironment='s diffuse light: under a constant sky of colour C an unoccluded white floor bakes to C.
+- Probe SH coefficients use =LrgEnvironment='s order and normalisation (=lrg_environment_sh_irradiance()= evaluates them).
+- uv2 is raylib's =texcoords2= (=vertexTexCoord2= in shaders), glTF =TEXCOORD_1=. A mesh without it reads (0, 0).
+- Lightmap entries are keyed by node / entity GUID strings.
+
+** Checking the result without a GPU
+:PROPERTIES:
+:CUSTOM_ID: lighting-bake-cpu-checks
+:END:
+Both outputs can be inspected on the CPU, which is what tests and tools do:
+
+#+begin_src C
+gfloat uv2[2] = { 0.5f, 0.5f }, up[3] = { 0, 1, 0 }, p[3] = { 2, 1, 0 }, rgb[3];
+
+lrg_lightmap3d_sample (lrg_world3d_get_lightmap (world), guid, uv2, rgb);   /* the texel under uv2 */
+lrg_probe_grid_sample (lrg_world3d_find_probe_grid (world, p), p, up, rgb);   /* what a dynamic object gets */
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: lighting-bake-pitfalls
+:END:
+- Moving, rescaling or re-meshing a static object invalidates its bake: bake again.
+- Duplicated or re-created nodes get new GUIDs and lose their entries until the next bake (they fall back to probes).
+- Do not mark lights that the game switches off as =baked=: their light stays in the lightmap.
+- An object outside every probe grid and without a lightmap entry is lit by the environment or the ambient only: leave no gaps.
+- Step the world once after loading before =lrg_lightmap_baker_add_world()=: lights register with the world when their entity enters it.
+- Primitives and models without =TEXCOORD_1= are lightmapped through the baker's own unwrap. =LrgWorld3DRenderer= handles it: a lightmapped primitive item draws a cached =lrg_uv_unwrap_new_lightmap_primitive (prim, item->params)= mesh with the world matrix alone, a lightmapped model whose meshes lack =texcoords2= draws the baker's merge-and-unwrap of it (split back per mesh, materials kept, cached on the =GrlModel=). Custom renderers do the same (=lrg_uv_unwrap_new_lightmap_primitive()=, =lrg_lightmap_baker_get_object_mesh()=).
+- Custom lit shaders must call =lrg_baked_set_uv2(fragTexCoord2)= to read lightmaps (see [[file:../modules/graphics/light-set.org::#glsl-library][the GLSL library]]).
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: lighting-bake-editor
+:END:
+=lrgeditor= does the whole flow (details in [[file:../editor/bake.org][Lighting Bake in the Editor]]):
+
+1. Inspector > Lighting: tick *Static lighting* on static geometry, set *Lightmap scale*; on lights set *Bake mode*.
+2. Create > Probe Volume and size it with the gizmo's extent handles.
+3. View > Panels > Lighting: set the settings (a property grid over =lighting: settings:=, every change undoable), press *Bake*. The bake runs on worker threads with a progress bar per phase and *Cancel*; the viewport shows the result as soon as it finishes.
+4. With a saved level the panel writes =<level>.rlightmap= and =<level>-<n>.rprobes= next to it and sets =lighting: lightmap:= / =probes:= in one undo step (*Save* does it for an unsaved result). *Clear* drops the references.
+5. The atlas preview shows the pages, *Sample* reads the light under the viewport centre, the eye chip compares with realtime lighting.
+
+From scripts: =lrgeditorctl bake set samples 256; lrgeditorctl bake start --wait=, or the =bake_*= MCP tools. Play-in-editor and the game load the same files.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: lighting-bake-see-also
+:END:
+- [[file:../modules/lighting/lightmap3d.org][LrgLightmap3D]], [[file:../modules/lighting/probe-grid.org][LrgProbeGrid]]
+- [[file:../modules/lighting/lightmap-baker.org][LrgLightmapBaker]], [[file:../modules/graphics/uv-unwrap.org][LrgUvUnwrap]]
+- [[file:materials-and-pbr.org][Materials and PBR]] - the lit shader the bake plugs into
+- [[file:rendering-pipeline.org][Rendering pipeline]] - where the per-item binding happens
+- [[file:load-a-level-in-your-game.org][Load a level in your game]]
+- [[file:../editor/yaml-format.org::#lighting][.rlevel lighting: block]]

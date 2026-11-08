@@ -1,0 +1,842 @@
+/* lrg-node.h
+ *
+ * Copyright 2025 Zach Podbielniak
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Editable node in an #LrgLevel authoring tree.
+ *
+ * LrgNode is the single unifier of 2D and 3D content in the editor document.
+ * Every node carries an always-3D local TRS transform (2D nodes simply live on
+ * Z=0 with #LrgNode:is-2d set), an ordered list of child nodes, an optional
+ * tagged #LrgNodeVisual payload, and ordered lists of component descriptions
+ * (#LrgComponentDesc) and script bindings (#LrgScriptBinding) that are
+ * materialized onto a runtime #LrgGameObject when the level is played.
+ *
+ * LrgNode is derivable: custom node kinds may subclass it and override the
+ * @instantiate virtual method to build their own runtime representation.
+ */
+
+#pragma once
+
+#if !defined(LIBREGNUM_INSIDE) && !defined(LIBREGNUM_COMPILATION)
+#error "Only <libregnum.h> can be included directly."
+#endif
+
+#include <glib-object.h>
+#include <graylib.h>
+#include "../lrg-version.h"
+#include "../lrg-types.h"
+#include "lrg-prefab.h"
+#include "../world3d/lrg-entity3d.h"
+#include "lrg-node-physics.h"
+
+G_BEGIN_DECLS
+
+#define LRG_TYPE_NODE (lrg_node_get_type ())
+
+/**
+ * LrgNodeForeachFunc:
+ * @node: the node being visited
+ * @user_data: (closure): user data
+ *
+ * Callback for lrg_node_foreach().
+ *
+ * Returns: %TRUE to continue walking, %FALSE to stop
+ */
+typedef gboolean (*LrgNodeForeachFunc) (LrgNode  *node,
+                                        gpointer  user_data);
+
+LRG_AVAILABLE_IN_ALL
+G_DECLARE_DERIVABLE_TYPE (LrgNode, lrg_node, LRG, NODE, GObject)
+
+/**
+ * LrgNodeClass:
+ * @parent_class: the parent class
+ * @instantiate: virtual method to build a runtime representation of this node
+ *   onto a game object (called by lrg_level_instantiate())
+ * @instantiate_3d: virtual method to build a 3D runtime representation of
+ *   this node onto an #LrgEntity3D (called by lrg_level_instantiate_3d()).
+ *   Since: 0.9.0
+ *
+ * The class structure for #LrgNode.
+ */
+struct _LrgNodeClass
+{
+    GObjectClass parent_class;
+
+    /**
+     * LrgNodeClass::instantiate:
+     * @self: the node
+     * @object: the runtime #LrgGameObject being built for this node
+     *
+     * Called during play-in-editor to materialize this node's runtime
+     * representation onto @object. The default implementation applies the
+     * node's component descriptions. Subclasses may chain up and add their
+     * own behavior.
+     */
+    void (*instantiate) (LrgNode       *self,
+                         LrgGameObject *object);
+
+    /**
+     * LrgNodeClass::instantiate_3d:
+     * @self: the node
+     * @entity: the runtime #LrgEntity3D built for this node
+     * @world: the #LrgWorld3D being populated
+     *
+     * Called by lrg_level_instantiate_3d() after @entity got the node's
+     * GUID, name, transform, flags, the component for its visual kind,
+     * its registry components and its script components, and after it
+     * was added to @world under its parent, but before the node's
+     * children are instantiated. Custom node kinds add their own
+     * components or change the entity here. The default implementation
+     * does nothing, so there is nothing to chain up to.
+     *
+     * Since: 0.9.0
+     */
+    void (*instantiate_3d) (LrgNode     *self,
+                            LrgEntity3D *entity,
+                            LrgWorld3D  *world);
+
+    /*< private >*/
+    gpointer _reserved[7];
+};
+
+/* ==========================================================================
+ * Constructors
+ * ========================================================================== */
+
+/**
+ * lrg_node_new:
+ * @name: (nullable): the node name
+ *
+ * Creates a new #LrgNode with an automatically generated guid, identity
+ * transform, and no visual.
+ *
+ * Returns: (transfer full): a new #LrgNode
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNode * lrg_node_new (const gchar *name);
+
+/* ==========================================================================
+ * Identity
+ * ========================================================================== */
+
+/**
+ * lrg_node_get_name:
+ * @self: an #LrgNode
+ *
+ * Returns: (transfer none) (nullable): the node name
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_node_get_name (LrgNode *self);
+
+/**
+ * lrg_node_set_name:
+ * @self: an #LrgNode
+ * @name: (nullable): the new name
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_name (LrgNode     *self,
+                        const gchar *name);
+
+/**
+ * lrg_node_get_guid:
+ * @self: an #LrgNode
+ *
+ * Gets the stable unique identifier of the node.
+ *
+ * Returns: (transfer none): the guid
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_node_get_guid (LrgNode *self);
+
+/**
+ * lrg_node_set_guid:
+ * @self: an #LrgNode
+ * @guid: the guid (e.g. loaded from a serialized level)
+ *
+ * Sets the stable unique identifier of the node.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_guid (LrgNode     *self,
+                        const gchar *guid);
+
+/* ==========================================================================
+ * Flags
+ * ========================================================================== */
+
+/**
+ * lrg_node_get_visible:
+ * @self: an #LrgNode
+ *
+ * Returns: %TRUE if the node is visible
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_get_visible (LrgNode *self);
+
+/**
+ * lrg_node_set_visible:
+ * @self: an #LrgNode
+ * @visible: visibility flag
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_visible (LrgNode  *self,
+                           gboolean  visible);
+
+/**
+ * lrg_node_get_locked:
+ * @self: an #LrgNode
+ *
+ * Returns: %TRUE if the node is locked against editing
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_get_locked (LrgNode *self);
+
+/**
+ * lrg_node_set_locked:
+ * @self: an #LrgNode
+ * @locked: locked flag
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_locked (LrgNode  *self,
+                          gboolean  locked);
+
+/**
+ * lrg_node_get_is_2d:
+ * @self: an #LrgNode
+ *
+ * Returns: %TRUE if the node is authored as 2D (gizmo/camera hint)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_get_is_2d (LrgNode *self);
+
+/**
+ * lrg_node_set_is_2d:
+ * @self: an #LrgNode
+ * @is_2d: 2D hint flag
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_is_2d (LrgNode  *self,
+                         gboolean  is_2d);
+
+/* ==========================================================================
+ * Tags and level instances
+ * ========================================================================== */
+
+/**
+ * lrg_node_add_tag:
+ * @self: an #LrgNode
+ * @tag: a tag
+ *
+ * Adds a tag. Tags are a set: adding the same tag twice is a no-op.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_add_tag (LrgNode     *self,
+                       const gchar *tag);
+
+/**
+ * lrg_node_remove_tag:
+ * @self: an #LrgNode
+ * @tag: a tag
+ *
+ * Returns: %TRUE if the tag was present
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_remove_tag (LrgNode     *self,
+                              const gchar *tag);
+
+/**
+ * lrg_node_has_tag:
+ * @self: an #LrgNode
+ * @tag: a tag
+ *
+ * Returns: %TRUE if the node has @tag
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_has_tag (LrgNode     *self,
+                           const gchar *tag);
+
+/**
+ * lrg_node_get_tags:
+ * @self: an #LrgNode
+ *
+ * Returns: (transfer full) (array zero-terminated=1): the tags, sorted
+ */
+LRG_AVAILABLE_IN_ALL
+gchar ** lrg_node_get_tags (LrgNode *self);
+
+/**
+ * lrg_node_set_tags:
+ * @self: an #LrgNode
+ * @tags: (array zero-terminated=1) (nullable) (transfer none): the new set
+ *
+ * Replaces the tag set. %NULL clears it.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_tags (LrgNode             *self,
+                        const gchar * const *tags);
+
+/**
+ * lrg_node_set_level_path:
+ * @self: an #LrgNode
+ * @path: (nullable) (type filename): a `.rlevel` this node instances
+ *
+ * Records the level file this node stands for. Play loads that file
+ * when the node has no children; the editor mounts the children with
+ * lrg_level_instance_mount().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_level_path (LrgNode     *self,
+                              const gchar *path);
+
+/**
+ * lrg_node_get_level_path:
+ * @self: an #LrgNode
+ *
+ * Returns: (transfer none) (nullable): the instanced level path
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_node_get_level_path (LrgNode *self);
+
+/**
+ * lrg_node_collect_tagged:
+ * @self: the subtree root
+ * @tag: the tag to match
+ *
+ * Returns: (transfer container) (element-type LrgNode): @self and every
+ *   descendant that has @tag, in depth-first pre-order. The nodes are
+ *   borrowed.
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_node_collect_tagged (LrgNode     *self,
+                                     const gchar *tag);
+
+/* ==========================================================================
+ * Transform (local TRS)
+ * ========================================================================== */
+
+/**
+ * lrg_node_get_location:
+ * @self: an #LrgNode
+ *
+ * Returns: (transfer none): the local position vector
+ */
+LRG_AVAILABLE_IN_ALL
+GrlVector3 * lrg_node_get_location (LrgNode *self);
+
+/**
+ * lrg_node_set_location_xyz:
+ * @self: an #LrgNode
+ * @x: X coordinate
+ * @y: Y coordinate
+ * @z: Z coordinate
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_location_xyz (LrgNode *self,
+                                gfloat   x,
+                                gfloat   y,
+                                gfloat   z);
+
+/**
+ * lrg_node_get_rotation:
+ * @self: an #LrgNode
+ *
+ * Returns: (transfer none): the local rotation vector (Euler radians)
+ */
+LRG_AVAILABLE_IN_ALL
+GrlVector3 * lrg_node_get_rotation (LrgNode *self);
+
+/**
+ * lrg_node_set_rotation_xyz:
+ * @self: an #LrgNode
+ * @rx: X rotation (radians)
+ * @ry: Y rotation (radians)
+ * @rz: Z rotation (radians)
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_rotation_xyz (LrgNode *self,
+                                gfloat   rx,
+                                gfloat   ry,
+                                gfloat   rz);
+
+/**
+ * lrg_node_get_scale:
+ * @self: an #LrgNode
+ *
+ * Returns: (transfer none): the local scale vector
+ */
+LRG_AVAILABLE_IN_ALL
+GrlVector3 * lrg_node_get_scale (LrgNode *self);
+
+/**
+ * lrg_node_set_scale_xyz:
+ * @self: an #LrgNode
+ * @sx: X scale factor
+ * @sy: Y scale factor
+ * @sz: Z scale factor
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_scale_xyz (LrgNode *self,
+                             gfloat   sx,
+                             gfloat   sy,
+                             gfloat   sz);
+
+/**
+ * lrg_node_get_local_matrix:
+ * @self: an #LrgNode
+ * @out: (out caller-allocates) (array fixed-size=16): column-major local
+ *   matrix T * Rz * Ry * Rx * S
+ *
+ * Composes the node's local location, Euler rotation (radians, XYZ) and
+ * scale into a 4x4 matrix with lrg_math3d_compose().  Same layout as a
+ * raylib Matrix (m0..m15).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_get_local_matrix (LrgNode *self,
+                                gfloat  *out);
+
+/**
+ * lrg_node_get_world_matrix:
+ * @self: an #LrgNode
+ * @out: (out caller-allocates) (array fixed-size=16): column-major world
+ *   matrix
+ *
+ * Multiplies the local matrices from the root down to @self
+ * (parent_world * local), giving the node's world transform in the level.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_get_world_matrix (LrgNode *self,
+                                gfloat  *out);
+
+/* ==========================================================================
+ * Hierarchy
+ * ========================================================================== */
+
+/**
+ * lrg_node_get_parent:
+ * @self: an #LrgNode
+ *
+ * Gets the parent node, if any. The parent is a borrowed back-pointer and is
+ * not owned by @self.
+ *
+ * Returns: (transfer none) (nullable): the parent node
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNode * lrg_node_get_parent (LrgNode *self);
+
+/**
+ * lrg_node_add_child:
+ * @self: an #LrgNode
+ * @child: (transfer none): the child to append
+ *
+ * Appends @child to @self's ordered child list and sets the child's parent to
+ * @self. A reference is taken on @child.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_add_child (LrgNode *self,
+                         LrgNode *child);
+
+/**
+ * lrg_node_remove_child:
+ * @self: an #LrgNode
+ * @child: the child to remove
+ *
+ * Removes @child from @self's child list and clears its parent pointer.
+ *
+ * Returns: %TRUE if the child was found and removed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_remove_child (LrgNode *self,
+                                LrgNode *child);
+
+/**
+ * lrg_node_get_children:
+ * @self: an #LrgNode
+ *
+ * Returns: (transfer none) (element-type LrgNode): the ordered child array
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_node_get_children (LrgNode *self);
+
+/**
+ * lrg_node_get_n_children:
+ * @self: an #LrgNode
+ *
+ * Returns: the number of child nodes
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_node_get_n_children (LrgNode *self);
+
+/**
+ * lrg_node_find_by_guid:
+ * @self: an #LrgNode
+ * @guid: the guid to search for
+ *
+ * Recursively searches @self and its descendants for a node with @guid.
+ *
+ * Returns: (transfer none) (nullable): the matching node, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNode * lrg_node_find_by_guid (LrgNode     *self,
+                                 const gchar *guid);
+
+/* ==========================================================================
+ * Visual
+ * ========================================================================== */
+
+/**
+ * lrg_node_get_visual:
+ * @self: an #LrgNode
+ *
+ * Returns: (transfer none) (nullable): the node's visual payload
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNodeVisual * lrg_node_get_visual (LrgNode *self);
+
+/**
+ * lrg_node_set_visual:
+ * @self: an #LrgNode
+ * @visual: (transfer none) (nullable): the visual payload
+ *
+ * Sets the node's visual payload. A reference is taken on @visual.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_visual (LrgNode       *self,
+                          LrgNodeVisual *visual);
+
+/**
+ * lrg_node_get_physics:
+ * @self: an #LrgNode
+ *
+ * The node's `physics:` block (body, shapes, joints), 0.9.0.
+ *
+ * Returns: (transfer none) (nullable): the physics description, %NULL when
+ *   the node has no body
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNodePhysics * lrg_node_get_physics (LrgNode *self);
+
+/**
+ * lrg_node_set_physics:
+ * @self: an #LrgNode
+ * @physics: (transfer none) (nullable): the physics description, %NULL to
+ *   remove the body
+ *
+ * Sets the node's physics block. A reference is taken on @physics; edit a
+ * copy (lrg_node_physics_copy()) when undo snapshots may share it.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_physics (LrgNode        *self,
+                           LrgNodePhysics *physics);
+
+/* ==========================================================================
+ * Components and Scripts
+ * ========================================================================== */
+
+/**
+ * lrg_node_add_component:
+ * @self: an #LrgNode
+ * @desc: (transfer none): the component description to append
+ *
+ * Appends a component description. A reference is taken on @desc.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_add_component (LrgNode          *self,
+                             LrgComponentDesc *desc);
+
+/**
+ * lrg_node_get_components:
+ * @self: an #LrgNode
+ *
+ * Returns: (transfer none) (element-type LrgComponentDesc): component array
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_node_get_components (LrgNode *self);
+
+/**
+ * lrg_node_add_script:
+ * @self: an #LrgNode
+ * @binding: (transfer none): the script binding to append
+ *
+ * Appends a script binding. A reference is taken on @binding.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_add_script (LrgNode          *self,
+                          LrgScriptBinding *binding);
+
+/**
+ * lrg_node_get_scripts:
+ * @self: an #LrgNode
+ *
+ * Returns: (transfer none) (element-type LrgScriptBinding): script array
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_node_get_scripts (LrgNode *self);
+
+/**
+ * lrg_node_insert_component:
+ * @self: an #LrgNode
+ * @desc: (transfer none): the component description to insert
+ * @index: position to insert at, or -1 to append
+ *
+ * Inserts a component description at @index. A reference is taken on @desc.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_insert_component (LrgNode          *self,
+                                LrgComponentDesc *desc,
+                                gint              index);
+
+/**
+ * lrg_node_remove_component_at:
+ * @self: an #LrgNode
+ * @index: index of the component description to remove
+ *
+ * Removes the component description at @index.
+ *
+ * Returns: %TRUE if a component was removed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_remove_component_at (LrgNode *self,
+                                       guint    index);
+
+/**
+ * lrg_node_find_component:
+ * @self: an #LrgNode
+ * @type_name: the registry type name to look for
+ *
+ * Returns: (transfer none) (nullable): the first component description whose
+ *   type name is @type_name, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgComponentDesc * lrg_node_find_component (LrgNode     *self,
+                                            const gchar *type_name);
+
+/**
+ * lrg_node_insert_script:
+ * @self: an #LrgNode
+ * @binding: (transfer none): the script binding to insert
+ * @index: position to insert at, or -1 to append
+ *
+ * Inserts a script binding at @index. A reference is taken on @binding.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_insert_script (LrgNode          *self,
+                             LrgScriptBinding *binding,
+                             gint              index);
+
+/**
+ * lrg_node_remove_script_at:
+ * @self: an #LrgNode
+ * @index: index of the script binding to remove
+ *
+ * Removes the script binding at @index.
+ *
+ * Returns: %TRUE if a script binding was removed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_remove_script_at (LrgNode *self,
+                                    guint    index);
+
+/* ==========================================================================
+ * Tree editing helpers
+ * ========================================================================== */
+
+/**
+ * lrg_node_insert_child:
+ * @self: an #LrgNode
+ * @child: (transfer none): the node to insert
+ * @index: position among the children, or -1 to append
+ *
+ * Inserts @child into the children of @self at @index. An out-of-range
+ * @index appends. A reference is taken on @child.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_insert_child (LrgNode *self,
+                            LrgNode *child,
+                            gint     index);
+
+/**
+ * lrg_node_get_child_index:
+ * @self: an #LrgNode
+ * @child: a node
+ *
+ * Returns: the index of @child among the children of @self, or -1
+ */
+LRG_AVAILABLE_IN_ALL
+gint lrg_node_get_child_index (LrgNode *self,
+                               LrgNode *child);
+
+/**
+ * lrg_node_is_ancestor_of:
+ * @self: an #LrgNode
+ * @node: a node
+ *
+ * Returns: %TRUE if @self is @node or one of its ancestors
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_is_ancestor_of (LrgNode *self,
+                                  LrgNode *node);
+
+/**
+ * lrg_node_get_depth:
+ * @self: an #LrgNode
+ *
+ * Returns: the number of ancestors of @self (0 for a detached or root node)
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_node_get_depth (LrgNode *self);
+
+/**
+ * lrg_node_get_path:
+ * @self: an #LrgNode
+ *
+ * Builds a slash-separated path of node names from the top-most named
+ * ancestor down to @self (the unnamed implicit level root is skipped), for
+ * example `"world/house/door"`. Unnamed nodes appear as `"(node)"`.
+ *
+ * Returns: (transfer full): the node path
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_node_get_path (LrgNode *self);
+
+/**
+ * lrg_node_find_by_path:
+ * @self: the node to search under
+ * @path: a slash-separated path of child names relative to @self
+ *
+ * Returns: (transfer none) (nullable): the first node matching @path
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNode * lrg_node_find_by_path (LrgNode     *self,
+                                 const gchar *path);
+
+/**
+ * lrg_node_copy_state:
+ * @self: the destination node
+ * @source: the node to copy from
+ *
+ * Copies the node's own editable state from @source into @self: name, flags,
+ * tags, level path, local transform, and deep copies of the visual payload,
+ * component descriptions and script bindings. The GUID, parent and children
+ * of @self are left untouched, and so is the prefab link (#LrgNode:prefab-link).
+ * This is the primitive behind the editor's
+ * snapshot-based undo (see lrg_editor_snapshot_node()).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_copy_state (LrgNode *self,
+                          LrgNode *source);
+
+/**
+ * lrg_node_state_equal:
+ * @self: an #LrgNode
+ * @other: another #LrgNode
+ *
+ * Compares the own editable state of two nodes (everything
+ * lrg_node_copy_state() copies). Children and GUIDs are ignored.
+ *
+ * Returns: %TRUE if the states are equal
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_state_equal (LrgNode *self,
+                               LrgNode *other);
+
+/**
+ * lrg_node_foreach:
+ * @self: an #LrgNode
+ * @func: (scope call) (closure user_data): function called for @self and
+ *   every descendant in depth-first pre-order; return %FALSE to stop the walk
+ * @user_data: data passed to @func
+ *
+ * Walks the subtree rooted at @self.
+ *
+ * Returns: %FALSE if @func stopped the walk early
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_foreach (LrgNode         *self,
+                           LrgNodeForeachFunc func,
+                           gpointer         user_data);
+
+/* ==========================================================================
+ * Prefab link (linked prefab instances, since 0.8.1)
+ * ========================================================================== */
+
+/**
+ * lrg_node_get_prefab_link:
+ * @self: an #LrgNode
+ *
+ * Gets the link of a prefab instance root (see lrg_prefab_instantiate_linked()).
+ * Only instance roots, including nested ones, carry a link; the link is not
+ * part of the node's editable state (lrg_node_copy_state() and
+ * lrg_node_state_equal() ignore it).
+ *
+ * Returns: (transfer none) (nullable): the link, or %NULL
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPrefabLink * lrg_node_get_prefab_link (LrgNode *self);
+
+/**
+ * lrg_node_set_prefab_link:
+ * @self: an #LrgNode
+ * @link: (nullable): the link, or %NULL to unlink
+ *
+ * Sets (a reference to) @link as this node's prefab link.
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_prefab_link (LrgNode       *self,
+                               LrgPrefabLink *link);
+
+/**
+ * lrg_node_get_prefab_source_guid:
+ * @self: an #LrgNode
+ *
+ * The back-reference of an instance node: the guid of the source prefab
+ * node it mirrors, looked up in the link of its owning instance root (see
+ * lrg_prefab_find_owner()). Works for roots and descendants alike.
+ *
+ * Returns: (transfer none) (nullable): the source node guid, or %NULL when
+ *   the node is not part of a linked instance or was added in the instance
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_node_get_prefab_source_guid (LrgNode *self);
+
+/* ==========================================================================
+ * Instantiation
+ * ========================================================================== */
+
+/**
+ * lrg_node_instantiate:
+ * @self: an #LrgNode
+ * @object: the runtime #LrgGameObject to populate
+ *
+ * Invokes the @instantiate virtual method to materialize this node onto a
+ * runtime game object. Used by lrg_level_instantiate().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_instantiate (LrgNode       *self,
+                           LrgGameObject *object);
+
+/**
+ * lrg_node_instantiate_3d:
+ * @self: an #LrgNode
+ * @entity: the runtime #LrgEntity3D built for this node
+ * @world: the #LrgWorld3D being populated
+ *
+ * Invokes the #LrgNodeClass.instantiate_3d virtual method (when the
+ * node's class sets one) so a custom node kind can add its own runtime
+ * pieces to @entity. Used by lrg_level_instantiate_3d().
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_instantiate_3d (LrgNode     *self,
+                              LrgEntity3D *entity,
+                              LrgWorld3D  *world);
+
+G_END_DECLS

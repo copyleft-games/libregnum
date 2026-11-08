@@ -145,11 +145,12 @@ endif
 EXAMPLES += example-chart-2d example-chart-3d
 EXAMPLES += game-chair-simulator
 EXAMPLES += reel-hello reel-showcase
-EXAMPLES += ui-showcase game-ui-menu ui-theme-editor ui-studio ui-dnd ui-property-grid
+EXAMPLES += ui-showcase game-ui-menu ui-theme-editor ui-studio ui-dnd ui-property-grid level-3d-runtime pbr-showcase physics-sandbox game-showcase-3d
 
 # Editor standalone (only built when BUILD_EDITOR_UI=1)
 ifeq ($(BUILD_EDITOR_UI),1)
 EXAMPLES += editor-standalone editor-custom-panel
+EXAMPLES += visual-script
 endif
 
 # Standalone parametric-CAD viewer (only built when CAD=1).  CAD_LIBS is
@@ -186,6 +187,10 @@ ifneq ($(TARGET_PLATFORM),windows)
 endif
 
 EXAMPLE_BINARIES := $(patsubst %,$(EXAMPLES_BUILDDIR)/%$(EXE_EXT),$(EXAMPLES))
+
+# Examples link the static library: relink them whenever it changes
+# (each per-example rule below has only its .c file as a prerequisite).
+$(EXAMPLE_BINARIES): $(LIBREGNUM_STATIC)
 
 # MinGW sysroot for Windows DLLs
 MINGW_BIN := /usr/x86_64-w64-mingw32/sys-root/mingw/bin
@@ -254,6 +259,26 @@ $(EXAMPLES_BUILDDIR)/ui-showcase$(EXE_EXT): ui-showcase.c | $(EXAMPLES_BUILDDIR)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/ui-studio$(EXE_EXT): ui-studio.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/level-3d-runtime$(EXE_EXT): level-3d-runtime.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/pbr-showcase$(EXE_EXT): pbr-showcase.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/physics-sandbox$(EXE_EXT): physics-sandbox.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/game-showcase-3d$(EXE_EXT): game-showcase-3d.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/visual-script$(EXE_EXT): visual-script.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 

@@ -1,0 +1,610 @@
+#+title: LrgMaterial - Material Assets (.rmat)
+#+description: Runtime materials: shading model, PBR parameters, texture slots, render state, instances and the lit shader uniform contract
+
+* LrgMaterial - Material Assets (.rmat)
+:PROPERTIES:
+:CUSTOM_ID: lrgmaterial
+:END:
+=LrgMaterial= is the runtime material of libregnum 0.9: one object that says how a surface is shaded (lit, unlit or a user shader), with which metallic-roughness parameters, which textures, and which render state (blend, cull, depth). Materials are assets: they load from and save to small YAML files with the =.rmat= extension, are cached by =LrgAssetManager=, and are referenced from levels by path or =guid:=. A material can be an *instance* of another one: it overrides a few values (a red variant of a crate) and inherits everything else, so editing the parent updates every instance.
+
+At draw time a material is bound to a GL program with =lrg_material_apply()=, which uploads the uniforms of the engine's lit shader contract (=colDiffuse=, =pbrParams=, =mapFlags=, =emissionOwn=, ...) and binds the textures to fixed texture units. =lrg_material_apply_state()= sets the rlgl render state and =lrg_material_restore_state()= puts it back. The engine's static batch, terrain, skinned mesh and the 3D components already do this for you.
+
+=LrgMaterial3D= (=scene/lrg-material3d.h=) stays as the import/authoring struct of the scene importer and of inline level materials; =lrg_material3d_to_material()= converts it.
+
+- *Type* - =LrgMaterial=, final GObject, =LRG_TYPE_MATERIAL=, GIR =Libregnum.Material=
+- *Header* - =graphics/lrg-material.h= (through =<libregnum.h>=)
+- *Format* - =.rmat= (YAML), version =LRG_MATERIAL_FORMAT_VERSION= (1)
+- *Headless* - loading, saving, instances, every getter and the =get_map_flags= / =get_pbr_params= / =get_emission_own= helpers; only texture loading and the =apply= functions need a GL context
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Values, defaults and overrides
+:PROPERTIES:
+:CUSTOM_ID: values-defaults-overrides
+:END:
+Every value of a material (a "param") has a set bit. A getter walks the material, then its parent, its grandparent and so on, and returns the first value that is set; when nobody sets it, the built-in default applies. Setting a value always makes it the material's own (an override); =lrg_material_revert()= drops it again. Saving writes only the values the material sets itself, so a fresh =lrg_material_new()= saves as a bare =version: 1= and an instance file holds just its =parent:= and overrides.
+
+| Key                  | Kind           | Default         | Getter                                  |
+|----------------------+----------------+-----------------+-----------------------------------------|
+| =shading_model=      | enum           | =lit=           | =lrg_material_get_shading_model()=      |
+| =shader=             | string         | none            | =lrg_material_get_shader()=             |
+| =base_color=         | RGBA 0..1      | =[1, 1, 1, 1]=  | =lrg_material_get_base_color()=         |
+| =metallic=           | 0..1           | 0               | =lrg_material_get_metallic()=           |
+| =roughness=          | 0..1           | 0.5             | =lrg_material_get_roughness()=          |
+| =occlusion_strength= | 0..1           | 1               | =lrg_material_get_occlusion_strength()= |
+| =normal_scale=       | 0..8           | 1               | =lrg_material_get_normal_scale()=       |
+| =emission_color=     | RGB 0..1       | =[0, 0, 0]=     | =lrg_material_get_emission_color()=     |
+| =emission_strength=  | 0..1000        | 0               | =lrg_material_get_emission_strength()=  |
+| =alpha_cutoff=       | 0..1           | 0.5             | =lrg_material_get_alpha_cutoff()=       |
+| =height_scale=       | 0..1           | 0.05            | =lrg_material_get_height_scale()=       |
+| =blend=              | enum           | =opaque=        | =lrg_material_get_blend_mode()=         |
+| =cull=               | enum           | =back=          | =lrg_material_get_cull_mode()=          |
+| =depth_test=         | bool           | true            | =lrg_material_get_depth_test()=         |
+| =depth_write=        | bool           | true            | =lrg_material_get_depth_write()=        |
+| =double_sided=       | bool           | false           | =lrg_material_get_double_sided()=       |
+| =render_queue=       | enum           | =auto=          | =lrg_material_get_render_queue()=       |
+
+Floats are clamped to their range when set. Colours are in sRGB (display) space, the way a colour picker shows them; the lit shader linearizes them. The defaults are also exported as =LRG_MATERIAL_DEFAULT_METALLIC=, =LRG_MATERIAL_DEFAULT_ROUGHNESS=, =LRG_MATERIAL_DEFAULT_OCCLUSION_STRENGTH=, =LRG_MATERIAL_DEFAULT_NORMAL_SCALE=, =LRG_MATERIAL_DEFAULT_ALPHA_CUTOFF= and =LRG_MATERIAL_DEFAULT_HEIGHT_SCALE=.
+
+*** Shading models
+:PROPERTIES:
+:CUSTOM_ID: shading-models
+:END:
+| =LrgShadingModel=          | Nick     | Meaning                                                                                  |
+|----------------------------+----------+------------------------------------------------------------------------------------------|
+| =LRG_SHADING_MODEL_LIT=    | =lit=    | The engine's lit metallic-roughness shader (the light set's program)                     |
+| =LRG_SHADING_MODEL_UNLIT=  | =unlit=  | Albedo times colour plus emission, no lighting (fog still applies); sets =mapFlags= bit 32 |
+| =LRG_SHADING_MODEL_CUSTOM= | =custom= | A user shader asset (=.rshader=, by path or =guid:=) named by =shader:=, fed the =uniforms:= table |
+
+LrgMaterial stores the custom shader's reference only; the shader asset API (=LrgShaderAsset=) compiles it and uploads the custom table with =lrg_material_apply_custom_uniforms()=.
+
+*** Texture slots
+:PROPERTIES:
+:CUSTOM_ID: texture-slots
+:END:
+| =LrgMaterialSlot=                   | =textures:= key  | Unit | Sampler       | =mapFlags= bit                              |
+|-------------------------------------+------------------+------+---------------+---------------------------------------------|
+| =LRG_MATERIAL_SLOT_ALBEDO=          | =albedo=         | 0    | =texture0=    | (white when unset)                          |
+| =LRG_MATERIAL_SLOT_METALLIC_GLOSS=  | =metallic_gloss= | 1    | =metallicMap= | 2 (=LRG_MATERIAL_MAP_FLAG_METALLIC_GLOSS=)  |
+| =LRG_MATERIAL_SLOT_NORMAL=          | =normal=         | 2    | =normalMap=   | 1 (=LRG_MATERIAL_MAP_FLAG_NORMAL=)          |
+| =LRG_MATERIAL_SLOT_ORM=             | =orm=            | 4    | =ormMap=      | 8 (=LRG_MATERIAL_MAP_FLAG_ORM=)             |
+| =LRG_MATERIAL_SLOT_EMISSION=        | =emission=       | 5    | =emissionMap= | 16 (=LRG_MATERIAL_MAP_FLAG_EMISSION=)       |
+| =LRG_MATERIAL_SLOT_HEIGHT=          | =height=         | 6    | =heightMap=   | 4 (=LRG_MATERIAL_MAP_FLAG_HEIGHT=)          |
+
+The unit numbers are raylib's material map indices (=LRG_MATERIAL_UNIT_ALBEDO=, =LRG_MATERIAL_UNIT_METALLIC_GLOSS=, =LRG_MATERIAL_UNIT_NORMAL=, =LRG_MATERIAL_UNIT_ORM=, =LRG_MATERIAL_UNIT_EMISSION=, =LRG_MATERIAL_UNIT_HEIGHT=), so a raylib =DrawMesh()= binds the same textures to the same units. The ORM map follows glTF: R = ambient occlusion, G = roughness, B = metallic. The legacy metallic/gloss map (R = metallic, A = smoothness) is the pre-0.9 format and overrides the metallic and roughness factors.
+
+A slot is set by reference (=lrg_material_set_texture_ref()=, a path or =guid:=) or given a runtime texture (=lrg_material_set_texture()=, a render target or procedural map, never saved). A reference set to =NULL= is an explicit "no texture" override that hides the parent's map. References load lazily on first use (=lrg_material_get_texture()=, =lrg_material_apply()=) or eagerly with =lrg_material_load_textures()=.
+
+*** Reference resolution
+:PROPERTIES:
+:CUSTOM_ID: reference-resolution
+:END:
+Parent, texture and texture-uniform references resolve with =lrg_material_resolve_reference()=:
+
+1. With an asset manager (=lrg_material_set_asset_manager()=, set automatically when loaded through =lrg_asset_manager_load_material()=): =lrg_asset_manager_resolve_reference()=, so =guid:= references and search paths work, and textures load through =lrg_asset_manager_load_texture()= with the =.meta= import settings (max size, mipmaps, filter, wrap) applied.
+2. Otherwise the fallback resolver: absolute paths as they are, relative ones against the base directory (=lrg_material_set_base_dir()=; loading from a file sets it to the file's directory). =guid:= references do not resolve without a manager.
+
+The manager is held weakly (it caches materials itself), so no reference cycle forms.
+
+*** Instances
+:PROPERTIES:
+:CUSTOM_ID: instances
+:END:
+=lrg_material_new_instance (parent)= creates a material with nothing set and =parent= as its parent; it copies the parent's asset manager and base directory. A =.rmat= file names its parent with =parent:= (a path relative to the file, or =guid:=). Instances keep a reference on their parent and re-emit =::changed= when it changes, so a renderer or editor listening on the instance follows edits of the base material. Parent chains can be any depth; a chain that loops (=a= -> =b= -> =a=) fails to load with =LRG_MATERIAL_ERROR_CYCLE=, and =lrg_material_set_parent()= refuses a loop with a critical warning.
+
+Loaded through an asset manager, every instance naming the same parent file (by any spelling or by guid) shares one cached parent object.
+
+*** Render state and render queue
+:PROPERTIES:
+:CUSTOM_ID: render-state
+:END:
+| =LrgMaterialBlendMode=        | Nick       | GL state from =lrg_material_apply_state()=      | Default queue |
+|-------------------------------+------------+-------------------------------------------------+---------------|
+| =LRG_MATERIAL_BLEND_OPAQUE=   | =opaque=   | raylib =BLEND_ALPHA= (alpha is 1)               | opaque        |
+| =LRG_MATERIAL_BLEND_CUTOUT=   | =cutout=   | =BLEND_ALPHA=, =alphaCutoff= uploaded           | cutout        |
+| =LRG_MATERIAL_BLEND_ALPHA=    | =alpha=    | =BLEND_ALPHA=                                   | transparent   |
+| =LRG_MATERIAL_BLEND_ADDITIVE= | =additive= | =BLEND_ADDITIVE= (=ONE= destination factor)     | transparent   |
+| =LRG_MATERIAL_BLEND_MULTIPLY= | =multiply= | =BLEND_MULTIPLIED=                              | transparent   |
+
+=LrgMaterialCullMode= is =back= (=LRG_MATERIAL_CULL_BACK=), =front= (=LRG_MATERIAL_CULL_FRONT=) or =none= (=LRG_MATERIAL_CULL_NONE=); =double_sided: true= forces =none=. =depth_test= and =depth_write= map to =rlEnableDepthTest()= / =rlEnableDepthMask()= and their disable twins.
+
+=LrgMaterialRenderQueue= (=auto=, =opaque=, =cutout=, =transparent=; =LRG_MATERIAL_RENDER_QUEUE_AUTO= .. =LRG_MATERIAL_RENDER_QUEUE_TRANSPARENT=) is the hint for =LrgWorld3D='s render lists: =lrg_material_resolve_render_queue()= returns the explicit queue or, for =auto=, the one the blend mode implies. The 3D components turn it into =LRG_RENDER_ITEM_FLAG_TRANSPARENT= / =LRG_RENDER_ITEM_FLAG_CUTOUT=, so items land in the right list (opaque front to back, transparent back to front).
+
+*** Custom uniforms
+:PROPERTIES:
+:CUSTOM_ID: custom-uniforms
+:END:
+The =uniforms:= table maps a GLSL uniform name to a typed value (=LrgMaterialUniformType=: =float=, =vec2=, =vec3=, =vec4=, =color=, =int=, =texture=). =lrg_material_apply()= uploads them to any program that declares them (any shading model), so a custom shader's parameters and an engine shader's extra knobs live in the same place. Instances inherit uniforms by name and can override single entries (=uniforms.<name>=).
+
+*** Texture unit budget
+:PROPERTIES:
+:CUSTOM_ID: texture-unit-budget
+:END:
+OpenGL 3.3 guarantees only 16 fragment texture units, so custom texture uniforms share a fixed budget with the light set and with =LrgShaderAsset= (whose samplers start at =LRG_SHADER_ASSET_FIRST_TEXTURE_UNIT=, 7, the same as =LRG_MATERIAL_CUSTOM_TEXTURE_UNIT=):
+
+| Units          | Owner                                   | 16-unit driver                    | More than 16 units                       |
+|----------------+-----------------------------------------+-----------------------------------+------------------------------------------|
+| 0 .. 6         | material maps (this page)               | material maps                     | material maps                            |
+| 7 .. 10        | free / hooks                            | environment, SSAO, decal hooks    | custom textures (lit and unlit programs) |
+| 11 .. 15       | light set: spot atlas, shadows, grid    | light set                         | light set                                |
+| 16 .. N-1 (32) | hooks (lit) or custom (unlit)           | -                                 | hooks on lit programs, custom on unlit   |
+
+A program counts as lit when it declares the light set's uniforms (=sunDirection= or =lightCount=). Unlit programs may use 7 .. =GL_MAX_TEXTURE_IMAGE_UNITS= - 1 (at most 31); lit programs only 7 .. 10, and only on a driver with more than 16 units. For each texture uniform: a sampler the program already points at an allowed unit keeps it (so after =lrg_shader_asset_apply()= the material's texture replaces the asset's default on the asset's unit); otherwise it takes the next allowed unit from the counter (=lrg_material_apply()= starts at 7; =lrg_material_apply_custom_uniforms()= takes the caller's counter). When nothing is left the sampler is not bound and a warning names it; nothing is ever bound past the driver's limit.
+
+The draw path for =LRG_SHADING_MODEL_CUSTOM= with a shader asset: =lrg_shader_asset_bind_lights()= (lit assets only), =lrg_shader_asset_apply (asset, NULL)=, =lrg_material_apply (material, lrg_shader_asset_get_shader_id (asset))=, then draw with =lrg_shader_asset_get_shader()=; fetch the program again after the asset's =reloaded= signal (the id changes).
+
+** The .rmat format
+:PROPERTIES:
+:CUSTOM_ID: rmat-format
+:END:
+A =.rmat= file is one YAML mapping. Every key is optional; missing keys inherit (instances) or take the default. The order on save is the order below; unknown top-level keys are kept and written back after the known ones, so tools can add their own data.
+
+#+begin_src yaml
+# materials/crate.rmat
+version: 1                     # format version; newer files are rejected (LRG_MATERIAL_ERROR_VERSION)
+name: crate                    # display name, not inherited
+parent: guid:3f0c9a1e-...      # optional: the material this one is an instance of (path or guid:)
+shading_model: lit             # lit | unlit | custom
+shader: shaders/wobble.rshader # custom only: the user shader asset (path or guid:)
+base_color: [0.8, 0.6, 0.4, 1.0]   # sRGB RGBA 0..1 -> colDiffuse
+metallic: 0.25                 # pbrParams.x (times ORM blue)
+roughness: 0.75                # pbrParams.y (times ORM green)
+occlusion_strength: 0.5        # pbrParams.z: mix(1, ORM red, strength)
+normal_scale: 2.0              # pbrParams.w: normal map XY scale
+emission_color: [1.0, 0.5, 0.0]    # sRGB RGB 0..1
+emission_strength: 3.0         # emissionOwn = (color * strength, 1)
+alpha_cutoff: 0.4              # used when blend: cutout
+height_scale: 0.1              # parallax depth (heightScale)
+textures:                      # slot -> path | guid: | null (explicit "no texture")
+  albedo: textures/crate_albedo.png
+  normal: guid:9b2d...
+  orm: textures/crate_orm.png
+  emission: null
+  height: textures/crate_height.png
+  metallic_gloss: textures/legacy_mg.png
+render_state:
+  blend: cutout                # opaque | cutout | alpha | additive | multiply
+  cull: back                   # back | front | none
+  depth_test: true
+  depth_write: true
+  double_sided: false
+render_queue: auto             # auto | opaque | cutout | transparent
+uniforms:                      # custom uniforms: name -> { type, value } or shorthand
+  wobble: { type: float, value: 0.5 }
+  tint: { type: color, value: [1.0, 0.0, 0.0, 1.0] }
+  offset: [0.25, 0.5]          # shorthand: 1..4 numbers = float / vec2 / vec3 / vec4
+  noise: { type: texture, value: textures/noise.png }
+#+end_src
+
+An instance file:
+
+#+begin_src yaml
+# materials/crate_red.rmat: the crate, tinted red and glowing
+version: 1
+name: crate_red
+parent: crate.rmat             # relative to this file (or guid:)
+base_color: [1.0, 0.1, 0.1, 1.0]
+emission_color: [1.0, 0.0, 0.0]
+emission_strength: 0.5
+#+end_src
+
+Parsing rules:
+- Numbers are YAML scalars parsed with =g_ascii_strtod()=; booleans accept =true/false/yes/no/on/off/1/0=.
+- =base_color= needs 3 or 4 components (alpha defaults to 1); =emission_color= exactly 3.
+- Unknown enum nicks, unknown =textures:= slots, unknown =render_state:= keys and a uniform whose value count does not match its type fail with =LRG_MATERIAL_ERROR_INVALID=.
+- A non-mapping document fails with =LRG_MATERIAL_ERROR_PARSE=; a =parent:= that does not resolve with =LRG_MATERIAL_ERROR_NOT_FOUND=; a loop with =LRG_MATERIAL_ERROR_CYCLE=.
+- The parent is resolved after all other keys, so its resolution sees the file's directory and asset manager.
+
+Round trip: =lrg_material_save_to_data()= of a loaded material, loaded again, saves to the identical text (=tests/test-material.c= checks it on =tests/data/materials/crate.rmat=).
+
+** The lit shader uniform contract
+:PROPERTIES:
+:CUSTOM_ID: uniform-contract
+:END:
+=lrg_material_apply (material, shader_id)= writes these uniforms to =shader_id= (skipping those the program does not declare) and binds the textures. This is the contract the light set's lit shader (see [[file:light-set.org][LrgLightSet]] and [[file:../../guides/materials-and-pbr.org][Materials and PBR]]) reads:
+
+| Uniform       | Type      | Value                                                                                          |
+|---------------+-----------+------------------------------------------------------------------------------------------------|
+| =texture0=    | sampler2D | unit 0: albedo map, raylib's 1x1 white texture when unset                                      |
+| =colDiffuse=  | vec4      | base colour (sRGB)                                                                             |
+| =pbrParams=   | vec4      | (metallic, roughness, occlusion strength, normal scale) (=lrg_material_get_pbr_params()=)       |
+| =mapFlags=    | int       | bits 1 normal, 2 legacy metallic-gloss, 4 height, 8 ORM, 16 emission map, 32 unlit (=lrg_material_get_map_flags()=) |
+| =emissionOwn= | vec4      | (emission colour x strength, 1) (=lrg_material_get_emission_own()=); w = 1 means "this material's emission" |
+| =alphaCutoff= | float     | the cutoff for =cutout= materials, otherwise 0                                                 |
+| =heightScale= | float     | the parallax height scale                                                                      |
+| =normalMap=, =ormMap=, =metallicMap=, =heightMap= | sampler2D | units 2, 4, 1, 6 when the slot has a texture                   |
+| =emissionMap= | sampler2D | unit 5: the emission map, or the 1x1 white texture (the shader always samples it times the tint) |
+| custom        | any       | the =uniforms:= table, textures within the [[#texture-unit-budget][unit budget]] (from 7)                  |
+
+=emissionColor= is *not* written: it stays the light set's global emission tint (=lrg_light_set_set_emission()=), used when =emissionOwn.w= is 0. Units 11 .. 15 belong to the light set (spot atlas, shadow maps, light grid) and the hooks take 16 and up (7 .. 10 on a 16-unit driver); the contract maps never bind there, custom textures follow the [[#texture-unit-budget][budget]].
+
+=lrg_material_reset_uniforms (shader_id)= restores the "no material" state: =pbrParams= = (0, 0.5, 1, 1), =mapFlags= = 0, =emissionOwn= = (0, 0, 0, 0), =alphaCutoff= = 0, and it unbinds units 1, 2, 4, 5 and 6 (an empty unit reads black, which is what draws without a material expect from =emissionMap=). Call it after drawing with a material, before draws that do not use one.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Construction and files
+:PROPERTIES:
+:CUSTOM_ID: api-files
+:END:
+#+begin_src C
+LrgMaterial *lrg_material_new           (void);
+LrgMaterial *lrg_material_new_instance  (LrgMaterial *parent);
+LrgMaterial *lrg_material_new_from_file (const gchar *path, LrgAssetManager *manager, GError **error);
+LrgMaterial *lrg_material_new_from_data (const gchar *data, gssize length, const gchar *base_dir,
+                                         LrgAssetManager *manager, GError **error);
+gchar       *lrg_material_save_to_data  (LrgMaterial *self, gsize *length);
+gboolean     lrg_material_save_to_file  (LrgMaterial *self, const gchar *path, GError **error);
+LrgMaterial *lrg_material_copy          (LrgMaterial *self);
+const gchar *lrg_material_get_path      (LrgMaterial *self);
+const gchar *lrg_material_get_name      (LrgMaterial *self);
+void         lrg_material_set_name      (LrgMaterial *self, const gchar *name);
+#+end_src
+
+- =lrg_material_new()= - transfer full; a lit opaque material with every value at its default.
+- =lrg_material_new_instance()= - transfer full; nothing set, =parent= referenced, manager and base dir copied.
+- =lrg_material_new_from_file()= - transfer full, nullable; =manager= nullable. Without a manager references resolve next to the file and =guid:= fails. Textures do not load here (headless).
+- =lrg_material_new_from_data()= - the same from memory; =base_dir= nullable (current directory).
+- =lrg_material_save_to_data()= - transfer full; =length= optional out. Own values, =parent:=, uniforms sorted by name, unknown keys.
+- =lrg_material_save_to_file()= - writes and remembers the path (=LrgMaterial:path=).
+- =lrg_material_copy()= - transfer full; own values, parent link, uniforms, runtime textures, unknown keys, name, manager, base dir.
+- =lrg_material_get_path()= / =lrg_material_get_name()= - transfer none, nullable.
+
+*** Resolution
+:PROPERTIES:
+:CUSTOM_ID: api-resolution
+:END:
+#+begin_src C
+LrgAssetManager *lrg_material_get_asset_manager (LrgMaterial *self);
+void             lrg_material_set_asset_manager (LrgMaterial *self, LrgAssetManager *manager);
+const gchar     *lrg_material_get_base_dir      (LrgMaterial *self);
+void             lrg_material_set_base_dir      (LrgMaterial *self, const gchar *base_dir);
+gchar           *lrg_material_resolve_reference (LrgMaterial *self, const gchar *ref);
+#+end_src
+
+Changing the manager or the base directory drops already loaded textures (they load again on next use). =lrg_material_resolve_reference()= returns a new canonical path or =NULL=.
+
+*** Instances
+:PROPERTIES:
+:CUSTOM_ID: api-instances
+:END:
+#+begin_src C
+LrgMaterial *lrg_material_get_parent      (LrgMaterial *self);
+void         lrg_material_set_parent      (LrgMaterial *self, LrgMaterial *parent);
+const gchar *lrg_material_get_parent_ref  (LrgMaterial *self);
+gboolean     lrg_material_set_parent_ref  (LrgMaterial *self, const gchar *ref, GError **error);
+gboolean     lrg_material_is_overridden   (LrgMaterial *self, const gchar *name);
+gboolean     lrg_material_revert          (LrgMaterial *self, const gchar *name);
+gchar      **lrg_material_list_overrides  (LrgMaterial *self);
+#+end_src
+
+- =lrg_material_set_parent()= - re-parents (=NULL= for none). The saved =parent:= becomes the parent's =guid:= when the asset manager indexes its file, else its path, else none (an in-memory parent cannot be saved).
+- =lrg_material_set_parent_ref()= - resolves and loads =ref= (through the manager's cache when there is one) and makes it the parent; =NULL= clears.
+- Override names are the =.rmat= keys (=roughness=, =base_color=, =blend=, =depth_write=, ...), =textures.<slot>= and =uniforms.<name>=. =lrg_material_list_overrides()= returns them in file order (transfer full, =NULL=-terminated).
+
+*** Parameters
+:PROPERTIES:
+:CUSTOM_ID: api-parameters
+:END:
+#+begin_src C
+LrgShadingModel lrg_material_get_shading_model      (LrgMaterial *self);
+void            lrg_material_set_shading_model      (LrgMaterial *self, LrgShadingModel model);
+const gchar    *lrg_material_get_shader             (LrgMaterial *self);
+void            lrg_material_set_shader             (LrgMaterial *self, const gchar *shader_ref);
+void            lrg_material_get_base_color         (LrgMaterial *self, gfloat *out /* [4] */);
+void            lrg_material_set_base_color         (LrgMaterial *self, gfloat r, gfloat g, gfloat b, gfloat a);
+gfloat          lrg_material_get_metallic           (LrgMaterial *self);
+void            lrg_material_set_metallic           (LrgMaterial *self, gfloat metallic);
+gfloat          lrg_material_get_roughness          (LrgMaterial *self);
+void            lrg_material_set_roughness          (LrgMaterial *self, gfloat roughness);
+gfloat          lrg_material_get_occlusion_strength (LrgMaterial *self);
+void            lrg_material_set_occlusion_strength (LrgMaterial *self, gfloat strength);
+gfloat          lrg_material_get_normal_scale       (LrgMaterial *self);
+void            lrg_material_set_normal_scale       (LrgMaterial *self, gfloat scale);
+void            lrg_material_get_emission_color     (LrgMaterial *self, gfloat *out /* [3] */);
+void            lrg_material_set_emission_color     (LrgMaterial *self, gfloat r, gfloat g, gfloat b);
+gfloat          lrg_material_get_emission_strength  (LrgMaterial *self);
+void            lrg_material_set_emission_strength  (LrgMaterial *self, gfloat strength);
+gfloat          lrg_material_get_alpha_cutoff       (LrgMaterial *self);
+void            lrg_material_set_alpha_cutoff       (LrgMaterial *self, gfloat cutoff);
+gfloat          lrg_material_get_height_scale       (LrgMaterial *self);
+void            lrg_material_set_height_scale       (LrgMaterial *self, gfloat scale);
+#+end_src
+
+Getters return effective values (own, else inherited, else default); setters make the value an override and emit =::changed= only when something changed.
+
+*** Render state
+:PROPERTIES:
+:CUSTOM_ID: api-render-state
+:END:
+#+begin_src C
+LrgMaterialBlendMode   lrg_material_get_blend_mode       (LrgMaterial *self);
+void                   lrg_material_set_blend_mode       (LrgMaterial *self, LrgMaterialBlendMode mode);
+LrgMaterialCullMode    lrg_material_get_cull_mode        (LrgMaterial *self);   /* NONE when double-sided */
+void                   lrg_material_set_cull_mode        (LrgMaterial *self, LrgMaterialCullMode mode);
+gboolean               lrg_material_get_depth_test       (LrgMaterial *self);
+void                   lrg_material_set_depth_test       (LrgMaterial *self, gboolean depth_test);
+gboolean               lrg_material_get_depth_write      (LrgMaterial *self);
+void                   lrg_material_set_depth_write      (LrgMaterial *self, gboolean depth_write);
+gboolean               lrg_material_get_double_sided     (LrgMaterial *self);
+void                   lrg_material_set_double_sided     (LrgMaterial *self, gboolean double_sided);
+LrgMaterialRenderQueue lrg_material_get_render_queue     (LrgMaterial *self);
+void                   lrg_material_set_render_queue     (LrgMaterial *self, LrgMaterialRenderQueue queue);
+LrgMaterialRenderQueue lrg_material_resolve_render_queue (LrgMaterial *self);   /* never AUTO */
+#+end_src
+
+*** Textures
+:PROPERTIES:
+:CUSTOM_ID: api-textures
+:END:
+#+begin_src C
+const gchar *lrg_material_get_texture_ref (LrgMaterial *self, LrgMaterialSlot slot);
+void         lrg_material_set_texture_ref (LrgMaterial *self, LrgMaterialSlot slot, const gchar *ref);
+void         lrg_material_set_texture     (LrgMaterial *self, LrgMaterialSlot slot, GrlTexture *texture);
+GrlTexture  *lrg_material_get_texture     (LrgMaterial *self, LrgMaterialSlot slot);
+gboolean     lrg_material_load_textures   (LrgMaterial *self, GError **error);
+#+end_src
+
+- =lrg_material_get_texture()= - transfer none, nullable. The runtime texture, otherwise the effective reference loaded once (needs a GL context; a failed load is remembered until the reference changes, a missing context is not).
+- =lrg_material_load_textures()= - loads every slot and texture uniform of the chain; returns =FALSE= with the first error when one fails (the others still load).
+
+*** Custom uniforms
+:PROPERTIES:
+:CUSTOM_ID: api-uniforms
+:END:
+#+begin_src C
+void         lrg_material_set_uniform             (LrgMaterial *self, const gchar *name,
+                                                   LrgMaterialUniformType type,
+                                                   const gfloat *values, guint n_values);
+void         lrg_material_set_uniform_float       (LrgMaterial *self, const gchar *name, gfloat value);
+void         lrg_material_set_uniform_texture     (LrgMaterial *self, const gchar *name, const gchar *ref);
+gboolean     lrg_material_get_uniform             (LrgMaterial *self, const gchar *name,
+                                                   LrgMaterialUniformType *type, gfloat *values /* [4] */);
+const gchar *lrg_material_get_uniform_texture_ref (LrgMaterial *self, const gchar *name);
+gchar      **lrg_material_list_uniforms           (LrgMaterial *self);   /* own + inherited, sorted */
+#+end_src
+
+*** Binding
+:PROPERTIES:
+:CUSTOM_ID: api-binding
+:END:
+#+begin_src C
+gint lrg_material_get_map_flags          (LrgMaterial *self);                 /* headless */
+void lrg_material_get_pbr_params         (LrgMaterial *self, gfloat *out);    /* headless, [4] */
+void lrg_material_get_emission_own       (LrgMaterial *self, gfloat *out);    /* headless, [4] */
+void lrg_material_apply                  (LrgMaterial *self, guint shader_id);
+void lrg_material_apply_custom_uniforms  (LrgMaterial *self, guint shader_id, gint *texture_unit);
+void lrg_material_reset_uniforms         (guint shader_id);
+void lrg_material_apply_state            (LrgMaterial *self);
+void lrg_material_restore_state          (LrgMaterial *self);                 /* nullable */
+void lrg_material_fill_raylib_maps       (LrgMaterial *self, gpointer maps);  /* C only */
+#+end_src
+
+- =lrg_material_get_map_flags()= - counts only textures that are present now (runtime or already loaded); =lrg_material_apply()= loads first, then computes it.
+- =lrg_material_apply()= - needs a GL context (no-op without one or with =shader_id= 0); leaves =shader_id= enabled and unit 0 active.
+- =lrg_material_apply_custom_uniforms()= - the =uniforms:= table only; =texture_unit= is in/out (the next unit to try); samplers already on a budget unit keep it; a warning when the budget is used up.
+- =lrg_material_apply_state()= / =lrg_material_restore_state()= - flush the rlgl batch first (=rlDrawRenderBatchActive()=), which can unbind the current program and vertex array: set the state before binding your own program and buffers. Restore puts back raylib's 3D-mode defaults (=BLEND_ALPHA=, back-face culling, depth test and write on), not a saved state.
+- =lrg_material_fill_raylib_maps()= - =maps= is a raylib =MaterialMap= array of at least =MAX_MATERIAL_MAPS= (12); fills the slots' textures at their units (albedo and emission fall back to white) and the albedo colour (base colour as bytes). Skipped by GIR.
+
+*** Enumerations, errors, constants
+:PROPERTIES:
+:CUSTOM_ID: api-enums
+:END:
+| Type                     | GType function                         | GType macro                        |
+|--------------------------+----------------------------------------+------------------------------------|
+| =LrgShadingModel=        | =lrg_shading_model_get_type()=         | =LRG_TYPE_SHADING_MODEL=           |
+| =LrgMaterialBlendMode=   | =lrg_material_blend_mode_get_type()=   | =LRG_TYPE_MATERIAL_BLEND_MODE=     |
+| =LrgMaterialCullMode=    | =lrg_material_cull_mode_get_type()=    | =LRG_TYPE_MATERIAL_CULL_MODE=      |
+| =LrgMaterialRenderQueue= | =lrg_material_render_queue_get_type()= | =LRG_TYPE_MATERIAL_RENDER_QUEUE=   |
+| =LrgMaterialSlot=        | =lrg_material_slot_get_type()=         | =LRG_TYPE_MATERIAL_SLOT=           |
+| =LrgMaterialUniformType= | =lrg_material_uniform_type_get_type()= | =LRG_TYPE_MATERIAL_UNIFORM_TYPE=   |
+| =LrgMaterialError=       | =lrg_material_error_get_type()=        | =LRG_TYPE_MATERIAL_ERROR=          |
+
+=LRG_MATERIAL_ERROR= (=lrg_material_error_quark()=) codes: =LRG_MATERIAL_ERROR_PARSE=, =LRG_MATERIAL_ERROR_INVALID=, =LRG_MATERIAL_ERROR_VERSION=, =LRG_MATERIAL_ERROR_NOT_FOUND=, =LRG_MATERIAL_ERROR_CYCLE=.
+
+*** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: api-properties
+:END:
+Properties read the effective value and write an override: =name=, =path= (read-only), =parent=, =asset-manager=, =shading-model=, =shader=, =base-color-r= / =-g= / =-b= / =-a=, =metallic=, =roughness=, =occlusion-strength=, =normal-scale=, =emission-color-r= / =-g= / =-b=, =emission-strength=, =alpha-cutoff=, =height-scale=, =blend-mode=, =cull-mode= (as set), =depth-test=, =depth-write=, =double-sided=, =render-queue=. All notify explicitly (=G_PARAM_EXPLICIT_NOTIFY=).
+
+Signal =changed= (no arguments): any value, texture, uniform, name or parent change of the material, and every =changed= of its parent.
+
+** Binding materials to geometry
+:PROPERTIES:
+:CUSTOM_ID: binding
+:END:
+| Where                                | API                                                                                                       |
+|--------------------------------------+-----------------------------------------------------------------------------------------------------------|
+| [[file:static-batch.org][LrgStaticBatch]] (per material id)      | =lrg_static_batch_set_material()=, =lrg_static_batch_get_material()=                                      |
+| [[file:terrain.org][LrgTerrain]] (per material id)          | =lrg_terrain_set_material()=, =lrg_terrain_get_material()= (shared-page and mesh paths)                   |
+| [[file:skinned-mesh.org][LrgSkinnedMesh]]                       | =lrg_skinned_mesh_set_material()=, =lrg_skinned_mesh_get_material()=                                      |
+| [[file:../world3d/components.org][LrgMeshRendererComponent]]   | =material= property (=lrg_mesh_renderer_component_set_material()=), =lrg_mesh_renderer_component_set_submesh_material()=, =lrg_mesh_renderer_component_get_submesh_material()=, =lrg_mesh_renderer_component_get_n_submesh_materials()=, =lrg_mesh_renderer_component_clear_submesh_materials()= |
+| [[file:../world3d/components.org][LrgSkinnedModelComponent]]   | =material= property (=lrg_skinned_model_component_set_material()=, =lrg_skinned_model_component_get_material()=), =lrg_skinned_model_component_set_submesh_material()=, =lrg_skinned_model_component_get_submesh_material()=, =lrg_skinned_model_component_get_n_submesh_materials()= |
+| Levels                                | =material: guid:...= or a =.rmat= path on a node's visual (=lrg_node_visual_set_material_ref()=, =lrg_node_visual_get_material_ref()=) |
+| Asset manager                         | =lrg_asset_manager_load_material()=, =lrg_asset_manager_get_material_cache_size()=, =.rmat= in =lrg_asset_manager_load_asset()= |
+| Authoring material                    | =lrg_material3d_to_material()=                                                                            |
+
+The batch, terrain and skinned mesh draw with the material by calling =lrg_material_apply()= on their shader, filling the raylib maps with =lrg_material_fill_raylib_maps()= (base colour times their tint), =lrg_material_apply_state()= around the draw, and =lrg_material_reset_uniforms()= after it. Without a lit shader (raylib's default program) only the albedo map, base colour and render state apply.
+
+The components never draw: a component holding an =LrgMaterial= submits render items whose =material= is the =LrgMaterial=, whose =color= is its base colour (the skinned model multiplies the component colour in), and whose flags follow the material (=LRG_RENDER_ITEM_FLAG_TRANSPARENT= / =LRG_RENDER_ITEM_FLAG_CUTOUT= from the resolved render queue, =LRG_RENDER_ITEM_FLAG_DOUBLE_SIDED= for cull =none=, =LRG_RENDER_ITEM_FLAG_UNLIT= for the unlit model). Submesh materials split a resolved model into one item per mesh (=mesh_index= = i). The world renderer binds item materials per draw.
+
+*** LrgMaterial3D
+:PROPERTIES:
+:CUSTOM_ID: material3d
+:END:
+=LrgMaterial3D= is the scene importer's and the level's inline material: colour, roughness, metallic, emission colour and strength. Its API: =lrg_material3d_new()=, =lrg_material3d_new_with_color()= (a material with a base colour), =lrg_material3d_copy()= (deep copy), =lrg_material3d_equal()= (field-wise comparison, two =NULL= are equal), the colour/roughness/metallic/emission getters and setters, and =lrg_material3d_to_material()=: a new =LrgMaterial= with the base colour, metallic, roughness, emission colour (RGB) and strength set explicitly; an alpha below 1 makes it =LRG_MATERIAL_BLEND_ALPHA=.
+
+*** Level references
+:PROPERTIES:
+:CUSTOM_ID: level-references
+:END:
+In a =.rlevel= / =.rprefab=, a primitive or mesh visual's =material:= is either the inline block (=color=, =roughness=, =metallic=, and since 0.9 =emission: [r, g, b]= and =emission_strength=) or a scalar reference to a =.rmat= (=material: guid:3f0c...= or =material: materials/crate.rmat=), stored as =LrgNodeVisual:material-ref=:
+
+#+begin_src yaml
+visual:
+  kind: mesh-asset
+  asset: guid:a1b2...           # the mesh
+  material: guid:3f0c9a1e-...   # a .rmat asset (or a path)
+#+end_src
+
+=lrg_level_instantiate_3d()= maps them onto the =LrgMeshRendererComponent=:
+- the inline block -> =color-r= .. =color-a=, =roughness=, =metallic=, =emission-r= / =-g= / =-b= and =emission-strength= (and play-in-editor writes those back with =lrg_level_visual_store_property()=);
+- a reference -> loaded with =lrg_asset_manager_load_material()= through the engine's asset manager (shared by every node naming it) and put in the =material= slot. Without a manager an absolute or current-directory path still loads; a reference that does not resolve logs a debug message and the node draws with its scalar material.
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** Load, tweak and save
+:PROPERTIES:
+:CUSTOM_ID: example-load-save
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+static gboolean
+make_variant (LrgAssetManager *assets,
+              GError         **error)
+{
+	LrgMaterial            *crate;
+	g_autoptr(LrgMaterial)  red = NULL;
+
+	/* cached and shared: every reference to crate.rmat gets this object */
+	crate = lrg_asset_manager_load_material (assets, "materials/crate.rmat", error);
+	if (crate == NULL)
+		return FALSE;
+
+	/* an instance: inherits textures, roughness, render state ... */
+	red = lrg_material_new_instance (crate);
+	lrg_material_set_name (red, "crate_red");
+	lrg_material_set_base_color (red, 1.0f, 0.1f, 0.1f, 1.0f);
+	lrg_material_set_emission_color (red, 1.0f, 0.0f, 0.0f);
+	lrg_material_set_emission_strength (red, 0.5f);
+
+	/* writes parent: guid:... (or the path) plus the three overrides */
+	return lrg_material_save_to_file (red, "materials/crate_red.rmat", error);
+}
+#+end_src
+
+*** Draw a static batch with materials
+:PROPERTIES:
+:CUSTOM_ID: example-batch
+:END:
+#+begin_src C
+/* once, after merging (material ids are the batch's ids) */
+lrg_static_batch_set_shader (batch, lrg_light_set_get_shader (lights));
+lrg_static_batch_set_material (batch, 0, lrg_asset_manager_load_material (assets, "materials/stone.rmat", NULL));
+lrg_static_batch_set_material (batch, 1, lrg_asset_manager_load_material (assets, "materials/wood.rmat", NULL));
+lrg_static_batch_upload (batch, NULL);
+
+/* every frame, inside the 3D mode */
+lrg_light_set_apply (lights, camera);
+lrg_static_batch_draw (batch, LRG_STATIC_BATCH_ALL_LAYERS);
+#+end_src
+
+*** Bind a material by hand
+:PROPERTIES:
+:CUSTOM_ID: example-manual
+:END:
+For your own =DrawMesh()= calls with the lit shader:
+
+#+begin_src C
+Shader      shader = *(Shader *) grl_shader_get_handle (lrg_light_set_get_shader (lights));
+MaterialMap maps[MAX_MATERIAL_MAPS] = { 0 };
+Material    mat = { 0 };
+
+mat.shader = shader;
+mat.maps = maps;
+lrg_material_apply_state (material);       /* flushes rlgl: first */
+lrg_material_apply (material, shader.id);  /* contract uniforms + textures */
+lrg_material_fill_raylib_maps (material, maps);
+DrawMesh (mesh, mat, transform);
+lrg_material_restore_state (material);
+lrg_material_reset_uniforms (shader.id);   /* before draws without a material */
+#+end_src
+
+*** A material on a component
+:PROPERTIES:
+:CUSTOM_ID: example-component
+:END:
+#+begin_src C
+g_autoptr(LrgMeshRendererComponent) mr = lrg_mesh_renderer_component_new_mesh ("models/barrel.glb");
+LrgMaterial *metal = lrg_asset_manager_load_material (assets, "materials/metal.rmat", NULL);
+LrgMaterial *label = lrg_asset_manager_load_material (assets, "materials/label.rmat", NULL);
+
+g_object_set (mr, "material", metal, NULL);                        /* every mesh */
+lrg_mesh_renderer_component_set_submesh_material (mr, 2, label);   /* mesh 2 only */
+lrg_entity3d_add_component (entity, LRG_COMPONENT (mr));
+#+end_src
+
+*** Unlit, additive glow
+:PROPERTIES:
+:CUSTOM_ID: example-glow
+:END:
+#+begin_src yaml
+version: 1
+name: portal_glow
+shading_model: unlit
+base_color: [0.3, 0.6, 1.0, 1.0]
+emission_color: [0.3, 0.6, 1.0]
+emission_strength: 2.0
+textures:
+  albedo: textures/portal_swirl.png
+render_state:
+  blend: additive
+  depth_write: false
+  double_sided: true
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- Loading is pure YAML parsing (no GL); textures load once per material on first use. Preload with =lrg_material_load_textures()= at level load to avoid a first-frame hitch.
+- Uniform locations are looked up once per (material, program) pair and cached; custom uniform locations likewise. Switching programs re-looks them up.
+- Every getter walks the parent chain (a few pointer hops); chains are short in practice. Cache values in hot loops if you read them per vertex.
+- Each draw with a material does one rlgl flush (=apply_state=), the uniform uploads and texture binds; group draws by material (the batch's chunks already are, components' items sort by =sort_key=).
+- The terrain's shared-page path re-enables its program and rebinds its page around each mesh that has a material; terrain without materials keeps its single-bind fast path.
+- Share materials through the asset manager instead of copying: instances are cheap (only overrides are stored).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Call =lrg_material_reset_uniforms()= after material draws.* Otherwise later draws on the same program inherit the last =mapFlags=, =pbrParams=, =emissionOwn= and bound units (a leftover white =emissionMap= makes everything glow with the global emission).
+- *State before buffers.* =lrg_material_apply_state()= and =lrg_material_restore_state()= flush the rlgl batch, which can unbind the program and the vertex array; set the state first, then bind your program and VAO (=DrawMesh()= rebinds both itself).
+- *=restore_state= is not a stack.* It restores raylib's 3D defaults; if you had culling off before, turn it off again.
+- *Colours are sRGB.* Do not linearize =base_color= or =emission_color= yourself; the shader does.
+- *=emissionColor= belongs to the light set.* A material writes =emissionOwn=; the global tint (=lrg_light_set_set_emission()=) applies to draws without a material.
+- *The custom texture budget is small on lit programs.* 7 .. 10 with more than 16 units, none on a 16-unit driver (the hooks own 7 .. 10 there); a sampler past the budget is skipped with a warning. Pack data into fewer textures, or use an unlit custom shader.
+- *=guid:= needs an asset manager* (with the project's asset directories indexed). Loading by path without a manager is fine for tools and tests.
+- *An in-memory parent cannot be saved* (=parent_ref= stays =NULL=); save the parent first, or set the reference with =lrg_material_set_parent_ref()=.
+- *The asset manager owns cached materials* (=lrg_asset_manager_load_material()= is transfer none). Take a reference if you keep one past =lrg_asset_manager_unload()=.
+- *Shared parents are shared.* Editing a cached material edits it for every instance and every node that references it; make an instance for per-object changes.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The [[file:../../editor/material-editor.org][material editor]] opens any =.rmat= from the assets panel (double-click, or New Material / Create Variant in its menus): a live lit preview (sphere, cube, plane), a property grid for every key with texture drag and drop, override markers and Revert on instances, and a uniform inspector for custom shading. Drag a material from the assets panel onto a mesh in the viewport to assign it (an undoable =material-ref= edit); =lrgeditorctl material ...= and the =material_*= MCP tools do the same. Without the editor the workflow is format level:
+
+1. Create =materials/<name>.rmat= in the project's asset directory (any text editor or =lrgeditorctl= file tools); copy the annotated example above. Textures are paths relative to the =.rmat= file's directory or to the project search paths, or =guid:= references taken from the textures' =.meta= sidecars.
+2. The editor's asset database indexes the file like any asset (it gets a =.meta= with a guid when the editor imports it), so it can be referenced as =guid:...=.
+3. Reference it from a node: set the visual's =material:= to the =guid:= (or a path) in the =.rlevel=, or from C/MCP set =LrgNodeVisual:material-ref= (=lrg_node_visual_set_material_ref()=). The inline =material:= block keeps working for simple colours.
+4. Play-in-editor instantiates the level with the engine's asset manager, so the referenced material appears in the =material= slot of the node's mesh renderer; the viewport and the game draw through the same renderer.
+5. For variants, write instance files (=parent:= + overrides) rather than copies, so edits to the base propagate.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../../guides/materials-and-pbr.org][Materials and PBR]] - the lit shader, GGX metallic-roughness, lights, shadows, IBL
+- [[file:light-set.org][LrgLightSet]] - the lit shader the contract feeds
+- [[file:static-batch.org][LrgStaticBatch]], [[file:terrain.org][LrgTerrain]], [[file:skinned-mesh.org][LrgSkinnedMesh]] - geometry that binds materials
+- [[file:../world3d/components.org][3D components]] - =material= slots and render items
+- [[file:../core/asset-manager.org][LrgAssetManager]] - the material cache, guid index and import settings
+- [[file:../../editor/yaml-format.org][Level YAML format]] - visual =material:= blocks and references

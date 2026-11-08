@@ -1,0 +1,94 @@
+#+title: LrgColorGradient
+#+description: The engine's runtime colour gradient: sorted RGBA stops with linear, step or smooth interpolation, a fast lookup table, a text form and conversion to the editor's LrgGradientStops
+
+* LrgColorGradient
+:PROPERTIES:
+:CUSTOM_ID: color-gradient
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Core]] > LrgColorGradient
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgColorGradient= (=core/lrg-color-gradient.h=, 0.9.0) maps a position =t= in 0 .. 1 to an RGBA colour (floats 0 .. 1) through sorted stops. It is what runtime code samples per particle or per vertex: colour over life, colour along a ribbon. It has three interpolation modes, an exact evaluator and a table-driven fast one, a one-line text form shared with the formats, and lossless conversion to and from =LrgGradientStops=, the boxed value type the editor's property grid edits with its gradient widget (=LrgGradientEdit=). Formats store gradients as =LrgGradientStops= properties (so the property grid works) and keep an =LrgColorGradient= internally for sampling.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+- *Stops* are kept sorted by offset. A stop added at an existing offset goes after it, making a hard edge.
+- *Evaluation*: before the first stop its colour, after the last its colour, in between the two neighbouring stops blended by the mode: =LINEAR= (straight blend of all four channels), =STEP= (the left stop's colour until the next stop), =SMOOTH= (smoothstep =3f^2 - 2f^3= of the segment fraction). One stop gives its colour everywhere; *no stop gives opaque white*, the neutral value of a colour multiplier.
+- *The table*: =lrg_color_gradient_evaluate_fast()= samples a 256-entry table (=LRG_COLOR_GRADIENT_LUT_SIZE=) rebuilt on first use after a change and blends the two nearest entries: exact for linear gradients at entries, within 1/255 elsewhere.
+- *Text form*: ="offset #rrggbbaa; offset #rrggbbaa; ..."= (the format of =lrg_gradient_stops_to_string()=; =#rgb= and =#rrggbb= read as opaque), optionally prefixed with =linear:=, =step:= or =smooth:=. The writer uses =%.9g= offsets and 8-bit channels, so text round-trips exactly.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Symbol | Description |
+|--------+-------------|
+| =LrgColorGradientMode=, =lrg_color_gradient_mode_get_type()= | =LRG_COLOR_GRADIENT_LINEAR=, =STEP=, =SMOOTH= (nicks =linear=, =step=, =smooth=) |
+| =LrgColorGradientError=, =LRG_COLOR_GRADIENT_ERROR=, =lrg_color_gradient_error_quark()= | =PARSE= |
+| =LRG_COLOR_GRADIENT_LUT_SIZE= | 256 |
+| =lrg_color_gradient_new ()= | empty |
+| =lrg_color_gradient_new_two (start, end)= | two RGBA stops at 0 and 1 |
+| =lrg_color_gradient_new_from_string (text, error)= | parse the text form |
+| =lrg_color_gradient_new_from_stops (stops)= | from =LrgGradientStops= (linear) |
+| =lrg_color_gradient_to_stops (self)= | to =LrgGradientStops= (transfer full; the mode is not part of it) |
+| =lrg_color_gradient_set_from_stops (self, stops)= | replace all stops, keep the mode (one =changed=) |
+| =lrg_color_gradient_to_string (self)= | the text form (transfer full) |
+| =lrg_color_gradient_copy (self)=, =lrg_color_gradient_equal (a, b)= | deep copy; same mode and stops |
+| =lrg_color_gradient_get_mode=, =set_mode= | property =mode= |
+| =lrg_color_gradient_get_n_stops (self)= | property =n-stops= (read-only) |
+| =lrg_color_gradient_get_stop (self, index, offset, rgba)= | read a stop |
+| =lrg_color_gradient_add_stop (self, offset, rgba)= | insert (clamped to 0 .. 1), returns the index |
+| =lrg_color_gradient_set_stop (self, index, offset, rgba)= | move/recolour (=rgba= nullable); returns the new index or -1 |
+| =lrg_color_gradient_remove_stop (self, index)=, =lrg_color_gradient_clear (self)= | remove |
+| =lrg_color_gradient_evaluate (self, t, out)= | exact RGBA at =t= |
+| =lrg_color_gradient_evaluate_fast (self, t, out)= | table RGBA at =t= |
+| =lrg_color_gradient_evaluate_color (self, t, color)= | exact, as a =GrlColor= |
+
+Signal =changed= after any change of stops or mode.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(GError)           error = NULL;
+g_autoptr(LrgColorGradient) fire = lrg_color_gradient_new_from_string ("0 #fff0c0ff; 0.3 #ff9020ff; 1 #30000000", &error);
+gfloat                      rgba[4];
+
+lrg_color_gradient_evaluate_fast (fire, particle_age / particle_life, rgba);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+=evaluate()= is a binary search plus a blend; =evaluate_fast()= is two table reads and a blend (the particle modules use it). Rebuilding the table costs 256 exact evaluations, once per change.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- In YAML, quote the text form: =#= after a space starts a comment.
+- Colours are clamped to 0 .. 1 (no HDR intensities).
+- =to_stops()= drops the mode; formats that need it store it beside the stops.
+
+
+** Symbol index
+:PROPERTIES:
+:CUSTOM_ID: symbol-index
+:END:
+The remaining public symbols of =core/lrg-color-gradient.h=, by their full names (the tables above abbreviate getter and setter pairs): =lrg_color_gradient_set_mode ()=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../particles/particle-asset.org][Particle assets]] (colour modules, ribbon gradients)
+- =LrgGradientStops= and =LrgGradientEdit= (=ui/lrg-gradient-edit.h=), the editor side

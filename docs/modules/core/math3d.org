@@ -1,0 +1,253 @@
+* 3D Math (lrg-math3d)
+:PROPERTIES:
+:CUSTOM_ID: math3d
+:END:
+=src/core/lrg-math3d.{c,h}= is the shared, headless 3D math of libregnum: Euler angles, quaternions, 4x4 matrices, TRS compose/decompose, point and direction transforms, look-at and projection matrices. It is always built, needs no window or GL context, allocates nothing and has no GObject type: every function works on plain =gfloat= arrays. The runtime level module (=lrg_node_get_world_matrix()=), the editor viewport, gizmo and picker, and games all use the same functions, so the editor and a game compute identical transforms.
+
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Core]]* > 3D Math
+
+#+end_quote
+
+New in 0.9.0. The matrix, compose/decompose and camera code moved here from the editor (=src/editor/lrg-editor-math.c=); the =lrg_editor_math_*()= functions stay as thin wrappers and give bit-identical results (see [[#math3d-editor-wrappers][Editor wrappers]]).
+
+** Conventions
+:PROPERTIES:
+:CUSTOM_ID: math3d-conventions
+:END:
+| Thing | Convention |
+|-------+------------|
+| Matrix | 4x4, column-major, 16 floats, element (row, col) at =m[col * 4 + row]=. The memory layout of a raylib =Matrix= read as =m0..m15=. |
+| Vectors | Column vectors: =world = M * local=. =lrg_math3d_multiply (a, b)= applied to a point applies =b= first. |
+| Euler angles | Radians, applied X, then Y, then Z: =R = Rz * Ry * Rx=, like raylib's =MatrixRotateXYZ= and the authored =rotation= of an =LrgNode= in a =.rlevel=. |
+| Quaternion | =(x, y, z, w)= like raylib's =Quaternion=. Euler to quaternion gives =qz * qy * qx=. |
+| TRS | =T * R * S=. Scale is the length of each basis column; a mirrored basis is reported as a negative X scale. |
+| Axes | Right-handed, Y up, a camera looks down its local -Z. |
+| Clip space | OpenGL: NDC z in [-1, 1], like raylib's =MatrixPerspective= / =MatrixOrtho=. |
+| Aliasing | Outputs may alias inputs where the reference says so (=multiply=, =invert=, =transpose=, =transform_*=, =quat_*=). |
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: math3d-concepts
+:END:
+*** Euler, quaternion, matrix
+:PROPERTIES:
+:CUSTOM_ID: math3d-representations
+:END:
+Authoring data (=.rlevel= nodes, the inspector) stores Euler angles because people edit them. Runtime code that interpolates or accumulates rotations should use quaternions (=lrg_math3d_quat_slerp()=, =lrg_math3d_quat_multiply()=), and renderers want matrices. The conversions are:
+
+#+begin_example
+ euler --lrg_math3d_euler_to_quat--> quat --lrg_math3d_quat_to_matrix--> matrix
+ euler <--lrg_math3d_quat_to_euler--  quat <--lrg_math3d_matrix_to_quat--  matrix
+ euler --------------------lrg_math3d_compose (with T and S)--------------> matrix
+ euler <-------------------lrg_math3d_decompose----------------------------  matrix
+#+end_example
+
+*** Gimbal lock
+:PROPERTIES:
+:CUSTOM_ID: math3d-gimbal
+:END:
+With =R = Rz * Ry * Rx=, a Y rotation of +-90 degrees makes X and Z rotate about the same axis; only =x - z= (at +90) or =x + z= (at -90) is observable. =lrg_math3d_decompose()= and =lrg_math3d_quat_to_euler()= detect this when =|sin(y)| >= 0.9999= and fold Z into X, reporting =z = 0=. The matrix rebuilt from those angles equals the original; the angles themselves differ from what was authored. This is the editor's long-standing behaviour, which is why the inspector keeps the authored Euler angles instead of re-deriving them from a matrix.
+
+*** Two decompositions
+:PROPERTIES:
+:CUSTOM_ID: math3d-decompositions
+:END:
+- =lrg_math3d_decompose()= returns Euler angles (the editor and =.rlevel= representation), with the gimbal folding above.
+- =lrg_math3d_decompose_quat()= returns a quaternion, like raylib 6.2's =MatrixDecompose=: no special case, =w >= 0= so equal rotations give equal quaternions.
+
+Both read scale as basis-column lengths and turn a mirrored basis (negative determinant) into a negative X scale, so =compose (decompose (m)) == m= for any shear-free TRS matrix. A zero-length axis makes both return =FALSE= (rotation zero / identity).
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: math3d-api
+:END:
+*** Matrices
+:PROPERTIES:
+:CUSTOM_ID: math3d-api-matrices
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_math3d_identity= | =void (gfloat *out)= | 4x4 identity |
+| =lrg_math3d_multiply= | =void (const gfloat *a, const gfloat *b, gfloat *out)= | =a * b=; =out= may alias =a= or =b= |
+| =lrg_math3d_invert= | =gboolean (const gfloat *m, gfloat *out)= | General inverse (cofactors). =FALSE= if singular; =out= is then the identity |
+| =lrg_math3d_transpose= | =void (const gfloat *m, gfloat *out)= | Converts between column- and row-major; may alias |
+| =lrg_math3d_transform_point= | =void (const gfloat *m, const gfloat *p, gfloat *out)= | =M * (p, 1)=, perspective divide when w is not 0 or 1 |
+| =lrg_math3d_transform_direction= | =void (const gfloat *m, const gfloat *d, gfloat *out)= | =M * (d, 0)=, translation ignored |
+
+*** TRS compose / decompose
+:PROPERTIES:
+:CUSTOM_ID: math3d-api-trs
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_math3d_compose= | =void (const gfloat *location, const gfloat *rotation, const gfloat *scale, gfloat *out)= | =T * Rz * Ry * Rx * S= from Euler radians |
+| =lrg_math3d_decompose= | =gboolean (const gfloat *m, gfloat *location, gfloat *rotation, gfloat *scale)= | Inverse of compose; Euler out; gimbal folding; =FALSE= on a zero axis |
+| =lrg_math3d_compose_quat= | =void (const gfloat *location, const gfloat *rotation, const gfloat *scale, gfloat *out)= | =T * R(q) * S=; =rotation= is a unit quaternion used as given |
+| =lrg_math3d_decompose_quat= | =gboolean (const gfloat *m, gfloat *location, gfloat *rotation, gfloat *scale)= | Quaternion out (=w >= 0=); =FALSE= on a zero axis |
+
+*** Euler, quaternion and matrix conversion
+:PROPERTIES:
+:CUSTOM_ID: math3d-api-convert
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_math3d_euler_to_quat= | =void (const gfloat *euler, gfloat *out)= | =qz * qy * qx= (same rotation as =lrg_math3d_compose()=) |
+| =lrg_math3d_quat_to_euler= | =void (const gfloat *q, gfloat *out)= | Normalises =q= first; same branch choices as =lrg_math3d_decompose()= |
+| =lrg_math3d_quat_to_matrix= | =void (const gfloat *q, gfloat *out)= | Pure rotation matrix |
+| =lrg_math3d_matrix_to_quat= | =void (const gfloat *m, gfloat *out)= | Upper 3x3 must be orthonormal (no scale); Shepperd's method, =w >= 0= |
+
+*** Quaternions
+:PROPERTIES:
+:CUSTOM_ID: math3d-api-quat
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_math3d_quat_identity= | =void (gfloat *out)= | =(0, 0, 0, 1)= |
+| =lrg_math3d_quat_from_axis_angle= | =void (const gfloat *axis, gfloat angle, gfloat *out)= | Axis normalised internally; a zero axis gives the identity |
+| =lrg_math3d_quat_multiply= | =void (const gfloat *a, const gfloat *b, gfloat *out)= | Hamilton product: rotate by =b=, then =a= |
+| =lrg_math3d_quat_normalize= | =void (const gfloat *q, gfloat *out)= | Zero quaternion becomes the identity |
+| =lrg_math3d_quat_invert= | =void (const gfloat *q, gfloat *out)= | Conjugate / squared length |
+| =lrg_math3d_quat_rotate_vector= | =void (const gfloat *q, const gfloat *v, gfloat *out)= | =q v q^-1= without building a matrix |
+| =lrg_math3d_quat_slerp= | =void (const gfloat *a, const gfloat *b, gfloat t, gfloat *out)= | Shorter arc; normalised lerp when nearly equal |
+
+*** Cameras
+:PROPERTIES:
+:CUSTOM_ID: math3d-api-camera
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_math3d_look_at= | =void (const gfloat *eye, const gfloat *target, const gfloat *up, gfloat *out)= | View matrix (world to camera). =eye == target= looks down -Z, a zero =up= means +Y, and a view parallel to =up= uses world -Z (looking down) or +Z (looking up) as screen-up |
+| =lrg_math3d_perspective= | =void (gfloat fovy, gfloat aspect, gfloat near_plane, gfloat far_plane, gfloat *out)= | =fovy= in radians; same matrix as raylib's =MatrixPerspective= |
+| =lrg_math3d_ortho= | =void (gfloat left, gfloat right, gfloat bottom, gfloat top, gfloat near_plane, gfloat far_plane, gfloat *out)= | Same matrix as =MatrixOrtho=; symmetric volumes give exact =+0= translations |
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: math3d-examples
+:END:
+*** A node's world transform
+:PROPERTIES:
+:CUSTOM_ID: math3d-example-world
+:END:
+=lrg_node_get_world_matrix()= (runtime level module) is built on these functions; this is what it does:
+
+#+begin_src C
+gfloat loc[3] = { 10.0f, 0.0f, 0.0f };
+gfloat rot[3] = { 0.0f, (gfloat) G_PI_2, 0.0f };   /* 90 degrees about Y */
+gfloat scl[3] = { 2.0f, 2.0f, 2.0f };
+gfloat parent[16], child[16], world[16];
+gfloat child_loc[3] = { 1.0f, 0.0f, 0.0f };
+gfloat zero[3] = { 0.0f, 0.0f, 0.0f };
+gfloat one[3] = { 1.0f, 1.0f, 1.0f };
+gfloat wl[3], wr[3], ws[3];
+
+lrg_math3d_compose (loc, rot, scl, parent);
+lrg_math3d_compose (child_loc, zero, one, child);
+lrg_math3d_multiply (parent, child, world);        /* parent * child */
+
+lrg_math3d_decompose (world, wl, wr, ws);
+/* wl = (10, 0, -2): +X turned to -Z, doubled, then moved by 10 */
+#+end_src
+
+*** Smoothly turning towards an authored rotation
+:PROPERTIES:
+:CUSTOM_ID: math3d-example-slerp
+:END:
+#+begin_src C
+static void
+turn_towards (gfloat       *current_q,      /* (x, y, z, w), updated */
+              const gfloat *target_euler,   /* authored radians */
+              gfloat        delta)
+{
+	gfloat target_q[4];
+
+	lrg_math3d_euler_to_quat (target_euler, target_q);
+	/* frame-rate independent ease: 10 per second */
+	lrg_math3d_quat_slerp (current_q, target_q, 1.0f - expf (-10.0f * delta), current_q);
+}
+#+end_src
+
+*** Camera matrices for a custom pass
+:PROPERTIES:
+:CUSTOM_ID: math3d-example-camera
+:END:
+#+begin_src C
+gfloat eye[3] = { 0.0f, 5.0f, 10.0f };
+gfloat target[3] = { 0.0f, 0.0f, 0.0f };
+gfloat up[3] = { 0.0f, 1.0f, 0.0f };
+gfloat view[16], proj[16], view_proj[16];
+gfloat ndc[3];
+
+lrg_math3d_look_at (eye, target, up, view);
+lrg_math3d_perspective (60.0f * (gfloat) G_PI / 180.0f, 16.0f / 9.0f, 0.1f, 500.0f, proj);
+lrg_math3d_multiply (proj, view, view_proj);
+lrg_math3d_transform_point (view_proj, target, ndc);   /* (0, 0, z) */
+#+end_src
+
+The 16 floats can be handed to raylib as a =Matrix= field by field (=m0 = out[0]= ... =m15 = out[15]=); the layouts agree. Do not =memcpy= into a raylib =Matrix= (the project rule: build it field by field so a layout change is a compile error).
+
+*** Quaternion TRS (runtime transforms)
+:PROPERTIES:
+:CUSTOM_ID: math3d-example-quat-trs
+:END:
+#+begin_src C
+gfloat m[16];
+gfloat loc[3], q[4], scl[3];
+
+if (lrg_math3d_decompose_quat (m, loc, q, scl))
+{
+	gfloat spin[4];
+	gfloat up[3] = { 0.0f, 1.0f, 0.0f };
+
+	lrg_math3d_quat_from_axis_angle (up, 0.1f, spin);
+	lrg_math3d_quat_multiply (spin, q, q);       /* world-space spin */
+	lrg_math3d_quat_normalize (q, q);
+	lrg_math3d_compose_quat (loc, q, scl, m);
+}
+#+end_src
+
+** Editor wrappers
+:PROPERTIES:
+:CUSTOM_ID: math3d-editor-wrappers
+:END:
+With =BUILD_EDITOR=1= the 0.8 editor API keeps working unchanged and calls core:
+
+| Editor function (=lrg-editor-math.h=) | Core function |
+|----------------------------------------+---------------|
+| =lrg_editor_math_identity= | =lrg_math3d_identity= |
+| =lrg_editor_math_compose= / =lrg_editor_math_decompose= | =lrg_math3d_compose= / =lrg_math3d_decompose= |
+| =lrg_editor_math_multiply= / =lrg_editor_math_invert= | =lrg_math3d_multiply= / =lrg_math3d_invert= |
+| =lrg_editor_math_transform_point= / =lrg_editor_math_transform_direction= | =lrg_math3d_transform_point= / =lrg_math3d_transform_direction= |
+| =lrg_editor_node_get_local_matrix= / =lrg_editor_node_get_world_matrix= | =lrg_node_get_local_matrix= / =lrg_node_get_world_matrix= (runtime level module) |
+| =lrg_editor_view_get_view_matrix= | =lrg_math3d_look_at= |
+| =lrg_editor_view_get_projection_matrix= | =lrg_math3d_perspective= (fovy degrees converted to radians) / =lrg_math3d_ortho= |
+
+=tests/test-math3d.c= carries a verbatim copy of the 0.8.1 editor code and checks core against it with =memcmp= on 528 samples (random TRS, both gimbal poles, mirrored scales) for compose, decompose, multiply, invert, transform and both projections, and checks the editor wrappers too when the editor is built.
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: math3d-performance
+:END:
+- Everything is scalar C on the stack; no allocation, no locks, safe from any thread.
+- =lrg_math3d_compose()= costs three =sinf= / =cosf= pairs; cache world matrices for static objects instead of recomposing them every frame. =lrg_node_get_world_matrix()= walks every ancestor, so it is O(depth) per call.
+- =lrg_math3d_invert()= is the general cofactor inverse. For a pure rotation + translation the transpose of the rotation is cheaper; profile before optimising.
+- The build compiles with =-ffp-contract=off=, so results are reproducible across call sites (no fused multiply-add differences between the editor and a game).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: math3d-pitfalls
+:END:
+- *Row-major data.* Matrices from row-major sources (some file formats, HLSL-style code) must go through =lrg_math3d_transpose()= first.
+- *Degrees.* Every angle is in radians, including =lrg_math3d_perspective()='s =fovy= (the editor view stores degrees and converts).
+- *Euler round trips are not identities.* =decompose (compose (e))= can return different angles for the same rotation (wrapping by 2 pi, gimbal folding). Compare matrices or quaternions, not angles.
+- *Shear.* Neither decomposition handles shear (a non-uniformly scaled parent with a rotated child produces one); the result then only approximates the matrix.
+- *Quaternion sign.* =q= and =-q= are the same rotation; compare with =|dot (q, p)| ~ 1=.
+- *Unnormalised quaternions.* =lrg_math3d_compose_quat()= and =lrg_math3d_quat_to_matrix()= use the quaternion as given; normalise after accumulating many multiplications.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: math3d-see-also
+:END:
+- [[file:../level/index.org][Runtime level module]] — =lrg_node_get_local_matrix()= / =lrg_node_get_world_matrix()=
+- [[file:../../editor/editor-runtime.org::#viewport-math][Viewport math and LrgEditorView]] — picking, rays and the editor camera on top of this module
+- [[file:../../guides/migration-0-8-to-0-9.org][Migrating from 0.8 to 0.9]]

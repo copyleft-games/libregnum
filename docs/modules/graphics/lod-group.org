@@ -1,0 +1,380 @@
+#+title: LrgLodGroup - Level of Detail
+#+description: LOD chains, screen-size selection, hysteresis, bias and dithered cross-fades
+#+created: 2026-11-07
+
+* LrgLodGroup - Level of Detail
+:PROPERTIES:
+:CUSTOM_ID: lrglodgroup
+:END:
+
+=LrgLodGroup= holds a level-of-detail (LOD) chain for one object: level 0 is the full-detail model, every further level is a cheaper version used once the object is small enough on screen. Selection uses the object's /screen size/, a per-level threshold, a hysteresis band, group, instance and global biases and an optional forced level; =LrgLodState= carries one view's selection and the dithered cross-fade between two levels. Chains are authored by hand or generated with [[file:mesh-simplify.org][LrgMeshSimplify]], optionally driven by the model's =.meta= LOD keys. [[file:../world3d/components.org::#lod][LrgLodComponent]] draws a chain in an =LrgWorld3D=.
+
+- *Header*: =graphics/lrg-lod-group.h=
+- *Types*: =LrgLodGroup= (final GObject, =LRG_TYPE_LOD_GROUP=, GIR =Libregnum.LodGroup=), =LrgLodState= (boxed struct, =LRG_TYPE_LOD_STATE=)
+- *Since*: 0.9.0
+- *Headless*: selection, states, screen-size maths and hand-made groups need no GPU; generating levels and binding the fade uniform do
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+
+*** Screen size
+:PROPERTIES:
+:CUSTOM_ID: screen-size
+:END:
+
+The /screen size/ is the fraction of the screen height covered by the object's bounding sphere diameter: 1 means as tall as the screen, 0.1 a tenth of it. For a perspective camera it is =radius / (distance * tan (fovy / 2))=; for an orthographic camera =2 * radius / view_height=. It is independent of the resolution, so the same thresholds work on a phone and a 4K monitor.
+
+- =lrg_lod_compute_screen_size (radius, distance, fovy)= is the perspective formula (fovy in degrees).
+- =lrg_lod_screen_size_from_view_projection (vp, center, radius)= reads both cases from a view-projection matrix: the projection's vertical scale is the length of the matrix's second row (P[1][1] times a unit camera axis) and the clip =w= of the centre is the view depth (perspective) or 1 (orthographic). This is what =LrgLodComponent= uses with =lrg_render_list_get_view_projection()=.
+
+The group's sphere comes from its local bounds (=lrg_lod_group_get_bounding_sphere()=: box centre, half diagonal), taken from the level-0 model's meshes (all eight corners of each mesh box transformed by the model transform, so a Z-up import is right) or set with =lrg_lod_group_set_bounds()=.
+
+*** Thresholds
+:PROPERTIES:
+:CUSTOM_ID: thresholds
+:END:
+
+Each level has a threshold: the /smallest/ screen size at which the level is still used. Thresholds decrease with the level. A size picks the first level whose threshold it reaches; below the last level's threshold the object is culled (=LRG_LOD_LEVEL_CULLED=). A last threshold of 0 never culls.
+
+#+begin_example
+screen size  1.0 ─────── 0.5 ─────── 0.25 ───── 0.1 ──── 0.0
+level            0      │     1      │    2     │   3 (last threshold 0: never culled)
+thresholds:  0.5, 0.25, 0.1, 0
+#+end_example
+
+*** Hysteresis
+:PROPERTIES:
+:CUSTOM_ID: hysteresis
+:END:
+
+An object hovering at a threshold would flip between two levels every frame. With hysteresis h (default 0.1) the level gets coarser only once the size drops below =threshold * (1 - h)= and finer only once it rises above =threshold * (1 + h)=. A large jump (a teleport, a camera cut) still lands on the right level at once. =lrg_lod_group_select_level()= takes the current level for this reason; pass =LRG_LOD_LEVEL_NONE= for a selection without history.
+
+*** Bias and forced level
+:PROPERTIES:
+:CUSTOM_ID: bias
+:END:
+
+The measured size is multiplied by the group's =bias=, the component's =bias= (per instance) and the process-wide =lrg_lod_set_global_bias()= before the thresholds are applied. Above 1 keeps detailed levels longer (a "high quality" setting, or a hero object), below 1 switches earlier (low-end hardware). =force-level= pins a level regardless of size (debugging, the editor's LOD preview); a forced level past the end is clamped to the last level.
+
+*** Cross-fade
+:PROPERTIES:
+:CUSTOM_ID: cross-fade
+:END:
+
+When the level changes and =fade-duration= (default 0.25 s) is positive, both levels are drawn for that time with complementary /dither/ masks instead of popping. Each fragment computes a stable pseudo-random value d in [0, 1) from its screen position (interleaved gradient noise); the incoming level keeps the fragments with d < fade, the outgoing one those with d >= fade, so every pixel is drawn exactly once and the image dissolves from one level to the other as =fade= goes 0 → 1. Because it is a discard (alpha test), not blending, it needs no sorting and works with opaque materials and the depth buffer.
+
+The per-draw value is the =lodFade= uniform:
+
+| =lodFade= | Meaning |
+|-----------+---------|
+| 0 | fully visible (every non-LOD draw, and LOD levels not fading) |
+| 0 < f < 1 | fading in: draw fragments whose dither value is below f |
+| -1 < f < 0 | fading out: draw fragments whose dither value is at least -f |
+
+=lrg_lod_state_get_level_fade()= returns the value for a level (and whether it is drawn at all); for a cross-fade at progress p the two values are p and -p.
+
+** LOD import keys (=.meta=)
+:PROPERTIES:
+:CUSTOM_ID: meta-keys
+:END:
+
+A model's sidecar (=rock.glb.meta=, importer =model=) can describe a generated chain. The keys are ordinary import settings (=LrgAssetMeta=), so they show in the editor's asset inspector, round-trip through IPC (=lrg_asset_meta_set_setting_variant()= validates them) and feed the thumbnail cache's settings hash.
+
+| Key | Type | Default | Meaning |
+|-----+------+---------+---------|
+| =lod-levels= | integer 1..8 | 1 | levels including the original; 1 = no chain |
+| =lod-ratios= | list of numbers | empty | triangle ratio of levels 1, 2, ... relative to the original; missing entries are 0.5^level |
+| =lod-screen-sizes= | list of numbers | empty | thresholds of levels 0, 1, ...; missing entries are 0.5^(level+1), except the last level which is 0 (never culled); a positive last value culls below it |
+| =lod-max-error= | number 0..1 | 0.05 | largest simplification error of any level, relative to the model size; a level stops short of its ratio rather than exceed it |
+| =lod-lock-border= | boolean | true | pin open mesh borders while simplifying |
+| =lod-hysteresis= | number 0..0.9 | 0.1 | the group's hysteresis |
+| =lod-fade-duration= | seconds 0..10 | 0.25 | the group's cross-fade time (0 = pop) |
+
+Lists are strings of numbers separated by commas, spaces or semicolons, or YAML flow sequences; both read the same (=lrg_asset_meta_parse_float_list()=).
+
+Annotated example:
+
+#+begin_src yaml
+version: 1
+guid: 7d3c2a9e-1f4b-4c8e-9a51-0b6e2f8d4c13
+importer: model
+settings:
+  scale: 0.01                 # import settings applied by the asset manager
+  up-axis: z
+  lod-levels: 4               # level 0 (the model) + 3 generated levels
+  lod-ratios: [0.5, 0.2, 0.05]          # 50%, 20%, 5% of the triangles
+  lod-screen-sizes: "0.4, 0.15, 0.05, 0.01"
+                              # level 0 down to 40% of the screen height,
+                              # level 1 to 15%, level 2 to 5%, level 3 to 1%,
+                              # culled below 1%
+  lod-max-error: 0.03         # never deviate more than 3% of the model size
+  lod-lock-border: true       # open edges (e.g. a cut-off trunk) stay put
+  lod-hysteresis: 0.1         # +-10% band around each threshold
+  lod-fade-duration: 0.3      # 0.3 s dithered cross-fade
+#+end_src
+
+The asset manager does not apply these keys when it loads the model (=lrg_asset_manager_load_model()= returns the full model, which becomes level 0); =lrg_lod_group_new_from_model_with_meta()= and =LrgLodComponent= read them. =lrg_lod_group_apply_meta()= re-applies only the selection keys (thresholds, hysteresis, fade) to an existing group, for live tuning without regenerating.
+
+** Generated levels
+:PROPERTIES:
+:CUSTOM_ID: generated-levels
+:END:
+
+=lrg_lod_group_new_from_model()= keeps the model itself as level 0 and simplifies every mesh of it from the original for each further level (errors never stack). A generated level is one single-mesh =GrlModel= per source mesh (=lrg_lod_group_get_level_models()=), each carrying a copy of its source material's maps, shader and parameters and the source model's transform: textures and shaders are shared with the source model, which the group keeps referenced. Every generated mesh keeps all of its attributes (see [[file:mesh-simplify.org][LrgMeshSimplify]]) and is uploaded, so generation needs a graphics context. =lrg_lod_group_get_level_triangle_count()= and =lrg_lod_group_get_level_error()= report what each level achieved. Skinned models (with bones) are refused.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+
+#+begin_src C
+#define LRG_LOD_MAX_LEVELS   (8)
+#define LRG_LOD_LEVEL_CULLED (-1)
+#define LRG_LOD_LEVEL_NONE   (-2)
+#define LRG_LOD_FADE_UNIFORM "lodFade"
+
+/* Screen size, global bias, shader side */
+gfloat       lrg_lod_compute_screen_size (gfloat radius, gfloat distance, gfloat fovy);
+gfloat       lrg_lod_screen_size_from_view_projection (const gfloat *vp, const gfloat *center, gfloat radius);
+gfloat       lrg_lod_get_global_bias (void);
+void         lrg_lod_set_global_bias (gfloat bias);
+const gchar *lrg_lod_get_glsl (void);
+void         lrg_lod_bind_fade (guint shader_id, gfloat fade);
+
+/* LrgLodState (boxed) */
+struct _LrgLodState { gint level; gint previous_level; gfloat fade; gfloat screen_size; gboolean initialized; };
+LrgLodState *lrg_lod_state_new (void);
+LrgLodState *lrg_lod_state_copy (const LrgLodState *state);
+void         lrg_lod_state_free (LrgLodState *state);
+void         lrg_lod_state_init (LrgLodState *state);
+gboolean     lrg_lod_state_is_fading (const LrgLodState *state);
+gboolean     lrg_lod_state_get_level_fade (const LrgLodState *state, gint level, gfloat *out_fade);
+
+/* LrgLodGroup */
+LrgLodGroup *lrg_lod_group_new (void);
+LrgLodGroup *lrg_lod_group_new_from_model (GrlModel *model, LrgMeshSimplify *simplify, guint n_levels,
+                                           const gfloat *ratios, guint n_ratios,
+                                           const gfloat *screen_sizes, guint n_screen_sizes, GError **error);
+LrgLodGroup *lrg_lod_group_new_from_model_with_meta (GrlModel *model, LrgAssetMeta *meta, GError **error);
+void         lrg_lod_group_apply_meta (LrgLodGroup *self, LrgAssetMeta *meta);
+
+gint         lrg_lod_group_add_level (LrgLodGroup *self, GrlModel *model, gfloat screen_size);
+gint         lrg_lod_group_add_level_models (LrgLodGroup *self, GPtrArray *models, gfloat screen_size);
+void         lrg_lod_group_remove_all_levels (LrgLodGroup *self);
+guint        lrg_lod_group_get_n_levels (LrgLodGroup *self);
+GrlModel    *lrg_lod_group_get_level_model (LrgLodGroup *self, guint level);
+GPtrArray   *lrg_lod_group_get_level_models (LrgLodGroup *self, guint level);
+gint         lrg_lod_group_find_level_of_model (LrgLodGroup *self, GrlModel *model);
+gfloat       lrg_lod_group_get_level_screen_size (LrgLodGroup *self, guint level);
+void         lrg_lod_group_set_level_screen_size (LrgLodGroup *self, guint level, gfloat screen_size);
+gint         lrg_lod_group_get_level_triangle_count (LrgLodGroup *self, guint level);
+gfloat       lrg_lod_group_get_level_error (LrgLodGroup *self, guint level);
+
+void         lrg_lod_group_set_bounds (LrgLodGroup *self, const gfloat *min, const gfloat *max);
+gboolean     lrg_lod_group_get_bounds (LrgLodGroup *self, gfloat *out_min, gfloat *out_max);
+gboolean     lrg_lod_group_get_bounding_sphere (LrgLodGroup *self, gfloat *out_center, gfloat *out_radius);
+
+gfloat       lrg_lod_group_get_hysteresis (LrgLodGroup *self);
+void         lrg_lod_group_set_hysteresis (LrgLodGroup *self, gfloat hysteresis);
+gfloat       lrg_lod_group_get_bias (LrgLodGroup *self);
+void         lrg_lod_group_set_bias (LrgLodGroup *self, gfloat bias);
+gint         lrg_lod_group_get_force_level (LrgLodGroup *self);
+void         lrg_lod_group_set_force_level (LrgLodGroup *self, gint level);
+gfloat       lrg_lod_group_get_fade_duration (LrgLodGroup *self);
+void         lrg_lod_group_set_fade_duration (LrgLodGroup *self, gfloat seconds);
+
+gint         lrg_lod_group_select_level (LrgLodGroup *self, gfloat screen_size, gint current_level);
+gboolean     lrg_lod_group_update_state (LrgLodGroup *self, LrgLodState *state, gfloat screen_size, gfloat delta);
+
+GType        lrg_lod_group_get_type (void);
+GType        lrg_lod_state_get_type (void);
+#+end_src
+
+| Function | Notes |
+|----------+-------|
+| =lrg_lod_compute_screen_size()= | perspective size; a camera inside the sphere gives a large finite value |
+| =lrg_lod_screen_size_from_view_projection()= | perspective or orthographic, column-major =vp= |
+| =lrg_lod_get_global_bias()= / =lrg_lod_set_global_bias()= | quality knob for every group (> 0) |
+| =lrg_lod_get_glsl()= | the fragment-shader snippet (see [[#renderer][Renderer integration]]); static string |
+| =lrg_lod_bind_fade()= | sets =lodFade= on a program (binds it; skips programs without the uniform; no-op without GL); locations are not cached because program ids are recycled after shader hot reloads |
+| =lrg_lod_state_new()= / =lrg_lod_state_copy()= / =lrg_lod_state_free()= | heap states (=g_autoptr (LrgLodState)= works) |
+| =lrg_lod_state_init()= | reset an embedded or stack state |
+| =lrg_lod_state_is_fading()= | two levels are being drawn |
+| =lrg_lod_state_get_level_fade()= | is a level drawn this frame, and with which =lodFade= |
+| =lrg_lod_group_new()= | empty; hysteresis 0.1, bias 1, no forced level, fade 0.25 s |
+| =lrg_lod_group_new_from_model()= | generated chain (GPU); =simplify= supplies the error cap and locks (its ratio is not touched), NULL means error 0.05 with locked borders |
+| =lrg_lod_group_new_from_model_with_meta()= | the same, configured by the =.meta= LOD keys; NULL meta or =lod-levels: 1= gives a one-level group |
+| =lrg_lod_group_apply_meta()= | re-apply thresholds, hysteresis and fade from a sidecar |
+| =lrg_lod_group_add_level()= | append a coarser level; a NULL model is an empty level (draws nothing; also handy in headless tests); returns -1 when 8 levels exist |
+| =lrg_lod_group_add_level_models()= | append a level drawn as several models (one render item each) |
+| =lrg_lod_group_remove_all_levels()= | drop every level (explicit bounds stay) |
+| =lrg_lod_group_get_n_levels()= | level count (also the =n-levels= property) |
+| =lrg_lod_group_get_level_model()= / =lrg_lod_group_get_level_models()= | first model / all models of a level (transfer none) |
+| =lrg_lod_group_find_level_of_model()= | which level a model belongs to (renderers, editor picking) |
+| =lrg_lod_group_get_level_screen_size()= / =lrg_lod_group_set_level_screen_size()= | thresholds (emits =changed=) |
+| =lrg_lod_group_get_level_triangle_count()= / =lrg_lod_group_get_level_error()= | what a level costs and how far it deviates |
+| =lrg_lod_group_set_bounds()= / =lrg_lod_group_get_bounds()= / =lrg_lod_group_get_bounding_sphere()= | local bounds and their sphere |
+| =lrg_lod_group_get_hysteresis()= / =lrg_lod_group_set_hysteresis()= | 0..0.9 |
+| =lrg_lod_group_get_bias()= / =lrg_lod_group_set_bias()= | > 0 |
+| =lrg_lod_group_get_force_level()= / =lrg_lod_group_set_force_level()= | -1..7 |
+| =lrg_lod_group_get_fade_duration()= / =lrg_lod_group_set_fade_duration()= | seconds, 0 pops |
+| =lrg_lod_group_select_level()= | pure selection with forced level, biases and hysteresis |
+| =lrg_lod_group_update_state()= | selection plus fade bookkeeping for one view; TRUE when the level changed |
+
+Properties: =n-levels= (read-only), =hysteresis=, =bias=, =force-level=, =fade-duration=. Signal: =changed= (levels added or removed, a threshold changed, bounds set).
+
+** Renderer integration
+:PROPERTIES:
+:CUSTOM_ID: renderer
+:END:
+
+What a renderer (the 0.9 =LrgWorld3DRenderer= and the editor viewport, wired in wave 2b) does with LOD items:
+
+1. *Shader.* Every program that draws LOD items (the lit shader, user shaders, the depth prepass and shadow-map programs) pastes =lrg_lod_get_glsl()= before =main= and calls =lrg_lod_fade_discard ();= first thing in =main=. Written out, the three lines are:
+
+   #+begin_src glsl
+   uniform float lodFade;   /* top level, next to the other uniforms */
+   /* first thing in main(): */
+   float lrg_lod_d = fract (52.9829189 * fract (dot (gl_FragCoord.xy, vec2 (0.06711056, 0.00583715))));
+   if (lodFade != 0.0 && (lodFade > 0.0 ? lrg_lod_d >= lodFade : lrg_lod_d < -lodFade)) discard;
+   #+end_src
+
+   An unset =lodFade= is 0, so programs that never see a LOD item are unaffected.
+2. *Per item.* Before drawing an item: =lrg_lod_bind_fade (shader_id, lrg_lod_component_get_item_fade (item, NULL))=. It returns 0 for items of other components, which also resets a value left by the previous item.
+3. *Depth.* A depth prepass must discard the same fragments as the colour pass (same =lodFade=), or the discarded fragments' depth hides the other level.
+4. *Shadows.* Only the incoming level carries =LRG_RENDER_ITEM_FLAG_CAST_SHADOW=; the fading-out level does not cast, so shadows do not double during a fade.
+
+Without step 1 a cross-fade simply shows both levels overlapped for =fade-duration=; set =fade-duration= to 0 on renderers that do not support it.
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+
+*** A hand-made chain
+:PROPERTIES:
+:CUSTOM_ID: example-manual
+:END:
+
+#+begin_src C
+g_autoptr(LrgLodGroup) tree = lrg_lod_group_new ();
+
+/* Artist-made levels: full mesh, reduced mesh, a cross-billboard. */
+lrg_lod_group_add_level (tree, lrg_asset_manager_load_model (assets, "tree_lod0.glb", NULL), 0.4f);
+lrg_lod_group_add_level (tree, lrg_asset_manager_load_model (assets, "tree_lod1.glb", NULL), 0.1f);
+lrg_lod_group_add_level (tree, lrg_asset_manager_load_model (assets, "tree_card.glb", NULL), 0.01f);
+/* below 1% of the screen height: culled */
+
+lrg_lod_group_set_hysteresis (tree, 0.15f);
+lrg_lod_group_set_fade_duration (tree, 0.4f);
+#+end_src
+
+*** Generate a chain from a model and its sidecar
+:PROPERTIES:
+:CUSTOM_ID: example-generate
+:END:
+
+#+begin_src C
+g_autoptr(GError)       error = NULL;
+g_autoptr(LrgAssetMeta) meta = lrg_asset_manager_get_asset_meta (assets, "models/rock.glb");
+GrlModel               *rock = lrg_asset_manager_load_model (assets, "models/rock.glb", &error);
+g_autoptr(LrgLodGroup)  chain = NULL;
+guint                   i;
+
+chain = lrg_lod_group_new_from_model_with_meta (rock, meta, &error);
+if (chain == NULL)
+	g_error ("LOD: %s", error->message);
+for (i = 0; i < lrg_lod_group_get_n_levels (chain); i++)
+	g_message ("level %u: %d triangles, error %.2f%%, down to %.0f%% of the screen", i,
+	           lrg_lod_group_get_level_triangle_count (chain, i),
+	           100.0 * lrg_lod_group_get_level_error (chain, i),
+	           100.0 * lrg_lod_group_get_level_screen_size (chain, i));
+#+end_src
+
+*** Drive selection yourself (a custom renderer)
+:PROPERTIES:
+:CUSTOM_ID: example-select
+:END:
+
+#+begin_src C
+/* One state per object and camera. */
+LrgLodState state;
+gfloat      center[3];
+gfloat      radius;
+gfloat      size;
+gfloat      fade;
+gint        level;
+
+lrg_lod_state_init (&state);
+
+/* every frame */
+lrg_lod_group_get_bounding_sphere (chain, center, &radius);   /* then to world space */
+size = lrg_lod_compute_screen_size (radius, distance_to_camera, camera_fovy);
+lrg_lod_group_update_state (chain, &state, size, frame_delta);
+
+for (level = 0; level < (gint) lrg_lod_group_get_n_levels (chain); level++)
+	if (lrg_lod_state_get_level_fade (&state, level, &fade))
+	{
+		lrg_lod_bind_fade (my_shader_id, fade);
+		draw_models (lrg_lod_group_get_level_models (chain, (guint) level));
+	}
+lrg_lod_bind_fade (my_shader_id, 0.0f);
+#+end_src
+
+*** In a 3D world
+:PROPERTIES:
+:CUSTOM_ID: example-world
+:END:
+
+#+begin_src C
+g_autoptr(LrgEntity3D)     e = lrg_entity3d_new_with_name ("rock");
+g_autoptr(LrgLodComponent) lod = lrg_lod_component_new_with_group (chain);
+
+lrg_entity3d_add_component (e, LRG_COMPONENT (lod));
+lrg_world3d_add_entity (world, e);
+lrg_lod_set_global_bias (low_end_gpu ? 0.5f : 1.0f);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+
+- Selection is a handful of float operations per object and view (one sphere transform, one dot product, up to 8 threshold compares); thousands of LOD objects cost well under a millisecond.
+- The win is in vertex and triangle throughput and in shadow passes: at 25% of the triangles an object far away costs a quarter of its vertex work in every pass.
+- A cross-fade draws two levels with discards (no early-z rejection inside the dithered fragments) for =fade-duration=; keep it short (0.2-0.4 s) on scenes with many objects crossing thresholds at once (fast flyovers).
+- Generation cost is the simplifier's, once per level: see [[file:mesh-simplify.org::#performance][LrgMeshSimplify performance]] (about 3 µs per source triangle per level). Generated groups are shared between components with the same model and sidecar.
+- Memory: a generated level stores compacted copies of the used vertices (with all attributes) and a 16-bit index buffer, so a 25% level costs roughly a quarter of the original's vertex memory.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+
+- *Thresholds must decrease with the level.* Selection takes the first level whose threshold the size reaches; an increasing threshold makes later levels unreachable.
+- *The last threshold culls.* Leave it at 0 unless you want the object to disappear when tiny.
+- *One state per view.* =LrgLodState= carries history; sharing one between cameras (or the shadow-map camera) makes them fight. The component keeps one per render list.
+- *Fade needs shader support.* Programs that do not run =lrg_lod_fade_discard()= draw both levels fully during a fade (and a depth prepass without it writes depth for both).
+- *Generated levels borrow textures.* Keep the group (it references the source model) alive as long as its level models are drawn; do not hand a generated part model to something that outlives the group.
+- *Skinned models are not supported* by the generator; author their levels by hand.
+- *Bounds come from CPU vertex data.* A level-0 model whose CPU arrays were freed has no bounds; call =lrg_lod_group_set_bounds()=.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+
+- *Import settings.* The =lod-*= keys appear today as rows of the model import settings in the asset inspector (they are known settings of the =model= importer) and are editable over IPC with =asset.meta.set= (which validates the lists).
+- *LOD preview.* The viewport draws mesh-asset nodes through the LOD group of their asset (=lrg_editor_scene_renderer_get_lod_group()=, built from the model and its =.meta=). Selecting such a node shows a "LOD" section in the inspector: a meter of the node's screen size in the active viewport against every level's threshold, one row per level with =lrg_lod_group_get_level_triangle_count()=, the threshold and =lrg_lod_group_get_level_error()=, the level drawn now highlighted, and a *Force level* picker (=lrg_lod_group_set_force_level()=, a preview shared by every instance of the asset, reset when the node is deselected). With the Bounds overlay on, the viewport draws the bounding sphere and a chip with the level, triangles and screen size. Over IPC: =lod.get= and =lod.force= (=lrgeditorctl lod get|force=). See [[file:../../editor/environment.org::#inspector-additions][Inspector additions]].
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+
+- [[file:mesh-simplify.org][LrgMeshSimplify]] (the simplifier behind generated levels)
+- [[file:../world3d/components.org::#lod][LrgLodComponent]] (drawing a chain in an LrgWorld3D)
+- [[file:../../editor/projects-and-assets.org::#import-settings][Import settings]] (all =.meta= keys)
+- [[file:../core/asset-manager.org::#import-settings][Runtime import settings]]

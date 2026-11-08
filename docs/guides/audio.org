@@ -1,0 +1,224 @@
+#+title: Audio guide
+#+description: How sound works in a libregnum game: the audio manager, the mixer graph and the project's .rmixer, snapshots and ducking, spatial sources with rolloff curves, cones, doppler and occlusion, the listener, and headless testing
+
+* Audio in libregnum
+:PROPERTIES:
+:CUSTOM_ID: audio-guide
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > Guides > Audio
+#+end_quote
+
+This guide ties the audio pieces together: where a sound goes from the moment a source plays it to the moment it reaches the speakers, how a project describes its mix, and how 3D sources are heard. The reference pages are under [[file:../modules/audio/index.org][modules/audio]].
+
+** The pieces
+:PROPERTIES:
+:CUSTOM_ID: pieces
+:END:
+| Piece | Role | Page |
+|-------+------+------|
+| =LrgAudioManager= | the process's audio hub: sound banks, music, volume channels, the listener, positional device voices and the game mixer | [[#manager][below]] |
+| =LrgAudioMixer= | the PCM mixer graph: buses, sends, effect chains, solo, ramps, ducking, meters | [[file:../modules/audio/mixer.org][mixer.org]] |
+| =LrgMixerAsset= (=.rmixer=) | the project's mix as data: buses, sends, effects, snapshots, ducking | [[file:../modules/audio/mixer-asset.org][mixer-asset.org]] |
+| =LrgAudioEffect= and friends | reverb, low-pass, high-pass, echo, chorus, pitch shift; parameters are properties | [[file:../modules/audio/effects.org][effects.org]] |
+| =LrgAudioSourceComponent= | a 3D emitter on an entity: rolloff curves, cone, doppler, occlusion, bus routing | [[file:../modules/world3d/components.org::#audio-source][components.org]] |
+| =LrgAudioListenerComponent= | the ears: pose and velocity for the manager | [[file:../modules/world3d/components.org::#audio-listener][components.org]] |
+| =LrgSoundBank=, =LrgWaveData= | sounds by name; raw samples | [[file:../modules/audio/sound-bank.org][sound-bank.org]], [[file:../modules/audio/wave-data.org][wave-data.org]] |
+| =LrgAudioBus= | device-mix buses for =GrlSound= voices (sends and inserts) | [[file:../modules/audio/buses.org][buses.org]] |
+
+** Signal path
+:PROPERTIES:
+:CUSTOM_ID: signal-path
+:END:
+#+begin_example
+LrgAudioSourceComponent (bus: "sfx")                        sound banks, music
+   | wave, gain x pan x pitch x occlusion low-pass               |
+   v                                                             v
+LrgAudioMixer:  sfx --+--> master --> GrlAudioStream ----> device mix <-- GrlSound voices
+                      | (send)            ^ lrg_audio_manager_update() pumps it
+                verb -+
+#+end_example
+
+A source with a bus (and a mixer on the manager) plays through the game mixer: its voice is spatialised in the mixer (gain, balance, pitch, a low-pass when occluded) and summed into its bus, then through effects, faders, ducking and sends to master; the manager feeds master to the device through a stream. Sources without a bus, sound-bank one-shots and music play as device voices beside the mixer, still spatialised by the component.
+
+** Setting up a project mix
+:PROPERTIES:
+:CUSTOM_ID: project-mix
+:END:
+1. Write =audio/main.rmixer= (by hand or with the editor's mixer panel):
+
+   #+begin_src yaml
+   version: 1
+   buses:
+   - name: music
+     volume: -6
+   - name: sfx
+     sends:
+     - target: verb
+       level: -14
+   - name: dialogue
+   - name: verb
+     effects:
+     - type: reverb
+       params:
+         preset: stone-room
+   snapshots:
+   - name: paused
+     blend: 0.3
+     volumes:
+       sfx: -144
+       music: -14
+   ducking:
+   - trigger: dialogue
+     target: music
+     threshold: -35
+     depth: -9
+     attack: 0.04
+     release: 0.6
+   #+end_src
+
+2. Name it in =project.ryaml= (root level or inside =project:=):
+
+   #+begin_src yaml
+   audio:
+     mixer: audio/main.rmixer
+   #+end_src
+
+3. At startup build the game mixer from it, and keep the layout for snapshots:
+
+   #+begin_src c
+   LrgAudioManager         *audio = lrg_audio_manager_get_default ();
+   g_autoptr(LrgMixerAsset) mix = lrg_mixer_asset_new_for_project (level_path, NULL);
+
+   lrg_audio_manager_load_project_mixer (audio, level_path, 48000, &error);
+   #+end_src
+
+4. Every frame call =lrg_audio_manager_update()=: it re-spatialises device voices, pumps the mixer into its stream (once an audio device is open) and drives music crossfades.
+
+5. On game-state changes ramp the mix: =lrg_mixer_asset_apply_snapshot (mix, lrg_audio_manager_get_mixer (audio), "paused", -1.0, NULL)=, and =NULL= to come back.
+
+=lrg_mixer_asset_find_project_mixer()= returns the resolved =.rmixer= path; a project without =audio.mixer= leaves the manager without a mixer (not an error), and every source then plays as a device voice.
+
+** Spatial sources
+:PROPERTIES:
+:CUSTOM_ID: spatial
+:END:
+Put an =LrgAudioListenerComponent= on the camera (or player) and an =LrgAudioSourceComponent= on each emitter. Levels do this for you: AUDIO_EMITTER nodes become source components (their visual params map to properties by name). Per source:
+
+- *Distance*: =min-distance=, =max-distance= and a =rolloff-mode=: linear, inverse (the default, steepness =rolloff=), logarithmic, or a custom =LrgKeyframeCurve= over normalised distance (=lrg_audio_source_component_set_rolloff_curve()=, or =rolloff-curve-keys: "0:1, 0.3:0.5, 1:0"= in a level). The pure function is =lrg_audio_rolloff_evaluate()=.
+- *Direction*: =cone-inner-angle=, =cone-outer-angle=, =cone-outer-gain= around the entity's forward (-Z) (=lrg_audio_cone_gain()=).
+- *Doppler*: =doppler-factor= and =speed-of-sound=; velocities come from movement between late updates (=lrg_audio_doppler_pitch()=).
+- *Occlusion*: =occlusion= casts a ray through the world's physics each late update; each body between the listener and the source multiplies the gain by =occlusion-gain= and muffles mixer voices with =occlusion-cutoff=.
+- *Routing*: =bus= picks the mixer bus (=sfx=, =ambience=...); =spatial-blend= 0 makes it a flat 2D sound.
+
+=lrg_audio_source_component_evaluate()= computes the result for any listener without a device, which is how tests and tools check a source; =lrg_audio_source_component_debug_draw()= draws its attenuation gizmo.
+
+** Headless and tests
+:PROPERTIES:
+:CUSTOM_ID: headless
+:END:
+Nothing above needs an audio device. Mixers render offline (=lrg_audio_mixer_render()=), the manager only opens a stream when raylib's device is already open, and sources can be pointed at an explicit =mixer= and =wave=. =tests/test-mixer-asset.c= builds a world, a private =LrgAudioManager= (=g_object_new (LRG_TYPE_AUDIO_MANAGER, NULL)=), a mixer and a source, moves entities and checks rendered samples against the analytic gains.
+
+** The audio manager
+:PROPERTIES:
+:CUSTOM_ID: manager
+:END:
+=LrgAudioManager= (=lrg_audio_manager_get_default()=) is the process-wide hub. Call =lrg_audio_manager_update()= once per frame.
+
+*** Sound banks and one-shots
+:PROPERTIES:
+:CUSTOM_ID: manager-banks
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_audio_manager_add_bank()= / =lrg_audio_manager_load_bank()= / =lrg_audio_manager_remove_bank()= | register banks (a bank object or a manifest file) |
+| =lrg_audio_manager_get_bank()= / =lrg_audio_manager_get_bank_names()= | look them up |
+| =lrg_audio_manager_play_sound()= / =lrg_audio_manager_play_sound_multi()= | play a bank sound (multi: overlapping instances) |
+| =lrg_audio_manager_stop_sound()= / =lrg_audio_manager_stop_all_sounds()= | stop |
+
+*** Listener and positional device voices
+:PROPERTIES:
+:CUSTOM_ID: manager-positional
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_audio_manager_set_listener()= / =lrg_audio_manager_get_listener()= | the ears' position, forward and up |
+| =lrg_audio_manager_set_listener_velocity()= / =lrg_audio_manager_get_listener_velocity()= | for doppler |
+| =lrg_audio_manager_play_sound_at()= | a positional voice with an #LrgAudioAttenuation (=lrg_audio_attenuation_new()=, =lrg_audio_attenuation_init_default()=, =lrg_audio_attenuation_copy()=, =lrg_audio_attenuation_free()=, boxed type =lrg_audio_attenuation_get_type()=) |
+| =lrg_audio_manager_set_voice_position()= / =lrg_audio_manager_get_voice_spatial()= | move it; read the applied gain and pan |
+| =lrg_audio_manager_set_voice_mix()= | replace the manager's attenuation with a gain and pan computed elsewhere (the source component does) |
+| =lrg_audio_manager_set_voice_pitch()= | pitch (doppler) |
+| =lrg_audio_manager_stop_voice()= / =lrg_audio_manager_is_voice_playing()= / =lrg_audio_manager_get_voice_count()= / =lrg_audio_manager_stop_all_voices()= | voice lifetime |
+| =lrg_audio_compute_spatial()= | the pure gain and pan of a listener and a source |
+| =lrg_audio_rolloff_evaluate()= / =lrg_audio_cone_gain()= / =lrg_audio_doppler_pitch()= | the pure spatial helpers (=LrgAudioRolloff=, =lrg_audio_rolloff_get_type()=) |
+
+*** The game mixer
+:PROPERTIES:
+:CUSTOM_ID: manager-mixer
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_audio_manager_set_mixer()= / =lrg_audio_manager_get_mixer()= | the =LrgAudioMixer= sources with a bus play through; played on the device by =update()= |
+| =lrg_audio_manager_load_project_mixer()= | build it from the project's =.rmixer= |
+
+*** Music
+:PROPERTIES:
+:CUSTOM_ID: manager-music
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_audio_manager_play_music()= / =lrg_audio_manager_play_music_from_file()= | start a track (an =LrgMusicTrack= or a file) |
+| =lrg_audio_manager_stop_music()= / =lrg_audio_manager_pause_music()= / =lrg_audio_manager_resume_music()= | transport |
+| =lrg_audio_manager_get_current_music()= / =lrg_audio_manager_is_music_playing()= | state |
+| =lrg_audio_manager_crossfade_to()= / =lrg_audio_manager_is_crossfading()= | crossfade to another track |
+
+*** Volumes and procedural sources
+:PROPERTIES:
+:CUSTOM_ID: manager-volumes
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_audio_manager_set_master_volume()= / =lrg_audio_manager_get_master_volume()= | master (the device's) |
+| =lrg_audio_manager_set_sfx_volume()= / =lrg_audio_manager_get_sfx_volume()= | sound effects and positional voices |
+| =lrg_audio_manager_set_music_volume()= / =lrg_audio_manager_get_music_volume()= | music |
+| =lrg_audio_manager_set_voice_volume()= / =lrg_audio_manager_get_voice_volume()= | the voice channel |
+| =lrg_audio_manager_set_muted()= / =lrg_audio_manager_get_muted()= | mute everything |
+| =lrg_audio_manager_add_procedural()= / =lrg_audio_manager_remove_procedural()= / =lrg_audio_manager_get_procedural()= / =lrg_audio_manager_get_procedural_names()= | =LrgProceduralAudio= generators by name |
+| =lrg_audio_manager_play_procedural()= / =lrg_audio_manager_stop_procedural()= / =lrg_audio_manager_stop_all_procedural()= | play them |
+
+The manager's volume channels apply to device voices; the game mixer has its own faders (put a =master= volume in the =.rmixer=, or ramp it).
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+The mixer renders 2048 frames at 48 kHz stereo (4 buses, 32 voices, a low-pass, a reverb, a send and a ducking rule) in about 0.39 ms on one i7-1280P core (=taskset=, [[file:../modules/audio/mixer-asset.org::#performance][details]]). A spatial source costs one evaluation (a few square roots and an =acos=) per late update, plus one physics ray when =occlusion= is on; spatial mixer voices take the per-frame mixing path (about ten times a plain voice). Keep occlusion for sources that matter and give far sources a =max-distance=.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- A =bus= without a manager mixer (no project =audio.mixer=) falls back to a device voice; an unknown bus name plays nothing.
+- Mixer voices need decodable sample files (=LrgWaveData=); a bank entry plays through the mixer only when its manifest file can be found (relative to the bank's base path).
+- Doppler measures velocity from movement: teleporting an entity produces one frame of extreme pitch, clamped to 0.125 .. 8. Set =doppler-factor= 0 on sources that teleport, or move them before =play()=.
+- The listener component must run its late update before sources read the listener; it is the camera's or player's entity, normally updated first. =lrg_audio_listener_component_sync()= pushes the pose at once.
+- Everything audio is single-threaded on the game thread.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+AUDIO_EMITTER nodes carry the source properties as visual params (=bus=, =rolloff_mode=, =rolloff_curve_keys=, =cone_inner_angle=, =occlusion=...). In lrgeditor ([[file:../editor/audio.org][Audio in the Editor]]):
+
+- Selecting an emitter shows its *attenuation gizmo* in the viewport (min and max distance spheres, the half-volume ring, the sound cones) with drag handles for the distances and cone angles, and the inspector's *Audio Source* section (every source setting with the runtime's defaults, a gain-over-distance plot from =lrg_audio_source_component_get_distance_gain()=, a curve editor for the custom rolloff and a bus picker listing the project mixer's buses).
+- The *mixer editor* edits =.rmixer= files (strips, effects, sends, snapshots, ducking, offline preview with meters) and the *Mixer panel* shows the project mixer, metering the game's mixer while play-in-editor runs (it loads the project mixer into the audio manager when play starts).
+- =mixer.*= and =audio.*= IPC methods script all of it.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../modules/audio/mixer-asset.org][.rmixer format]] · [[file:../modules/audio/mixer.org][LrgAudioMixer]] · [[file:../modules/audio/effects.org][Effects]]
+- [[file:../modules/world3d/components.org::#audio-attenuation][Source attenuation]]
+- [[file:physics.org][Physics guide]] (occlusion rays use the world's =LrgDynamicsWorld=)
+- [[file:load-a-level-in-your-game.org][Loading a level]]

@@ -1,0 +1,169 @@
+#+title: Shader Graph Editor
+#+description: The lrgeditor tool for .rshadergraph node shaders on the LrgNodeGraph canvas: palette, typed ports, live validation on the nodes, generated GLSL, preview sphere, save with the generated .rshader, and the shadergraph.* IPC methods
+#+authors: Zach Podbielniak
+#+categories: libregnum editor shaders rendering
+#+created: 2026-11-07T00:00:00-05:00
+#+updated: 2026-11-07T00:00:00-05:00
+#+version: 0.9.0
+
+* Shader Graph Editor
+:PROPERTIES:
+:CUSTOM_ID: shader-graph-editor
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Shader Graph Editor
+#+end_quote
+
+The shader graph editor (=LrgEditorShaderGraphEditor=, =src/editor/ui/lrg-editor-shader-graph-editor.{h,c}=, since 0.9.0) builds user shaders from nodes. It edits =.rshadergraph= files (format and node library: [[file:../modules/graphics/shader-graph.org][LrgShaderGraph]]) on the =LrgNodeGraph= canvas and turns them into =.rshader= assets ([[file:../modules/graphics/shader-asset.org][LrgShaderAsset]]) that custom materials use. Like the material editor it is a [[file:data-editors.org][data editor]] on an =LrgEditorDocument= (=LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH=, recognised by the =.rshadergraph= extension), with the shared toolbar, banner, issues list and document undo.
+
+#+begin_example
++-----------+------------------------------------------+----------------------+
+| [Find...] |   [Parameter . tint]--.                  |   ( preview sphere ) |
+| INPUTS    |                       \__[PBR output]    |   sphere . graph lit |
+|  o UV     |   [Fresnel]--[Multiply]--/  albedo       | (Sphere|Cube|Plane)  |
+|  o Time   |   [Constant]--'             emission     +----------------------+
+| MATHS     |   [Texture sample]  <- red card:         | [Node] [GLSL]        |
+|  o Add    |     texture: required input is missing   |  Uniform   tint      |
+|  ...      |                              [minimap]   |  Type      color     |
++-----------+------------------------------------------+----------------------+
+#+end_example
+
+** Opening and creating
+:PROPERTIES:
+:CUSTOM_ID: shader-graph-editor-open
+:END:
+- Double click a =.rshadergraph= in the Assets panel, call =lrg_editor_shader_graph_editor_open (app, path, &error)=, or use =shadergraph.open=.
+- *New Shader Graph* in the Assets panel's background menu, =shadergraph.create= or =lrg_editor_shader_graph_editor_create (app, path, master, &error)= write a valid starter graph: a =tint= colour parameter wired to the output's colour, and for the PBR master (="pbr"=, the default; ="unlit"= is the other) a fresnel rim (=rim= x =rim_color=) on the emission.
+- =lrg_editor_shader_graph_editor_new (app, document)= builds an editor without docking it.
+
+** The canvas
+:PROPERTIES:
+:CUSTOM_ID: shader-graph-editor-canvas
+:END:
+The middle is an =LrgNodeGraph= (=lrg_editor_shader_graph_editor_get_canvas()=) mirroring the model (=lrg_editor_shader_graph_editor_get_graph()=):
+
+- One card per node, titled with the library label (a parameter adds its uniform name: "Parameter · tint"), coloured by category (inputs, maths, texture, procedural, output), at the node's saved =position=.
+- Ports are typed: =float=, =vec2=, =vec3=, =vec4=, =sampler2D= get the canvas' type colours, dynamic ports are "any". A wire may join any numeric ports (the graph converts floats and truncates vectors; widening is reported by validation); a =sampler2D= only connects to a =sampler2D=.
+- Everything the canvas offers works: drag wires (an input keeps one link; a new wire replaces it), move cards (snapped to the grid), box select, Delete, Ctrl+D (the copy gets a GLSL-safe id and, for a parameter, a free uniform name), the minimap, Home to frame all.
+- Each canvas gesture is one undo step: edits reach the model at once and are written to the document on the next idle, so a delete with its five link removals is one step.
+
+** Palette
+:PROPERTIES:
+:CUSTOM_ID: shader-graph-editor-palette
+:END:
+The left column (=shadergraph-palette=) lists the whole node library grouped by category (=lrg_shader_graph_list_node_types()=, headers in the category colour). Typing in the filter (=shadergraph-filter=) narrows it by label or type name. Clicking a node type adds it in the middle of the view and selects it (=lrg_editor_shader_graph_editor_add_node()=): a =parameter= starts as a =float= named =param=, =param2=, ..., a =constant= as =1=, a =swizzle= with mask =xyz=, so they validate at once.
+
+** Node properties
+:PROPERTIES:
+:CUSTOM_ID: shader-graph-editor-properties
+:END:
+The *Node* tab (=shadergraph-grid=) shows the selected node:
+
+| Node | Rows |
+|------+------|
+| =parameter= | Uniform (=name=), Type (=float vec2 vec3 vec4 color sampler2D=), Default (number, vector or colour by type) and Range for numbers, Texture (asset reference) for samplers, Hint |
+| =constant= | Value (a number, or a vector of its width) |
+| =swizzle= | Mask |
+| =pbr_output=, =unlit_output= | Blend, Cull (the generated asset's render state) |
+| every node | one row per *unconnected* input (=in-<port>=): the value it takes, as wide as the port's resolved type; Reset returns to the library default |
+
+A grid gesture is one undo step. =lrg_editor_shader_graph_editor_set_param()=, =lrg_editor_shader_graph_editor_set_values()= and =lrg_editor_shader_graph_editor_set_input()= are the same edits from C; =lrg_editor_shader_graph_editor_select_node()= / =lrg_editor_shader_graph_editor_get_selected()= drive the selection.
+
+** Validation on the nodes
+:PROPERTIES:
+:CUSTOM_ID: shader-graph-editor-validation
+:END:
+After every edit the graph is validated (=lrg_shader_graph_validate()=):
+
+- a node with problems gets the danger accent and a body under its ports listing the messages ("texture: required input is missing", type mismatches, cycles, invalid parameters);
+- the issues list names each problem with its node, at the line of the node in the file; clicking one selects and frames the node;
+- =lrg_editor_shader_graph_editor_get_problems()= returns them (=LrgShaderGraphProblem=).
+
+** Generated code and preview
+:PROPERTIES:
+:CUSTOM_ID: shader-graph-editor-code
+:END:
+- The *GLSL* tab shows the generated fragment stage (=lrg_shader_graph_generate_fragment()=, read-only, GLSL colours); while the graph is invalid it says so. =lrg_editor_shader_graph_editor_get_glsl()= returns the same text.
+- The preview above the tabs draws a sphere (or cube / plane) with the generated asset (=lrg_editor_shader_graph_editor_get_asset()=, the last valid one: an edit that breaks the graph keeps the last good shader on screen), compiled on its next frame, lit by the editor's preview light set and environment when the graph ends in =pbr_output=. It uses the same renderer as the [[file:material-editor.org::#material-editor-preview][material editor]]. =lrg_editor_shader_graph_editor_render_preview()= renders it into an image.
+
+** Saving and exporting
+:PROPERTIES:
+:CUSTOM_ID: shader-graph-editor-save
+:END:
+Save writes the graph and, when it is valid, the generated asset next to it with the same stem (=glow.rshadergraph= -> =glow.rshader=, =lrg_editor_shader_graph_editor_get_shader_path()=), inline fragment and all. Open material editors and thumbnails using that =.rshader= reload it at once. =lrg_editor_shader_graph_editor_export (self, path, &error)= writes the asset anywhere.
+
+Point a material at the generated asset to use the graph:
+
+#+begin_src yaml
+# materials/glow.rmat
+version: 1
+name: glow
+shading_model: custom
+shader: ../shaders/glow.rshader
+uniforms:
+  tint: { type: color, value: [0.2, 0.8, 1.0, 1.0] }   # the graph's "tint" parameter
+#+end_src
+
+** Using it from C
+:PROPERTIES:
+:CUSTOM_ID: shader-graph-editor-c
+:END:
+#+begin_src c
+g_autoptr(GError)           error = NULL;
+LrgEditorShaderGraphEditor *ed;
+const gchar                *t, *s;
+
+lrg_editor_shader_graph_editor_create (app, "shaders/pulse.rshadergraph", "unlit", &error);
+ed = lrg_editor_shader_graph_editor_open (app, "shaders/pulse.rshadergraph", &error);
+
+/* tint * (0.5 + 0.5 sin(time)) -> colour */
+t = lrg_editor_shader_graph_editor_add_node (ed, "time", "t", -500, 200, &error);
+s = lrg_editor_shader_graph_editor_add_node (ed, "sin", "wave", -300, 200, &error);
+lrg_editor_shader_graph_editor_connect (ed, t, "time", s, "in", &error);
+lrg_editor_shader_graph_editor_connect (ed, s, "out", "out", "alpha", &error);
+
+if (lrg_editor_shader_graph_editor_get_problems (ed)->len == 0)
+	lrg_editor_data_editor_save (LRG_EDITOR_DATA_EDITOR (ed), &error);   /* also writes pulse.rshader */
+#+end_src
+
+=lrg_editor_shader_graph_editor_remove_node()= and =lrg_editor_shader_graph_editor_disconnect()= complete the editing API; =lrg_editor_shader_graph_editor_install (app)= registers the IPC methods (the Assets panel does it at startup).
+
+** IPC methods
+:PROPERTIES:
+:CUSTOM_ID: shader-graph-editor-ipc
+:END:
+| Method | Params | Result |
+|--------+--------+--------|
+| =shadergraph.open= | =path= | ={path, panel}= |
+| =shadergraph.create= | =path=, =master?= (=pbr unlit=) | ={path}= |
+| =shadergraph.node_types= | | ={types: [{type, label, category, inputs, outputs}]}= |
+| =shadergraph.get= | =path= | ={path, name, nodes: [{id, type, x, y, params}], links: [{from, from_port, to, to_port}]}= |
+| =shadergraph.add_node= | =path=, =type=, =id?=, =x?=, =y?= | ={id}= |
+| =shadergraph.remove_node= | =path=, =id= | ={removed}= |
+| =shadergraph.connect= | =path=, =from=, =from_port=, =to=, =to_port= | ={ok}= |
+| =shadergraph.disconnect= | =path=, =to=, =to_port= | ={removed}= |
+| =shadergraph.set_param= | =path=, =id=, =key=, =value= (string for =name type hint texture mask blend cull=, number or array for =default range value=, null clears) | ={ok}= |
+| =shadergraph.set_input= | =path=, =id=, =port=, =value= (number, array of 1..4, null for the default) | ={ok}= |
+| =shadergraph.validate= | =path= | ={ok, problems: [{code, node, port, message}]}= |
+| =shadergraph.glsl= | =path= | ={fragment}= (an invalid graph is =failed=) |
+| =shadergraph.save= | =path= | ={path, shader}= (=shader= is null when the graph is invalid) |
+
+Every edit method is one undo step of the open editor (opened when needed).
+
+** Performance and pitfalls
+:PROPERTIES:
+:CUSTOM_ID: shader-graph-editor-notes
+:END:
+- Every edit regenerates the code and a new asset; the preview compiles it once on its next frame (a failed compile is not retried until the next edit).
+- The canvas is rebuilt from the model only after undo, redo, reload, duplication and API/IPC edits; canvas gestures change it in place.
+- Saving overwrites =<stem>.rshader= next to the graph; keep hand-written shaders under another name.
+- Node ids are GLSL identifiers; ids typed through IPC must be valid ones.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: shader-graph-editor-see-also
+:END:
+- [[file:../modules/graphics/shader-graph.org][LrgShaderGraph]] - format, node library, generation
+- [[file:../modules/graphics/shader-asset.org][LrgShaderAsset]] - what the graph generates
+- [[file:material-editor.org][Material editor]] - custom materials and their uniform inspector
+- [[file:../modules/ui/widgets/node-graph.org][LrgNodeGraph]] - the canvas widget

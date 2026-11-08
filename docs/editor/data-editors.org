@@ -65,7 +65,7 @@ else
 :PROPERTIES:
 :CUSTOM_ID: data-editors-one-type
 :END:
-=LrgEditorDocument= is a final GObject with a =format= property (=LrgEditorDocumentFormat=: =unknown=, =input-map=, =locale=, =sound-bank=, =hud-layout=, =ui-layout=, =dialog-tree=, =dungeon=, =theme=), not a base class with one subclass per format. Everything the panels and IPC drive (paths, undo, save, reload, line mapping) is the same for every format; the formats differ only in their validator, the skeleton of a new file and a few read helpers. One type keeps the =data.*= IPC methods and the base data-editor panel generic, and the per-format code is a set of static functions selected by the enum. A format the engine does not know (=unknown=) still gets the full editing model, with validation reduced to the YAML-level checks.
+=LrgEditorDocument= is a final GObject with a =format= property (=LrgEditorDocumentFormat=: =unknown=, =input-map=, =locale=, =sound-bank=, =hud-layout=, =ui-layout=, =dialog-tree=, =dungeon=, =theme=, and the 0.9.0 engine asset formats =material=, =post-stack=, =shader-graph=, =anim-graph=, =bone-map=, =sequence=, =skeleton2d=, =physics-asset=, =bt=, =fsm=, =particles=, =weather=, =mixer=, =tileset=, =sprite=, =water=, =nav-settings=), not a base class with one subclass per format. Everything the panels and IPC drive (paths, undo, save, reload, line mapping) is the same for every format; the formats differ only in their validator, the skeleton of a new file and a few read helpers. One type keeps the =data.*= IPC methods and the base data-editor panel generic, and the per-format code is a set of static functions selected by the enum. A format the engine does not know (=unknown=) still gets the full editing model, with validation reduced to the YAML-level checks.
 
 *** Properties and signals
 :PROPERTIES:
@@ -101,6 +101,8 @@ else
 
 =lrg_editor_document_detect_format (name, text, len)= decides in this order:
 
+0. *An engine asset extension* (since 0.9.0) decides on its own: =.rmat= → =LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL= (nick =material=, the [[file:material-editor.org][material editor]]), =.rpost= → =LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK= (=post-stack=, the post stack editor), =.rshadergraph= → =LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH= (=shader-graph=, the [[file:shader-graph-editor.org][shader graph editor]]). These formats have no document-level validator (their editors validate with the engine loaders) and =lrg_editor_data_editor_can_open()= accepts the three extensions besides =.yaml= / =.yml=. =.rphysasset= → =LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET= (=physics-asset=, the [[file:physics-asset-editor.org][physics asset editor]]) joined in 0.9.0; a YAML mapping with =version:= and a =parts:= sequence whose first item has a =bone:= key is detected by content too.
+   The 0.9.0 navigation, AI, effects, terrain, audio and 2D formats are engine-backed (see [[#data-editors-engine-backed][Engine-backed formats]]) and are recognised by their extension only: =.rbt= → =LRG_EDITOR_DOCUMENT_FORMAT_BT= (=bt=), =.rfsm= → =LRG_EDITOR_DOCUMENT_FORMAT_FSM= (=fsm=), =.rparticles= → =LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES= (=particles=), =.rweather= → =LRG_EDITOR_DOCUMENT_FORMAT_WEATHER= (=weather=), =.rmixer= → =LRG_EDITOR_DOCUMENT_FORMAT_MIXER= (=mixer=), =.rtileset= → =LRG_EDITOR_DOCUMENT_FORMAT_TILESET= (=tileset=), =.rsprite= → =LRG_EDITOR_DOCUMENT_FORMAT_SPRITE= (=sprite=), =.rwater= → =LRG_EDITOR_DOCUMENT_FORMAT_WATER= (=water=) and =.rnav= → =LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS= (=nav-settings=). One table drives both directions: =lrg_editor_document_format_get_extension()= returns the extension of any engine asset format (with its dot, =NULL= for the plain YAML formats) and detection matches the same table.
 1. *A double extension* is an explicit statement: =*.input.yaml= (also =.inputmap=), =*.locale.yaml=, =*.bank.yaml= (also =.soundbank=), =*.hud.yaml=, =*.ui.yaml=, =*.dialog.yaml=, =*.dungeon.yaml=, =*.theme.yaml=, plus the bare names =dungeon.yaml= and =theme.yaml=. =.yml= works too.
 2. *The content*: the keys each loader requires or is known by. =actions:= mapping → input map; =sounds:= → sound bank; =pieces:= → HUD layout; =nodes:= sequence → dialog tree; =strings:= or =code:= + =name:= → locale; =generator:= → dungeon; =colors=, =metrics=, =preset=, =accent=, =styles= or =motion= → theme; a root =type:= → UI layout.
 3. *The parent directory*: =locales=, =locale=, =i18n=, =lang=, =themes=, =dialogs=, =dialog=, =dialogue=, =input=, =dungeons=, =ui=.
@@ -249,8 +251,7 @@ Issues come sorted: errors, then warnings, then infos, each in the order found.
 :END:
 Validation checks what would be saved: it serializes the document and gives that text to the format's real loader, so a passing document is one the game will load.
 
-- Loaders with a from-memory API get the text directly: =lrg_ui_loader_load_from_data=, =lrg_dialog_tree_new_from_data=, =lrg_procgen_dungeon_new_from_data=, =lrg_theme_new_from_data=.
-- Loaders that only read files get a temporary file under =g_get_tmp_dir()= that is deleted right after: =lrg_input_map_load_from_file=, =lrg_locale_new_from_file=, =lrg_hud_layout_load_from_file=, =lrg_sound_bank_new_from_file=. The temporary file's name is replaced by the document's name in every message.
+- Every loader gets the text directly, through its from-memory API: =lrg_ui_loader_load_from_data=, =lrg_dialog_tree_new_from_data=, =lrg_procgen_dungeon_new_from_data=, =lrg_theme_new_from_data= and, since 0.9.0, =lrg_input_map_load_from_data=, =lrg_locale_new_from_data=, =lrg_hud_layout_load_from_data= and =lrg_sound_bank_new_from_data= (manifest only). No temporary files are written. The source name these loaders put in their messages (=<data>=) is replaced by the document's name.
 - A loader's =GError= becomes an error issue. Its location is recovered when the message carries one: the UI loader's =children[2].children[0]:= and the dungeon loader's =params.fill-percent:= prefixes become =/children/2/children/0= and =/params/fill-percent= (when that path exists), and =line N, column M= positions are mapped back to a path with =get_path_at_line=.
 - Warnings a loader logs while it runs (in its log domain) are captured as warning issues instead of reaching the console, except where the structural checks already report the same thing with a path (input maps).
 - Some loaders stop at the first problem. Where the structural checks mirror the loader's rules (HUD layouts, dialog trees), they report every problem with its path, and the loader's own error is added only when they found none.
@@ -263,10 +264,10 @@ Duplicate keys found when the file was read are reported for every format as war
 :END:
 | Format | Engine loader | Structural checks |
 |--------+---------------+-------------------|
-| Input map | =lrg_input_map_load_from_file= (temp file) | Each action is a mapping with a non-empty =bindings= sequence (else the loader silently drops it). Each binding is a mapping with a known =type= (=keyboard=, =mouse_button=, =gamepad_button=, =gamepad_axis=) and its required field (=key=, =button=, =axis=). Key names are checked against the loader's table (an unknown name loads as no key at all). The same input bound twice, in one action or two, is a warning (modifiers compared order-free) |
-| Locale | =lrg_locale_new_from_file= (temp file) | =strings= is a mapping; each entry is a text or a mapping of plural forms (=zero=, =one=, =two=, =few=, =many=, =other=); empty entries are warnings. With a =reference= document: keys it has and this one lacks (warning), keys only here (info), a different number of =%= placeholders than the reference's text (warning) |
-| Sound bank | =lrg_sound_bank_new_from_file= on a copy *without* =sounds= (temp file) | The loader would decode every sound, so it only checks the root, =name= and =base_path=. Each sound must be a file name with a known audio extension (wav, ogg, mp3, flac, qoa, xm, mod), and its file must exist, resolved like =LrgSoundBank= does (=base_path= relative to =base-dir=, else the document's directory). Untitled documents without =base-dir= skip the file check |
-| HUD layout | =lrg_hud_layout_load_from_file= (temp file) | Only =version= and =pieces= at the root; per piece only =anchor=, =x=, =y=, =locked=, =hidden=; =anchor= a known =LrgHudAnchor= nick; =x= / =y= numbers and only beside an anchor; =locked= / =hidden= =true= / =false= / =yes= / =no= |
+| Input map | =lrg_input_map_load_from_data= | Each action is a mapping with a non-empty =bindings= sequence (else the loader silently drops it). Each binding is a mapping with a known =type= (=keyboard=, =mouse_button=, =gamepad_button=, =gamepad_axis=) and its required field (=key=, =button=, =axis=). Key names are checked against the loader's table (an unknown name loads as no key at all). The same input bound twice, in one action or two, is a warning (modifiers compared order-free) |
+| Locale | =lrg_locale_new_from_data= | =strings= is a mapping; each entry is a text or a mapping of plural forms (=zero=, =one=, =two=, =few=, =many=, =other=); empty entries are warnings. With a =reference= document: keys it has and this one lacks (warning), keys only here (info), a different number of =%= placeholders than the reference's text (warning) |
+| Sound bank | =lrg_sound_bank_new_from_data= in manifest-only mode | The loader reads the whole manifest the engine way (root, =name=, =base_path=, =volume=, =sounds=) without decoding audio, so it needs neither the files nor an audio device. Each sound must be a file name with a known audio extension (wav, ogg, mp3, flac, qoa, xm, mod), and its file must exist, resolved like =LrgSoundBank= does (=base_path= relative to =base-dir=, else the document's directory). Untitled documents without =base-dir= skip the file check |
+| HUD layout | =lrg_hud_layout_load_from_data= | Only =version= and =pieces= at the root; per piece only =anchor=, =x=, =y=, =locked=, =hidden=; =anchor= a known =LrgHudAnchor= nick; =x= / =y= numbers and only beside an anchor; =locked= / =hidden= =true= / =false= / =yes= / =no= |
 | UI layout | =lrg_ui_loader_load_from_data= | The loader is strict (unknown types, properties, values, handlers, includes) and its messages carry the node path and line. =include:= paths resolve against the current directory, since the text is validated from memory |
 | Dialog tree | =lrg_dialog_tree_new_from_data= | =id= and a non-empty =nodes= sequence; each node has =id= and =text=; ids are unique; responses have =text= and =next=; every =next= (node, response) and =start= names an existing node; nodes unreachable from =start= (or the first node) are warnings. The loader's linear-scene rule (a node with neither =next= nor =responses= continues with the following node) counts as an edge |
 | Dungeon | =lrg_procgen_dungeon_new_from_data= | The loader is strict (unknown keys and parameters, ranges, types) and names the offending key, which becomes the issue's path |
@@ -361,6 +362,86 @@ The recipe format of [[file:../modules/procgen/yaml.org][LrgProcgenDungeon]]. Th
 :END:
 The format of [[file:../guides/theming.org][LrgTheme files]]. Colours set with =set_string= are quoted automatically, so ='#7c6cff'= never turns into a comment.
 
+** Engine-backed formats
+:PROPERTIES:
+:CUSTOM_ID: data-editors-engine-backed
+:END:
+*** Overview
+:PROPERTIES:
+:CUSTOM_ID: data-editors-engine-backed-overview
+:END:
+Since 0.9.0 nine formats are /engine-backed/: the document is still a YAML tree (so YAML paths, the generic =data.*= IPC methods, gesture merging and the per-file undo history work exactly as for every other format), but the engine object is the authority on what the file means and on the bytes that are written. The editor of such a format does not poke YAML paths for its edits; it asks the document for a fresh engine object, changes it through the engine's own API (which validates every value) and hands it back as one undoable command.
+
+| Format | Nick | Extension | Engine object | Editor |
+|--------+------+-----------+---------------+--------|
+| =LRG_EDITOR_DOCUMENT_FORMAT_BT= | =bt= | =.rbt= | =LrgBtAsset= | =LrgEditorBtEditor= (behaviour tree graph) |
+| =LRG_EDITOR_DOCUMENT_FORMAT_FSM= | =fsm= | =.rfsm= | =LrgLogicMachine= | =LrgEditorFsmEditor= (state graph) |
+| =LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES= | =particles= | =.rparticles= | =LrgParticleAsset= | =LrgEditorParticleEditor= |
+| =LRG_EDITOR_DOCUMENT_FORMAT_WEATHER= | =weather= | =.rweather= | =LrgWeatherAsset= | =LrgEditorWeatherEditor= |
+| =LRG_EDITOR_DOCUMENT_FORMAT_MIXER= | =mixer= | =.rmixer= | =LrgMixerAsset= | =LrgEditorMixerEditor= |
+| =LRG_EDITOR_DOCUMENT_FORMAT_TILESET= | =tileset= | =.rtileset= | =LrgTileset= | =LrgEditorTilesetEditor= |
+| =LRG_EDITOR_DOCUMENT_FORMAT_SPRITE= | =sprite= | =.rsprite= | =LrgSpriteSheet= | =LrgEditorSpriteEditor= |
+| =LRG_EDITOR_DOCUMENT_FORMAT_WATER= | =water= | =.rwater= | =LrgWaterBody= | =LrgEditorWaterEditor= |
+| =LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS= | =nav-settings= | =.rnav= | =LrgNavBake= | none: the Navigation panel (action =nav.open-settings=) |
+
+=lrg_editor_document_format_get_object_type()= returns the engine GType of a format (=G_TYPE_INVALID= for the plain YAML formats), which is also the test for "engine-backed".
+
+*** Load, edit, undo, save
+:PROPERTIES:
+:CUSTOM_ID: data-editors-engine-backed-flow
+:END:
+- *New*: =lrg_editor_document_new()= writes the engine's own default object through the engine writer, so a new file is byte for byte what the engine would write. Two defaults are filled in so the skeleton validates: a behaviour tree gets an empty =sequence= root with the id =root= (it succeeds at once), a state machine one =idle= state that is the initial state.
+- *Load*: the file is parsed into the YAML tree as for any format; the engine object is built on demand.
+- *Read*: =lrg_editor_document_dup_object()= runs the engine loader on the current text and returns a new object the caller owns (=transfer full=). Relative paths (weather particle effects, tileset images) resolve from the base directory or the file's directory; textures are never loaded, so this works headless and on worker-free paths. A document the loader rejects returns =NULL= with the loader's error.
+- *Edit*: =lrg_editor_document_commit_object (doc, object, label, gesture, error)= runs the engine writer and makes that text the whole document. It is one =replace= of the root, so its undo step restores the previous tree: the undo history holds snapshots of the engine's output. =gesture= 0 makes one step labelled =label= (default ="Edit"=); a non-zero gesture id merges consecutive commits into one step, for drags and sliders (=lrg_editor_data_editor_new_gesture()= hands out ids). A commit whose text equals the current file text records nothing.
+- *Save*: =lrg_editor_document_save()= writes =lrg_editor_document_to_file_data()=: the engine writer's output for the parsed document. A file the engine wrote therefore loads and saves back byte for byte, whatever the YAML tree's own serializer would have done with sequence indentation. When the engine cannot parse the document (half-way through a hand edit over =data.set=) the save writes the YAML text instead, and validation reports why.
+- *Validate*: =lrg_editor_document_validate()= runs the engine loader on the text, then the asset's own =validate()= where it has one (=lrg_bt_asset_validate()=, =lrg_logic_machine_validate()=, =lrg_particle_asset_validate()=, =lrg_mixer_asset_validate()=); the error message becomes an error issue placed on its YAML path where the message names one.
+
+*** Worked example
+:PROPERTIES:
+:CUSTOM_ID: data-editors-engine-backed-example
+:END:
+#+begin_src c
+/* lower a mixer's master bus through the engine API, as one undo step */
+g_autoptr(LrgEditorDocument) doc = NULL;
+g_autoptr(GObject) object = NULL;
+g_autoptr(GError) error = NULL;
+
+doc = lrg_editor_document_new_from_file ("audio/main.rmixer", &error);
+object = lrg_editor_document_dup_object (doc, &error);          /* an LrgMixerAsset */
+if (object == NULL)
+	return;                                                      /* the loader's message */
+lrg_mixer_asset_set_bus_volume (LRG_MIXER_ASSET (object), "master", -3.0);
+lrg_editor_document_commit_object (doc, object, "Master Volume", 0, &error);
+lrg_editor_document_undo (doc);                                  /* back to the old text */
+lrg_editor_document_redo (doc);
+lrg_editor_document_save (doc, &error);                          /* the engine writer's bytes */
+#+end_src
+
+A slider drags with a gesture id instead, so the whole drag is one step:
+#+begin_src c
+guint gesture = lrg_editor_data_editor_new_gesture ();
+/* every motion event: */
+lrg_water_body_set_level (water, value);
+lrg_editor_document_commit_object (doc, G_OBJECT (water), "Water Level", gesture, NULL);
+#+end_src
+
+*** Performance and pitfalls
+:PROPERTIES:
+:CUSTOM_ID: data-editors-engine-backed-pitfalls
+:END:
+- =dup_object()= parses the whole file each call; editors keep one object per refresh instead of calling it per widget. =to_file_data()= is cached until the next change.
+- Comments are not kept in these formats: the engine writers do not write them (unknown keys are kept by the loaders that document it, e.g. =LrgNavBake= and =LrgParticleAsset=).
+- A path edit (=data.set=) can leave the document unparseable by the engine; =dup_object()= then fails until the edit is fixed or undone. Editors show the loader message instead of the graph.
+- =commit_object()= refuses an object of another type (=LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND=) and a read-only document.
+- The data editor registry maps each format to its editor by GType at first use; an editor type that does not derive from =LrgEditorDataEditor= is skipped (the file then opens nowhere rather than in a wrong editor).
+
+*** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: data-editors-engine-backed-editor
+:END:
+Double-clicking one of these files in the Assets panel opens its editor (a =.rnav= opens the Navigation panel: the assets panel stores the path as the app's ="lrg-editor-nav-settings-path"= data and runs the action =nav.open-settings=). The Assets panel background menu has New Behaviour Tree, New State Machine, New Particle Effect, New Weather, New Mixer, New Tileset, New Sprite Sheet, New Water Body, New Terrain and New Navigation Settings; an image's menu has Slice Sprite Sheet. The same files come from =lrg_editor_assets_panel_create_asset()= and =lrgeditorctl asset new KIND= (IPC =asset.new=). Every format answers the generic =data.*= methods too; the tool-specific methods are listed in [[file:ipc-protocol.org::#method-index][the IPC method index]].
+
 ** Engine gaps found
 :PROPERTIES:
 :CUSTOM_ID: data-editors-engine-gaps
@@ -411,6 +492,8 @@ Header: =editor/lrg-editor-document.h= (included by =<libregnum.h>= in editor bu
 | =lrg_editor_document_format_get_type= | GType of =LrgEditorDocumentFormat= |
 | =lrg_editor_document_format_to_string= | format → nick (="sound-bank"=) |
 | =lrg_editor_document_format_from_string= | nick or C name → format (=unknown= otherwise) |
+| =lrg_editor_document_format_get_extension= | the engine extension of a format (=.rbt=, ...), =NULL= for plain YAML formats |
+| =lrg_editor_document_format_get_object_type= | the engine GType of an engine-backed format, =G_TYPE_INVALID= otherwise |
 | =lrg_editor_document_node_kind_get_type= | GType of =LrgEditorDocumentNodeKind= |
 | =lrg_editor_document_error_quark= | the =LRG_EDITOR_DOCUMENT_ERROR= domain |
 | =lrg_editor_document_error_get_type= | GType of =LrgEditorDocumentError= |
@@ -479,6 +562,7 @@ Header: =editor/lrg-editor-document.h= (included by =<libregnum.h>= in editor bu
 | =lrg_editor_document_set_null= | null |
 | =lrg_editor_document_set_value= | typed setter from a =GValue= |
 | =lrg_editor_document_replace= | replace a subtree from YAML text |
+| =lrg_editor_document_replace_gesture= | the same with a gesture id: consecutive replacements of one path in one gesture merge into one undo step (0.9.0; the physics asset editor rewrites a part on every step of a drag) |
 | =lrg_editor_document_insert_item= | insert into a sequence |
 | =lrg_editor_document_move_item= | reorder a sequence item |
 | =lrg_editor_document_add_key= | add a mapping key at a position |
@@ -520,6 +604,9 @@ Header: =editor/lrg-editor-document.h= (included by =<libregnum.h>= in editor bu
 | =lrg_editor_document_dialog_nodes= | dialog node ids |
 | =lrg_editor_document_dialog_edges= | dialog edges for the node graph |
 | =lrg_editor_document_sound_bank_resolve= | file a sound plays |
+| =lrg_editor_document_dup_object= | a fresh engine object parsed from the document (engine-backed formats) |
+| =lrg_editor_document_commit_object= | the engine writer's text of an object as the whole document, one undo step (or a gesture) |
+| =lrg_editor_document_to_file_data= | the text a save writes (the engine writer's for engine-backed formats) |
 
 ** Editor panels
 :PROPERTIES:
@@ -1136,3 +1223,9 @@ Every public function of the data editor panel headers that the sections above d
 =tests/test-editor-document.c= runs headless (no window, no audio device): path escaping, format detection, every skeleton validating, open errors, gesture merging, nested groups, dirty tracking across save/undo/redo/limit/clear, typed values, comment and unknown-key preservation through save, external-change detection and reload, line mapping and duplicate keys, and for each of the eight formats a real-format fixture that is loaded, edited, undone, saved, reloaded and validated both passing and failing with the expected message and path.
 
 =tests/test-editor-app-data-1.c= drives the base panel and the input map, locale, sound bank and theme editors through the canvas of a headless =LrgEditorApp= (=tests/editor-app-fixture.h=) and the IPC: opening each format from a temporary project (=data.open=, tab reuse, =data.list=), edits through the UI with undo / redo going to the document only (the level's history stays empty), Save keeping comments and unknown keys, Revert, the external-change banner (a clean reload, Keep mine, Reload), issue rows revealing their path in the editor, the unsaved-changes prompt on close, input map key capture (a chord, a mouse button on the veil, Escape) and grid edits (rename, type change), the locale grid's missing-cell highlight, edit bar, cross-language undo and CSV round trip, a sound asset dropped on the sound list and on the File row, the theme preview following grid edits and "Use for editor", the assets panel opening a data file, and every =data.*= method with its errors.
+
+** Engine writers (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: data-editors-engine-writers
+:END:
+Every format these editors handle now has an engine writer next to its loader: =lrg_input_map_save_to_data= / =lrg_input_map_save_to_file=, =lrg_locale_save_to_data= / =lrg_locale_save_to_file=, =lrg_sound_bank_save_to_data= / =lrg_sound_bank_save_to_file=, =lrg_hud_layout_save_to_data= / =lrg_hud_layout_save_to_file= and =lrg_dialog_tree_save_to_data= / =lrg_dialog_tree_save_to_file=, each writing exactly what its loader reads (round-trip tested). The data editors still save through the document model: it keeps comments, blank lines, unknown keys and the author's layout, which the engine writers do not (only the input-map writer keeps unknown keys, and none keeps comments). The engine writers are for games and tools that produce or rewrite these files from engine objects (a rebinding screen saving the input map, a CSV import producing a locale, a generated dialog), and the documents they write open in these editors like hand-written ones.

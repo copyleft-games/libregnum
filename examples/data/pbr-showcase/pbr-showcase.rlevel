@@ -1,0 +1,298 @@
+# pbr-showcase.rlevel - the level examples/pbr-showcase.c plays.
+#
+# Copyright 2026 Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# A small stage that shows the 0.9.0 look of a level, all of it authored
+# here and carried into the runtime by lrg_level_instantiate_3d():
+#
+# - environment: an equirect HDR sky (skies/showcase-sky.hdr, written by
+#   the example on its first run) for image-based lighting, exposure,
+#   ambient fallback, light distance fog, volumetric fog for the spot
+#   light's beam, and the post stack showcase.rpost;
+# - two rows of spheres with .rmat materials: the back row metal, the
+#   front row dielectric, roughness rising left to right (each material an
+#   instance of metal.rmat / dielectric.rmat overriding the roughness);
+# - a sun, a spot light and a point light, all casting shadows;
+# - a decal on the floor (textures/showcase-decal.png, generated too);
+# - a reflection probe around the stage;
+# - a chrome knot whose .meta asks for three levels of detail
+#   (models/knot.obj + knot.obj.meta, generated), so it becomes an
+#   LrgLodComponent.
+#
+# Asset paths are relative to this file's directory.
+type: level
+name: pbr-showcase
+default_view: 3d
+environment:
+  sky:
+    source: equirect
+    path: skies/showcase-sky.hdr   # equirect panorama, read linear
+    exposure: 0.0
+    rotation: 0.0
+  ibl:
+    enabled: true
+    diffuse_intensity: 1.0
+    specular_intensity: 1.0
+    resolution: 128
+  ambient:
+    color: [0.16, 0.17, 0.2]       # used when IBL is toggled off
+    intensity: 1.0
+  fog:
+    enabled: true
+    type: exponential
+    color: [0.62, 0.68, 0.78, 0.6]
+    density: 0.012
+  volumetric:
+    enabled: true
+    density: 0.015
+    anisotropy: 0.6
+    steps: 32
+    max_distance: 40.0
+    intensity: 1.2
+  post_stack: showcase.rpost
+nodes:
+  # The sun: low and warm, from the right behind the camera, casting the long shadows.
+  - name: Sun
+    guid: 7b000000-0000-4000-8000-000000000001
+    transform:
+      location: [8.00, 12.00, 6.00]
+      rotation: [-0.750, 0.900, 0.000]
+    visual:
+      kind: light
+      material:
+        color: [1.0, 0.9, 0.76, 1.0]
+      params:
+        light_type: directional
+        intensity: 1.0
+        cast_shadows: true
+
+  # A cool spot from the upper left onto the sphere grid (shadowed);
+  # the volumetric fog makes its cone visible.
+  - name: Spot
+    guid: 7b000000-0000-4000-8000-000000000002
+    transform:
+      location: [-3.00, 7.00, 3.00]
+      rotation: [-0.940, -0.720, 0.000]
+    visual:
+      kind: light
+      material:
+        color: [0.55, 0.75, 1.0, 1.0]
+      params:
+        light_type: spot
+        intensity: 2.2
+        range: 22.0
+        spot_angle: 50.0
+        spot_inner_angle: 30.0
+        cast_shadows: true
+        shadow_bias: 0.02
+
+  # A warm point light beside the knot (shadowed), with a glowing bulb.
+  - name: Lamp
+    guid: 7b000000-0000-4000-8000-000000000003
+    transform:
+      location: [4.60, 2.60, 1.80]
+    visual:
+      kind: light
+      material:
+        color: [1.0, 0.62, 0.3, 1.0]
+      params:
+        light_type: point
+        intensity: 1.8
+        range: 12.0
+        cast_shadows: true
+
+  - name: Bulb
+    guid: 7b000000-0000-4000-8000-000000000004
+    transform:
+      location: [4.60, 2.60, 1.80]
+      scale: [0.18, 0.18, 0.18]
+    visual:
+      kind: primitive
+      primitive: uv-sphere
+      material: materials/glow.rmat
+      params:
+        cast_shadows: false
+
+  - name: Camera
+    guid: 7b000000-0000-4000-8000-000000000005
+    transform:
+      location: [0.00, 3.40, 11.50]
+      rotation: [-0.200, 0.000, 0.000]
+    visual:
+      kind: camera
+      params:
+        fov: 50.0
+        near: 0.1
+        far: 200.0
+
+  # The stage
+  - name: Floor
+    guid: 7b000000-0000-4000-8000-000000000006
+    transform:
+      scale: [40.00, 1.00, 40.00]
+    visual:
+      kind: primitive
+      primitive: plane
+      material: materials/floor.rmat
+
+  - name: Wall
+    guid: 7b000000-0000-4000-8000-000000000007
+    transform:
+      location: [0.00, 4.00, -4.50]
+      scale: [24.00, 8.00, 0.50]
+    visual:
+      kind: primitive
+      primitive: cube
+      material: materials/wall.rmat
+
+  # The sphere grid: metal behind, dielectric in front, roughness
+  # 0.05 .. 0.95 from left to right.
+  - name: Metal_0
+    guid: 7b000000-0000-4000-8000-000000000008
+    transform:
+      location: [-5.20, 0.75, -1.40]
+      scale: [1.40, 1.40, 1.40]
+    visual:
+      kind: primitive
+      primitive: uv-sphere
+      material: materials/metal_r0.rmat
+
+  - name: Metal_1
+    guid: 7b000000-0000-4000-8000-000000000009
+    transform:
+      location: [-3.20, 0.75, -1.40]
+      scale: [1.40, 1.40, 1.40]
+    visual:
+      kind: primitive
+      primitive: uv-sphere
+      material: materials/metal_r1.rmat
+
+  - name: Metal_2
+    guid: 7b000000-0000-4000-8000-00000000000a
+    transform:
+      location: [-1.20, 0.75, -1.40]
+      scale: [1.40, 1.40, 1.40]
+    visual:
+      kind: primitive
+      primitive: uv-sphere
+      material: materials/metal_r2.rmat
+
+  - name: Metal_3
+    guid: 7b000000-0000-4000-8000-00000000000b
+    transform:
+      location: [0.80, 0.75, -1.40]
+      scale: [1.40, 1.40, 1.40]
+    visual:
+      kind: primitive
+      primitive: uv-sphere
+      material: materials/metal_r3.rmat
+
+  - name: Metal_4
+    guid: 7b000000-0000-4000-8000-00000000000c
+    transform:
+      location: [2.80, 0.75, -1.40]
+      scale: [1.40, 1.40, 1.40]
+    visual:
+      kind: primitive
+      primitive: uv-sphere
+      material: materials/metal_r4.rmat
+
+  - name: Plastic_0
+    guid: 7b000000-0000-4000-8000-00000000000d
+    transform:
+      location: [-5.20, 0.75, 0.60]
+      scale: [1.40, 1.40, 1.40]
+    visual:
+      kind: primitive
+      primitive: uv-sphere
+      material: materials/plastic_r0.rmat
+
+  - name: Plastic_1
+    guid: 7b000000-0000-4000-8000-00000000000e
+    transform:
+      location: [-3.20, 0.75, 0.60]
+      scale: [1.40, 1.40, 1.40]
+    visual:
+      kind: primitive
+      primitive: uv-sphere
+      material: materials/plastic_r1.rmat
+
+  - name: Plastic_2
+    guid: 7b000000-0000-4000-8000-00000000000f
+    transform:
+      location: [-1.20, 0.75, 0.60]
+      scale: [1.40, 1.40, 1.40]
+    visual:
+      kind: primitive
+      primitive: uv-sphere
+      material: materials/plastic_r2.rmat
+
+  - name: Plastic_3
+    guid: 7b000000-0000-4000-8000-000000000010
+    transform:
+      location: [0.80, 0.75, 0.60]
+      scale: [1.40, 1.40, 1.40]
+    visual:
+      kind: primitive
+      primitive: uv-sphere
+      material: materials/plastic_r3.rmat
+
+  - name: Plastic_4
+    guid: 7b000000-0000-4000-8000-000000000011
+    transform:
+      location: [2.80, 0.75, 0.60]
+      scale: [1.40, 1.40, 1.40]
+    visual:
+      kind: primitive
+      primitive: uv-sphere
+      material: materials/plastic_r4.rmat
+
+  # The LOD model: knot.obj.meta has lod-levels: 3.
+  - name: Knot
+    guid: 7b000000-0000-4000-8000-000000000012
+    transform:
+      location: [6.70, 2.30, -1.20]
+      rotation: [0.300, 0.500, 0.000]
+      scale: [2.40, 2.40, 2.40]
+    visual:
+      kind: mesh-asset
+      asset: models/knot.obj
+      material: materials/chrome.rmat
+
+  # A decal projected down onto the floor in front of the spheres.
+  - name: Decal
+    guid: 7b000000-0000-4000-8000-000000000013
+    transform:
+      location: [-1.20, 0.30, 3.00]
+      rotation: [0.000, 0.350, 0.000]
+    visual:
+      kind: decal
+      asset: textures/showcase-decal.png
+      material:
+        color: [1.0, 1.0, 1.0, 0.9]
+      params:
+        size_x: 3.2
+        size_y: 1.0
+        size_z: 3.2
+        fade_angle: 60.0
+        sort_order: 0
+
+  # A reflection probe around the stage: box-projected, so the floor
+  # and the spheres reflect the wall and each other in place.  The
+  # renderer picks probes by the camera position, so the box also
+  # contains where the camera orbits.
+  - name: Probe
+    guid: 7b000000-0000-4000-8000-000000000014
+    transform:
+      location: [0.00, 3.00, 3.00]
+    visual:
+      kind: reflection-probe
+      params:
+        extents_x: 16.0
+        extents_y: 5.0
+        extents_z: 13.0
+        blend_distance: 1.5
+        intensity: 1.0
+        box_projection: true
+        resolution: 128

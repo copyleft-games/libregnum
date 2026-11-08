@@ -16,6 +16,7 @@
 #include "lrg-component.h"
 #include "lrg-component-private.h"
 #include "components/lrg-sprite-component.h"
+#include "components/lrg-skeleton2d-component.h"
 #include "../lrg-log.h"
 
 /* ==========================================================================
@@ -24,7 +25,8 @@
 
 typedef struct
 {
-    GList *components;   /* List of LrgComponent (owned references) */
+    GList      *components;   /* List of LrgComponent (owned references) */
+    GHashTable *tags;         /* owned set of strings, created on first tag */
 
     /* The instance's GrlUpdatable / GrlDrawable vtables, looked up on the
      * first world update / draw (a subclass may implement either interface
@@ -94,6 +96,7 @@ lrg_game_object_draw (GrlEntity *entity)
     LrgGameObjectPrivate *priv = lrg_game_object_get_instance_private (self);
     GrlEntityClass       *parent_class;
     GType                 sprite_type;
+    GType                 skeleton_type;
     GList                *l;
 
     /* Chain up when the parent has a draw vfunc. GrlEntity leaves it
@@ -103,20 +106,23 @@ lrg_game_object_draw (GrlEntity *entity)
     if (parent_class->draw != NULL)
         parent_class->draw (entity);
 
-    /* Draw the object's enabled sprite components, in component order.
-     * LrgSpriteComponent is final, so an exact type compare is the same
-     * test as LRG_IS_SPRITE_COMPONENT() without the type-system call it
-     * makes for every other component type. */
+    /* Draw the object's enabled sprite and 2D skeleton components, in
+     * component order.  Both types are final, so an exact type compare is
+     * the same test as the LRG_IS_*() macros without the type-system call
+     * they make for every other component type. */
     sprite_type = LRG_TYPE_SPRITE_COMPONENT;
+    skeleton_type = LRG_TYPE_SKELETON2D_COMPONENT;
     for (l = priv->components; l != NULL; l = l->next)
     {
         LrgComponent *component = l->data;
+        GType         type = G_TYPE_FROM_INSTANCE (component);
 
-        if (G_TYPE_FROM_INSTANCE (component) == sprite_type &&
-            _lrg_component_get_enabled_unchecked (component))
-        {
+        if (!_lrg_component_get_enabled_unchecked (component))
+            continue;
+        if (type == sprite_type)
             lrg_sprite_component_draw (LRG_SPRITE_COMPONENT (component));
-        }
+        else if (type == skeleton_type)
+            lrg_skeleton2d_component_draw (LRG_SKELETON2D_COMPONENT (component));
     }
 }
 
@@ -240,6 +246,7 @@ lrg_game_object_dispose (GObject *object)
     lrg_game_object_remove_all_components (self);
 
     g_clear_pointer (&priv->components, g_list_free);
+    g_clear_pointer (&priv->tags, g_hash_table_unref);
 
     G_OBJECT_CLASS (lrg_game_object_parent_class)->dispose (object);
 }
@@ -583,4 +590,83 @@ lrg_game_object_get_component_count (LrgGameObject *self)
     priv = lrg_game_object_get_instance_private (self);
 
     return g_list_length (priv->components);
+}
+
+/* ==========================================================================
+ * Tags
+ * ========================================================================== */
+
+static gint
+game_object_tag_cmp (gconstpointer a,
+                     gconstpointer b)
+{
+    return g_strcmp0 (*(const gchar * const *) a, *(const gchar * const *) b);
+}
+
+void
+lrg_game_object_add_tag (LrgGameObject *self,
+                         const gchar   *tag)
+{
+    LrgGameObjectPrivate *priv;
+
+    g_return_if_fail (LRG_IS_GAME_OBJECT (self));
+    g_return_if_fail (tag != NULL && tag[0] != '\0');
+
+    priv = lrg_game_object_get_instance_private (self);
+    if (priv->tags == NULL)
+        priv->tags = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+    if (g_hash_table_contains (priv->tags, tag))
+        return;
+    g_hash_table_add (priv->tags, g_strdup (tag));
+}
+
+gboolean
+lrg_game_object_remove_tag (LrgGameObject *self,
+                            const gchar   *tag)
+{
+    LrgGameObjectPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_GAME_OBJECT (self), FALSE);
+    g_return_val_if_fail (tag != NULL, FALSE);
+
+    priv = lrg_game_object_get_instance_private (self);
+    if (priv->tags == NULL)
+        return FALSE;
+    return g_hash_table_remove (priv->tags, tag);
+}
+
+gboolean
+lrg_game_object_has_tag (LrgGameObject *self,
+                         const gchar   *tag)
+{
+    LrgGameObjectPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_GAME_OBJECT (self), FALSE);
+    g_return_val_if_fail (tag != NULL, FALSE);
+
+    priv = lrg_game_object_get_instance_private (self);
+    return priv->tags != NULL && g_hash_table_contains (priv->tags, tag);
+}
+
+gchar **
+lrg_game_object_get_tags (LrgGameObject *self)
+{
+    LrgGameObjectPrivate *priv;
+    GPtrArray            *out;
+    GHashTableIter        iter;
+    gpointer              key;
+
+    g_return_val_if_fail (LRG_IS_GAME_OBJECT (self), NULL);
+
+    priv = lrg_game_object_get_instance_private (self);
+    out = g_ptr_array_new ();
+    if (priv->tags != NULL)
+    {
+        g_hash_table_iter_init (&iter, priv->tags);
+        while (g_hash_table_iter_next (&iter, &key, NULL))
+            g_ptr_array_add (out, g_strdup ((const gchar *) key));
+    }
+    g_ptr_array_sort (out, game_object_tag_cmp);
+    g_ptr_array_add (out, NULL);
+    return (gchar **) g_ptr_array_free (out, FALSE);
 }

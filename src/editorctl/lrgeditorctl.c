@@ -47,11 +47,15 @@ static gboolean  opt_watch    = FALSE;
 static gint      opt_tail     = 50;
 static gboolean  opt_window   = FALSE;
 static gboolean  opt_force    = FALSE;
+static gboolean  opt_wait     = FALSE;
 static gchar    *opt_level    = NULL;
 static gchar    *opt_type     = NULL;
+static gchar    *opt_node     = NULL;
+static gchar    *opt_target   = NULL;
 static gboolean  opt_license  = FALSE;
 static gboolean  opt_version  = FALSE;
 static gchar   **opt_args     = NULL;
+static const gchar *ctl_argv0 = NULL;
 
 static LrgCtlFormat output = LRG_CTL_FORMAT_DEFAULT;
 
@@ -75,9 +79,13 @@ static const GOptionEntry entries[] = {
 	{ "tail", 0, 0, G_OPTION_ARG_INT, &opt_tail, "Log records to show first (default 50)", "N" },
 	{ "window", 0, 0, G_OPTION_ARG_NONE, &opt_window, "Screenshot the whole window, not just the viewport", NULL },
 	{ "force", 0, 0, G_OPTION_ARG_NONE, &opt_force, "Discard unsaved changes (open, new, quit)", NULL },
+	{ "wait", 0, 0, G_OPTION_ARG_NONE, &opt_wait, "Wait for a started job to finish (env bake, bake start)", NULL },
 	{ "level", 'l', 0, G_OPTION_ARG_STRING, &opt_level,
 	  "Toast level for notify: info, success, warning, error (or 0-3)", "LEVEL" },
 	{ "type", 't', 0, G_OPTION_ARG_STRING, &opt_type, "Asset type filter for get assets", "TYPE" },
+	{ "node", 'n', 0, G_OPTION_ARG_STRING, &opt_node,
+	  "Node for physics verbs (GUID or name path; default the primary selection)", "NODE" },
+	{ "target", 0, 0, G_OPTION_ARG_STRING, &opt_target, "Joint target node for physics add-joint", "NODE" },
 	{ "license", 0, 0, G_OPTION_ARG_NONE, &opt_license, "Print the license and exit", NULL },
 	{ "version", 'v', 0, G_OPTION_ARG_NONE, &opt_version, "Print the version and exit", NULL },
 	{ G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_args, NULL, "COMMAND [RESOURCE] [ARGS...]" },
@@ -108,10 +116,17 @@ static const gchar *description =
 	"  view [top|front|right|bottom|back|left|persp|all] | view focus NAME | view set key=value...\n"
 	"  screenshot FILE.png [--window]\n"
 	"  tiles NODE [ACTION key=value...] tilemap grid; ACTION: paint rect fill pick configure\n"
-	"  timeline [list|get|add|rm|key|play|stop|seek|state] ...  keyframe timelines\n"
+	"  timeline [list|get|add|rm|key|tangent|play|stop|seek|state] ...  keyframe timelines\n"
 	"  thumbnail PATH                   generate/print an asset's cached thumbnail\n"
 	"  meta get PATH | meta set PATH key=value... [guid=G]  asset .meta sidecar\n"
 	"  vcs [PATH]                       git branch and file status (badges)\n"
+	"  vcs diff|log|locks|magit | vcs commit MESSAGE\n"
+	"  merge BASE OURS THEIRS | merge install [DIR]   .rlevel merge driver\n"
+	"  po extract|pseudo TEXT | po import PATH ID | po export PATH ID TEXT\n"
+	"  collab apply USER GUID REV PROP VALUE | collab get GUID PROP\n"
+	"  collab lock|unlock USER GUID | collab cursor USER X Y Z | collab presence\n"
+	"  scenes list | scenes open PATH | scenes active INDEX\n"
+	"  gizmo apply OP [axis=N] [value=N] | gizmo pivot MODE | gizmo cursor X Y Z | gizmo origin\n"
 	"  prefab overrides|apply|revert|relink|unlink NODE [keys=a,b] | prefab sync [PATH]\n"
 	"  code open PATH[:LINE] | code list | code save [PATH]   built-in code editor\n"
 	"  inspector list|get|set|reset|state|apply-override|revert-override [NODE] [NAME] [key=value...]\n"
@@ -126,6 +141,94 @@ static const gchar *description =
 	"  palette [commands|files] [QUERY] open the command palette / quick-open\n"
 	"  preferences [PAGE]               open the preferences dialog (e.g. keybindings)\n"
 	"  view layout single|split-h|split-v|quad | view render-mode MODE | view overlay NAME on|off\n"
+	"  view layers [MASK|LAYER on|off]  a viewport's render-layer mask (viewport=N)\n"
+	"                                   MODE: lit unlit wireframe normals lighting-only overdraw uv\n"
+	"                                   light-complexity ao reflections\n"
+	"  material open|create|variant|get|set|revert|save|preview|assign|list ...  .rmat materials\n"
+	"  shader create|compile|diagnostics|uniforms|reload PATH   .rshader user shaders\n"
+	"  shadergraph open|create|types|get|add|remove|connect|disconnect|param|input|validate|glsl|save ...\n"
+	"  env [get|set KEY VALUE|reset|bake [--wait]|progress|show]  the level environment block\n"
+	"  post types|open|create|get|add|remove|move|set|save|preview|look|assign ...  .rpost post stacks\n"
+	"  lod get NODE | lod force NODE LEVEL|auto   LOD preview of a mesh node\n"
+	"  bake [get|set KEY VALUE|reset|start [--wait]|progress|cancel|save [DIR]|clear|evaluate [X Y Z [NX NY NZ]]\n"
+	"       |preview on|off|page N|show]  the level's lighting bake (lightmaps, probe grids)\n"
+	"  seq list|open|create|get|set|add-track|add-key|set-key|add-section|remove|bind|play|scrub|save|undo|from-timeline ...\n"
+	"                                   .rseq sequences (path=... for one that is not open)\n"
+	"  skel2d create|open|get|add-bone|set-bone|remove-bone|add-slot|set-slot|remove-slot|draw-order|attach|detach\n"
+	"         |mesh|auto-weights|paint-weights|skin|clip|key|play|mode|pick|save PATH ...  .rskel2d 2D skeletons\n"
+	"  anim open|create|get|enter|add-layer|remove-layer|add-state|remove-state|set-state|add-transition\n"
+	"       |set-transition|remove-transition|add-param|remove-param|set-param|blend-tree|preview|validate|save PATH ...\n"
+	"                                   .ranim animation graphs\n"
+	"  bonemap open|create|get|set|auto-fill|rules|models|preview|save PATH ...  .rbonemap retarget maps\n"
+	"  clip list|info|preview|morph MODEL ...  glTF clips and morph targets of a model\n"
+	"  physics get|add-body [KIND]|remove-body|set-body K=V..|add-shape [KIND] [K=V..]|remove-shape I\n"
+	"          |set-shape I K=V..|move-shape I TO|add-joint [KIND] [--target N] [K=V..]|remove-joint I\n"
+	"          |set-joint I K=V..|fit [I] [--kind K]|overlay [NAME..|+NAME|-NAME]|state|show  [--node N]\n"
+	"                                   the selected node's physics: block (body, shapes, joints)\n"
+	"  physics layers [get]|name I NAME|-|collide A B on|off|settings [K=V..]|reset [empty=true]|open\n"
+	"                                   project collision layers, collide matrix, world settings\n"
+	"  physasset open|create|get|model|add-part|remove-part|set-part|generate|stabilize|exclude|unexclude\n"
+	"            |set|select|simulate|save PATH ...  .rphysasset ragdolls\n"
+	/* m67e-usage: begin */
+	"  nav get|set|new|bake|cancel|save|clear|area-add|area-remove|area-set|area-box-add|area-box-remove|\n"
+	"      area-box-set|link-add|link-remove|link-set|select|overlay|agents|debug-agent|show ... [key=value...]\n"
+	"                                   navigation (Navigation panel)\n"
+	"  bt open|create|get|palette|add-node|remove-node|move-node|set-node|set-position|layout|select|\n"
+	"     show|add-key|remove-key|set-subtree|remove-subtree|open-subtree|validate|save|live ... [key=value...]\n"
+	"                                   behaviour tree (behaviour tree editor)\n"
+	"  fsm open|create|get|enter|up|add-state|remove-state|rename-state|set-initial|add-transition|\n"
+	"      set-transition|remove-transition|set-actions|set-position|select|add-key|remove-key|validate|\n"
+	"      save|live|send-event ... [key=value...]\n"
+	"                                   state machine (state machine editor)\n"
+	"  ai show|entities|select|state|set-key|send-event|brains|topic|log ... [key=value...]\n"
+	"                                   ai debug (AI panel)\n"
+	"  particles open|create|get|kinds|set|add-emitter|remove-emitter|move-emitter|duplicate-emitter|\n"
+	"            add-module|remove-module|move-module|select|solo|play|restart|seek|preview|stats|save|\n"
+	"            render ... [key=value...]\n"
+	"                                   particle effect (particle editor)\n"
+	"  weather open|create|get|kinds|set|add-preset|remove-preset|set-preset|add-layer|remove-layer|\n"
+	"          move-layer|set-layer|set-param|set-transition|remove-transition|select|preview|save|render ... [key=value...]\n"
+	"                                   weather (weather editor)\n"
+	"  terrain get|brush|stroke|sample|add-layer|remove-layer|set-layer|add-foliage|remove-foliage|\n"
+	"          set-foliage|rebake|save|create|show ... [key=value...]\n"
+	"                                   terrain (Terrain panel)\n"
+	"  water get|set|set-wave|add-point|set-point|remove-point|save ... [key=value...]\n"
+	"                                   water (water editor)\n"
+	"  mixer show|open|create|set-default|get|effect-types|add-bus|remove-bus|set-bus|set-send|\n"
+	"        remove-send|add-effect|remove-effect|move-effect|set-effect|add-snapshot|remove-snapshot|\n"
+	"        set-snapshot|capture-snapshot|set-duck|remove-duck|preview|meters|save ... [key=value...]\n"
+	"                                   mixer (mixer editor)\n"
+	"  audio get|set|curve|buses ... [key=value...]\n"
+	"                                   audio emitter (inspector)\n"
+	"  tiles state|grid|brush|autopaint|refresh|cell-at|tile-info ... [key=value...]\n"
+	"                                   tile painting (Tiles panel)\n"
+	"  tileset create|open|get|set|select|tile|collision|rule-tile|rule|preview|save ... [key=value...]\n"
+	"                                   tileset (tileset editor)\n"
+	"  sprite create|open|get|slice|frame|clip|clip-frame|event|play|save ... [key=value...]\n"
+	"                                   sprite sheet (sprite editor)\n"
+	"  debug state|show|breakpoints|set-breakpoint|remove-breakpoint|toggle-breakpoint|clear-breakpoints|\n"
+	"        continue|pause|step-over|step-in|step-out|stop|stack|scopes|variables|evaluate|watches|\n"
+	"        add-watch|remove-watch|dap-start|dap-stop ... [key=value...]\n"
+	"                                   script debugger (Debug panel)\n"
+	"  lsp servers|status|diagnostics|complete|hover|definition|references|rename|format|restart ... [key=value...]\n"
+	"                                   language server (code panel)\n"
+	"  profiler sample|set|capture|save|load|frames|frame|compare|view ... [key=value...]\n"
+	"                                   profiler capture (profiler panel)\n"
+	"  frame capture|status|calls|call|scrub|texture|save|load|show ... [key=value...]\n"
+	"                                   frame debugger (Frame Debugger panel)\n"
+	"  script run|languages|tools|run-tool|reload|run-in-editor|editor-running ... [key=value...]\n"
+	"                                   tool script (console panel)\n"
+	"  vscript create|open|get|node-types|gi-search|add-node|remove-node|set-node|connect|disconnect|\n"
+	"          set-variable|add-subgraph|remove-subgraph|add-comment|remove-comment|set-program|select|\n"
+	"          validate|run|live|breakpoint|continue|save ... [key=value...]\n"
+	"                                   visual script (visual script editor)\n"
+	"  memory status|types|resources|snapshot|snapshots|diff|clear-snapshots|history|show ... [key=value...]\n"
+	"                                   memory profiler (Memory panel)\n"
+	"  network stats|history|enable|reset|show ... [key=value...]\n"
+	"                                   network stats (Network panel)\n"
+	/* m67e-usage: end */
+	"  asset new KIND [path=P] [name=N] [image=I]  a new asset file (bt fsm particles weather mixer tileset\n"
+	"                                   sprite water nav-settings terrain ...)\n"
 	"  logs [--tail N] [-w]             editor log; -w follows\n"
 	"  events [TYPE...]                 stream events (changed, selection, level, saved, log, ...)\n"
 	"  call METHOD [key=value...|JSON]  any IPC method\n"
@@ -155,6 +258,43 @@ static const gchar *description =
 	"  lrgeditorctl view layout quad\n"
 	"  lrgeditorctl data open data/input.yaml\n"
 	"  lrgeditorctl data set /actions/jump/bindings/0/key ENTER; lrgeditorctl data save\n"
+	"  lrgeditorctl view mode light-complexity viewport=1\n"
+	"  lrgeditorctl view layers 0x5\n"
+	"  lrgeditorctl material create materials/steel.rmat shading_model=lit\n"
+	"  lrgeditorctl material set materials/steel.rmat metallic 1\n"
+	"  lrgeditorctl material assign Props/Crate materials/steel.rmat\n"
+	"  lrgeditorctl shader compile shaders/water.rshader\n"
+	"  lrgeditorctl shadergraph connect graphs/glow.rshadergraph time out mul a\n"
+	"  lrgeditorctl env set fog.density 0.02; lrgeditorctl env bake --wait\n"
+	"  lrgeditorctl post add looks/night.rpost vignette; lrgeditorctl post set looks/night.rpost 0 intensity 0.4\n"
+	"  lrgeditorctl lod force Props/Statue 2\n"
+	"  lrgeditorctl bake set samples 256; lrgeditorctl bake start --wait\n"
+	"  lrgeditorctl bake evaluate 0 0.01 0 0 1 0\n"
+	"  lrgeditorctl seq create seq/intro.rseq length=8; lrgeditorctl seq add-track transform binding=Props/Crate\n"
+	"  lrgeditorctl seq add-key 0 1.5 2 channel=location.y; lrgeditorctl seq scrub 1.5\n"
+	"  lrgeditorctl skel2d add-bone rigs/hero.rskel2d arm parent=root length=40\n"
+	"  lrgeditorctl anim add-transition anims/hero.ranim idle walk conditions='[{\"parameter\":\"speed\",\"op\":\">\",\"value\":0.1}]'\n"
+	"  lrgeditorctl bonemap auto-fill maps/mixamo.rbonemap\n"
+	"  lrgeditorctl clip list models/hero.glb\n"
+	"  lrgeditorctl physics add-body dynamic --node Props/Crate; lrgeditorctl physics set-body mass=20 --node Props/Crate\n"
+	"  lrgeditorctl physics add-joint hinge --target Door/Frame axis=0,1,0 --node Door\n"
+	"  lrgeditorctl physics layers name 9 water; lrgeditorctl physics layers collide water debris off\n"
+	"  lrgeditorctl physics layers settings gravity=0,-3.7,0 iterations=12\n"
+	"  lrgeditorctl physasset create chars/hero.rphysasset model=chars/hero.glb total_mass=80\n"
+	"  lrgeditorctl physasset set-part chars/hero.rphysasset shin_l joint=hinge twist_degrees=0,140\n"
+	"  lrgeditorctl physasset simulate chars/hero.rphysasset advance=2\n"
+	"  lrgeditorctl nav set agent_radius=0.4; lrgeditorctl nav bake; lrgeditorctl nav save\n"
+	"  lrgeditorctl bt add-node ai/guard.rbt wait parent=root props='{\"seconds\":2}'\n"
+	"  lrgeditorctl fsm add-transition ai/door.rfsm idle open event=use\n"
+	"  lrgeditorctl particles add-module fx/sparks.rparticles 0 gravity; lrgeditorctl particles seek fx/sparks.rparticles 1.5\n"
+	"  lrgeditorctl weather preview fx/sky.rweather preset=clear transition_to=storm\n"
+	"  lrgeditorctl terrain stroke points=[[0,0],[4,0]] tool=raise radius=6 --node Island\n"
+	"  lrgeditorctl water points-add 4 0 width=3 --node Lake\n"
+	"  lrgeditorctl mixer add-bus footsteps parent=sfx; lrgeditorctl audio set Speaker max_distance=30 bus=sfx\n"
+	"  lrgeditorctl tiles autopaint cells=[3,4,4,4] rule_tile=grass --node Ground\n"
+	"  lrgeditorctl tileset rule-tile preset grass preset=blob47 first=16 path=tiles/ground.rtileset\n"
+	"  lrgeditorctl sprite clip add walk frames=[0,1,2,3] fps=10 path=sprites/hero.rsprite\n"
+	"  lrgeditorctl asset new bt path=ai/guard.rbt; lrgeditorctl asset new sprite image=sprites/hero.png\n"
 	"  lrgeditorctl notify 'Build finished' --level success\n"
 	"  claude mcp add libregnum -- lrgeditorctl mcp\n";
 
@@ -723,6 +863,27 @@ cmd_create (gchar  **args,
 	if (!lrg_ctl_parse_assignments (args + 2, set, error))
 		return FALSE;
 
+	/*
+	 * kind=, primitive=, parent= and index= are node.create parameters
+	 * (the same as --kind, --primitive, --parent, --index): node.set does
+	 * not know them at the top level and would drop them silently, which
+	 * created a plain node for "create node Map kind=tilemap". The flags
+	 * win when both are given.
+	 */
+	{
+		static const gchar * const create_keys[] = { "kind", "primitive", "parent", "index", NULL };
+		guint                      k;
+
+		for (k = 0; create_keys[k] != NULL; k++)
+		{
+			if (!json_object_has_member (set, create_keys[k]))
+				continue;
+			if (!json_object_has_member (p, create_keys[k]))
+				json_object_set_member (p, create_keys[k], json_object_dup_member (set, create_keys[k]));
+			json_object_remove_member (set, create_keys[k]);
+		}
+	}
+
 	created = call ("node.create", p, error);
 	if (created == NULL)
 		return FALSE;
@@ -1182,6 +1343,8 @@ cmd_select (gchar  **args,
 	return call_ok ("selection.set", p, error);
 }
 
+static gboolean view_layers (gchar **args, GError **error);
+
 static gboolean
 cmd_view (gchar  **args,
           GError **error)
@@ -1224,7 +1387,10 @@ cmd_view (gchar  **args,
 
 		return passthrough ("view.layout", keys, args + 1, error);
 	}
-	if (g_strcmp0 (args[0], "render-mode") == 0 || g_strcmp0 (args[0], "render_mode") == 0)
+	if (g_strcmp0 (args[0], "layers") == 0)
+		return view_layers (args + 1, error);
+	if (g_strcmp0 (args[0], "render-mode") == 0 || g_strcmp0 (args[0], "render_mode") == 0 ||
+	    g_strcmp0 (args[0], "mode") == 0)
 	{
 		static const gchar * const keys[] = { "mode", NULL };
 
@@ -1268,7 +1434,7 @@ cmd_view (gchar  **args,
 			return call_ok ("action.run", p, error);
 		}
 	return usage_error (error, "view top|front|right|bottom|back|left|persp|all, view focus NAME, view set key=value, "
-	                    "view layout NAME, view render-mode MODE, view overlay NAME on|off");
+	                    "view layout NAME, view render-mode MODE, view overlay NAME on|off, view layers [MASK|LAYER on|off]");
 }
 
 static gboolean
@@ -1440,6 +1606,10 @@ simple_method (const gchar  *method,
  * tiles NODE [paint|rect|fill|pick|configure key=value...]
  * Without an action, prints the grid (layer name and rows of tile ids).
  */
+/* the M6/M7 tiles.* verbs (defined with the other M6/M7 families) */
+static gboolean m67_has_verb (const gchar *family, const gchar *verb);
+static gboolean m67_run_named (const gchar *family, gchar **args, GError **error);
+
 static gboolean
 cmd_tiles (gchar  **args,
            GError **error)
@@ -1455,6 +1625,9 @@ cmd_tiles (gchar  **args,
 
 	if (args[0] == NULL)
 		return usage_error (error, "tiles NODE [paint|rect|fill|pick|configure key=value...]");
+	/* the 0.9.0 rule-tile and grid verbs: tiles state|grid|brush|autopaint|... */
+	if (m67_has_verb ("tiles", args[0]))
+		return m67_run_named ("tiles", args, error);
 	p = node_param (args[0]);
 	if (args[1] != NULL)
 	{
@@ -1508,7 +1681,8 @@ cmd_tiles (gchar  **args,
 
 /*
  * timeline [list] | get NAME | add NAME [key=value...] | rm NAME |
- * key NAME NODE key=value... | play [NAME] | stop | seek TIME [NAME] | state
+ * key NAME NODE key=value... | tangent NODE TIME MODE [key=value...] |
+ * play [NAME] | stop | seek TIME [NAME] | state
  */
 static gboolean
 cmd_timeline (gchar  **args,
@@ -1541,6 +1715,16 @@ cmd_timeline (gchar  **args,
 		if (!lrg_ctl_parse_assignments (args + 3, p, error))
 			return FALSE;
 	}
+	else if (g_strcmp0 (what, "tangent") == 0 && args[1] != NULL && args[2] != NULL && args[3] != NULL)
+	{
+		/* tangent NODE TIME MODE [name=TL] [channel=C] [slope=S | in=I out=O] */
+		method = "timeline.tangent";
+		json_object_set_string_member (p, "node", args[1]);
+		json_object_set_double_member (p, "time", g_ascii_strtod (args[2], NULL));
+		json_object_set_string_member (p, "tangent", args[3]);
+		if (!lrg_ctl_parse_assignments (args + 4, p, error))
+			return FALSE;
+	}
 	else if (g_strcmp0 (what, "play") == 0)
 	{
 		method = "timeline.play";
@@ -1556,6 +1740,7 @@ cmd_timeline (gchar  **args,
 	}
 	if (method == NULL)
 		return usage_error (error, "timeline [list|get NAME|add NAME|rm NAME|key NAME NODE key=value...|"
+		                           "tangent NODE TIME MODE [name=TL] [channel=C] [slope=S]|"
 		                           "play [NAME]|stop|seek TIME [NAME]|state]");
 
 	r = call (method, p, error);
@@ -1633,7 +1818,155 @@ cmd_meta (gchar  **args,
 	return TRUE;
 }
 
-/* vcs [PATH]: the project's git status, or one path's badge */
+/* lrgeditor next to this binary, else the one on PATH. */
+static gchar *
+find_lrgeditor (void)
+{
+	g_autofree gchar *dir = NULL;
+	gchar            *beside;
+
+	if (ctl_argv0 != NULL)
+	{
+		dir = g_path_get_dirname (ctl_argv0);
+		beside = g_build_filename (dir, "lrgeditor", NULL);
+		if (g_file_test (beside, G_FILE_TEST_IS_EXECUTABLE))
+			return beside;
+		g_free (beside);
+	}
+	return g_find_program_in_path ("lrgeditor");
+}
+
+/* Runs lrgeditor with @argv[1...] (argv[0] is replaced). Prints stderr. */
+static gboolean
+spawn_lrgeditor (gchar  **argv,
+                 GError **error)
+{
+	g_autofree gchar *bin = find_lrgeditor ();
+	g_autofree gchar *err_text = NULL;
+	gint              status = 0;
+
+	if (bin == NULL)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		                     "lrgeditor is not installed");
+		return FALSE;
+	}
+	argv[0] = bin;
+	if (!g_spawn_sync (NULL, argv, NULL, 0, NULL, NULL, NULL, &err_text, &status, error))
+		return FALSE;
+	if (err_text != NULL && err_text[0] != '\0')
+		fputs (err_text, stderr);
+	return g_spawn_check_wait_status (status, error);
+}
+
+/* merge BASE OURS THEIRS | merge install [DIR] */
+static gboolean
+cmd_merge (gchar  **args,
+           GError **error)
+{
+	gchar *argv[6];
+
+	if (g_strcmp0 (args[0], "install") == 0)
+	{
+		if (args[1] != NULL && args[2] != NULL)
+			return usage_error (error, "merge install [DIR]");
+		argv[0] = NULL;
+		argv[1] = (gchar *) "--merge-install";
+		argv[2] = (args[1] != NULL) ? args[1] : (gchar *) ".";
+		argv[3] = NULL;
+		return spawn_lrgeditor (argv, error);
+	}
+	if (args[0] == NULL || args[1] == NULL || args[2] == NULL || args[3] != NULL)
+		return usage_error (error, "merge BASE OURS THEIRS | merge install [DIR]");
+	argv[0] = NULL;
+	argv[1] = (gchar *) "--merge";
+	argv[2] = args[0];
+	argv[3] = args[1];
+	argv[4] = args[2];
+	argv[5] = NULL;
+	return spawn_lrgeditor (argv, error);
+}
+
+static gboolean
+cmd_po (gchar  **args,
+        GError **error)
+{
+	static const gchar * const text_keys[] = { "text", NULL };
+	static const gchar * const import_keys[] = { "path", "id", NULL };
+	static const gchar * const export_keys[] = { "path", "id", "text", NULL };
+
+	if (g_strcmp0 (args[0], "extract") == 0)
+		return passthrough ("po.extract", text_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "pseudo") == 0)
+		return passthrough ("po.pseudo", text_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "import") == 0)
+		return passthrough ("po.import", import_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "export") == 0)
+		return passthrough ("po.export", export_keys, args + 1, error);
+	return usage_error (error, "po extract|pseudo TEXT | po import PATH ID | po export PATH ID TEXT");
+}
+
+static gboolean
+cmd_collab (gchar  **args,
+            GError **error)
+{
+	static const gchar * const apply_keys[] = { "user", "guid", "revision", "prop", "value", NULL };
+	static const gchar * const get_keys[] = { "guid", "prop", NULL };
+	static const gchar * const lock_keys[] = { "user", "guid", NULL };
+	static const gchar * const cursor_keys[] = { "user", "x", "y", "z", NULL };
+
+	if (g_strcmp0 (args[0], "apply") == 0)
+		return passthrough ("collab.apply", apply_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "get") == 0)
+		return passthrough ("collab.get", get_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "lock") == 0)
+		return passthrough ("collab.lock", lock_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "unlock") == 0)
+		return passthrough ("collab.unlock", lock_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "cursor") == 0)
+		return passthrough ("collab.cursor", cursor_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "presence") == 0)
+		return passthrough ("collab.presence", NULL, args + 1, error);
+	return usage_error (error, "collab apply|get|lock|unlock|cursor|presence ...");
+}
+
+static gboolean
+cmd_scenes (gchar  **args,
+            GError **error)
+{
+	static const gchar * const path_keys[] = { "path", NULL };
+	static const gchar * const index_keys[] = { "index", NULL };
+
+	if (args[0] == NULL || g_strcmp0 (args[0], "list") == 0)
+		return passthrough ("scenes.list", NULL, args[0] != NULL ? args + 1 : args, error);
+	if (g_strcmp0 (args[0], "open") == 0)
+		return passthrough ("scenes.open", path_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "active") == 0)
+		return passthrough ("scenes.active", index_keys, args + 1, error);
+	return usage_error (error, "scenes list | scenes open PATH | scenes active INDEX");
+}
+
+static gboolean
+cmd_gizmo (gchar  **args,
+           GError **error)
+{
+	static const gchar * const apply_keys[] = { "op", NULL };
+	static const gchar * const pivot_keys[] = { "mode", NULL };
+	static const gchar * const cursor_keys[] = { "x", "y", "z", NULL };
+
+	if (g_strcmp0 (args[0], "apply") == 0)
+		return passthrough ("gizmo.apply", apply_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "pivot") == 0)
+		return passthrough ("gizmo.pivot", pivot_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "cursor") == 0)
+		return passthrough ("gizmo.cursor", cursor_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "origin") == 0)
+		return passthrough ("gizmo.origin", NULL, args + 1, error);
+	return usage_error (error, "gizmo apply OP [axis=N] [value=N] | gizmo pivot MODE | gizmo cursor X Y Z | gizmo origin");
+}
+
+/* vcs [PATH]: the project's git status, or one path's badge.
+ * vcs diff|log|locks|magit | vcs commit MESSAGE */
 static gboolean
 cmd_vcs (gchar  **args,
          GError **error)
@@ -1645,6 +1978,27 @@ cmd_vcs (gchar  **args,
 		{ "STATUS", "status", FALSE }, { "LETTER", "letter", TRUE }, { "PATH", "path", FALSE }
 	};
 
+	if (g_strcmp0 (args[0], "diff") == 0)
+		return passthrough ("vcs.diff", NULL, args + 1, error);
+	if (g_strcmp0 (args[0], "log") == 0)
+		return passthrough ("vcs.log", NULL, args + 1, error);
+	if (g_strcmp0 (args[0], "locks") == 0)
+		return passthrough ("vcs.locks", NULL, args + 1, error);
+	if (g_strcmp0 (args[0], "magit") == 0)
+		return passthrough ("vcs.magit", NULL, args + 1, error);
+	if (g_strcmp0 (args[0], "commit") == 0)
+	{
+		static const gchar * const message_keys[] = { "message", NULL };
+		g_autofree gchar           *msg = NULL;
+		gchar                      *one[2];
+
+		if (args[1] == NULL)
+			return usage_error (error, "vcs commit MESSAGE");
+		msg = g_strjoinv (" ", args + 1);
+		one[0] = msg;
+		one[1] = NULL;
+		return passthrough ("vcs.commit", message_keys, one, error);
+	}
 	if (args[0] != NULL)
 		return passthrough ("vcs.status", keys, args, error);
 	r = call ("vcs.status", p, error);
@@ -1836,6 +2190,12 @@ cmd_asset (gchar  **args,
 
 	if (g_strcmp0 (args[0], "orphans") == 0)
 		return passthrough ("asset.orphans", NULL, args + 1, error);
+	if (g_strcmp0 (args[0], "new") == 0)
+	{
+		static const gchar * const new_keys[] = { "kind", NULL };
+
+		return passthrough ("asset.new", new_keys, args + 1, error);
+	}
 	if (args[0] == NULL || args[1] == NULL)
 		return usage_error (error, "asset reveal|duplicate|trash PATH | asset rename PATH NAME | "
 		                    "asset move PATH DEST | asset orphans [trash=true]");
@@ -1959,7 +2319,10 @@ cmd_source (gchar  **args,
 	return TRUE;
 }
 
-/* profiler [frames=N] [enable=true|false]: section timings */
+/*
+ * profiler [sample] [frames=N] [enable=true|false]: section timings;
+ * profiler VERB ...: the generated profiler.* verbs (set, capture, ...)
+ */
 static gboolean
 cmd_profiler (gchar  **args,
               GError **error)
@@ -1972,6 +2335,11 @@ cmd_profiler (gchar  **args,
 	g_autoptr(JsonNode)   r = NULL;
 	JsonObject           *o;
 
+	/* profiler set|capture|save|load|frames|frame|compare|view: the 0.9.0 verbs */
+	if (m67_has_verb ("profiler", args[0]))
+		return m67_run_named ("profiler", args, error);
+	if (g_strcmp0 (args[0], "sample") == 0)
+		args++;
 	if (!lrg_ctl_parse_assignments (args, p, error))
 		return FALSE;
 	r = call ("profiler.sample", p, error);
@@ -2184,6 +2552,1617 @@ cmd_preferences (gchar  **args,
 	return TRUE;
 }
 
+/* ==========================================================================
+ * 0.9.0 rendering verbs: material, shader, shadergraph, env, post, lod
+ * ========================================================================== */
+
+/*
+ * One sub-command of a verb family: "material get PATH" calls
+ * material.get with {path}. @keys names the positional parameters in
+ * order; a leading '@' marks a file path (sent through path_arg()), a
+ * leading '~' a typed value (parsed like an assignment value: JSON,
+ * numbers, booleans, null, number vectors; "on" / "off" are booleans).
+ * Anything else is sent as a string. key=value arguments pass through.
+ */
+typedef struct
+{
+	const gchar *verb;
+	const gchar *method;
+	const gchar *keys[8];
+} CtlVerb;
+
+/* A typed positional value: on/off as booleans, else lrg_ctl_parse_value(). */
+static JsonNode *
+typed_value (const gchar *text)
+{
+	JsonNode *node;
+
+	if (g_strcmp0 (text, "on") == 0 || g_strcmp0 (text, "off") == 0)
+	{
+		node = json_node_new (JSON_NODE_VALUE);
+		json_node_set_boolean (node, text[1] == 'n');
+		return node;
+	}
+	return lrg_ctl_parse_value (text);
+}
+
+/* The usage line of a family: "family verb KEY KEY | ...". */
+static gchar *
+family_usage (const gchar   *family,
+              const CtlVerb *table,
+              gsize          n)
+{
+	GString *s = g_string_new (NULL);
+	gsize    i;
+	guint    k;
+
+	for (i = 0; i < n; i++)
+	{
+		if (i > 0)
+			g_string_append (s, " | ");
+		g_string_append_printf (s, "%s %s", family, table[i].verb);
+		for (k = 0; table[i].keys[k] != NULL; k++)
+		{
+			const gchar      *key = table[i].keys[k];
+			g_autofree gchar *upper = NULL;
+
+			if (*key == '@' || *key == '~')
+				key++;
+			upper = g_ascii_strup (key, -1);
+			g_string_append_printf (s, " %s", upper);
+		}
+	}
+	g_string_append (s, " [key=value...]");
+	return g_string_free (s, FALSE);
+}
+
+/* Builds the params of @row from @args (positionals, then key=value). */
+static JsonObject *
+family_params (const CtlVerb  *row,
+               gchar         **args,
+               GError        **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	guint                 k = 0;
+	guint                 i;
+
+	for (i = 0; args != NULL && args[i] != NULL; i++)
+	{
+		const gchar *key = row->keys[k];
+
+		if (strchr (args[i], '=') == NULL && key != NULL)
+		{
+			if (*key == '@')
+			{
+				g_autofree gchar *path = path_arg (args[i]);
+
+				json_object_set_string_member (p, key + 1, path);
+			}
+			else if (*key == '~')
+				json_object_set_member (p, key + 1, typed_value (args[i]));
+			else
+				json_object_set_string_member (p, key, args[i]);
+			k++;
+		}
+		else
+		{
+			gchar *one[] = { args[i], NULL };
+
+			if (!lrg_ctl_parse_assignments (one, p, error))
+				return NULL;
+		}
+	}
+	return g_steal_pointer (&p);
+}
+
+/* Runs "family VERB ..." from @table; the result prints as YAML by default. */
+static gboolean
+run_family (const gchar   *family,
+            const CtlVerb *table,
+            gsize          n,
+            gchar        **args,
+            GError       **error)
+{
+	g_autoptr(JsonObject) p = NULL;
+	g_autoptr(JsonNode)   r = NULL;
+	gsize                 i;
+
+	for (i = 0; args[0] != NULL && i < n; i++)
+	{
+		if (g_strcmp0 (args[0], table[i].verb) != 0)
+			continue;
+		p = family_params (&table[i], args + 1, error);
+		if (p == NULL)
+			return FALSE;
+		r = call (table[i].method, p, error);
+		if (r == NULL)
+			return FALSE;
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
+	{
+		g_autofree gchar *usage = family_usage (family, table, n);
+
+		return usage_error (error, "%s", usage);
+	}
+}
+
+/* material open|create|variant|get|set|revert|save|preview|assign|list */
+static gboolean
+cmd_material (gchar  **args,
+              GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "open", "material.open", { "@path", NULL } },
+		{ "create", "material.create", { "@path", NULL } },
+		{ "variant", "material.create_variant", { "@path", "@dest", NULL } },
+		{ "get", "material.get", { "@path", NULL } },
+		{ "set", "material.set", { "@path", "key", "~value", NULL } },
+		{ "revert", "material.revert", { "@path", "key", NULL } },
+		{ "save", "material.save", { "@path", NULL } },
+		{ "preview", "material.preview", { "@path", "shape", NULL } },
+		{ "assign", "material.assign", { "node", "@path", NULL } },
+		{ "list", "material.list", { NULL } },
+	};
+
+	return run_family ("material", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* shader create|compile|diagnostics|uniforms|reload PATH */
+static gboolean
+cmd_shader (gchar  **args,
+            GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "create", "shader.create", { "@path", NULL } },
+		{ "compile", "shader.compile", { "@path", NULL } },
+		{ "diagnostics", "shader.diagnostics", { "@path", NULL } },
+		{ "uniforms", "shader.uniforms", { "@path", NULL } },
+		{ "reload", "shader.reload", { "@path", NULL } },
+	};
+
+	return run_family ("shader", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* shadergraph open|create|types|get|add|remove|connect|disconnect|param|input|validate|glsl|save */
+static gboolean
+cmd_shadergraph (gchar  **args,
+                 GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "open", "shadergraph.open", { "@path", NULL } },
+		{ "create", "shadergraph.create", { "@path", NULL } },
+		{ "types", "shadergraph.node_types", { NULL } },
+		{ "get", "shadergraph.get", { "@path", NULL } },
+		{ "add", "shadergraph.add_node", { "@path", "type", NULL } },
+		{ "remove", "shadergraph.remove_node", { "@path", "id", NULL } },
+		{ "connect", "shadergraph.connect", { "@path", "from", "from_port", "to", "to_port", NULL } },
+		{ "disconnect", "shadergraph.disconnect", { "@path", "to", "to_port", NULL } },
+		{ "param", "shadergraph.set_param", { "@path", "id", "key", "~value", NULL } },
+		{ "input", "shadergraph.set_input", { "@path", "id", "port", "~value", NULL } },
+		{ "validate", "shadergraph.validate", { "@path", NULL } },
+		{ "glsl", "shadergraph.glsl", { "@path", NULL } },
+		{ "save", "shadergraph.save", { "@path", NULL } },
+	};
+
+	return run_family ("shadergraph", table, G_N_ELEMENTS (table), args, error);
+}
+
+/*
+ * env bake --wait: start the bake, then poll environment.progress until
+ * it is no longer baking (the bake runs over the editor's next frames).
+ * Exits 1 when the editor reports an error.
+ */
+static gboolean
+env_bake_wait (GError **error)
+{
+	g_autoptr(JsonNode) started = NULL;
+	gint64              deadline;
+
+	started = call ("environment.bake", NULL, error);
+	if (started == NULL)
+		return FALSE;
+	/* A bake under software GL can take a while: wait up to ten minutes
+	 * (or --timeout seconds when that is longer) */
+	deadline = g_get_monotonic_time () + (gint64) MAX (opt_timeout, 600) * G_USEC_PER_SEC;
+	while (g_get_monotonic_time () < deadline)
+	{
+		g_autoptr(JsonNode) r = call ("environment.progress", NULL, error);
+		JsonObject         *o;
+
+		if (r == NULL)
+			return FALSE;
+		o = JSON_NODE_HOLDS_OBJECT (r) ? json_node_get_object (r) : NULL;
+		if (o == NULL || !json_object_get_boolean_member_with_default (o, "baking", FALSE))
+		{
+			const gchar *err = str_member (o, "error");
+
+			if (err != NULL)
+			{
+				g_set_error (error, LRG_CTL_ERROR, LRG_CTL_ERROR_REMOTE, "bake failed: %s", err);
+				return FALSE;
+			}
+			lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+			return TRUE;
+		}
+		g_usleep (100 * 1000);
+	}
+	g_set_error_literal (error, LRG_CTL_ERROR, LRG_CTL_ERROR_REMOTE, "timed out waiting for the bake");
+	return FALSE;
+}
+
+/* env get|set KEY VALUE|reset|bake [--wait]|progress|show */
+static gboolean
+cmd_env (gchar  **args,
+         GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "get", "environment.get", { NULL } },
+		{ "set", "environment.set", { "key", "~value", NULL } },
+		{ "reset", "environment.reset", { NULL } },
+		{ "bake", "environment.bake", { NULL } },
+		{ "progress", "environment.progress", { NULL } },
+		{ "show", "environment.show", { NULL } },
+	};
+
+	if (args[0] == NULL)
+	{
+		gchar *get[] = { (gchar *) "get", NULL };
+
+		return run_family ("env", table, G_N_ELEMENTS (table), get, error);
+	}
+	if (g_strcmp0 (args[0], "bake") == 0 && opt_wait)
+		return env_bake_wait (error);
+	return run_family ("env", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* post types|open|create|get|add|remove|move|set|save|preview|look|assign */
+static gboolean
+cmd_post (gchar  **args,
+          GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "types", "post.effect_types", { NULL } },
+		{ "open", "post.open", { "@path", NULL } },
+		{ "create", "post.create", { "@path", NULL } },
+		{ "get", "post.get", { "@path", NULL } },
+		{ "add", "post.add", { "@path", "type", NULL } },
+		{ "remove", "post.remove", { "@path", "~index", NULL } },
+		{ "move", "post.move", { "@path", "~from", "~to", NULL } },
+		{ "set", "post.set", { "@path", "~index", "key", "~value", NULL } },
+		{ "save", "post.save", { "@path", NULL } },
+		{ "preview", "post.preview", { "@path", "~enabled", NULL } },
+		{ "look", "post.save_look", { "@path", NULL } },
+		{ "assign", "post.assign", { "@path", NULL } },
+	};
+
+	/* post preview on|off: no path (the open editor's stack, or off) */
+	if (g_strcmp0 (args[0], "preview") == 0 &&
+	    (g_strcmp0 (args[1], "on") == 0 || g_strcmp0 (args[1], "off") == 0))
+	{
+		g_autoptr(JsonObject) p = json_object_new ();
+		g_autoptr(JsonNode)   r = NULL;
+
+		json_object_set_boolean_member (p, "enabled", g_strcmp0 (args[1], "on") == 0);
+		r = call ("post.preview", p, error);
+		if (r == NULL)
+			return FALSE;
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
+	return run_family ("post", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* lod get NODE | lod force NODE LEVEL|auto */
+static gboolean
+cmd_lod (gchar  **args,
+         GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "get", "lod.get", { "node", NULL } },
+		{ "force", "lod.force", { "node", "~level", NULL } },
+	};
+
+	/* "auto" is -1 (a bare -1 would be read as an option) */
+	if (g_strcmp0 (args[0], "force") == 0 && args[1] != NULL && g_strcmp0 (args[2], "auto") == 0)
+	{
+		gchar *fixed[] = { args[0], args[1], (gchar *) "-1", NULL };
+		guint  i;
+
+		for (i = 3; args[i] != NULL; i++)
+			if (strchr (args[i], '=') != NULL)
+				return usage_error (error, "lod force NODE auto takes no other arguments");
+		return run_family ("lod", table, G_N_ELEMENTS (table), fixed, error);
+	}
+	return run_family ("lod", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* ==========================================================================
+ * 0.9.0 M3/M4 editor verbs: bake, seq, skel2d, anim, bonemap, clip
+ * ========================================================================== */
+
+/*
+ * bake start --wait: start the lighting bake, then poll bake.progress
+ * until it stops.  Exits 1 when the bake failed or was cancelled.
+ */
+static gboolean
+bake_start_wait (gchar  **args,
+                 GError **error)
+{
+	static const CtlVerb start = { "start", "bake.start", { NULL } };
+	g_autoptr(JsonObject) p = family_params (&start, args, error);
+	g_autoptr(JsonNode)   started = NULL;
+	gint64                deadline;
+
+	if (p == NULL)
+		return FALSE;
+	started = call ("bake.start", p, error);
+	if (started == NULL)
+		return FALSE;
+	/* the baker runs on the CPU: large levels take minutes */
+	deadline = g_get_monotonic_time () + (gint64) MAX (opt_timeout, 3600) * G_USEC_PER_SEC;
+	while (g_get_monotonic_time () < deadline)
+	{
+		g_autoptr(JsonNode) r = call ("bake.progress", NULL, error);
+		JsonObject         *o;
+
+		if (r == NULL)
+			return FALSE;
+		o = JSON_NODE_HOLDS_OBJECT (r) ? json_node_get_object (r) : NULL;
+		if (o == NULL || !json_object_get_boolean_member_with_default (o, "baking", FALSE))
+		{
+			const gchar *err = str_member (o, "error");
+			const gchar *phase = str_member (o, "phase");
+
+			if (err != NULL)
+			{
+				g_set_error (error, LRG_CTL_ERROR, LRG_CTL_ERROR_REMOTE, "bake failed: %s", err);
+				return FALSE;
+			}
+			if (g_strcmp0 (phase, "cancelled") == 0)
+			{
+				g_set_error_literal (error, LRG_CTL_ERROR, LRG_CTL_ERROR_REMOTE, "bake cancelled");
+				return FALSE;
+			}
+			{
+				g_autoptr(JsonNode) state = call ("bake.get", NULL, error);
+
+				if (state == NULL)
+					return FALSE;
+				lrg_ctl_print (state, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+			}
+			return TRUE;
+		}
+		g_usleep (200 * 1000);
+	}
+	g_set_error_literal (error, LRG_CTL_ERROR, LRG_CTL_ERROR_REMOTE, "timed out waiting for the bake");
+	return FALSE;
+}
+
+/* "X Y Z" positionals as a JSON array member @key of @p. */
+static gboolean
+xyz_member (JsonObject   *p,
+            const gchar  *key,
+            gchar       **args,
+            GError      **error)
+{
+	JsonArray *a = json_array_new ();
+	guint      k;
+
+	for (k = 0; k < 3; k++)
+	{
+		gchar   *end = NULL;
+		gdouble  v;
+
+		if (args[k] == NULL)
+		{
+			json_array_unref (a);
+			return usage_error (error, "%s needs three numbers", key);
+		}
+		v = g_ascii_strtod (args[k], &end);
+		if (end == args[k] || *end != '\0')
+		{
+			json_array_unref (a);
+			return usage_error (error, "%s: '%s' is not a number", key, args[k]);
+		}
+		json_array_add_double_element (a, v);
+	}
+	json_object_set_array_member (p, key, a);
+	return TRUE;
+}
+
+/*
+ * bake [get] | set KEY VALUE | reset | start [--wait] [save=false] |
+ * progress | cancel | save [DIR] | clear | evaluate [X Y Z [NX NY NZ]] |
+ * preview on|off | page N | show
+ */
+static gboolean
+cmd_bake (gchar  **args,
+          GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "get", "bake.get", { NULL } },
+		{ "set", "bake.set", { "key", "~value", NULL } },
+		{ "start", "bake.start", { NULL } },
+		{ "progress", "bake.progress", { NULL } },
+		{ "cancel", "bake.cancel", { NULL } },
+		{ "save", "bake.save", { "@dir", NULL } },
+		{ "clear", "bake.clear", { NULL } },
+		{ "evaluate", "bake.evaluate", { NULL } },
+		{ "preview", "bake.preview", { "~show", NULL } },
+		{ "page", "bake.preview", { "~page", NULL } },
+		{ "show", "bake.show", { NULL } },
+		{ "reset", "bake.set", { NULL } },
+	};
+
+	if (args[0] == NULL)
+	{
+		gchar *get[] = { (gchar *) "get", NULL };
+
+		return run_family ("bake", table, G_N_ELEMENTS (table), get, error);
+	}
+	if (g_strcmp0 (args[0], "start") == 0 && opt_wait)
+		return bake_start_wait (args + 1, error);
+	if (g_strcmp0 (args[0], "reset") == 0)
+	{
+		g_autoptr(JsonObject) p = json_object_new ();
+		g_autoptr(JsonNode)   r = NULL;
+
+		json_object_set_boolean_member (p, "reset", TRUE);
+		r = call ("bake.set", p, error);
+		if (r == NULL)
+			return FALSE;
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
+	if (g_strcmp0 (args[0], "evaluate") == 0 && args[1] != NULL && strchr (args[1], '=') == NULL)
+	{
+		/* evaluate X Y Z [NX NY NZ]: a point (and normal); without
+		 * numbers the surface under the viewport centre */
+		g_autoptr(JsonObject) p = json_object_new ();
+		g_autoptr(JsonNode)   r = NULL;
+
+		if (!xyz_member (p, "position", args + 1, error))
+			return FALSE;
+		if (args[4] != NULL && !xyz_member (p, "normal", args + 4, error))
+			return FALSE;
+		r = call ("bake.evaluate", p, error);
+		if (r == NULL)
+			return FALSE;
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
+	return run_family ("bake", table, G_N_ELEMENTS (table), args, error);
+}
+
+/*
+ * seq list | open PATH | create PATH | get | set | add-track KIND |
+ * add-key TRACK TIME [VALUE] | set-key TRACK | add-section TRACK START |
+ * remove | bind NODE | play | scrub TIME | save | undo [redo=true] |
+ * from-timeline TL PATH
+ * (path=... picks a sequence other than the open one)
+ */
+static gboolean
+cmd_seq (gchar  **args,
+         GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "list", "sequence.list", { NULL } },
+		{ "open", "sequence.open", { "@path", NULL } },
+		{ "create", "sequence.create", { "@path", NULL } },
+		{ "get", "sequence.get", { NULL } },
+		{ "set", "sequence.set", { NULL } },
+		{ "add-track", "sequence.add_track", { "kind", NULL } },
+		{ "add-key", "sequence.add_key", { "~track", "~time", "~value", NULL } },
+		{ "set-key", "sequence.set_key", { "~track", NULL } },
+		{ "add-section", "sequence.add_section", { "~track", "~start", NULL } },
+		{ "remove", "sequence.remove", { NULL } },
+		{ "bind", "sequence.bind", { "node", NULL } },
+		{ "play", "sequence.play", { NULL } },
+		{ "scrub", "sequence.scrub", { "~time", NULL } },
+		{ "save", "sequence.save", { NULL } },
+		{ "undo", "sequence.undo", { NULL } },
+		{ "from-timeline", "sequence.from_timeline", { "timeline", "@path", NULL } },
+	};
+
+	if (args[0] == NULL)
+	{
+		gchar *list[] = { (gchar *) "list", NULL };
+
+		return run_family ("seq", table, G_N_ELEMENTS (table), list, error);
+	}
+	return run_family ("seq", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* skel2d VERB PATH ...: the .rskel2d editor (every verb names the file) */
+static gboolean
+cmd_skel2d (gchar  **args,
+            GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "create", "skel2d.create", { "@path", NULL } },
+		{ "open", "skel2d.open", { "@path", NULL } },
+		{ "get", "skel2d.get", { "@path", NULL } },
+		{ "add-bone", "skel2d.add_bone", { "@path", "name", NULL } },
+		{ "set-bone", "skel2d.set_bone", { "@path", "bone", NULL } },
+		{ "remove-bone", "skel2d.remove_bone", { "@path", "bone", NULL } },
+		{ "add-slot", "skel2d.add_slot", { "@path", "name", "bone", NULL } },
+		{ "set-slot", "skel2d.set_slot", { "@path", "slot", NULL } },
+		{ "remove-slot", "skel2d.remove_slot", { "@path", "slot", NULL } },
+		{ "draw-order", "skel2d.draw_order", { "@path", "~order", NULL } },
+		{ "attach", "skel2d.attach", { "@path", "slot", "name", NULL } },
+		{ "detach", "skel2d.detach", { "@path", "slot", "name", NULL } },
+		{ "mesh", "skel2d.mesh", { "@path", "slot", "name", NULL } },
+		{ "auto-weights", "skel2d.auto_weights", { "@path", "slot", "name", NULL } },
+		{ "paint-weights", "skel2d.paint_weights", { "@path", "slot", "name", "bone", "~x", "~y", NULL } },
+		{ "skin", "skel2d.skin", { "@path", "name", "op", NULL } },
+		{ "clip", "skel2d.clip", { "@path", "name", "op", NULL } },
+		{ "key", "skel2d.key", { "@path", "target", "channel", "~time", NULL } },
+		{ "play", "skel2d.play", { "@path", NULL } },
+		{ "mode", "skel2d.mode", { "@path", "mode", NULL } },
+		{ "pick", "skel2d.pick", { "@path", "~x", "~y", NULL } },
+		{ "save", "skel2d.save", { "@path", NULL } },
+	};
+
+	return run_family ("skel2d", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* anim VERB PATH ...: the .ranim animation graph editor */
+static gboolean
+cmd_anim (gchar  **args,
+          GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "open", "anim.open", { "@path", NULL } },
+		{ "create", "anim.create", { "@path", NULL } },
+		{ "get", "anim.get", { "@path", NULL } },
+		{ "enter", "anim.enter", { "@path", NULL } },
+		{ "add-layer", "anim.add_layer", { "@path", "name", NULL } },
+		{ "remove-layer", "anim.remove_layer", { "@path", "name", NULL } },
+		{ "add-state", "anim.add_state", { "@path", "name", NULL } },
+		{ "remove-state", "anim.remove_state", { "@path", "name", NULL } },
+		{ "set-state", "anim.set_state", { "@path", "name", NULL } },
+		{ "add-transition", "anim.add_transition", { "@path", "from", "to", NULL } },
+		{ "set-transition", "anim.set_transition", { "@path", "from", "to", NULL } },
+		{ "remove-transition", "anim.remove_transition", { "@path", "from", "to", NULL } },
+		{ "add-param", "anim.add_parameter", { "@path", "name", "type", NULL } },
+		{ "remove-param", "anim.remove_parameter", { "@path", "name", NULL } },
+		{ "set-param", "anim.set_parameter", { "@path", "name", "~value", NULL } },
+		{ "blend-tree", "anim.set_blend_tree", { "@path", "state", NULL } },
+		{ "preview", "anim.preview", { "@path", NULL } },
+		{ "validate", "anim.validate", { "@path", NULL } },
+		{ "save", "anim.save", { "@path", NULL } },
+	};
+
+	return run_family ("anim", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* bonemap VERB PATH ...: the .rbonemap retarget map editor */
+static gboolean
+cmd_bonemap (gchar  **args,
+             GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "open", "bonemap.open", { "@path", NULL } },
+		{ "create", "bonemap.create", { "@path", NULL } },
+		{ "get", "bonemap.get", { "@path", NULL } },
+		{ "set", "bonemap.set", { "@path", "source", "~target", NULL } },
+		{ "auto-fill", "bonemap.auto_fill", { "@path", NULL } },
+		{ "rules", "bonemap.set_rules", { "@path", NULL } },
+		{ "models", "bonemap.set_models", { "@path", NULL } },
+		{ "preview", "bonemap.preview", { "@path", NULL } },
+		{ "save", "bonemap.save", { "@path", NULL } },
+	};
+
+	return run_family ("bonemap", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* clip list|info|preview|morph MODEL ...: glTF clips and morph targets */
+static gboolean
+cmd_clip (gchar  **args,
+          GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "list", "clip.list", { "@model", NULL } },
+		{ "info", "clip.info", { "@model", "clip", NULL } },
+		{ "preview", "clip.preview", { "@model", "clip", NULL } },
+		{ "morph", "clip.set_morph", { "@model", "target", "~weight", NULL } },
+	};
+
+	return run_family ("clip", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* ==========================================================================
+ * 0.9.0 M5 physics verbs: physics (node physics blocks, project layers)
+ * and physasset (.rphysasset ragdolls)
+ * ========================================================================== */
+
+/*
+ * values_call:
+ * Calls @method with params from @args: arguments without '=' fill @keys
+ * in order (as in family_params: '@' a path, '~' a typed value);
+ * key=value arguments whose key is in @top go to the top level, every
+ * other one into a "values" object (the field = value maps of
+ * physics.set_* and physasset.set_part). --node fills "node" when
+ * @with_node and node= was not given.
+ */
+static gboolean
+values_call (const gchar         *method,
+             const gchar * const *keys,
+             const gchar * const *top,
+             gboolean             with_node,
+             gchar              **args,
+             JsonObject          *extra,
+             GError             **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(JsonObject) values = json_object_new ();
+	g_autoptr(JsonNode)   r = NULL;
+	guint                 k = 0;
+	guint                 i;
+
+	for (i = 0; args != NULL && args[i] != NULL; i++)
+	{
+		const gchar *eq = strchr (args[i], '=');
+
+		if (eq == NULL || eq == args[i])
+		{
+			const gchar *key = keys != NULL ? keys[k] : NULL;
+
+			if (key == NULL)
+				return usage_error (error, "%s: unexpected argument '%s'", method, args[i]);
+			if (*key == '@')
+			{
+				g_autofree gchar *path = path_arg (args[i]);
+
+				json_object_set_string_member (p, key + 1, path);
+			}
+			else if (*key == '~')
+				json_object_set_member (p, key + 1, typed_value (args[i]));
+			else
+				json_object_set_string_member (p, key, args[i]);
+			k++;
+		}
+		else
+		{
+			g_autofree gchar *key = g_strndup (args[i], eq - args[i]);
+
+			if (top != NULL && g_strv_contains (top, key))
+				json_object_set_member (p, key, lrg_ctl_parse_value (eq + 1));
+			else
+				json_object_set_member (values, key, lrg_ctl_parse_value (eq + 1));
+		}
+	}
+	if (json_object_get_size (values) > 0)
+		json_object_set_object_member (p, "values", json_object_ref (values));
+	if (with_node && opt_node != NULL && !json_object_has_member (p, "node"))
+		json_object_set_string_member (p, "node", opt_node);
+	if (extra != NULL)
+	{
+		GList *members = json_object_get_members (extra);
+		GList *l;
+
+		for (l = members; l != NULL; l = l->next)
+			if (!json_object_has_member (p, l->data))
+				json_object_set_member (p, l->data, json_object_dup_member (extra, l->data));
+		g_list_free (members);
+	}
+	r = call (method, p, error);
+	if (r == NULL)
+		return FALSE;
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
+/*
+ * physics overlay [NAME..] [+NAME] [-NAME] [viewport=N]: no names reads
+ * the flags; bare names set them ("all", "none" too), +NAME / -NAME turn
+ * one on or off.
+ */
+static gboolean
+physics_overlay (gchar  **args,
+                 GError **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(JsonNode)   r = NULL;
+	JsonArray            *flags = json_array_new ();
+	JsonArray            *on = json_array_new ();
+	JsonArray            *off = json_array_new ();
+	guint                 i;
+
+	for (i = 0; args != NULL && args[i] != NULL; i++)
+	{
+		if (strchr (args[i], '=') != NULL)
+		{
+			gchar *one[] = { args[i], NULL };
+
+			if (!lrg_ctl_parse_assignments (one, p, error))
+			{
+				json_array_unref (flags);
+				json_array_unref (on);
+				json_array_unref (off);
+				return FALSE;
+			}
+		}
+		else if (args[i][0] == '+')
+			json_array_add_string_element (on, args[i] + 1);
+		else if (args[i][0] == '-' && args[i][1] != '\0')
+			json_array_add_string_element (off, args[i] + 1);
+		else
+			json_array_add_string_element (flags, args[i]);
+	}
+	if (json_array_get_length (flags) > 0)
+		json_object_set_array_member (p, "flags", flags);
+	else
+		json_array_unref (flags);
+	if (json_array_get_length (on) > 0)
+		json_object_set_array_member (p, "enable", on);
+	else
+		json_array_unref (on);
+	if (json_array_get_length (off) > 0)
+		json_object_set_array_member (p, "disable", off);
+	else
+		json_array_unref (off);
+	r = call ("physics.overlay", p, error);
+	if (r == NULL)
+		return FALSE;
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
+/*
+ * physics layers [get] | name I NAME|- | collide A B on|off |
+ * settings [K=V..] | reset [empty=true] | open
+ */
+static gboolean
+physics_layers (gchar  **args,
+                GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "get", "physics.layers.get", { NULL } },
+		{ "name", "physics.layers.set_name", { "~index", "name", NULL } },
+		{ "collide", "physics.layers.set_collides", { "a", "b", "~collides", NULL } },
+		{ "settings", "physics.layers.settings", { NULL } },
+		{ "reset", "physics.layers.reset", { NULL } },
+		{ "open", "physics.layers.open", { NULL } },
+	};
+
+	if (args[0] == NULL)
+	{
+		gchar *get[] = { (gchar *) "get", NULL };
+
+		return run_family ("physics layers", table, G_N_ELEMENTS (table), get, error);
+	}
+	/* "name I -" (or no name) clears the slot */
+	if (g_strcmp0 (args[0], "name") == 0 && args[1] != NULL && (args[2] == NULL || g_strcmp0 (args[2], "-") == 0))
+	{
+		g_autoptr(JsonObject) p = json_object_new ();
+		g_autoptr(JsonNode)   r = NULL;
+
+		json_object_set_member (p, "index", typed_value (args[1]));
+		json_object_set_null_member (p, "name");
+		r = call ("physics.layers.set_name", p, error);
+		if (r == NULL)
+			return FALSE;
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
+	/* layer names that look like numbers are indices */
+	if (g_strcmp0 (args[0], "collide") == 0 && args[1] != NULL && args[2] != NULL && args[3] != NULL)
+	{
+		g_autoptr(JsonObject) p = json_object_new ();
+		g_autoptr(JsonNode)   r = NULL;
+		guint                 k;
+
+		for (k = 0; k < 2; k++)
+		{
+			gchar *end = NULL;
+			gint64 v = g_ascii_strtoll (args[1 + k], &end, 10);
+
+			if (end != args[1 + k] && *end == '\0')
+				json_object_set_int_member (p, k == 0 ? "a" : "b", v);
+			else
+				json_object_set_string_member (p, k == 0 ? "a" : "b", args[1 + k]);
+		}
+		json_object_set_member (p, "collides", typed_value (args[3]));
+		r = call ("physics.layers.set_collides", p, error);
+		if (r == NULL)
+			return FALSE;
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
+	return run_family ("physics layers", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* physics VERB ... [--node N]: the node physics: block (see the usage) */
+static gboolean
+cmd_physics (gchar  **args,
+             GError **error)
+{
+	static const gchar * const no_keys[] = { NULL };
+	static const gchar * const kind_key[] = { "kind", NULL };
+	static const gchar * const index_key[] = { "~index", NULL };
+	static const gchar * const move_keys[] = { "~index", "~to", NULL };
+	static const gchar * const node_top[] = { "node", NULL };
+	static const gchar * const body_top[] = { "node", "kind", "shape", NULL };
+	static const gchar * const shape_top[] = { "node", "kind", "fit", NULL };
+	static const gchar * const joint_top[] = { "node", "kind", "target", NULL };
+	static const gchar * const index_top[] = { "node", "index", NULL };
+	static const gchar * const fit_top[] = { "node", "index", "kind", NULL };
+	static const gchar * const move_top[] = { "node", "index", "to", NULL };
+	const gchar               *verb = args[0];
+	g_autoptr(JsonObject)      extra = json_object_new ();
+
+	if (verb == NULL || g_strcmp0 (verb, "get") == 0)
+		return values_call ("physics.get", no_keys, node_top, TRUE, verb != NULL ? args + 1 : args, NULL, error);
+	if (g_strcmp0 (verb, "layers") == 0)
+		return physics_layers (args + 1, error);
+	if (g_strcmp0 (verb, "overlay") == 0)
+		return physics_overlay (args + 1, error);
+	if (opt_kind != NULL)
+		json_object_set_string_member (extra, "kind", opt_kind);
+	if (g_strcmp0 (verb, "state") == 0)
+		return values_call ("physics.state", no_keys, node_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "show") == 0)
+		return values_call ("physics.show", no_keys, NULL, FALSE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "add-body") == 0)
+		return values_call ("physics.add_body", kind_key, body_top, TRUE, args + 1, extra, error);
+	if (g_strcmp0 (verb, "remove-body") == 0)
+		return values_call ("physics.remove_body", no_keys, node_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "set-body") == 0)
+		return values_call ("physics.set_body", no_keys, node_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "add-shape") == 0)
+		return values_call ("physics.add_shape", kind_key, shape_top, TRUE, args + 1, extra, error);
+	if (g_strcmp0 (verb, "remove-shape") == 0)
+		return values_call ("physics.remove_shape", index_key, index_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "set-shape") == 0)
+		return values_call ("physics.set_shape", index_key, index_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "move-shape") == 0)
+		return values_call ("physics.move_shape", move_keys, move_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "add-joint") == 0)
+	{
+		if (opt_target != NULL)
+			json_object_set_string_member (extra, "target", opt_target);
+		return values_call ("physics.add_joint", kind_key, joint_top, TRUE, args + 1, extra, error);
+	}
+	if (g_strcmp0 (verb, "remove-joint") == 0)
+		return values_call ("physics.remove_joint", index_key, index_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "set-joint") == 0)
+		return values_call ("physics.set_joint", index_key, index_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "fit") == 0)
+		return values_call ("physics.fit", index_key, fit_top, TRUE, args + 1, extra, error);
+	return usage_error (error, "physics get|add-body|remove-body|set-body|add-shape|remove-shape|set-shape|move-shape"
+	                           "|add-joint|remove-joint|set-joint|fit|overlay|state|show|layers ...");
+}
+
+/* physasset VERB PATH ...: the .rphysasset editor (every verb names the file) */
+static gboolean
+cmd_physasset (gchar  **args,
+               GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "open", "physasset.open", { "@path", NULL } },
+		{ "create", "physasset.create", { "@path", NULL } },
+		{ "get", "physasset.get", { "@path", NULL } },
+		{ "model", "physasset.set_model", { "@path", "model", NULL } },
+		{ "remove-part", "physasset.remove_part", { "@path", "part", NULL } },
+		{ "generate", "physasset.generate", { "@path", NULL } },
+		{ "stabilize", "physasset.stabilize", { "@path", NULL } },
+		{ "exclude", "physasset.exclude", { "@path", "a", "b", NULL } },
+		{ "set", "physasset.set", { "@path", NULL } },
+		{ "select", "physasset.select", { "@path", "part", NULL } },
+		{ "simulate", "physasset.simulate", { "@path", NULL } },
+		{ "save", "physasset.save", { "@path", NULL } },
+	};
+	static const gchar * const add_keys[] = { "@path", "bone", NULL };
+	static const gchar * const set_keys[] = { "@path", "part", NULL };
+	static const gchar * const path_top[] = { "path", NULL };
+
+	if (args[0] != NULL && g_strcmp0 (args[0], "add-part") == 0)
+		return values_call ("physasset.add_part", add_keys, path_top, FALSE, args + 1, NULL, error);
+	if (args[0] != NULL && g_strcmp0 (args[0], "set-part") == 0)
+		return values_call ("physasset.set_part", set_keys, path_top, FALSE, args + 1, NULL, error);
+	if (args[0] != NULL && g_strcmp0 (args[0], "unexclude") == 0)
+	{
+		static const gchar * const excl_keys[] = { "@path", "a", "b", NULL };
+		g_autoptr(JsonObject)      extra = json_object_new ();
+
+		json_object_set_boolean_member (extra, "remove", TRUE);
+		return values_call ("physasset.exclude", excl_keys, NULL, FALSE, args + 1, extra, error);
+	}
+	return run_family ("physasset", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* ==========================================================================
+ * 0.9.0 M6/M7 verbs: nav, bt, fsm, ai, particles, weather, terrain, water,
+ * mixer, audio, tiles (rule tiles and grids), tileset and sprite
+ *
+ * One table row per IPC method (rows generated from the method lists the
+ * tools publish; keep them in sync with docs/editor/ipc-protocol.org).
+ * The verb is the method name after the family with '.' and '_' turned
+ * into '-' (nav.area.box.add -> "nav area-box-add").
+ * ========================================================================== */
+
+/*
+ * M67Verb:
+ * @verb: the CLI verb
+ * @method: the IPC method
+ * @keys: positional parameters in order ('@' a file path, '~' a typed
+ *   value, as in #CtlVerb)
+ * @wrap: %NULL, or the object member that key=value arguments go into
+ *   (nav.set "values", audio.set "params"), except the keys in @top
+ * @top: key=value keys that stay top-level when @wrap is set
+ * @node: --node fills "node" when node= was not given
+ */
+typedef struct
+{
+	const gchar *verb;
+	const gchar *method;
+	const gchar *keys[6];
+	const gchar *wrap;
+	const gchar *top[4];
+	gboolean     node;
+} M67Verb;
+
+/* m67e-generated: begin */
+/* nav get|set|new|bake|cancel|save|clear|area-add|area-remove|area-set|area-box-add|area-box-remove|area-box-set|link-add|link-remove|link-set|select|overlay|agents|debug-agent|show */
+static const M67Verb m67_nav_verbs[] = {
+	{ "get", "nav.get", { NULL }, NULL, { NULL }, FALSE },
+	{ "set", "nav.set", { NULL }, "values", { "key", "value", "values", NULL }, FALSE },
+	{ "new", "nav.new", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "bake", "nav.bake", { NULL }, NULL, { NULL }, FALSE },
+	{ "cancel", "nav.cancel", { NULL }, NULL, { NULL }, FALSE },
+	{ "save", "nav.save", { NULL }, NULL, { NULL }, FALSE },
+	{ "clear", "nav.clear", { NULL }, NULL, { NULL }, FALSE },
+	{ "area-add", "nav.area.add", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "area-remove", "nav.area.remove", { "~area", NULL }, NULL, { NULL }, FALSE },
+	{ "area-set", "nav.area.set", { "~area", NULL }, NULL, { NULL }, FALSE },
+	{ "area-box-add", "nav.area.box.add", { "~area", NULL }, NULL, { NULL }, FALSE },
+	{ "area-box-remove", "nav.area.box.remove", { "~area", "~box", NULL }, NULL, { NULL }, FALSE },
+	{ "area-box-set", "nav.area.box.set", { "~area", "~box", NULL }, NULL, { NULL }, FALSE },
+	{ "link-add", "nav.link.add", { NULL }, NULL, { NULL }, FALSE },
+	{ "link-remove", "nav.link.remove", { "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "link-set", "nav.link.set", { "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "select", "nav.select", { NULL }, NULL, { NULL }, FALSE },
+	{ "overlay", "nav.overlay", { NULL }, NULL, { NULL }, FALSE },
+	{ "agents", "nav.agents", { NULL }, NULL, { NULL }, FALSE },
+	{ "debug-agent", "nav.debug_agent", { NULL }, NULL, { NULL }, TRUE },
+	{ "show", "nav.show", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* bt open|create|get|palette|add-node|remove-node|move-node|set-node|set-position|layout|select|show|add-key|remove-key|set-subtree|remove-subtree|open-subtree|validate|save|live */
+static const M67Verb m67_bt_verbs[] = {
+	{ "open", "bt.open", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "create", "bt.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "bt.get", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "palette", "bt.palette", { NULL }, NULL, { NULL }, FALSE },
+	{ "add-node", "bt.add_node", { "@path", "type", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-node", "bt.remove_node", { "@path", "id", NULL }, NULL, { NULL }, FALSE },
+	{ "move-node", "bt.move_node", { "@path", "id", "parent", NULL }, NULL, { NULL }, FALSE },
+	{ "set-node", "bt.set_node", { "@path", "id", NULL }, NULL, { NULL }, FALSE },
+	{ "set-position", "bt.set_position", { "@path", "id", "~x", "~y", NULL }, NULL, { NULL }, FALSE },
+	{ "layout", "bt.layout", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "select", "bt.select", { "@path", "~id", NULL }, NULL, { NULL }, FALSE },
+	{ "show", "bt.show", { "@path", "~subtree", NULL }, NULL, { NULL }, FALSE },
+	{ "add-key", "bt.add_key", { "@path", "name", "type", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-key", "bt.remove_key", { "@path", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "set-subtree", "bt.set_subtree", { "@path", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-subtree", "bt.remove_subtree", { "@path", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "open-subtree", "bt.open_subtree", { "@path", "id", NULL }, NULL, { NULL }, FALSE },
+	{ "validate", "bt.validate", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "save", "bt.save", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "live", "bt.live", { "@path", NULL }, NULL, { NULL }, FALSE },
+};
+
+/* fsm open|create|get|enter|up|add-state|remove-state|rename-state|set-initial|add-transition|set-transition|remove-transition|set-actions|set-position|select|add-key|remove-key|validate|save|live|send-event */
+static const M67Verb m67_fsm_verbs[] = {
+	{ "open", "fsm.open", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "create", "fsm.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "fsm.get", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "enter", "fsm.enter", { "@path", "state", NULL }, NULL, { NULL }, FALSE },
+	{ "up", "fsm.up", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "add-state", "fsm.add_state", { "@path", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-state", "fsm.remove_state", { "@path", "state", NULL }, NULL, { NULL }, FALSE },
+	{ "rename-state", "fsm.rename_state", { "@path", "state", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "set-initial", "fsm.set_initial", { "@path", "state", NULL }, NULL, { NULL }, FALSE },
+	{ "add-transition", "fsm.add_transition", { "@path", "from", "to", NULL }, NULL, { NULL }, FALSE },
+	{ "set-transition", "fsm.set_transition", { "@path", "from", "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-transition", "fsm.remove_transition", { "@path", "from", "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "set-actions", "fsm.set_actions", { "@path", "state", "phase", NULL }, NULL, { NULL }, FALSE },
+	{ "set-position", "fsm.set_position", { "@path", "state", "~x", "~y", NULL }, NULL, { NULL }, FALSE },
+	{ "select", "fsm.select", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "add-key", "fsm.add_key", { "@path", "name", "type", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-key", "fsm.remove_key", { "@path", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "validate", "fsm.validate", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "save", "fsm.save", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "live", "fsm.live", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "send-event", "fsm.send_event", { "@path", "event", NULL }, NULL, { NULL }, FALSE },
+};
+
+/* ai show|entities|select|state|set-key|send-event|brains|topic|log */
+static const M67Verb m67_ai_verbs[] = {
+	{ "show", "ai.show", { NULL }, NULL, { NULL }, FALSE },
+	{ "entities", "ai.entities", { NULL }, NULL, { NULL }, FALSE },
+	{ "select", "ai.select", { "~entity", NULL }, NULL, { NULL }, FALSE },
+	{ "state", "ai.state", { NULL }, NULL, { NULL }, FALSE },
+	{ "set-key", "ai.set_key", { "key", "~value", NULL }, NULL, { NULL }, FALSE },
+	{ "send-event", "ai.send_event", { "event", NULL }, NULL, { NULL }, FALSE },
+	{ "brains", "ai.brains", { NULL }, NULL, { NULL }, FALSE },
+	{ "topic", "ai.topic", { "brain", "topic", NULL }, NULL, { NULL }, FALSE },
+	{ "log", "ai.log", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* particles open|create|get|kinds|set|add-emitter|remove-emitter|move-emitter|duplicate-emitter|add-module|remove-module|move-module|select|solo|play|restart|seek|preview|stats|save|render */
+static const M67Verb m67_particles_verbs[] = {
+	{ "open", "particles.open", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "create", "particles.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "particles.get", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "kinds", "particles.kinds", { NULL }, NULL, { NULL }, FALSE },
+	{ "set", "particles.set", { "@path", "key", "~value", NULL }, NULL, { NULL }, FALSE },
+	{ "add-emitter", "particles.add_emitter", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-emitter", "particles.remove_emitter", { "@path", "~emitter", NULL }, NULL, { NULL }, FALSE },
+	{ "move-emitter", "particles.move_emitter", { "@path", "~from", "~to", NULL }, NULL, { NULL }, FALSE },
+	{ "duplicate-emitter", "particles.duplicate_emitter", { "@path", "~emitter", NULL }, NULL, { NULL }, FALSE },
+	{ "add-module", "particles.add_module", { "@path", "~emitter", "kind", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-module", "particles.remove_module", { "@path", "~emitter", "~module", NULL }, NULL, { NULL }, FALSE },
+	{ "move-module", "particles.move_module", { "@path", "~emitter", "~from", "~to", NULL }, NULL, { NULL }, FALSE },
+	{ "select", "particles.select", { "@path", "~emitter", NULL }, NULL, { NULL }, FALSE },
+	{ "solo", "particles.solo", { "@path", "~emitter", NULL }, NULL, { NULL }, FALSE },
+	{ "play", "particles.play", { "@path", "~playing", NULL }, NULL, { NULL }, FALSE },
+	{ "restart", "particles.restart", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "seek", "particles.seek", { "@path", "~time", NULL }, NULL, { NULL }, FALSE },
+	{ "preview", "particles.preview", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "stats", "particles.stats", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "save", "particles.save", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "render", "particles.render", { "@path", "file", NULL }, NULL, { NULL }, FALSE },
+};
+
+/* weather open|create|get|kinds|set|add-preset|remove-preset|set-preset|add-layer|remove-layer|move-layer|set-layer|set-param|set-transition|remove-transition|select|preview|save|render */
+static const M67Verb m67_weather_verbs[] = {
+	{ "open", "weather.open", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "create", "weather.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "weather.get", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "kinds", "weather.kinds", { NULL }, NULL, { NULL }, FALSE },
+	{ "set", "weather.set", { "@path", "key", "~value", NULL }, NULL, { NULL }, FALSE },
+	{ "add-preset", "weather.add_preset", { "@path", "id", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-preset", "weather.remove_preset", { "@path", "~preset", NULL }, NULL, { NULL }, FALSE },
+	{ "set-preset", "weather.set_preset", { "@path", "~preset", NULL }, NULL, { NULL }, FALSE },
+	{ "add-layer", "weather.add_layer", { "@path", "~preset", "kind", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-layer", "weather.remove_layer", { "@path", "~preset", "~layer", NULL }, NULL, { NULL }, FALSE },
+	{ "move-layer", "weather.move_layer", { "@path", "~preset", "~from", "~to", NULL }, NULL, { NULL }, FALSE },
+	{ "set-layer", "weather.set_layer", { "@path", "~preset", "~layer", NULL }, NULL, { NULL }, FALSE },
+	{ "set-param", "weather.set_param", { "@path", "~preset", "~layer", "name", "~value", NULL }, NULL, { NULL }, FALSE },
+	{ "set-transition", "weather.set_transition", { "@path", "from", "to", "~duration", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-transition", "weather.remove_transition", { "@path", "from", "to", NULL }, NULL, { NULL }, FALSE },
+	{ "select", "weather.select", { "@path", "~preset", NULL }, NULL, { NULL }, FALSE },
+	{ "preview", "weather.preview", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "save", "weather.save", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "render", "weather.render", { "@path", "file", NULL }, NULL, { NULL }, FALSE },
+};
+
+/* terrain get|brush|stroke|sample|add-layer|remove-layer|set-layer|add-foliage|remove-foliage|set-foliage|rebake|save|create|show */
+static const M67Verb m67_terrain_verbs[] = {
+	{ "get", "terrain.get", { NULL }, NULL, { NULL }, TRUE },
+	{ "brush", "terrain.brush", { NULL }, NULL, { NULL }, FALSE },
+	{ "stroke", "terrain.stroke", { NULL }, NULL, { NULL }, TRUE },
+	{ "sample", "terrain.sample", { "~x", "~z", NULL }, NULL, { NULL }, TRUE },
+	{ "add-layer", "terrain.add_layer", { NULL }, NULL, { NULL }, TRUE },
+	{ "remove-layer", "terrain.remove_layer", { "~index", NULL }, NULL, { NULL }, TRUE },
+	{ "set-layer", "terrain.set_layer", { "~index", NULL }, NULL, { NULL }, TRUE },
+	{ "add-foliage", "terrain.add_foliage", { NULL }, NULL, { NULL }, TRUE },
+	{ "remove-foliage", "terrain.remove_foliage", { "~index", NULL }, NULL, { NULL }, TRUE },
+	{ "set-foliage", "terrain.set_foliage", { "~index", NULL }, NULL, { NULL }, TRUE },
+	{ "rebake", "terrain.rebake", { NULL }, NULL, { NULL }, TRUE },
+	{ "save", "terrain.save", { NULL }, NULL, { NULL }, TRUE },
+	{ "create", "terrain.create", { NULL }, NULL, { NULL }, FALSE },
+	{ "show", "terrain.show", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* water get|set|set-wave|add-point|set-point|remove-point|save */
+static const M67Verb m67_water_verbs[] = {
+	{ "get", "water.get", { NULL }, NULL, { NULL }, TRUE },
+	{ "set", "water.set", { NULL }, NULL, { NULL }, TRUE },
+	{ "set-wave", "water.set_wave", { NULL }, NULL, { NULL }, TRUE },
+	{ "add-point", "water.add_point", { "~x", "~z", NULL }, NULL, { NULL }, TRUE },
+	{ "set-point", "water.set_point", { "~index", NULL }, NULL, { NULL }, TRUE },
+	{ "remove-point", "water.remove_point", { "~index", NULL }, NULL, { NULL }, TRUE },
+	{ "save", "water.save", { NULL }, NULL, { NULL }, TRUE },
+};
+
+/* mixer show|open|create|set-default|get|effect-types|add-bus|remove-bus|set-bus|set-send|remove-send|add-effect|remove-effect|move-effect|set-effect|add-snapshot|remove-snapshot|set-snapshot|capture-snapshot|set-duck|remove-duck|preview|meters|save */
+static const M67Verb m67_mixer_verbs[] = {
+	{ "show", "mixer.show", { NULL }, NULL, { NULL }, FALSE },
+	{ "open", "mixer.open", { NULL }, NULL, { NULL }, FALSE },
+	{ "create", "mixer.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "set-default", "mixer.set_default", { "~path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "mixer.get", { NULL }, NULL, { NULL }, FALSE },
+	{ "effect-types", "mixer.effect_types", { NULL }, NULL, { NULL }, FALSE },
+	{ "add-bus", "mixer.add_bus", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-bus", "mixer.remove_bus", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "set-bus", "mixer.set_bus", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "set-send", "mixer.set_send", { "source", "target", "~level", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-send", "mixer.remove_send", { "source", "target", NULL }, NULL, { NULL }, FALSE },
+	{ "add-effect", "mixer.add_effect", { "bus", "type", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-effect", "mixer.remove_effect", { "bus", "id", NULL }, NULL, { NULL }, FALSE },
+	{ "move-effect", "mixer.move_effect", { "bus", "id", "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "set-effect", "mixer.set_effect", { "bus", "id", NULL }, NULL, { NULL }, FALSE },
+	{ "add-snapshot", "mixer.add_snapshot", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-snapshot", "mixer.remove_snapshot", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "set-snapshot", "mixer.set_snapshot", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "capture-snapshot", "mixer.capture_snapshot", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "set-duck", "mixer.set_duck", { "trigger", "target", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-duck", "mixer.remove_duck", { "trigger", "target", NULL }, NULL, { NULL }, FALSE },
+	{ "preview", "mixer.preview", { NULL }, NULL, { NULL }, FALSE },
+	{ "meters", "mixer.meters", { NULL }, NULL, { NULL }, FALSE },
+	{ "save", "mixer.save", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* audio get|set|curve|buses */
+static const M67Verb m67_audio_verbs[] = {
+	{ "get", "audio.get", { "node", NULL }, NULL, { NULL }, TRUE },
+	{ "set", "audio.set", { "node", NULL }, "params", { "node", "params", NULL }, TRUE },
+	{ "curve", "audio.curve", { "node", NULL }, NULL, { NULL }, TRUE },
+	{ "buses", "audio.buses", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* tiles state|grid|brush|autopaint|refresh|cell-at|tile-info */
+static const M67Verb m67_tiles_verbs[] = {
+	{ "state", "tiles.get", { NULL }, NULL, { NULL }, TRUE },
+	{ "grid", "tiles.grid", { NULL }, NULL, { NULL }, TRUE },
+	{ "brush", "tiles.brush", { NULL }, NULL, { NULL }, FALSE },
+	{ "autopaint", "tiles.paint", { NULL }, NULL, { NULL }, TRUE },
+	{ "refresh", "tiles.refresh", { NULL }, NULL, { NULL }, TRUE },
+	{ "cell-at", "tiles.cell_at", { NULL }, NULL, { NULL }, TRUE },
+	{ "tile-info", "tiles.tile_info", { "~tile", NULL }, NULL, { NULL }, TRUE },
+};
+
+/* tileset create|open|get|set|select|tile|collision|rule-tile|rule|preview|save */
+static const M67Verb m67_tileset_verbs[] = {
+	{ "create", "tileset.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "open", "tileset.open", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "tileset.get", { NULL }, NULL, { NULL }, FALSE },
+	{ "set", "tileset.set", { NULL }, NULL, { NULL }, FALSE },
+	{ "select", "tileset.select", { NULL }, NULL, { NULL }, FALSE },
+	{ "tile", "tileset.tile", { "~tile", NULL }, NULL, { NULL }, FALSE },
+	{ "collision", "tileset.collision", { "~tile", "op", NULL }, NULL, { NULL }, FALSE },
+	{ "rule-tile", "tileset.rule_tile", { "op", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "rule", "tileset.rule", { "rule_tile", "op", NULL }, NULL, { NULL }, FALSE },
+	{ "preview", "tileset.preview", { "rule_tile", NULL }, NULL, { NULL }, FALSE },
+	{ "save", "tileset.save", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* sprite create|open|get|slice|frame|clip|clip-frame|event|play|save */
+static const M67Verb m67_sprite_verbs[] = {
+	{ "create", "sprite.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "open", "sprite.open", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "sprite.get", { NULL }, NULL, { NULL }, FALSE },
+	{ "slice", "sprite.slice", { "mode", NULL }, NULL, { NULL }, FALSE },
+	{ "frame", "sprite.frame", { "op", NULL }, NULL, { NULL }, FALSE },
+	{ "clip", "sprite.clip", { "op", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "clip-frame", "sprite.clip_frame", { "clip", "op", NULL }, NULL, { NULL }, FALSE },
+	{ "event", "sprite.event", { "clip", "op", "~frame", NULL }, NULL, { NULL }, FALSE },
+	{ "play", "sprite.play", { NULL }, NULL, { NULL }, FALSE },
+	{ "save", "sprite.save", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* debug state|show|breakpoints|set-breakpoint|remove-breakpoint|toggle-breakpoint|clear-breakpoints|continue|pause|step-over|step-in|step-out|stop|stack|scopes|variables|evaluate|watches|add-watch|remove-watch|dap-start|dap-stop */
+static const M67Verb m67_debug_verbs[] = {
+	{ "state", "debug.state", { NULL }, NULL, { NULL }, FALSE },
+	{ "show", "debug.show", { NULL }, NULL, { NULL }, FALSE },
+	{ "breakpoints", "debug.breakpoints", { NULL }, NULL, { NULL }, FALSE },
+	{ "set-breakpoint", "debug.set_breakpoint", { "@path", "~line", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-breakpoint", "debug.remove_breakpoint", { "@path", "~line", NULL }, NULL, { NULL }, FALSE },
+	{ "toggle-breakpoint", "debug.toggle_breakpoint", { "~line", NULL }, NULL, { NULL }, FALSE },
+	{ "clear-breakpoints", "debug.clear_breakpoints", { NULL }, NULL, { NULL }, FALSE },
+	{ "continue", "debug.continue", { NULL }, NULL, { NULL }, FALSE },
+	{ "pause", "debug.pause", { NULL }, NULL, { NULL }, FALSE },
+	{ "step-over", "debug.step_over", { NULL }, NULL, { NULL }, FALSE },
+	{ "step-in", "debug.step_in", { NULL }, NULL, { NULL }, FALSE },
+	{ "step-out", "debug.step_out", { NULL }, NULL, { NULL }, FALSE },
+	{ "stop", "debug.stop", { NULL }, NULL, { NULL }, FALSE },
+	{ "stack", "debug.stack", { NULL }, NULL, { NULL }, FALSE },
+	{ "scopes", "debug.scopes", { NULL }, NULL, { NULL }, FALSE },
+	{ "variables", "debug.variables", { "~reference", NULL }, NULL, { NULL }, FALSE },
+	{ "evaluate", "debug.evaluate", { "expression", NULL }, NULL, { NULL }, FALSE },
+	{ "watches", "debug.watches", { NULL }, NULL, { NULL }, FALSE },
+	{ "add-watch", "debug.add_watch", { "expression", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-watch", "debug.remove_watch", { "expression", NULL }, NULL, { NULL }, FALSE },
+	{ "dap-start", "debug.dap_start", { NULL }, NULL, { NULL }, FALSE },
+	{ "dap-stop", "debug.dap_stop", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* lsp servers|status|diagnostics|complete|hover|definition|references|rename|format|restart */
+static const M67Verb m67_lsp_verbs[] = {
+	{ "servers", "lsp.servers", { NULL }, NULL, { NULL }, FALSE },
+	{ "status", "lsp.status", { NULL }, NULL, { NULL }, FALSE },
+	{ "diagnostics", "lsp.diagnostics", { NULL }, NULL, { NULL }, FALSE },
+	{ "complete", "lsp.complete", { NULL }, NULL, { NULL }, FALSE },
+	{ "hover", "lsp.hover", { NULL }, NULL, { NULL }, FALSE },
+	{ "definition", "lsp.definition", { NULL }, NULL, { NULL }, FALSE },
+	{ "references", "lsp.references", { NULL }, NULL, { NULL }, FALSE },
+	{ "rename", "lsp.rename", { "new_name", NULL }, NULL, { NULL }, FALSE },
+	{ "format", "lsp.format", { NULL }, NULL, { NULL }, FALSE },
+	{ "restart", "lsp.restart", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* profiler set|capture|save|load|frames|frame|compare|view */
+static const M67Verb m67_profiler_verbs[] = {
+	{ "set", "profiler.set", { NULL }, NULL, { NULL }, FALSE },
+	{ "capture", "profiler.capture", { NULL }, NULL, { NULL }, FALSE },
+	{ "save", "profiler.save", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "load", "profiler.load", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "frames", "profiler.frames", { NULL }, NULL, { NULL }, FALSE },
+	{ "frame", "profiler.frame", { NULL }, NULL, { NULL }, FALSE },
+	{ "compare", "profiler.compare", { NULL }, NULL, { NULL }, FALSE },
+	{ "view", "profiler.view", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* frame capture|status|calls|call|scrub|texture|save|load|show */
+static const M67Verb m67_frame_verbs[] = {
+	{ "capture", "frame.capture", { NULL }, NULL, { NULL }, FALSE },
+	{ "status", "frame.status", { NULL }, NULL, { NULL }, FALSE },
+	{ "calls", "frame.calls", { NULL }, NULL, { NULL }, FALSE },
+	{ "call", "frame.call", { "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "scrub", "frame.scrub", { "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "texture", "frame.texture", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "save", "frame.save", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "load", "frame.load", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "show", "frame.show", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* script run|languages|tools|run-tool|reload|run-in-editor|editor-running */
+static const M67Verb m67_script_verbs[] = {
+	{ "run", "script.run", { "code", NULL }, NULL, { NULL }, FALSE },
+	{ "languages", "script.languages", { NULL }, NULL, { NULL }, FALSE },
+	{ "tools", "script.tools", { NULL }, NULL, { NULL }, FALSE },
+	{ "run-tool", "script.run_tool", { "id", NULL }, NULL, { NULL }, FALSE },
+	{ "reload", "script.reload", { NULL }, NULL, { NULL }, FALSE },
+	{ "run-in-editor", "script.run_in_editor", { "node", NULL }, NULL, { NULL }, TRUE },
+	{ "editor-running", "script.editor_running", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* vscript create|open|get|node-types|gi-search|add-node|remove-node|set-node|connect|disconnect|set-variable|add-subgraph|remove-subgraph|add-comment|remove-comment|set-program|select|validate|run|live|breakpoint|continue|save */
+static const M67Verb m67_vscript_verbs[] = {
+	{ "create", "vscript.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "open", "vscript.open", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "vscript.get", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "node-types", "vscript.node_types", { "query", NULL }, NULL, { NULL }, FALSE },
+	{ "gi-search", "vscript.gi_search", { "query", NULL }, NULL, { NULL }, FALSE },
+	{ "add-node", "vscript.add_node", { "type", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-node", "vscript.remove_node", { "id", NULL }, NULL, { NULL }, FALSE },
+	{ "set-node", "vscript.set_node", { "id", NULL }, NULL, { NULL }, FALSE },
+	{ "connect", "vscript.connect", { "from", "to", NULL }, NULL, { NULL }, FALSE },
+	{ "disconnect", "vscript.disconnect", { "from", "to", NULL }, NULL, { NULL }, FALSE },
+	{ "set-variable", "vscript.set_variable", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "add-subgraph", "vscript.add_subgraph", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-subgraph", "vscript.remove_subgraph", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "add-comment", "vscript.add_comment", { "text", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-comment", "vscript.remove_comment", { "id", NULL }, NULL, { NULL }, FALSE },
+	{ "set-program", "vscript.set_program", { NULL }, NULL, { NULL }, FALSE },
+	{ "select", "vscript.select", { NULL }, NULL, { NULL }, FALSE },
+	{ "validate", "vscript.validate", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "run", "vscript.run", { NULL }, NULL, { NULL }, FALSE },
+	{ "live", "vscript.live", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "breakpoint", "vscript.breakpoint", { "node", NULL }, NULL, { NULL }, TRUE },
+	{ "continue", "vscript.continue", { NULL }, NULL, { NULL }, FALSE },
+	{ "save", "vscript.save", { "@path", NULL }, NULL, { NULL }, FALSE },
+};
+
+/* memory status|types|resources|snapshot|snapshots|diff|clear-snapshots|history|show */
+static const M67Verb m67_memory_verbs[] = {
+	{ "status", "memory.status", { NULL }, NULL, { NULL }, FALSE },
+	{ "types", "memory.types", { NULL }, NULL, { NULL }, FALSE },
+	{ "resources", "memory.resources", { NULL }, NULL, { NULL }, FALSE },
+	{ "snapshot", "memory.snapshot", { NULL }, NULL, { NULL }, FALSE },
+	{ "snapshots", "memory.snapshots", { NULL }, NULL, { NULL }, FALSE },
+	{ "diff", "memory.diff", { "from", NULL }, NULL, { NULL }, FALSE },
+	{ "clear-snapshots", "memory.clear_snapshots", { NULL }, NULL, { NULL }, FALSE },
+	{ "history", "memory.history", { NULL }, NULL, { NULL }, FALSE },
+	{ "show", "memory.show", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* network stats|history|enable|reset|show */
+static const M67Verb m67_network_verbs[] = {
+	{ "stats", "network.stats", { NULL }, NULL, { NULL }, FALSE },
+	{ "history", "network.history", { "metric", NULL }, NULL, { NULL }, FALSE },
+	{ "enable", "network.enable", { NULL }, NULL, { NULL }, FALSE },
+	{ "reset", "network.reset", { NULL }, NULL, { NULL }, FALSE },
+	{ "show", "network.show", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* the M6/M7/M8 families: lrgeditorctl FAMILY VERB ... */
+static const struct
+{
+	const gchar   *family;
+	const M67Verb *verbs;
+	gsize          n_verbs;
+} m67_families[] = {
+	{ "nav", m67_nav_verbs, G_N_ELEMENTS (m67_nav_verbs) },
+	{ "bt", m67_bt_verbs, G_N_ELEMENTS (m67_bt_verbs) },
+	{ "fsm", m67_fsm_verbs, G_N_ELEMENTS (m67_fsm_verbs) },
+	{ "ai", m67_ai_verbs, G_N_ELEMENTS (m67_ai_verbs) },
+	{ "particles", m67_particles_verbs, G_N_ELEMENTS (m67_particles_verbs) },
+	{ "weather", m67_weather_verbs, G_N_ELEMENTS (m67_weather_verbs) },
+	{ "terrain", m67_terrain_verbs, G_N_ELEMENTS (m67_terrain_verbs) },
+	{ "water", m67_water_verbs, G_N_ELEMENTS (m67_water_verbs) },
+	{ "mixer", m67_mixer_verbs, G_N_ELEMENTS (m67_mixer_verbs) },
+	{ "audio", m67_audio_verbs, G_N_ELEMENTS (m67_audio_verbs) },
+	{ "tiles", m67_tiles_verbs, G_N_ELEMENTS (m67_tiles_verbs) },
+	{ "tileset", m67_tileset_verbs, G_N_ELEMENTS (m67_tileset_verbs) },
+	{ "sprite", m67_sprite_verbs, G_N_ELEMENTS (m67_sprite_verbs) },
+	{ "debug", m67_debug_verbs, G_N_ELEMENTS (m67_debug_verbs) },
+	{ "lsp", m67_lsp_verbs, G_N_ELEMENTS (m67_lsp_verbs) },
+	{ "profiler", m67_profiler_verbs, G_N_ELEMENTS (m67_profiler_verbs) },
+	{ "frame", m67_frame_verbs, G_N_ELEMENTS (m67_frame_verbs) },
+	{ "script", m67_script_verbs, G_N_ELEMENTS (m67_script_verbs) },
+	{ "vscript", m67_vscript_verbs, G_N_ELEMENTS (m67_vscript_verbs) },
+	{ "memory", m67_memory_verbs, G_N_ELEMENTS (m67_memory_verbs) },
+	{ "network", m67_network_verbs, G_N_ELEMENTS (m67_network_verbs) },
+};
+/* m67e-generated: end */
+
+/* The usage of one M6/M7 family: "family verb KEY | ...". */
+static gchar *
+m67_usage (const gchar   *family,
+           const M67Verb *table,
+           gsize          n)
+{
+	GString *s = g_string_new (NULL);
+	gsize    i;
+	guint    k;
+
+	for (i = 0; i < n; i++)
+	{
+		if (i > 0)
+			g_string_append (s, " | ");
+		g_string_append_printf (s, "%s %s", family, table[i].verb);
+		for (k = 0; table[i].keys[k] != NULL; k++)
+		{
+			const gchar      *key = table[i].keys[k];
+			g_autofree gchar *upper = NULL;
+
+			if (*key == '@' || *key == '~')
+				key++;
+			upper = g_ascii_strup (key, -1);
+			g_string_append_printf (s, " %s", upper);
+		}
+	}
+	g_string_append (s, " [key=value...]");
+	return g_string_free (s, FALSE);
+}
+
+/*
+ * m67_params:
+ * Builds the params of @row from @args: arguments without '=' fill the
+ * positional keys, key=value arguments go to the top level (parsed like
+ * every other verb's assignments) or, with @row->wrap, into that member.
+ */
+static JsonObject *
+m67_params (const M67Verb  *row,
+            gchar         **args,
+            GError        **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(JsonObject) wrapped = json_object_new ();
+	guint                 k = 0;
+	guint                 i;
+
+	for (i = 0; args != NULL && args[i] != NULL; i++)
+	{
+		const gchar *eq = strchr (args[i], '=');
+
+		if (eq == NULL || eq == args[i])
+		{
+			const gchar *key = row->keys[k];
+
+			if (key == NULL)
+			{
+				usage_error (error, "%s: unexpected argument '%s'", row->method, args[i]);
+				return NULL;
+			}
+			if (*key == '@')
+			{
+				g_autofree gchar *path = path_arg (args[i]);
+
+				json_object_set_string_member (p, key + 1, path);
+			}
+			else if (*key == '~')
+				json_object_set_member (p, key + 1, typed_value (args[i]));
+			else
+				json_object_set_string_member (p, key, args[i]);
+			k++;
+		}
+		else if (row->wrap != NULL)
+		{
+			g_autofree gchar *key = g_strndup (args[i], eq - args[i]);
+
+			if (g_strv_contains (row->top, key))
+				json_object_set_member (p, key, lrg_ctl_parse_value (eq + 1));
+			else
+				json_object_set_member (wrapped, key, lrg_ctl_parse_value (eq + 1));
+		}
+		else
+		{
+			gchar *one[] = { args[i], NULL };
+
+			if (!lrg_ctl_parse_assignments (one, p, error))
+				return NULL;
+		}
+	}
+	if (row->wrap != NULL && json_object_get_size (wrapped) > 0)
+		json_object_set_object_member (p, row->wrap, json_object_ref (wrapped));
+	if (row->node && opt_node != NULL && !json_object_has_member (p, "node"))
+		json_object_set_string_member (p, "node", opt_node);
+	return g_steal_pointer (&p);
+}
+
+/*
+ * m67_run:
+ * Runs "FAMILY VERB ..." of an M6/M7 family; a bare FAMILY runs its
+ * "get" (or "state") verb. The result prints as YAML by default.
+ */
+static gboolean
+m67_run (const gchar   *family,
+         const M67Verb *table,
+         gsize          n,
+         gchar        **args,
+         GError       **error)
+{
+	static gchar         *none[] = { NULL };
+	const gchar          *verb = args[0];
+	g_autoptr(JsonObject) p = NULL;
+	g_autoptr(JsonNode)   r = NULL;
+	gsize                 i;
+
+	for (i = 0; verb == NULL && i < n; i++)
+	{
+		if (g_strcmp0 (table[i].verb, "get") == 0 || g_strcmp0 (table[i].verb, "state") == 0)
+			verb = table[i].verb;
+	}
+	for (i = 0; verb != NULL && i < n; i++)
+	{
+		if (g_strcmp0 (verb, table[i].verb) != 0)
+			continue;
+		p = m67_params (&table[i], args[0] != NULL ? args + 1 : none, error);
+		if (p == NULL)
+			return FALSE;
+		r = call (table[i].method, p, error);
+		if (r == NULL)
+			return FALSE;
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
+	{
+		g_autofree gchar *usage = m67_usage (family, table, n);
+
+		return usage_error (error, "%s", usage);
+	}
+}
+
+/* The M6/M7 family named @family, or NULL. */
+static gboolean
+m67_lookup (const gchar    *family,
+            const M67Verb **table,
+            gsize          *n)
+{
+	gsize i;
+
+	for (i = 0; i < G_N_ELEMENTS (m67_families); i++)
+	{
+		if (g_strcmp0 (family, m67_families[i].family) == 0)
+		{
+			*table = m67_families[i].verbs;
+			*n = m67_families[i].n_verbs;
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+/*
+ * m67_has_verb:
+ * @family: a generated family ("tiles", "code", "profiler", ...)
+ * @verb: (nullable): the first argument after the family
+ *
+ * Whether @verb is one of @family's generated verbs. The hand-written
+ * commands that share a family with a generated table (tiles NODE ...,
+ * code open|list|save, profiler [key=value]) ask this first and hand the
+ * generated verbs over to m67_run_named().
+ */
+static gboolean
+m67_has_verb (const gchar *family,
+              const gchar *verb)
+{
+	const M67Verb *table = NULL;
+	gsize          n = 0;
+	gsize          i;
+
+	if (verb == NULL || !m67_lookup (family, &table, &n))
+		return FALSE;
+	for (i = 0; i < n; i++)
+	{
+		if (g_strcmp0 (verb, table[i].verb) == 0)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* FAMILY VERB ...: runs a verb of a generated family by its name */
+static gboolean
+m67_run_named (const gchar  *family,
+               gchar       **args,
+               GError      **error)
+{
+	const M67Verb *table = NULL;
+	gsize          n = 0;
+
+	if (!m67_lookup (family, &table, &n))
+		return usage_error (error, "%s: unknown command family", family);
+	return m67_run (family, table, n, args, error);
+}
+
+/*
+ * view layers [MASK | LAYER on|off] [viewport=N]: a viewport's render
+ * layer cull mask. MASK is a number (0x... hex too), "all" or "none";
+ * LAYER is an index 0..31 or a layer name.
+ */
+static gboolean
+view_layers (gchar  **args,
+             GError **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(JsonNode)   r = NULL;
+	const gchar          *pos[2] = { NULL, NULL };
+	guint                 n = 0;
+	guint                 i;
+
+	for (i = 0; args[i] != NULL; i++)
+	{
+		if (strchr (args[i], '=') != NULL)
+		{
+			gchar *one[] = { args[i], NULL };
+
+			if (!lrg_ctl_parse_assignments (one, p, error))
+				return FALSE;
+		}
+		else if (n < 2)
+			pos[n++] = args[i];
+		else
+			return usage_error (error, "view layers [MASK | LAYER on|off] [viewport=N]");
+	}
+	if (n == 1)
+	{
+		guint64 mask = 0;
+
+		if (g_strcmp0 (pos[0], "all") == 0)
+			mask = 0xFFFFFFFFu;
+		else if (g_strcmp0 (pos[0], "none") == 0)
+			mask = 0;
+		else if (!g_ascii_string_to_unsigned (pos[0], g_str_has_prefix (pos[0], "0x") ? 16 : 10,
+		                                      0, 0xFFFFFFFFu, &mask, NULL) &&
+		         !(g_str_has_prefix (pos[0], "0x") &&
+		           g_ascii_string_to_unsigned (pos[0] + 2, 16, 0, 0xFFFFFFFFu, &mask, NULL)))
+			return usage_error (error, "view layers: '%s' is not a mask (a number, 0x hex, all or none)", pos[0]);
+		json_object_set_int_member (p, "mask", (gint64) mask);
+	}
+	else if (n == 2)
+	{
+		guint64 layer = 0;
+
+		if (g_ascii_string_to_unsigned (pos[0], 10, 0, 31, &layer, NULL))
+			json_object_set_int_member (p, "layer", (gint64) layer);
+		else
+			json_object_set_string_member (p, "layer", pos[0]);
+		json_object_set_boolean_member (p, "enabled", g_strcmp0 (pos[1], "on") == 0 ||
+		                                g_strcmp0 (pos[1], "true") == 0 || g_strcmp0 (pos[1], "1") == 0);
+	}
+	r = call ("view.layers", p, error);
+	if (r == NULL)
+		return FALSE;
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
 #ifdef LRG_EDITORCTL_HAVE_MCP
 static gboolean
 cmd_mcp (GError **error)
@@ -2224,7 +4203,7 @@ static const gchar *completion_script =
 	"\tesac\n"
 	"\tif [[ ${COMP_CWORD} -eq 1 ]]\n"
 	"\tthen\n"
-	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset source profiler data palette preferences' -- \"${cur}\")\n"
+	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset source profiler data palette preferences material shader shadergraph env post lod bake seq skel2d anim bonemap clip physics physasset nav bt fsm ai particles weather terrain water mixer audio tileset sprite debug lsp frame script vscript memory network merge po collab scenes gizmo' -- \"${cur}\")\n"
 	"\t\treturn\n"
 	"\tfi\n"
 	"\tcase \"${verb}\" in\n"
@@ -2246,13 +4225,62 @@ static const gchar *completion_script =
 	"\t\trun) mapfile -t COMPREPLY < <(compgen -W \"$(lrgeditorctl get actions -o name 2>/dev/null)\" -- \"${cur}\") ;;\n"
 	"\t\tplay) mapfile -t COMPREPLY < <(compgen -W 'start pause step stop state' -- \"${cur}\") ;;\n"
 	"\t\tgame) mapfile -t COMPREPLY < <(compgen -W 'start stop' -- \"${cur}\") ;;\n"
-	"\t\tview) mapfile -t COMPREPLY < <(compgen -W 'top front right bottom back left persp all focus set layout render-mode overlay' -- \"${cur}\") ;;\n"
+	"\t\tview)\n"
+	"\t\t\tif [[ ${COMP_CWORD} -eq 3 && ( ${prev} == render-mode || ${prev} == mode ) ]]\n"
+	"\t\t\tthen\n"
+	"\t\t\t\tmapfile -t COMPREPLY < <(compgen -W 'lit unlit wireframe normals lighting-only overdraw uv light-complexity ao reflections' -- \"${cur}\")\n"
+	"\t\t\telse\n"
+	"\t\t\t\tmapfile -t COMPREPLY < <(compgen -W 'top front right bottom back left persp all focus set layout render-mode mode overlay layers' -- \"${cur}\")\n"
+	"\t\t\tfi ;;\n"
+	"\t\tmaterial) mapfile -t COMPREPLY < <(compgen -W 'open create variant get set revert save preview assign list' -- \"${cur}\") ;;\n"
+	"\t\tshader) mapfile -t COMPREPLY < <(compgen -W 'create compile diagnostics uniforms reload' -- \"${cur}\") ;;\n"
+	"\t\tshadergraph) mapfile -t COMPREPLY < <(compgen -W 'open create types get add remove connect disconnect param input validate glsl save' -- \"${cur}\") ;;\n"
+	"\t\tenv) mapfile -t COMPREPLY < <(compgen -W 'get set reset bake progress show' -- \"${cur}\") ;;\n"
+	"\t\tpost) mapfile -t COMPREPLY < <(compgen -W 'types open create get add remove move set save preview look assign' -- \"${cur}\") ;;\n"
+	"\t\tlod) mapfile -t COMPREPLY < <(compgen -W 'get force' -- \"${cur}\") ;;\n"
+	"\t\tbake) mapfile -t COMPREPLY < <(compgen -W 'get set reset start progress cancel save clear evaluate preview page show' -- \"${cur}\") ;;\n"
+	"\t\tseq|sequence) mapfile -t COMPREPLY < <(compgen -W 'list open create get set add-track add-key set-key add-section remove bind play scrub save undo from-timeline' -- \"${cur}\") ;;\n"
+	"\t\tskel2d) mapfile -t COMPREPLY < <(compgen -W 'create open get add-bone set-bone remove-bone add-slot set-slot remove-slot draw-order attach detach mesh auto-weights paint-weights skin clip key play mode pick save' -- \"${cur}\") ;;\n"
+	"\t\tanim) mapfile -t COMPREPLY < <(compgen -W 'open create get enter add-layer remove-layer add-state remove-state set-state add-transition set-transition remove-transition add-param remove-param set-param blend-tree preview validate save' -- \"${cur}\") ;;\n"
+	"\t\tbonemap) mapfile -t COMPREPLY < <(compgen -W 'open create get set auto-fill rules models preview save' -- \"${cur}\") ;;\n"
+	"\t\tclip) mapfile -t COMPREPLY < <(compgen -W 'list info preview morph' -- \"${cur}\") ;;\n"
+	"\t\tphysics) mapfile -t COMPREPLY < <(compgen -W 'get add-body remove-body set-body add-shape remove-shape set-shape move-shape add-joint remove-joint set-joint fit overlay state show layers' -- \"${cur}\") ;;\n"
+	"\t\tphysasset) mapfile -t COMPREPLY < <(compgen -W 'open create get model add-part remove-part set-part generate stabilize exclude unexclude set select simulate save' -- \"${cur}\") ;;\n"
+	/* m67e-completion: begin */
+	"\t\tnav) mapfile -t COMPREPLY < <(compgen -W 'get set new bake cancel save clear area-add area-remove area-set area-box-add area-box-remove area-box-set link-add link-remove link-set select overlay agents debug-agent show' -- \"${cur}\") ;;\n"
+	"\t\tbt) mapfile -t COMPREPLY < <(compgen -W 'open create get palette add-node remove-node move-node set-node set-position layout select show add-key remove-key set-subtree remove-subtree open-subtree validate save live' -- \"${cur}\") ;;\n"
+	"\t\tfsm) mapfile -t COMPREPLY < <(compgen -W 'open create get enter up add-state remove-state rename-state set-initial add-transition set-transition remove-transition set-actions set-position select add-key remove-key validate save live send-event' -- \"${cur}\") ;;\n"
+	"\t\tai) mapfile -t COMPREPLY < <(compgen -W 'show entities select state set-key send-event brains topic log' -- \"${cur}\") ;;\n"
+	"\t\tparticles) mapfile -t COMPREPLY < <(compgen -W 'open create get kinds set add-emitter remove-emitter move-emitter duplicate-emitter add-module remove-module move-module select solo play restart seek preview stats save render' -- \"${cur}\") ;;\n"
+	"\t\tweather) mapfile -t COMPREPLY < <(compgen -W 'open create get kinds set add-preset remove-preset set-preset add-layer remove-layer move-layer set-layer set-param set-transition remove-transition select preview save render' -- \"${cur}\") ;;\n"
+	"\t\tterrain) mapfile -t COMPREPLY < <(compgen -W 'get brush stroke sample add-layer remove-layer set-layer add-foliage remove-foliage set-foliage rebake save create show' -- \"${cur}\") ;;\n"
+	"\t\twater) mapfile -t COMPREPLY < <(compgen -W 'get set set-wave add-point set-point remove-point save' -- \"${cur}\") ;;\n"
+	"\t\tmixer) mapfile -t COMPREPLY < <(compgen -W 'show open create set-default get effect-types add-bus remove-bus set-bus set-send remove-send add-effect remove-effect move-effect set-effect add-snapshot remove-snapshot set-snapshot capture-snapshot set-duck remove-duck preview meters save' -- \"${cur}\") ;;\n"
+	"\t\taudio) mapfile -t COMPREPLY < <(compgen -W 'get set curve buses' -- \"${cur}\") ;;\n"
+	"\t\ttiles) mapfile -t COMPREPLY < <(compgen -W 'state grid brush autopaint refresh cell-at tile-info' -- \"${cur}\") ;;\n"
+	"\t\ttileset) mapfile -t COMPREPLY < <(compgen -W 'create open get set select tile collision rule-tile rule preview save' -- \"${cur}\") ;;\n"
+	"\t\tsprite) mapfile -t COMPREPLY < <(compgen -W 'create open get slice frame clip clip-frame event play save' -- \"${cur}\") ;;\n"
+	"\t\tdebug) mapfile -t COMPREPLY < <(compgen -W 'state show breakpoints set-breakpoint remove-breakpoint toggle-breakpoint clear-breakpoints continue pause step-over step-in step-out stop stack scopes variables evaluate watches add-watch remove-watch dap-start dap-stop' -- \"${cur}\") ;;\n"
+	"\t\tlsp) mapfile -t COMPREPLY < <(compgen -W 'servers status diagnostics complete hover definition references rename format restart' -- \"${cur}\") ;;\n"
+	"\t\tprofiler) mapfile -t COMPREPLY < <(compgen -W 'sample set capture save load frames frame compare view' -- \"${cur}\") ;;\n"
+	"\t\tframe) mapfile -t COMPREPLY < <(compgen -W 'capture status calls call scrub texture save load show' -- \"${cur}\") ;;\n"
+	"\t\tscript) mapfile -t COMPREPLY < <(compgen -W 'run languages tools run-tool reload run-in-editor editor-running' -- \"${cur}\") ;;\n"
+	"\t\tvscript) mapfile -t COMPREPLY < <(compgen -W 'create open get node-types gi-search add-node remove-node set-node connect disconnect set-variable add-subgraph remove-subgraph add-comment remove-comment set-program select validate run live breakpoint continue save' -- \"${cur}\") ;;\n"
+	"\t\tmemory) mapfile -t COMPREPLY < <(compgen -W 'status types resources snapshot snapshots diff clear-snapshots history show' -- \"${cur}\") ;;\n"
+	"\t\tnetwork) mapfile -t COMPREPLY < <(compgen -W 'stats history enable reset show' -- \"${cur}\") ;;\n"
+	"\t\tmerge) mapfile -t COMPREPLY < <(compgen -W 'install' -- \"${cur}\") ;;\n"
+	"\t\tpo) mapfile -t COMPREPLY < <(compgen -W 'extract pseudo import export' -- \"${cur}\") ;;\n"
+	"\t\tcollab) mapfile -t COMPREPLY < <(compgen -W 'apply get lock unlock cursor presence' -- \"${cur}\") ;;\n"
+	"\t\tscenes) mapfile -t COMPREPLY < <(compgen -W 'list open active' -- \"${cur}\") ;;\n"
+	"\t\tgizmo) mapfile -t COMPREPLY < <(compgen -W 'apply pivot cursor origin' -- \"${cur}\") ;;\n"
+	"\t\tvcs|git) mapfile -t COMPREPLY < <(compgen -W 'diff log commit locks magit' -- \"${cur}\") ;;\n"
+	/* m67e-completion: end */
 	"\t\tmeta) mapfile -t COMPREPLY < <(compgen -W 'get set' -- \"${cur}\") ;;\n"
 	"\t\tprefab) mapfile -t COMPREPLY < <(compgen -W 'overrides apply revert sync relink unlink' -- \"${cur}\") ;;\n"
 	"\t\tcode) mapfile -t COMPREPLY < <(compgen -W 'open list save' -- \"${cur}\") ;;\n"
 	"\t\tinspector) mapfile -t COMPREPLY < <(compgen -W 'list get set reset state apply-override revert-override' -- \"${cur}\") ;;\n"
 	"\t\thierarchy) mapfile -t COMPREPLY < <(compgen -W 'reveal rename filter state' -- \"${cur}\") ;;\n"
-	"\t\tasset) mapfile -t COMPREPLY < <(compgen -W 'reveal rename move duplicate trash orphans' -- \"${cur}\") ;;\n"
+	"\t\tasset) mapfile -t COMPREPLY < <(compgen -W 'reveal rename move duplicate trash orphans new' -- \"${cur}\") ;;\n"
 	"\t\tsource|sources) mapfile -t COMPREPLY < <(compgen -W 'list ls search export import place' -- \"${cur}\") ;;\n"
 	"\t\tdata) mapfile -t COMPREPLY < <(compgen -W 'list open get set edit undo redo validate save reload close reveal' -- \"${cur}\") ;;\n"
 	"\t\tpalette) mapfile -t COMPREPLY < <(compgen -W 'commands files' -- \"${cur}\") ;;\n"
@@ -2285,6 +4313,16 @@ dispatch (gchar  **argv,
 		return cmd_meta (rest, error);
 	if (g_strcmp0 (verb, "vcs") == 0 || g_strcmp0 (verb, "git") == 0)
 		return cmd_vcs (rest, error);
+	if (g_strcmp0 (verb, "merge") == 0)
+		return cmd_merge (rest, error);
+	if (g_strcmp0 (verb, "po") == 0)
+		return cmd_po (rest, error);
+	if (g_strcmp0 (verb, "collab") == 0)
+		return cmd_collab (rest, error);
+	if (g_strcmp0 (verb, "scenes") == 0)
+		return cmd_scenes (rest, error);
+	if (g_strcmp0 (verb, "gizmo") == 0)
+		return cmd_gizmo (rest, error);
 	if (g_strcmp0 (verb, "prefab") == 0)
 		return cmd_prefab (rest, error);
 	if (g_strcmp0 (verb, "code") == 0)
@@ -2305,6 +4343,42 @@ dispatch (gchar  **argv,
 		return cmd_palette (rest, error);
 	if (g_strcmp0 (verb, "preferences") == 0 || g_strcmp0 (verb, "prefs") == 0)
 		return cmd_preferences (rest, error);
+	if (g_strcmp0 (verb, "material") == 0 || g_strcmp0 (verb, "mat") == 0)
+		return cmd_material (rest, error);
+	if (g_strcmp0 (verb, "shader") == 0)
+		return cmd_shader (rest, error);
+	if (g_strcmp0 (verb, "shadergraph") == 0 || g_strcmp0 (verb, "sg") == 0)
+		return cmd_shadergraph (rest, error);
+	if (g_strcmp0 (verb, "env") == 0 || g_strcmp0 (verb, "environment") == 0)
+		return cmd_env (rest, error);
+	if (g_strcmp0 (verb, "post") == 0)
+		return cmd_post (rest, error);
+	if (g_strcmp0 (verb, "lod") == 0)
+		return cmd_lod (rest, error);
+	if (g_strcmp0 (verb, "bake") == 0)
+		return cmd_bake (rest, error);
+	if (g_strcmp0 (verb, "seq") == 0 || g_strcmp0 (verb, "sequence") == 0)
+		return cmd_seq (rest, error);
+	if (g_strcmp0 (verb, "skel2d") == 0)
+		return cmd_skel2d (rest, error);
+	if (g_strcmp0 (verb, "anim") == 0)
+		return cmd_anim (rest, error);
+	if (g_strcmp0 (verb, "bonemap") == 0)
+		return cmd_bonemap (rest, error);
+	if (g_strcmp0 (verb, "clip") == 0)
+		return cmd_clip (rest, error);
+	if (g_strcmp0 (verb, "physics") == 0)
+		return cmd_physics (rest, error);
+	if (g_strcmp0 (verb, "physasset") == 0)
+		return cmd_physasset (rest, error);
+	{
+		const M67Verb *table = NULL;
+		gsize          n = 0;
+
+		/* nav bt fsm ai particles weather terrain water mixer audio tileset sprite */
+		if (g_strcmp0 (verb, "tiles") != 0 && m67_lookup (verb, &table, &n))
+			return m67_run (verb, table, n, rest, error);
+	}
 	if (g_strcmp0 (verb, "get") == 0)
 		return cmd_get (rest, error);
 	if (g_strcmp0 (verb, "describe") == 0)
@@ -2505,6 +4579,7 @@ main (int    argc,
 	g_autoptr(GError)         error = NULL;
 	gboolean                  ok;
 
+	ctl_argv0 = argv[0];
 	ctx = g_option_context_new ("- control running libregnum editors");
 	g_option_context_add_main_entries (ctx, entries, NULL);
 	g_option_context_set_description (ctx, description);

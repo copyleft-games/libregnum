@@ -1,0 +1,353 @@
+#+title: LrgEntity3D
+#+description: The runtime 3D scene entity: identity, quaternion TRS with authored Euler, hierarchy, cached world matrices, ordered components.
+
+* LrgEntity3D
+:PROPERTIES:
+:CUSTOM_ID: lrgentity3d
+:END:
+=LrgEntity3D= is the node of the 0.9.0 3D runtime. Every object in a running 3D game (a crate, a light, the player, a camera rig, an empty group) is an entity in an [[file:world3d.org][LrgWorld3D]]. It is a derivable =GObject= declared in =src/world3d/lrg-entity3d.h=.
+
+The 2D =LrgWorld= / =LrgGameObject= pair is untouched; the 3D runtime is a separate, parallel type family that reuses =LrgComponent= (see [[file:../ecs/component.org::#component-hooks-3d][LrgComponent 3D hooks]]).
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+An entity has:
+
+- *Identity*: a GUID (settable once; the =LrgNode= GUID when instantiated from a =.rlevel=), a name (not unique), string tags (a set).
+- *Flags*: =active= (takes part in world phases), =visible= (collected for rendering), =static= (a hint for batching, baking, navigation), and a render =layer= (0..31, matched against a camera's cull mask).
+- *Local transform*: position (vec3), rotation (unit quaternion =x, y, z, w=), scale (vec3), plus the *authored Euler* rotation the editor wrote, kept so a round trip never rewrites =370°= as =10°=.
+- *Hierarchy*: one parent, an ordered list of children (the parent owns a reference to each child).
+- *Cached matrices*: local =T * R * S= and world =parent_world * local=, recomputed lazily.
+- *Components*: an ordered list of =LrgComponent= instances (the entity owns a reference to each).
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Math conventions
+:PROPERTIES:
+:CUSTOM_ID: math-conventions
+:END:
+All transform math uses =src/core/lrg-math3d.h=: column-major 4x4 matrices stored as 16 floats (=m[col * 4 + row]=, the memory layout of a raylib =Matrix=), points as column vectors (=world = M * local=), Euler XYZ radians with =R = Rz * Ry * Rx=, quaternions =(x, y, z, w)=, Y up, and "forward" is local =-Z= (cameras and spot/directional lights face it).
+
+*** Rotation: quaternion plus authored Euler
+:PROPERTIES:
+:CUSTOM_ID: rotation-authored-euler
+:END:
+The quaternion is the truth for every matrix. The authored Euler is a side channel for tools:
+
+| call                                 | quaternion            | authored Euler kept? |
+|--------------------------------------+-----------------------+----------------------|
+| =lrg_entity3d_set_rotation_euler()=  | =euler_to_quat(e)=    | yes, stored exactly  |
+| =lrg_entity3d_set_rotation()=        | normalised input      | no                   |
+| =lrg_entity3d_set_local_trs()=       | normalised input      | no                   |
+| =lrg_entity3d_set_local_matrix()=    | decomposed            | no                   |
+| =lrg_entity3d_set_world_rotation()=  | solved via parent     | no                   |
+| =lrg_entity3d_set_world_matrix()=    | decomposed            | no                   |
+| position / scale setters             | unchanged             | unchanged            |
+
+=lrg_entity3d_get_rotation_euler()= returns the stored angles bit-exactly while =lrg_entity3d_has_authored_euler()= is =TRUE=; otherwise it decomposes the quaternion with =lrg_math3d_quat_to_euler()=. Play-in-editor sync-back uses this: an entity that never rotated at runtime writes back the exact authored angles.
+
+*** Hierarchy and ownership
+:PROPERTIES:
+:CUSTOM_ID: hierarchy-ownership
+:END:
+#+begin_example
+ LrgWorld3D ──owns──► root (LrgEntity3D "root")
+                        │  children: GPtrArray, one ref each
+                        ├── "level"            (parent link is weak)
+                        │     ├── "crate"  ──owns──► [MeshRenderer, Collider, Script]
+                        │     └── "lamp"   ──owns──► [Light]
+                        └── "player"
+                              └── "camera_rig" ──► [Camera, AudioListener]
+#+end_example
+
+- =lrg_entity3d_add_child()= / =lrg_entity3d_insert_child()= take a reference; the child must have no parent. Drop your own reference afterwards if the hierarchy should own it.
+- =lrg_entity3d_remove_child()= drops the parent's reference: keep your own if you want to reuse the child.
+- =lrg_entity3d_set_parent()= moves an entity (keeping it alive), with =keep_world= choosing whether the world or the local transform survives. Reparenting inside one world does not leave and re-join the world (the GUID map and component world hooks are not churned). Detaching (=parent= =NULL=) drops the old parent's reference, so hold your own.
+- Cycles are refused with a warning (=lrg_entity3d_is_ancestor_of()= guards it).
+
+*** Cached world matrices and dirty propagation
+:PROPERTIES:
+:CUSTOM_ID: dirty-propagation
+:END:
+#+begin_example
+ write (set_position on "level")            read (get_world_matrix on "crate")
+ ────────────────────────────────           ───────────────────────────────────
+ level.local_version++                       crate.world_epoch == epoch? ──yes──► cached
+ global epoch++                                       │ no
+ (children are NOT walked: O(1))             validate parent chain (stops at the first
+                                             ancestor validated in this epoch)
+                                             inputs (local_version, parent ptr,
+                                             parent.world_version) unchanged? ──► cached
+                                                      │ changed
+                                             world = parent.world * local
+                                             world_version = ++global counter
+#+end_example
+
+A write is O(1) whatever the subtree size; descendants are fixed up on their next read. =lrg_entity3d_get_world_version()= exposes the per-entity counter so systems (the world's spatial index, renderers' instance caches) can detect movement with one integer compare.
+
+*** Transform-changed signal (coalesced)
+:PROPERTIES:
+:CUSTOM_ID: transform-changed-coalesced
+:END:
+=LrgEntity3D::transform-changed= fires for the entity whose own local transform changed (or that was reparented):
+
+- inside a world it is *queued* and emitted at most once per flush; the world flushes after =update=, after each fixed substep, after =late_update=, and at the start of =lrg_world3d_collect_render()=;
+- outside a world it is emitted synchronously by each effective setter (setting the same value is a no-op).
+
+Descendants whose world matrix changed as a consequence do not emit; compare =lrg_entity3d_get_world_version()= instead.
+
+*** Components
+:PROPERTIES:
+:CUSTOM_ID: components
+:END:
+Components keep attach order (it is the update order). A component has at most one owner, an =LrgGameObject= or an =LrgEntity3D=. Adding to an entity calls the component's =attached_entity()= vfunc, then =world_entered()= if the entity is in a world, then emits =component-added=; removal runs =world_exited()=, =detached_entity()=, then emits =component-removed=. Disposing an entity detaches its components in reverse order.
+
+=lrg_entity3d_get_component()= matches subtypes (=G_TYPE_CHECK_INSTANCE_TYPE=), so asking for =LRG_TYPE_COMPONENT= returns the first component.
+
+*** Bounds
+:PROPERTIES:
+:CUSTOM_ID: bounds
+:END:
+=lrg_entity3d_get_local_bounds()= unions the =get_bounds()= results of enabled components; =lrg_entity3d_get_world_bounds()= transforms the eight corners by the world matrix. An entity without bounds is a zero-size box at its world position (it is still found by spatial queries that contain that point).
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+All functions are =LRG_AVAILABLE_IN_ALL=. Vectors are =gfloat= arrays; "out" arrays are caller-allocated.
+
+*** Construction
+:PROPERTIES:
+:CUSTOM_ID: api-construction
+:END:
+| function                                         | notes                                                     |
+|--------------------------------------------------+-----------------------------------------------------------|
+| =lrg_entity3d_new (void)=                        | transfer full; identity transform, active, visible, layer 0 |
+| =lrg_entity3d_new_with_name (const gchar *name)= | same, with a name                                         |
+
+*** Identity and flags
+:PROPERTIES:
+:CUSTOM_ID: api-identity
+:END:
+| function                                          | notes                                                         |
+|---------------------------------------------------+---------------------------------------------------------------|
+| =lrg_entity3d_get_guid()=                         | transfer none, nullable                                       |
+| =lrg_entity3d_set_guid (self, guid)=              | once only; a different second value warns and returns =FALSE= |
+| =lrg_entity3d_ensure_guid()=                      | assigns a random v4 UUID when unset; returns it               |
+| =lrg_entity3d_get_name()= / =lrg_entity3d_set_name()= | nullable, not unique                                      |
+| =lrg_entity3d_get_active()= / =lrg_entity3d_set_active()= | own flag                                              |
+| =lrg_entity3d_is_active_in_hierarchy()=           | own flag AND every ancestor's                                 |
+| =lrg_entity3d_get_visible()= / =lrg_entity3d_set_visible()= | own flag                                            |
+| =lrg_entity3d_is_visible_in_hierarchy()=          | own flag AND every ancestor's                                 |
+| =lrg_entity3d_get_static()= / =lrg_entity3d_set_static()= | hint only; setters still work                           |
+| =lrg_entity3d_get_layer()= / =lrg_entity3d_set_layer()= | 0..31                                                     |
+| =lrg_entity3d_get_layer_mask()=                   | =LRG_RENDER_LAYERS_BIT (layer)=                               |
+| =lrg_entity3d_add_tag()=                          | set semantics                                                 |
+| =lrg_entity3d_remove_tag()=                       | =TRUE= if it was present                                      |
+| =lrg_entity3d_has_tag()=                          |                                                               |
+| =lrg_entity3d_get_tags()=                         | transfer full =GStrv=, sorted                                 |
+
+*** Local transform
+:PROPERTIES:
+:CUSTOM_ID: api-local-transform
+:END:
+| function                                                     | notes                                    |
+|--------------------------------------------------------------+------------------------------------------|
+| =lrg_entity3d_get_position (self, out[3])=                   |                                          |
+| =lrg_entity3d_set_position (self, pos[3])=                   |                                          |
+| =lrg_entity3d_set_position_xyz (self, x, y, z)=              |                                          |
+| =lrg_entity3d_get_rotation (self, out[4])=                   | quaternion                               |
+| =lrg_entity3d_set_rotation (self, q[4])=                     | normalised; zero becomes identity; forgets Euler |
+| =lrg_entity3d_get_rotation_euler (self, out[3])=             | authored angles when available           |
+| =lrg_entity3d_set_rotation_euler (self, e[3])=               | stores both                              |
+| =lrg_entity3d_has_authored_euler()=                          |                                          |
+| =lrg_entity3d_get_scale (self, out[3])=                      |                                          |
+| =lrg_entity3d_set_scale (self, s[3])=                        |                                          |
+| =lrg_entity3d_set_scale_xyz (self, x, y, z)=                 |                                          |
+| =lrg_entity3d_set_local_trs (self, t[3], q[4], s[3])=        | one version bump, one signal             |
+| =lrg_entity3d_get_local_matrix (self, out[16])=              | cached                                   |
+| =lrg_entity3d_set_local_matrix (self, m[16])=                | decomposes; no shear                     |
+
+*** World transform
+:PROPERTIES:
+:CUSTOM_ID: api-world-transform
+:END:
+| function                                                      | notes                                                    |
+|---------------------------------------------------------------+----------------------------------------------------------|
+| =lrg_entity3d_get_world_matrix (self, out[16])=               | validates lazily                                         |
+| =lrg_entity3d_peek_world_matrix (self)=                       | transfer none; valid until the next transform change     |
+| =lrg_entity3d_get_world_version (self)=                       | changes whenever the world matrix is rebuilt             |
+| =lrg_entity3d_get_world_position()= / =lrg_entity3d_set_world_position()= | solved through the parent's inverse          |
+| =lrg_entity3d_get_world_rotation()= / =lrg_entity3d_set_world_rotation()= | quaternion product of ancestors; ignores non-uniform scale |
+| =lrg_entity3d_get_world_scale()=                              | basis lengths; lossy under rotated non-uniform scale     |
+| =lrg_entity3d_set_world_matrix (self, m[16])=                 | local = inverse(parent world) * m                        |
+| =lrg_entity3d_transform_point (self, local[3], out[3])=       | entity space to world                                    |
+| =lrg_entity3d_inverse_transform_point (self, world[3], out[3])= | world to entity space                                  |
+| =lrg_entity3d_get_forward()=                                  | world -Z, unit                                           |
+| =lrg_entity3d_get_up()=                                       | world +Y, unit                                           |
+| =lrg_entity3d_get_right()=                                    | world +X, unit                                           |
+
+*** Hierarchy
+:PROPERTIES:
+:CUSTOM_ID: api-hierarchy
+:END:
+| function                                             | notes                                                   |
+|------------------------------------------------------+---------------------------------------------------------|
+| =lrg_entity3d_get_parent()=                          | transfer none, nullable                                 |
+| =lrg_entity3d_get_world()=                           | the =LrgWorld3D= or =NULL=                              |
+| =lrg_entity3d_get_root()=                            | topmost ancestor (the world root when in a world)       |
+| =lrg_entity3d_get_n_children()=                      |                                                         |
+| =lrg_entity3d_get_child (self, index)=               | =NULL= past the end                                     |
+| =lrg_entity3d_get_children()=                        | transfer container                                      |
+| =lrg_entity3d_get_index()=                           | sibling index or -1                                     |
+| =lrg_entity3d_add_child (self, child)=               | takes a ref                                             |
+| =lrg_entity3d_insert_child (self, child, index)=     | -1 appends                                              |
+| =lrg_entity3d_remove_child (self, child)=            | drops the parent's ref                                  |
+| =lrg_entity3d_set_parent (self, parent, keep_world)= | reparent or detach                                      |
+| =lrg_entity3d_set_sibling_index (self, index)=       | clamped                                                 |
+| =lrg_entity3d_is_ancestor_of (self, descendant)=     | strict                                                  |
+| =lrg_entity3d_find_child (self, name, recursive)=    | depth first, pre-order                                  |
+| =lrg_entity3d_find_by_path (self, "a/b/c")=          | =.=, =..=, and =#<index>= segments                      |
+| =lrg_entity3d_get_path()=                            | transfer full; relative to the topmost ancestor         |
+| =lrg_entity3d_foreach (self, func, data)=            | =LrgEntity3DVisitFunc= returns =FALSE= to skip children |
+
+*** Components and bounds
+:PROPERTIES:
+:CUSTOM_ID: api-components
+:END:
+| function                                             | notes                                  |
+|------------------------------------------------------+----------------------------------------|
+| =lrg_entity3d_add_component (self, component)=       | takes a ref; =FALSE= if already owned  |
+| =lrg_entity3d_remove_component (self, component)=    | drops the ref                          |
+| =lrg_entity3d_get_component (self, type)=            | first match, subtypes included         |
+| =lrg_entity3d_get_components_of_type (self, type)=   | transfer container                     |
+| =lrg_entity3d_has_component (self, type)=            |                                        |
+| =lrg_entity3d_get_components()=                      | transfer container, attach order       |
+| =lrg_entity3d_get_n_components()=                    |                                        |
+| =lrg_entity3d_get_local_bounds (self, out)=          | union of components' =get_bounds()=    |
+| =lrg_entity3d_get_world_bounds (self, out)=          | AABB of the transformed corners        |
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| property  | type          | access | notes                                       |
+|-----------+---------------+--------+---------------------------------------------|
+| =guid=    | string        | rw     | settable once                               |
+| =name=    | string        | rw     |                                             |
+| =active=  | boolean       | rw     | default =TRUE=                              |
+| =visible= | boolean       | rw     | default =TRUE=                              |
+| =static=  | boolean       | rw     | default =FALSE=                             |
+| =layer=   | uint          | rw     | 0..31, default =LRG_RENDER_LAYERS_DEFAULT= |
+| =parent=  | =LrgEntity3D= | r      |                                             |
+| =world=   | =LrgWorld3D=  | r      |                                             |
+
+All use =G_PARAM_EXPLICIT_NOTIFY=: =notify= fires only on real changes.
+
+*** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+| signal              | arguments       | when                                                              |
+|---------------------+-----------------+-------------------------------------------------------------------|
+| =transform-changed= | none            | own local transform changed / reparented (coalesced in a world)   |
+| =child-added=       | =LrgEntity3D *= | after linking a child                                             |
+| =child-removed=     | =LrgEntity3D *= | after unlinking (the child is still alive during emission)        |
+| =component-added=   | =LrgComponent *= | after the attach hooks ran                                       |
+| =component-removed= | =LrgComponent *= | after the detach hooks ran (still alive during emission)        |
+
+The class has default-handler slots for the first three (=LrgEntity3DClass.transform_changed=, =child_added=, =child_removed=) and eight reserved pointers.
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** Build a small hierarchy
+:PROPERTIES:
+:CUSTOM_ID: example-hierarchy
+:END:
+#+begin_src c
+g_autoptr(LrgWorld3D) world = lrg_world3d_new ();
+g_autoptr(LrgEntity3D) car = lrg_entity3d_new_with_name ("car");
+g_autoptr(LrgEntity3D) wheel = lrg_entity3d_new_with_name ("wheel_fl");
+gfloat yaw[3] = { 0.0f, G_PI / 2.0f, 0.0f };
+gfloat p[3];
+
+lrg_entity3d_set_guid (car, "7c0e7d64-6f0a-4a5e-9a26-c1b0b5c1a001");
+lrg_entity3d_set_position_xyz (car, 10.0f, 0.0f, 0.0f);
+lrg_entity3d_set_rotation_euler (car, yaw);
+
+lrg_entity3d_add_child (car, wheel);
+lrg_entity3d_set_position_xyz (wheel, 1.0f, -0.3f, 1.5f);
+
+lrg_world3d_add_entity (world, car);
+
+/* World-space position of the wheel: car * wheel */
+lrg_entity3d_get_world_position (wheel, p);
+
+/* Look up later by path or GUID */
+g_assert (lrg_world3d_find_by_path (world, "car/wheel_fl") == wheel);
+#+end_src
+
+*** Reparent without a visual jump
+:PROPERTIES:
+:CUSTOM_ID: example-keep-world
+:END:
+#+begin_src c
+/* Pick up a crate: attach it to the hand, keeping where it is now. */
+lrg_entity3d_set_parent (crate, hand, TRUE);
+
+/* Drop it back into the level root, again in place. */
+lrg_entity3d_set_parent (crate, lrg_world3d_get_root (world), TRUE);
+#+end_src
+
+*** Cheap movement detection
+:PROPERTIES:
+:CUSTOM_ID: example-world-version
+:END:
+#+begin_src c
+guint64 v = lrg_entity3d_get_world_version (entity);
+if (v != cache->last_version)
+{
+	cache->last_version = v;
+	rebuild_instance_matrix (cache, lrg_entity3d_peek_world_matrix (entity));
+}
+#+end_src
+
+** Performance notes
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- Transform writes are O(1) and never walk children; reads are O(depth) only after a change, O(1) otherwise (epoch fast path).
+- =lrg_entity3d_peek_world_matrix()= avoids a 64-byte copy per read in render loops.
+- =get_children= / =get_components= allocate a container; in hot loops use =lrg_entity3d_get_n_children()= + =lrg_entity3d_get_child()=, or =lrg_entity3d_foreach()=.
+- The epoch and counters are not atomic: a hierarchy is single-threaded.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- =remove_child= and =set_parent (…, NULL, …)= drop the parent's reference; if that was the last one the entity is finalized.
+- =set_world_rotation= / =get_world_rotation= ignore ancestor scale; with non-uniform ancestor scale use =set_world_matrix=.
+- A GUID can be set once. Instantiate code must set it before anything relies on it; =ensure_guid= is for runtime-spawned entities.
+- Components added to an entity do not get the 2D =attached()= hook, and 2D components added to a game object do not get =attached_entity()=; =update()= runs for both.
+- Do not mutate the hierarchy from inside =lrg_entity3d_foreach()=; world phases snapshot children and components so components may spawn or destroy entities during =update=.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+In 0.9.0 play-in-editor, a 3D level is instantiated into an =LrgWorld3D= with one =LrgEntity3D= per =LrgNode= (same GUID, full TRS, authored Euler kept). The hierarchy panel shows the live entity tree while playing and the inspector edits entity properties; on stop, sync-back writes only fields that changed and keeps authored Euler angles exactly (=lrg_entity3d_has_authored_euler()=). See [[file:../../editor/editor-runtime.org][Editor runtime (play mode)]] and the [[file:../../guides/migration-0-8-to-0-9.org][0.8 to 0.9 migration guide]].
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:world3d.org][LrgWorld3D]]: phases, render lists, registries
+- [[file:../ecs/component.org::#component-hooks-3d][LrgComponent 3D hooks]]
+- [[file:../core/math3d.org][Shared 3D math (lrg-math3d)]]
+- [[file:octree.org][LrgOctree]]

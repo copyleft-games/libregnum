@@ -1,0 +1,153 @@
+#+title: LrgFoliage - Foliage Scatter Layers
+#+description: Deterministic scatter layers (meshes, billboards, grass) over a terrain with density maps, slope/height/material rules, instanced LOD drawing and the foliage component
+
+* LrgFoliage - Foliage Scatter Layers
+:PROPERTIES:
+:CUSTOM_ID: lrgfoliage
+:END:
+=LrgFoliage= (0.9.0) places and draws vegetation and props over a terrain: forests, bushes, rocks, flower cards and grass. A foliage set is a list of =LrgFoliageLayer= s; each says *what* to place (a mesh, a textured billboard card or grass blades), *how densely* (instances per square unit, scaled by a paintable per-cell density map and per terrain surface layer), *where* (slope and height limits) and *how it looks from afar* (an LOD mesh, a dithered fade, a cull distance). Placement is a pure function of the terrain and the settings, done per patch of cells so painting re-scatters only what changed. Drawing is instanced.
+
+Normally a foliage set belongs to an [[file:terrain-asset.org][LrgTerrainAsset]] (=lrg_terrain_asset_get_foliage()=), is saved in the =foliage:= block of its =.rterrain= and is drawn by the terrain's =LrgTerrainComponent=. =LrgFoliageComponent= draws a set that lives apart from a terrain asset.
+
+- *Types* - =LrgFoliage=, =LrgFoliageLayer= (final GObjects), =LrgFoliageInstance= (boxed struct), =LrgFoliageComponent=
+- *Headers* - =graphics/lrg-foliage.h=, =world3d/components/lrg-foliage-component.h=
+- *Limits* - =LRG_FOLIAGE_MAX_LAYERS= (16), =LRG_FOLIAGE_MAX_PER_CELL= (64)
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Layers
+:PROPERTIES:
+:CUSTOM_ID: concepts-layers
+:END:
+| =LrgFoliageKind= | Draws | Uses |
+|------------------+-------+------|
+| =LRG_FOLIAGE_KIND_MESH= | a mesh per instance: a model file (its first mesh with its diffuse texture and colour) or a built-in procedural tree =builtin:conifer=, =builtin:broadleaf=, =builtin:palm=, =builtin:dead=, =builtin:shrub= (an =LrgTreeMesh= of the layer seed, =size[1]= high) | =mesh=, =lod_mesh=, =lod_distance= |
+| =LRG_FOLIAGE_KIND_BILLBOARD= | two crossed, alpha-tested cards =size[0]= x =size[1]= | =texture= |
+| =LRG_FOLIAGE_KIND_GRASS= | swaying blades through an =LrgGrassField= (base a darker shade of the colour, tip the colour) | =size= = blade width, height |
+
+Layer settings (=lrg_foliage_layer_new()=, getters / setters): =lrg_foliage_layer_get_name=, =lrg_foliage_layer_get_kind=, =lrg_foliage_layer_get_mesh= / =lrg_foliage_layer_set_mesh=, =lrg_foliage_layer_get_lod_mesh= / =lrg_foliage_layer_set_lod_mesh= / =lrg_foliage_layer_get_lod_distance=, =lrg_foliage_layer_get_texture= / =lrg_foliage_layer_set_texture=, =lrg_foliage_layer_get_color= / =lrg_foliage_layer_set_color=, =lrg_foliage_layer_get_density= / =lrg_foliage_layer_set_density=, =lrg_foliage_layer_get_material_density= / =lrg_foliage_layer_set_material_density=, =lrg_foliage_layer_get_scale_range= / =lrg_foliage_layer_set_scale_range=, =lrg_foliage_layer_get_slope_range= / =lrg_foliage_layer_set_slope_range=, =lrg_foliage_layer_get_height_range= / =lrg_foliage_layer_set_height_range=, =lrg_foliage_layer_get_align= / =lrg_foliage_layer_set_align= (0 upright .. 1 follow the ground), =lrg_foliage_layer_get_size= / =lrg_foliage_layer_set_size=, =lrg_foliage_layer_get_fade= / =lrg_foliage_layer_set_fade=, =lrg_foliage_layer_get_seed= / =lrg_foliage_layer_set_seed=. Changing a placement rule marks every patch of the layer for re-scattering.
+
+*** Placement
+:PROPERTIES:
+:CUSTOM_ID: concepts-placement
+:END:
+The foliage grid is the terrain's cell grid (=lrg_foliage_set_grid()= / =lrg_foliage_get_grid()=; a terrain asset sets it for its own foliage). Cells group into square patches of =lrg_foliage_get_patch_cells()= cells (=lrg_foliage_set_patch_cells()=, default 16), the unit of re-scattering, culling and LOD. In a cell a layer has =slots = ceil (density x cell area)= candidates (at most 64). Slot k of cell (i, j) has its own hash of the foliage seed (=lrg_foliage_get_seed()= / =lrg_foliage_set_seed()=), the layer seed, the layer index, i, j and k: its first value accepts it when below =density x area / slots x painted density x min (1, sum of surface weights x material factors)= at the slot's spot, the next ones give its position in the cell, yaw and scale. Then the rules drop it over holes, outside the height range and outside the slope range (from the ground normal). Instances (=LrgFoliageInstance=: position, yaw, scale, up) are local to the terrain; =lrg_foliage_instance_get_matrix()= builds the transform (=lrg_foliage_instance_copy()=, =lrg_foliage_instance_free()=).
+
+Consequences: the same terrain, maps and seeds always give the same instances in the same order; painting more density only adds instances (a slot accepted at density d stays accepted at any higher density with the same slot count); and an edit re-scatters only its patches.
+
+*** Density maps and dirty patches
+:PROPERTIES:
+:CUSTOM_ID: concepts-density
+:END:
+Each layer has a byte per cell (=lrg_foliage_get_density()= / =lrg_foliage_set_density()= / =lrg_foliage_fill_density()=, 0 .. 1, starting full), painted by the =foliage-paint= / =foliage-erase= brushes. Height, splat, hole and density changes of the owning terrain call =lrg_foliage_mark_dirty()= on the cells around them; =lrg_foliage_get_dirty_patches()= counts what waits. The components re-scatter dirty patches right before collecting render items; =lrg_terrain_asset_scatter_foliage()= re-scatters everything now. =lrg_foliage_get_instance_count()= and =lrg_foliage_get_instance()= read the result.
+
+Without a terrain, place instances by hand: =lrg_foliage_add_instance()= (into the patch under its position; needs a grid), =lrg_foliage_clear_instances()=.
+
+*** Drawing
+:PROPERTIES:
+:CUSTOM_ID: concepts-drawing
+:END:
+Each non-empty layer is one custom render item in the renderer's *transparent* category. Its draw writes depth and alpha-tests, so it looks like cutout geometry, but it stays out of the depth prepass (SSAO) and the shadow passes, and is drawn after volumetric fog: foliage does not cast shadows in 0.9.0. The draw culls patches against the frustum and the fade end, uses the LOD mesh for patches beyond =lod_distance=, and issues one instanced draw per run of consecutive patches sharing a mesh, with a small shader: the instance transform, a gentle wind sway growing with height, vertex light from the renderer's light set (=lrg_light_sample=, ambient, sun and the clustered point / spot lights) times a soft sun term, alpha test at 0.5, a dithered fade between the fade start and end, and fog. Grass layers draw through an =LrgGrassField= lit by the same light set. =lrg_foliage_release_gpu()= frees meshes, buffers, shader and grass fields.
+
+** Format: the foliage block
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+#+begin_src yaml
+foliage:
+  seed: 2026                  # the scatter seed
+  patch_cells: 16             # written when not 16
+  layers:
+  - name: pines
+    kind: mesh                # mesh | billboard | grass
+    mesh: builtin:conifer     # model path / guid: / builtin:<tree shape>
+    lod_mesh: builtin:shrub   # optional far mesh
+    lod_distance: 60          # written with lod_mesh
+    texture: cards/fern.png   # billboard cards
+    color: [1, 1, 1, 1]       # tint (grass: tip colour)
+    density: 0.006            # per square unit at full density
+    material_density: [1, 0, 0, 0]   # per terrain layer, up to the last factor that is not 1
+    scale: [0.8, 1.2]
+    slope: [0, 32]            # degrees
+    height: [3, 40]           # ground height range; written when set
+    align: 0
+    size: [1, 9]              # card width/height, blade width/height, tree height
+    fade: [260, 320]          # dissolve start, cull distance
+    seed: 0
+    density_file: island.foliage0.png   # written when painted; gray, one byte per cell
+#+end_src
+
+Values are checked like the rest of the =.rterrain= (=/foliage/layers[0]/kind: expected one of mesh, billboard, grass=); unknown keys are kept. =kind= is read first, so its defaults (grass: density 4, size 0.4 x 0.5, fade 25 .. 35, a green colour) apply before the other keys.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+=LrgFoliage=: =lrg_foliage_new=, =lrg_foliage_get_seed=, =lrg_foliage_set_seed=, =lrg_foliage_get_patch_cells=, =lrg_foliage_set_patch_cells=, =lrg_foliage_set_grid=, =lrg_foliage_get_grid=, =lrg_foliage_get_n_layers=, =lrg_foliage_get_layer=, =lrg_foliage_add_layer= (returns the index, -1 when full or the layer belongs to another set), =lrg_foliage_remove_layer=, =lrg_foliage_get_density=, =lrg_foliage_set_density=, =lrg_foliage_fill_density=, =lrg_foliage_mark_dirty=, =lrg_foliage_get_dirty_patches=, =lrg_foliage_get_instance_count=, =lrg_foliage_get_instance=, =lrg_foliage_add_instance=, =lrg_foliage_clear_instances=, =lrg_foliage_release_gpu=. Enum =LrgFoliageKind= (=lrg_foliage_kind_get_type ()=); boxed =LrgFoliageInstance= (=lrg_foliage_instance_get_type ()=).
+
+=LrgFoliageComponent=: =lrg_foliage_component_new=, =lrg_foliage_component_get_foliage_set=, =lrg_foliage_component_set_foliage_set=, =lrg_foliage_component_get_terrain=, =lrg_foliage_component_set_terrain= (the ground dirty patches re-scatter on; the foliage grid follows its cells). Properties =foliage-set=, =terrain=, =layer=. The sway clock advances with the component's update.
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** A forest that avoids rock and water
+:PROPERTIES:
+:CUSTOM_ID: example-forest
+:END:
+#+begin_src C
+LrgFoliage                *f = lrg_terrain_asset_get_foliage (asset);
+g_autoptr(LrgFoliageLayer) pines = lrg_foliage_layer_new ("pines", LRG_FOLIAGE_KIND_MESH);
+
+lrg_foliage_layer_set_mesh (pines, "builtin:conifer");
+lrg_foliage_layer_set_size (pines, 1.0f, 9.0f);
+lrg_foliage_layer_set_density (pines, 0.006f);          /* one per ~170 square units */
+lrg_foliage_layer_set_slope_range (pines, 0.0f, 32.0f);
+lrg_foliage_layer_set_height_range (pines, 3.0f, 40.0f); /* above the lake */
+lrg_foliage_layer_set_material_density (pines, 1, 0.0f); /* not on layer 1 (rock) */
+lrg_foliage_add_layer (f, pines);
+lrg_foliage_set_seed (f, 2026);
+/* drawn by the terrain component; saved with the asset */
+#+end_src
+
+*** Clearing a path with the foliage brush
+:PROPERTIES:
+:CUSTOM_ID: example-erase
+:END:
+#+begin_src C
+g_autoptr(LrgTerrainBrush) erase = lrg_terrain_brush_new (LRG_TERRAIN_BRUSH_FOLIAGE_ERASE);
+
+lrg_terrain_brush_set_layer (erase, 0);   /* the pines */
+lrg_terrain_brush_set_radius (erase, 4.0f);
+lrg_terrain_edit_free (lrg_terrain_brush_apply (erase, asset, x, z, 1.0f));
+/* the patches under the brush re-scatter before the next frame */
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Scattering costs one hash chain, a weight sample and (for accepted slots) a height and normal sample per candidate slot. One instanced draw per run of visible patches per LOD mesh; instance buffers are re-uploaded only after a re-scatter. Grass hands its blades to =LrgGrassField=, which culls its own groups. Measured on the showcase (three layers, 126 933 instances over 256 x 256 units), =taskset -c 2=, release build: a full scatter takes 113 ms (about 0.9 µs per instance); painting re-scatters one 16-cell patch at a time.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Foliage casts no shadows and is not in the depth prepass (no SSAO on it) in 0.9.0.
+- Model meshes: only the model's first mesh is drawn, with its own diffuse texture and colour.
+- =lrg_foliage_add_instance()= needs a grid; a re-scatter replaces hand-placed instances of the patches it re-scatters.
+- =material_density= factors above 1 are clamped: they shape, not raise, density.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The Terrain panel's Foliage section ([[file:../../editor/terrain.org::#editor-terrain-foliage][Foliage layers]]) adds mesh, card and grass layers, edits every scatter rule above in a grid (density, scale, slope, height, align, size, fade, seed, mesh / LOD mesh / texture, colour), and its Foliage / Erase brushes paint the selected layer's density with =LRG_TERRAIN_BRUSH_FOLIAGE_PAINT= / =_ERASE= (one undo step per stroke, from the stroke's =LrgTerrainEdit= of kind =LRG_TERRAIN_EDIT_FOLIAGE=); Rebake runs =lrg_terrain_asset_scatter_foliage()=. IPC: =terrain.add_foliage=, =terrain.set_foliage=, =terrain.remove_foliage=, =terrain.stroke {"tool": "foliage-paint"}=. The result saves with the terrain.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+[[file:terrain-asset.org][LrgTerrainAsset]], [[file:terrain-brush.org][LrgTerrainBrush]], [[file:world-look.org][LrgGrassField and LrgTreeMesh]], [[file:../../guides/terrain.org][Terrain guide]].

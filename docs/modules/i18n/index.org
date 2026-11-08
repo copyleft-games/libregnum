@@ -44,6 +44,12 @@ A locale represents a single language with its strings and pluralization rules. 
 - Plural form handling (one, few, many, other, etc.)
 - Custom properties via subclassing
 
+*** [[file:po.org][Gettext PO]]
+:PROPERTIES:
+:CUSTOM_ID: gettext-po
+:END:
+=lrg_po_import_file()=, =lrg_po_export()=, =lrg_po_extract()= and =lrg_po_pseudolocalize()=. The locale editor does not call them.
+
 *** [[file:csv.org][LrgCsv - CSV string tables]]
 :PROPERTIES:
 :CUSTOM_ID: lrgcsv---csv-string-tables

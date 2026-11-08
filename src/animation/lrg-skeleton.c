@@ -12,6 +12,7 @@
 #include "lrg-bone-pose-private.h"
 
 #include <string.h>
+#include <math.h>
 
 /**
  * SECTION:lrg-skeleton
@@ -89,6 +90,9 @@ typedef struct
     gboolean    order_valid;
     gboolean    cyclic;
     guint       generation;
+
+    /* inverse bind matrices: GINT_TO_POINTER(bone index) -> gfloat[16] */
+    GHashTable *inverse_binds;
 } LrgSkeletonPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgSkeleton, lrg_skeleton, G_TYPE_OBJECT)
@@ -474,6 +478,7 @@ lrg_skeleton_finalize (GObject *object)
     g_clear_pointer (&priv->sparse_index, g_hash_table_unref);
     g_clear_pointer (&priv->cached_parent, g_array_unref);
     g_clear_pointer (&priv->pose_order, g_array_unref);
+    g_clear_pointer (&priv->inverse_binds, g_hash_table_unref);
 
     G_OBJECT_CLASS (lrg_skeleton_parent_class)->finalize (object);
 }
@@ -581,6 +586,7 @@ lrg_skeleton_init (LrgSkeleton *self)
     priv->order_valid = FALSE;
     priv->cyclic = FALSE;
     priv->generation = 0;
+    priv->inverse_binds = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, g_free);
 }
 
 LrgSkeleton *
@@ -889,6 +895,19 @@ lrg_skeleton_copy (LrgSkeleton *self)
         g_object_unref (bone_copy);
     }
 
+    /* the inverse bind matrices travel with the bones */
+    {
+        LrgSkeletonPrivate *copy_priv = lrg_skeleton_get_instance_private (copy);
+        GHashTableIter      iter;
+        gpointer            key;
+        gpointer            value;
+
+        g_hash_table_iter_init (&iter, priv->inverse_binds);
+        while (g_hash_table_iter_next (&iter, &key, &value))
+            g_hash_table_insert (copy_priv->inverse_binds, key,
+                                 g_memdup2 (value, 16 * sizeof (gfloat)));
+    }
+
     lrg_skeleton_calculate_world_poses (copy);
 
     return copy;
@@ -900,4 +919,167 @@ lrg_skeleton_get_generation (LrgSkeleton *self)
     LrgSkeletonPrivate *priv = lrg_skeleton_get_instance_private (self);
 
     return priv->generation;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Inverse bind matrices                                                    */
+/* ------------------------------------------------------------------------ */
+
+void
+lrg_skeleton_set_inverse_bind_matrix (LrgSkeleton  *self,
+                                      gint          bone_index,
+                                      const gfloat *matrix)
+{
+    LrgSkeletonPrivate *priv;
+
+    g_return_if_fail (LRG_IS_SKELETON (self));
+    g_return_if_fail (matrix != NULL);
+
+    priv = lrg_skeleton_get_instance_private (self);
+    g_hash_table_insert (priv->inverse_binds, GINT_TO_POINTER (bone_index),
+                         g_memdup2 (matrix, 16 * sizeof (gfloat)));
+}
+
+const gfloat *
+lrg_skeleton_get_inverse_bind_matrix (LrgSkeleton *self,
+                                      gint         bone_index)
+{
+    LrgSkeletonPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_SKELETON (self), NULL);
+
+    priv = lrg_skeleton_get_instance_private (self);
+    return g_hash_table_lookup (priv->inverse_binds, GINT_TO_POINTER (bone_index));
+}
+
+gboolean
+lrg_skeleton_compute_bind_world_poses (LrgSkeleton *self,
+                                       LrgBonePose *out_poses,
+                                       guint        n_poses)
+{
+    LrgSkeletonPrivate *priv;
+    g_autofree guint8  *done = NULL;
+    guint               n;
+    guint               pass;
+    guint               remaining;
+    GList              *l;
+
+    g_return_val_if_fail (LRG_IS_SKELETON (self), FALSE);
+    g_return_val_if_fail (out_poses != NULL, FALSE);
+
+    priv = lrg_skeleton_get_instance_private (self);
+    n = priv->n_bones;
+    if (n_poses < n)
+        return FALSE;
+    for (l = priv->bones; l != NULL; l = l->next)
+    {
+        gint index = LRG_BONE (l->data)->index;
+
+        if (index < 0 || (guint)index >= n)
+            return FALSE;
+    }
+
+    /*
+     * Resolve parents before children: each pass composes the bones
+     * whose parent is done (or that have none). A chain resolves in at
+     * most n passes; a cycle leaves its bones at their local bind pose.
+     */
+    done = g_new0 (guint8, n);
+    remaining = n;
+    for (pass = 0; pass <= n && remaining > 0; pass++)
+    {
+        for (l = priv->bones; l != NULL; l = l->next)
+        {
+            LrgBone *bone = LRG_BONE (l->data);
+            gint     parent = bone->parent_index;
+
+            if (done[bone->index])
+                continue;
+            if (parent < 0 || (guint)parent >= n || parent == bone->index)
+                out_poses[bone->index] = bone->bind_pose;
+            else if (done[parent])
+                lrg_bone_pose_compose_into (&out_poses[parent], &bone->bind_pose,
+                                            &out_poses[bone->index]);
+            else
+                continue;
+            done[bone->index] = 1;
+            remaining--;
+        }
+    }
+    for (l = priv->bones; l != NULL; l = l->next)
+    {
+        LrgBone *bone = LRG_BONE (l->data);
+
+        if (!done[bone->index])
+            out_poses[bone->index] = bone->bind_pose;
+    }
+    return TRUE;
+}
+
+/* invert an affine column-major matrix (upper 3x3 by cofactors) */
+static gboolean
+affine_invert (const gfloat *m,
+               gfloat       *out)
+{
+    gdouble a[9];
+    gdouble inv[9];
+    gdouble det;
+    guint   c;
+    guint   r;
+
+    for (c = 0; c < 3; c++)
+        for (r = 0; r < 3; r++)
+            a[c * 3 + r] = m[c * 4 + r];
+    /* inv = adj(a) / det, column-major a[c*3+r] */
+    inv[0] = a[4] * a[8] - a[7] * a[5];
+    inv[3] = a[6] * a[5] - a[3] * a[8];
+    inv[6] = a[3] * a[7] - a[6] * a[4];
+    inv[1] = a[7] * a[2] - a[1] * a[8];
+    inv[4] = a[0] * a[8] - a[6] * a[2];
+    inv[7] = a[6] * a[1] - a[0] * a[7];
+    inv[2] = a[1] * a[5] - a[4] * a[2];
+    inv[5] = a[3] * a[2] - a[0] * a[5];
+    inv[8] = a[0] * a[4] - a[3] * a[1];
+    det = a[0] * inv[0] + a[3] * inv[1] + a[6] * inv[2];
+    if (fabs (det) < 1e-20)
+        return FALSE;
+    memset (out, 0, 16 * sizeof (gfloat));
+    for (c = 0; c < 3; c++)
+        for (r = 0; r < 3; r++)
+            out[c * 4 + r] = (gfloat)(inv[c * 3 + r] / det);
+    for (r = 0; r < 3; r++)
+        out[12 + r] = -(out[r] * m[12] + out[4 + r] * m[13] + out[8 + r] * m[14]);
+    out[15] = 1.0f;
+    return TRUE;
+}
+
+void
+lrg_skeleton_compute_inverse_bind_matrices (LrgSkeleton *self)
+{
+    LrgSkeletonPrivate     *priv;
+    g_autofree LrgBonePose *world = NULL;
+    GList                  *l;
+
+    g_return_if_fail (LRG_IS_SKELETON (self));
+
+    priv = lrg_skeleton_get_instance_private (self);
+    if (priv->n_bones == 0)
+        return;
+    world = g_new0 (LrgBonePose, priv->n_bones);
+    if (!lrg_skeleton_compute_bind_world_poses (self, world, priv->n_bones))
+    {
+        g_warning ("lrg_skeleton_compute_inverse_bind_matrices: bone indices are not 0 .. %u",
+                   priv->n_bones - 1);
+        return;
+    }
+    for (l = priv->bones; l != NULL; l = l->next)
+    {
+        LrgBone *bone = LRG_BONE (l->data);
+        gfloat   m[16];
+        gfloat   inv[16];
+
+        lrg_bone_pose_to_matrix (&world[bone->index], m);
+        if (affine_invert (m, inv))
+            lrg_skeleton_set_inverse_bind_matrix (self, bone->index, inv);
+    }
 }

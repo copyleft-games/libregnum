@@ -1,0 +1,474 @@
+#+title: LrgShaderAsset - user shaders (.rshader)
+#+description: GLSL 330 user shader assets: the .rshader format, the engine contract and preamble, the lit library, described uniforms, compile diagnostics with user line numbers, hot reload with keep-last-good
+
+* LrgShaderAsset - user shaders (=.rshader=)
+:PROPERTIES:
+:CUSTOM_ID: lrgshaderasset
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > Modules > Graphics > Shader assets
+#+end_quote
+
+=LrgShaderAsset= is a user-written shader that plugs into the engine's renderer: a vertex and a fragment stage written in GLSL 330 against a documented contract, an optional =lit: true= flag that gives the fragment stage the light set's full PBR lighting library, a table of described uniforms (type, default, range, inspector hint) that the uniform inspector and materials use, render-state defaults, and hot reload. Compile errors come back as a =GError= and as structured diagnostics whose line numbers point into /your/ file, not into the text the engine prepended. A broken edit never takes a working shader away: the last program that compiled stays in use (keep-last-good).
+
+Shader graphs ([[file:shader-graph.org][LrgShaderGraph]]) generate =LrgShaderAsset= objects, so everything on this page applies to graph shaders too.
+
+Loading, saving, the uniform table and the generated text are headless. Only =lrg_shader_asset_compile()= and the =apply= / =bind= calls need a GL context (an open window).
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+| Type | Kind | Purpose |
+|------+------+---------|
+| =LrgShaderAsset= | final GObject (=LRG_TYPE_SHADER_ASSET=, GIR =Libregnum.ShaderAsset=) | the asset: description, values, program, hot reload |
+| =LrgShaderUniform= | boxed (=LRG_TYPE_SHADER_UNIFORM=) | one uniform description |
+| =LrgShaderDiagnostic= | boxed, immutable (=LRG_TYPE_SHADER_DIAGNOSTIC=) | one compiler / linker message with a mapped position |
+| =LrgShaderUniformType= | enum (=LRG_TYPE_SHADER_UNIFORM_TYPE=) | =FLOAT=, =VEC2=, =VEC3=, =VEC4=, =COLOR=, =INT=, =BOOL=, =SAMPLER2D= (nicks are the =type:= values) |
+| =LrgShaderStage= | enum (=LRG_TYPE_SHADER_STAGE=) | =LRG_SHADER_STAGE_VERTEX=, =LRG_SHADER_STAGE_FRAGMENT= |
+| =LrgShaderAssetError= | enum (=LRG_TYPE_SHADER_ASSET_ERROR=), domain =LRG_SHADER_ASSET_ERROR= | =PARSE=, =IO=, =NO_CONTEXT=, =COMPILE=, =LINK=, =UNIFORM= |
+
+Header: =graphics/lrg-shader-asset.h= (through =<libregnum.h>=). =LRG_SHADER_ASSET_FIRST_TEXTURE_UNIT= (7) is where sampler uniforms are bound from when the caller does not choose a unit; the error quark is =lrg_shader_asset_error_quark()= the enum GTypes are =lrg_shader_asset_error_get_type()=, =lrg_shader_stage_get_type()= and =lrg_shader_uniform_type_get_type()=, and the boxed GTypes =lrg_shader_uniform_get_type()= and =lrg_shader_diagnostic_get_type()=.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** The stage contract
+:PROPERTIES:
+:CUSTOM_ID: contract
+:END:
+User stages are GLSL 330 /bodies/: you write functions and =main()=, the engine writes =#version 330= and the declarations below in front of your text (the /preamble/). Anything you declare yourself is left out of the preamble, so shaders ported from raylib examples that declare =in vec3 vertexPosition;= or =out vec4 finalColor;= keep working. A leading =#version= line in your text is blanked (the line count is kept, so line numbers stay right).
+
+Vertex stage preamble (only when you supply a vertex stage):
+
+| Declaration | Meaning |
+|-------------+---------|
+| =in vec3 vertexPosition=, =in vec2 vertexTexCoord=, =in vec3 vertexNormal=, =in vec4 vertexColor=, =in vec4 vertexTangent=, =in vec2 vertexTexCoord2= | raylib's attributes, bound to raylib's fixed locations |
+| =uniform mat4 mvp=, =matModel=, =matView=, =matProjection=, =matNormal= | raylib's matrices, set by =DrawMesh()= / the batch |
+| =uniform float lrgTime= | the asset's time (=lrg_shader_asset_set_time()=) |
+| =out vec3 fragPosition= (draw / world space), =out vec2 fragTexCoord=, =out vec4 fragColor=, =out vec3 fragNormal= (world space) | the varyings the fragment stage reads |
+
+When you supply no vertex stage, an unlit asset uses the complete built-in stage (=lrg_shader_asset_get_default_vertex_source()=) and a lit asset uses the light set's (=lrg_light_set_get_vertex_source()=); both write the four varyings above and nothing is prepended.
+
+Fragment stage preamble:
+
+| Declaration | Meaning |
+|-------------+---------|
+| =#define LRG_SHADER_ASSET 1=, =#define LRG_FRAGMENT_STAGE 1= (=LRG_VERTEX_STAGE= in the vertex stage), =#define LRG_LIT 1= when lit | test with =#ifdef= |
+| =in vec3 fragPosition=, =in vec2 fragTexCoord=, =in vec4 fragColor=, =in vec3 fragNormal= | the varyings |
+| =out vec4 finalColor= | the output (raylib's name) |
+| =uniform sampler2D texture0=, =uniform vec4 colDiffuse= | raylib's material slot 0 and colour |
+| =uniform mat4 matView=, =uniform float lrgTime= | view matrix, time |
+| /the lit library/ (lit assets only) | see [[#lit][Lit assets]] |
+| =vec3 lrg_to_linear (vec3)=, =vec3 lrg_to_display (vec3)= | sRGB as gamma 2.2, the light set's convention (the library's own when lit) |
+| =vec3 lrg_light_pbr (...)= fallback, =#define LRG_LIGHT_FALLBACK 1= | only when lit and the library defines no =lrg_light_pbr= |
+| =#define LRG_HAS_DECALS / LRG_HAS_OVERLAY / LRG_HAS_AIR / LRG_HAS_FOG / LRG_HAS_OUTPUT_LINEAR 1= | lit only: which light-set passes the library provides |
+| =vec3 lrg_view_position ()= | the eye: the library's =mapCamera= when lit, else derived from =matView= |
+| =uniform <type> <name>;= for each described uniform | so you never declare them twice |
+
+Names starting with =lrg= and =gl_= are reserved for the engine.
+
+*** Lit assets
+:PROPERTIES:
+:CUSTOM_ID: lit
+:END:
+=lit: true= prepends =lrg_light_set_get_glsl_library()=: every uniform, hook and function of the engine's own lit fragment shader (no =#version=, no varyings, no =main=). It gives you:
+
+| Function | Result |
+|----------+--------|
+| =vec3 lrg_light_pbr (vec3 p, vec3 n, vec3 v, vec4 albedo, float metal, float rough, float ao)= | /linear/ radiance from the sun, the clustered point and spot lights with shadows, and the indirect light (IBL when an environment is bound); =albedo= is linear; emission is not included |
+| =LrgSurface lrg_surface (vec3 p, vec3 ng, vec2 uv, vec4 vertex_colour)= | the bound material's maps sampled (=struct LrgSurface { vec4 albedo; vec3 normal; float metallic, roughness, occlusion; vec3 emission; }=, albedo and emission linear) |
+| =vec4 lrg_light_shade (vec3 p, vec3 normal, vec2 uv, vec4 vertex_colour)= | everything the built-in shader's =main()= does: the final colour |
+| =vec3 lrg_to_linear (vec3)=, =vec3 lrg_to_display (vec3)= | colour space conversion |
+| =lrg_decals_apply=, =lrg_overlay_apply=, =lrg_air=, =lrg_fog_amount= | the passes the built-in shader applies (guarded by the =LRG_HAS_*= macros) |
+
+The library declares =texture0=, =colDiffuse=, =mapCamera=, =sunDirection=, the light arrays and every other uniform the light set binds. *Do not declare them again*: a lit stage that redeclares a library name fails before the driver sees it with =LRG_SHADER_ASSET_ERROR_COMPILE= and a diagnostic on your line (='fakeSun' is declared by the lit library ...=).
+
+A lit program only lights once the light set has uploaded its state to it: call =lrg_shader_asset_bind_lights (asset, lights)= after =lrg_light_set_apply()= every frame. Without it the library's samplers point at unit 0 and the program draws nothing.
+
+While the light set's library is unavailable or replaced by one without =lrg_light_pbr= (a custom library through =lrg_shader_asset_set_library_source()=), lit assets get a fallback =lrg_light_pbr= (a fixed sun from above plus a quarter ambient) and =LRG_LIGHT_FALLBACK= is defined, so lit shaders keep compiling.
+
+=lrg_shader_asset_set_library_source()= is also the documented test seam for the lit path: tests (and custom lighting models) pass a small library of their own.
+
+*** Uniforms: descriptions and values
+:PROPERTIES:
+:CUSTOM_ID: uniforms
+:END:
+The =uniforms:= table /describes/ uniforms: their GLSL type, default, inspector range and hint, and for samplers a default texture. The asset declares them in both stages' preambles and keeps one /stored value/ per uniform, starting at the default. =lrg_shader_asset_apply()= uploads every stored value (and =lrgTime=), binding samplers to consecutive texture units.
+
+Materials share an asset, so per-material values are not stored in it: a material applies its own table on top with =lrg_shader_asset_apply_uniform()= / =lrg_shader_asset_apply_uniform_texture()= right after =lrg_shader_asset_apply()= (see [[#materials][Using it from a material]]).
+
+Unbound samplers get, in order: the texture set with =lrg_shader_asset_set_uniform_texture()=, the default texture loaded from the uniform's =default:= path at compile time (plain paths only; =guid:= references are left to the caller), raylib's 1 x 1 white texture.
+
+*** Diagnostics and line mapping
+:PROPERTIES:
+:CUSTOM_ID: diagnostics
+:END:
+Each stage's preamble line count is known, so the driver's line numbers map back to yours. Compiling first runs a diagnostic compile and link through GL entry points resolved with =rlGetProcAddress()= (raylib only prints logs); the program in use is then built by raylib from the same text, which keeps raylib's attribute bindings and location table (a driver shader cache makes the second compile nearly free). The info log is parsed by =lrg_shader_parse_info_log()=, which knows Mesa (=0:12(5): error: ...=), NVIDIA (=0(12) : error C1008: ...=) and AMD / Intel-on-Windows / Apple (=ERROR: 0:12: ...=) positions. Lines past the preamble become =source:line= of your file; lines inside it are reported against =<preamble>= (an error in the lit library or in your uniform table); unrecognised log lines become positionless errors.
+
+Source names: a stage loaded from a path reports the resolved path; an inline stage reports =<document path>#vertex= / =#fragment= (or =<name>#fragment= for an asset built in code); a default stage reports =<default vertex>=.
+
+The =GError= of a failed compile lists the errors one per line as =source:line:column: error: message=, the format editors jump to; =lrg_shader_asset_get_diagnostics()= has the structured list (warnings included).
+
+*** Hot reload and keep-last-good
+:PROPERTIES:
+:CUSTOM_ID: hot-reload
+:END:
+=lrg_shader_asset_set_watch (asset, TRUE, &error)= watches the =.rshader= file and every stage file it names with =GFileMonitor= (directory monitors, so editors that save by rename are seen). Changes are coalesced for 100 ms, then =lrg_shader_asset_reload()= runs:
+
+1. the document and stage files are parsed into a /new/ description; a parse or I/O error stops here;
+2. if the asset was compiled, the new description is compiled; a compile or link error stops here;
+3. only now are the description and program swapped in, stored values of uniforms that kept their name and type survive (others reset to their new defaults), light sets that cached the old program forget it, and =reloaded= is emitted.
+
+Any failure emits =reload-failed= with the =GError= and leaves the previous description and program in use, so a game keeps drawing with the last good shader while you fix a typo. The reload runs on the thread-default =GMainContext= that was current when the watch started: the game loop must iterate it (=g_main_context_iteration (NULL, FALSE)= once per frame) and own the GL context. After =reloaded=, fetch the program again with =lrg_shader_asset_get_shader()=; do not cache the =GrlShader=.
+
+An asset built in code (no document path) cannot be watched; =lrg_shader_asset_reload()= on it only recompiles.
+
+** Format: =.rshader=
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+A YAML mapping. Annotated example (the writer produces exactly this layout; comments are not written back):
+
+#+begin_src yaml
+version: 1                    # format version; only 1 (optional on read, always written)
+name: dissolve                # display name (string, default "untitled")
+lit: true                     # prepend the lit library to the fragment stage (bool, default false)
+vertex: dissolve.vert         # vertex stage: one line = a path relative to this file;
+                              #   a multi-line literal block = inline GLSL; absent = default stage
+fragment: |                   # fragment stage (required): path or inline GLSL, same rule
+  void main()
+  {
+      float n = texture(noise_tex, fragTexCoord).r;
+      if (n < edge) discard;
+      vec3 n_ws = normalize(fragNormal);
+      vec3 v = normalize(lrg_view_position() - fragPosition);
+      vec3 lit = lrg_light_pbr(fragPosition, n_ws, v, vec4(lrg_to_linear(tint.rgb), 1.0), 0.0, 0.6, 1.0);
+      finalColor = vec4(lrg_to_display(lit), 1.0);
+  }
+render_state:                 # defaults a material using this shader starts from (all optional)
+  blend: cutout               #   opaque | cutout | alpha | additive | multiply (default opaque)
+  cull: none                  #   back | front | none (default back)
+  depth_test: true            #   bool (default true)
+  depth_write: true           #   bool (default true)
+  alpha_cutoff: 0.5           #   0 .. 1, the cutout threshold (default 0.5)
+uniforms:                     # described uniforms, in this order (mapping name: description)
+  tint:                       #   key = GLSL identifier (not gl_*, at most 64 chars)
+    type: color               #   float | vec2 | vec3 | vec4 | color | int | bool | sampler2D (required)
+    default: [1, 0.5, 0.25, 1]#   number, or a list of exactly the type's component count;
+                              #   bool: true/false; sampler2D: a texture path or guid:<id>
+    hint: color               #   inspector hint: slider, drag, color, direction, toggle, hidden, ...
+  edge:
+    type: float
+    default: 0.1
+    range: [0, 1]             #   [min, max], min <= max; an editing hint, values are not clamped
+    hint: slider
+  noise_tex:
+    type: sampler2D
+    default: textures/noise.png
+editor_notes: anything        # unknown top-level keys are kept and written back in place
+#+end_src
+
+Rules:
+- Defaults when a key is absent: =float= / vectors / =int= / =bool= are 0, =color= is =[1, 1, 1, 1]=, samplers are white.
+- Unknown keys /inside/ a uniform or =render_state= are errors (they are almost always typos such as =defualt=); unknown top-level keys are kept.
+- Stage paths are read when the document loads (relative to the document's directory, or to =base_dir= for =lrg_shader_asset_new_from_data()=); the writer writes the path back, never the file's text.
+- Writing leaves out every value equal to its default, writes inline stages as literal blocks, whole numbers without an exponent and other numbers in their shortest exact form; load + save is byte-stable.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Loading and saving
+:PROPERTIES:
+:CUSTOM_ID: api-io
+:END:
+| Function | Notes |
+|----------+-------|
+| =LrgShaderAsset *lrg_shader_asset_new (void)= | empty unlit asset named =untitled=; set a fragment stage before compiling |
+| =LrgShaderAsset *lrg_shader_asset_new_from_file (const gchar *path, GError **error)= | transfer full, nullable; =PARSE= or =IO= errors as =path: /yaml/path: message= |
+| =LrgShaderAsset *lrg_shader_asset_new_from_data (const gchar *data, gssize length, const gchar *base_dir, GError **error)= | from text; =base_dir= (nullable) resolves stage paths; messages name =<data>= |
+| =gchar *lrg_shader_asset_save_to_data (LrgShaderAsset *self, gsize *length, GError **error)= | transfer full |
+| =gboolean lrg_shader_asset_save_to_file (LrgShaderAsset *self, const gchar *path, GError **error)= | atomic; stage files are not written |
+| =const gchar *lrg_shader_asset_get_path (LrgShaderAsset *self)= | the document path or =NULL= |
+
+*** Description
+:PROPERTIES:
+:CUSTOM_ID: api-description
+:END:
+| Function | Notes |
+|----------+-------|
+| =lrg_shader_asset_get_name= / =lrg_shader_asset_set_name= | =name= property |
+| =lrg_shader_asset_get_lit= / =lrg_shader_asset_set_lit= | =lit= property; next compile |
+| =void lrg_shader_asset_set_library_source (LrgShaderAsset *self, const gchar *glsl)= | override the lit library (=NULL= = the light set's); the test seam |
+| =const gchar *lrg_shader_asset_get_library_source (LrgShaderAsset *self)= | the library the next compile uses |
+| =void lrg_shader_asset_set_source (LrgShaderAsset *self, LrgShaderStage stage, const gchar *source)= | inline text (=NULL= clears; vertex: back to the default stage); clears the stage's path |
+| =const gchar *lrg_shader_asset_get_source (LrgShaderAsset *self, LrgShaderStage stage)= | the user text (inline or read from the path), nullable |
+| =gboolean lrg_shader_asset_set_source_path (LrgShaderAsset *self, LrgShaderStage stage, const gchar *path, GError **error)= | point the stage at a file and read it; a watched asset follows it |
+| =const gchar *lrg_shader_asset_get_source_path (LrgShaderAsset *self, LrgShaderStage stage)= | as written in the document, nullable |
+| =lrg_shader_asset_get_blend_mode= / =gboolean lrg_shader_asset_set_blend_mode (self, const gchar *mode)= | =opaque cutout alpha additive multiply=; =FALSE= for anything else |
+| =lrg_shader_asset_get_cull_mode= / =gboolean lrg_shader_asset_set_cull_mode (self, const gchar *mode)= | =back front none= |
+| =lrg_shader_asset_get_depth_test= / =lrg_shader_asset_set_depth_test= | bool |
+| =lrg_shader_asset_get_depth_write= / =lrg_shader_asset_set_depth_write= | bool |
+| =lrg_shader_asset_get_alpha_cutoff= / =lrg_shader_asset_set_alpha_cutoff= | 0 .. 1 (clamped) |
+| =gchar *lrg_shader_asset_get_generated_source (LrgShaderAsset *self, LrgShaderStage stage, guint *out_preamble_lines)= | the full text the driver gets; headless ("show generated code") |
+| =const gchar *lrg_shader_asset_get_default_vertex_source (void)= | the built-in unlit vertex stage, with =#version= |
+
+The render-state strings use the material blend / cull nicks so a material can map them with =g_enum_get_value_by_nick()=.
+
+*** Uniform descriptions
+:PROPERTIES:
+:CUSTOM_ID: api-uniform-descriptions
+:END:
+| Function | Notes |
+|----------+-------|
+| =LrgShaderUniform *lrg_shader_uniform_new (const gchar *name, LrgShaderUniformType type)= | zero default (white for colours) |
+| =lrg_shader_uniform_copy= / =lrg_shader_uniform_free= | boxed copy / free; =g_autoptr(LrgShaderUniform)= works |
+| =const gchar *lrg_shader_uniform_get_name (const LrgShaderUniform *self)= | |
+| =LrgShaderUniformType lrg_shader_uniform_get_uniform_type (const LrgShaderUniform *self)= | |
+| =void lrg_shader_uniform_set_default (LrgShaderUniform *self, const gfloat *values, guint n_values)= | up to 4 components; ignored for samplers |
+| =void lrg_shader_uniform_get_default (const LrgShaderUniform *self, gfloat *out_values)= | 4 floats, unused ones 0 |
+| =lrg_shader_uniform_set_range (self, gfloat min, gfloat max)=, =lrg_shader_uniform_clear_range (self)=, =gboolean lrg_shader_uniform_get_range (self, gfloat *out_min, gfloat *out_max)= | inspector range |
+| =lrg_shader_uniform_set_hint= / =lrg_shader_uniform_get_hint= | nullable string |
+| =lrg_shader_uniform_set_default_texture= / =lrg_shader_uniform_get_default_texture= | sampler default: path or =guid:= |
+| =guint lrg_shader_uniform_type_get_components (LrgShaderUniformType type)= | 1 .. 4 |
+| =const gchar *lrg_shader_uniform_type_get_glsl (LrgShaderUniformType type)= | the declaration type (=vec4= for =color=) |
+| =void lrg_shader_asset_add_uniform (LrgShaderAsset *self, const LrgShaderUniform *uniform)= | copies; replaces by name in place; resets its value to the default |
+| =gboolean lrg_shader_asset_remove_uniform (LrgShaderAsset *self, const gchar *name)= | |
+| =guint lrg_shader_asset_get_n_uniforms (LrgShaderAsset *self)= | |
+| =const LrgShaderUniform *lrg_shader_asset_get_uniform_at (LrgShaderAsset *self, guint index)= | document order |
+| =const LrgShaderUniform *lrg_shader_asset_get_uniform (LrgShaderAsset *self, const gchar *name)= | |
+
+*** Uniform values
+:PROPERTIES:
+:CUSTOM_ID: api-uniform-values
+:END:
+| Function | Notes |
+|----------+-------|
+| =gboolean lrg_shader_asset_set_uniform_float (self, const gchar *name, gfloat value)= | one-component numbers (=float int bool=) |
+| =gboolean lrg_shader_asset_set_uniform_int (self, const gchar *name, gint value)= | same, from an int |
+| =lrg_shader_asset_set_uniform_vec2 (self, name, x, y)=, =lrg_shader_asset_set_uniform_vec3 (self, name, x, y, z)=, =lrg_shader_asset_set_uniform_vec4 (self, name, x, y, z, w)= | =vec4= also sets =color= |
+| =gboolean lrg_shader_asset_set_uniform_texture (self, const gchar *name, GrlTexture *texture)= | keeps a reference; =NULL= = default |
+| =gboolean lrg_shader_asset_get_uniform_value (self, const gchar *name, gfloat *out_values)= | 4 floats |
+| =void lrg_shader_asset_reset_uniforms (LrgShaderAsset *self)= | back to the defaults, set textures dropped |
+| =lrg_shader_asset_set_time= / =lrg_shader_asset_get_time= | =lrgTime=, also the =time= property |
+
+Every setter returns =FALSE= for an unknown name or a type with another component count.
+
+*** Compiling, binding, drawing
+:PROPERTIES:
+:CUSTOM_ID: api-gpu
+:END:
+| Function | Notes |
+|----------+-------|
+| =gboolean lrg_shader_asset_compile (LrgShaderAsset *self, GError **error)= | needs a window (=NO_CONTEXT=); =COMPILE= / =LINK= with mapped diagnostics; keeps the previous program on failure |
+| =gboolean lrg_shader_asset_is_compiled (LrgShaderAsset *self)= | =compiled= property |
+| =GrlShader *lrg_shader_asset_get_shader (LrgShaderAsset *self)= | transfer none; replaced by a reload |
+| =guint lrg_shader_asset_get_shader_id (LrgShaderAsset *self)= | GL program id, 0 when not compiled |
+| =GPtrArray *lrg_shader_asset_get_diagnostics (LrgShaderAsset *self)= | element type =LrgShaderDiagnostic=, transfer none |
+| =gboolean lrg_shader_asset_apply (LrgShaderAsset *self, gint *texture_unit)= | uploads stored values + =lrgTime=; samplers from =*texture_unit= (or 7) upward, advanced; leaves the program bound |
+| =gboolean lrg_shader_asset_apply_uniform (self, const gchar *name, const gfloat *values, guint n_values, GError **error)= | per-draw upload, not stored; =UNIFORM= error for unknown names / wrong counts |
+| =gboolean lrg_shader_asset_apply_uniform_texture (self, const gchar *name, guint texture_id, gint *texture_unit, GError **error)= | per-draw sampler binding (0 = white) |
+| =gint lrg_shader_asset_get_uniform_location (LrgShaderAsset *self, const gchar *name)= | cached; -1 when absent or optimised out |
+| =gboolean lrg_shader_asset_bind_lights (LrgShaderAsset *self, LrgLightSet *lights)= | =lrg_light_set_bind_shader()= on this program; remembered weakly and forgotten when the program changes |
+| =void lrg_shader_asset_release (LrgShaderAsset *self)= | free the program and default textures (before the window closes) |
+
+*** Diagnostics
+:PROPERTIES:
+:CUSTOM_ID: api-diagnostics
+:END:
+| Function | Notes |
+|----------+-------|
+| =GPtrArray *lrg_shader_parse_info_log (const gchar *log, LrgShaderStage stage, guint preamble_lines, const gchar *source_name)= | transfer full; headless |
+| =lrg_shader_diagnostic_copy= / =lrg_shader_diagnostic_free= | boxed |
+| =LrgShaderStage lrg_shader_diagnostic_get_stage (const LrgShaderDiagnostic *self)= | link messages report the fragment stage |
+| =const gchar *lrg_shader_diagnostic_get_source (...)= | file path, =<doc>#fragment=, =<preamble>= |
+| =guint lrg_shader_diagnostic_get_line (...)=, =guint lrg_shader_diagnostic_get_column (...)= | 1-based, 0 = unknown |
+| =gboolean lrg_shader_diagnostic_is_error (...)=, =gboolean lrg_shader_diagnostic_is_in_preamble (...)= | |
+| =const gchar *lrg_shader_diagnostic_get_message (...)= | without the position prefix |
+| =gchar *lrg_shader_diagnostic_to_string (...)= | =source:line:column: error: message= |
+
+*** Hot reload
+:PROPERTIES:
+:CUSTOM_ID: api-reload
+:END:
+| Function | Notes |
+|----------+-------|
+| =gboolean lrg_shader_asset_reload (LrgShaderAsset *self, GError **error)= | re-read + recompile, keep-last-good |
+| =gboolean lrg_shader_asset_set_watch (LrgShaderAsset *self, gboolean watch, GError **error)= | needs a document path; =watch= property |
+| =gboolean lrg_shader_asset_get_watch (LrgShaderAsset *self)= | |
+
+*** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: api-properties
+:END:
+| Property | Type | Access | Default |
+|----------+------+--------+---------|
+| =name= | string | read-write | ="untitled"= |
+| =path= | string | read-only | =NULL= |
+| =lit= | boolean | read-write | =FALSE= |
+| =compiled= | boolean | read-only | =FALSE= |
+| =watch= | boolean | read-write | =FALSE= |
+| =blend-mode= | string | read-write | ="opaque"= |
+| =cull-mode= | string | read-write | ="back"= |
+| =depth-test= | boolean | read-write | =TRUE= |
+| =depth-write= | boolean | read-write | =TRUE= |
+| =alpha-cutoff= | float 0 .. 1 | read-write | 0.5 |
+| =time= | float | read-write | 0 |
+
+All read-write properties notify only on change (=G_PARAM_EXPLICIT_NOTIFY=).
+
+| Signal | Parameters | When |
+|--------+------------+------|
+| =reloaded= | none | a reload replaced the description (and program) |
+| =reload-failed= | =GError *error= | a reload failed; the previous state stays in use |
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** An unlit tinted shader drawn on a model
+:PROPERTIES:
+:CUSTOM_ID: example-unlit
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgShaderAsset) tint = lrg_shader_asset_new_from_file ("shaders/tint.rshader", &error);
+Shader *shader;
+
+if (tint == NULL || !lrg_shader_asset_compile (tint, &error))
+{
+	g_printerr ("%s\n", error->message);   /* "shaders/tint.rshader#fragment:3:12: error: ..." */
+	return;
+}
+shader = grl_shader_get_handle (lrg_shader_asset_get_shader (tint));
+model.materials[0].shader = *shader;
+
+/* each frame */
+lrg_shader_asset_set_uniform_vec4 (tint, "tint", 0.2f, 0.8f, 1.0f, 1.0f);
+lrg_shader_asset_set_time (tint, (gfloat) GetTime ());
+lrg_shader_asset_apply (tint, NULL);
+DrawModel (model, position, 1.0f, WHITE);
+#+end_src
+
+*** A lit shader with the engine's lights
+:PROPERTIES:
+:CUSTOM_ID: example-lit
+:END:
+#+begin_src C
+/* dissolve.rshader has lit: true and calls lrg_light_pbr() */
+g_autoptr(LrgShaderAsset) dissolve = lrg_shader_asset_new_from_file ("shaders/dissolve.rshader", &error);
+
+lrg_shader_asset_compile (dissolve, &error);
+
+/* each frame, after the light set selected lights for the camera */
+lrg_light_set_apply (lights, cam_x, cam_y, cam_z);
+lrg_shader_asset_bind_lights (dissolve, lights);     /* lights, shadows, IBL, fog ... */
+lrg_shader_asset_set_uniform_float (dissolve, "edge", progress);
+lrg_shader_asset_apply (dissolve, NULL);             /* samplers from unit 7 */
+DrawModel (model, position, 1.0f, WHITE);
+#+end_src
+
+*** Hot reload in a game loop
+:PROPERTIES:
+:CUSTOM_ID: example-reload
+:END:
+#+begin_src C
+static void
+on_reload_failed (LrgShaderAsset *asset, GError *error, gpointer data)
+{
+	g_printerr ("shader kept its last good version:\n%s\n", error->message);
+}
+
+lrg_shader_asset_set_watch (dissolve, TRUE, &error);
+g_signal_connect (dissolve, "reload-failed", G_CALLBACK (on_reload_failed), NULL);
+
+while (!WindowShouldClose ())
+{
+	g_main_context_iteration (NULL, FALSE);       /* runs pending reloads */
+	model.materials[0].shader = *(Shader *) grl_shader_get_handle (lrg_shader_asset_get_shader (dissolve));
+	/* ... draw ... */
+}
+lrg_shader_asset_release (dissolve);
+CloseWindow ();
+#+end_src
+
+*** Building an asset in code
+:PROPERTIES:
+:CUSTOM_ID: example-code
+:END:
+#+begin_src C
+g_autoptr(LrgShaderAsset) wave = lrg_shader_asset_new ();
+g_autoptr(LrgShaderUniform) speed = lrg_shader_uniform_new ("speed", LRG_SHADER_UNIFORM_FLOAT);
+gfloat two = 2.0f;
+
+lrg_shader_uniform_set_default (speed, &two, 1);
+lrg_shader_uniform_set_range (speed, 0.0f, 10.0f);
+lrg_shader_uniform_set_hint (speed, "slider");
+lrg_shader_asset_add_uniform (wave, speed);
+lrg_shader_asset_set_name (wave, "wave");
+lrg_shader_asset_set_source (wave, LRG_SHADER_STAGE_FRAGMENT,
+                             "void main()\n{\n    finalColor = vec4(0.5 + 0.5 * sin(lrgTime * speed));\n}\n");
+lrg_shader_asset_save_to_file (wave, "shaders/wave.rshader", &error);
+#+end_src
+
+** Using it from a material
+:PROPERTIES:
+:CUSTOM_ID: materials
+:END:
+An =LrgMaterial= with the custom shading model (=LRG_SHADING_MODEL_CUSTOM=) names a shader asset by path or =guid:= and carries its own custom uniform table (=lrg_material_set_uniform()= and friends). The draw path for such a material is:
+
+1. =lrg_shader_asset_bind_lights (asset, lights)= when the asset is lit;
+2. =lrg_shader_asset_apply (asset, NULL)= for the asset's stored values (its defaults, samplers from unit 7);
+3. =lrg_material_apply (material, lrg_shader_asset_get_shader_id (asset))=: the contract uniforms (=texture0=, =colDiffuse=, maps, =pbrParams=...) and the material's custom uniforms by name, which override step 2 (custom textures from =LRG_MATERIAL_CUSTOM_TEXTURE_UNIT=);
+4. draw with =lrg_shader_asset_get_shader()= and the asset's render state (=blend-mode=, =cull-mode=, =depth-test=, =depth-write=, =alpha-cutoff=) as the material's defaults.
+
+A material that wants per-draw values without its own table can use =lrg_shader_asset_apply_uniform()= / =lrg_shader_asset_apply_uniform_texture()= after step 2 instead.
+
+The uniform inspector lists =lrg_shader_asset_get_uniform_at()= in order and edits with the type, range and hint of each description.
+
+** Performance notes
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- Compiling runs a diagnostic compile and link, then raylib's; with Mesa's (or any driver's) shader cache the second is nearly free. Compile at load time, not per frame.
+- Uniform locations are cached per program (=lrg_shader_asset_get_uniform_location()=); the cache is dropped when the program changes.
+- =apply= uploads every described uniform; for many draws with the same values, call it once per asset per frame and use =apply_uniform= for what differs per material.
+- The fallback =lrg_view_position()= without the lit library transposes =mat3 (matView)= per fragment; it is cheap but not free. Lit assets read =mapCamera= instead.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Do not redeclare library uniforms in a lit stage* (=texture0=, =colDiffuse=, =sunDirection=, ...). The asset catches it and reports your line.
+- *Lit programs need =lrg_shader_asset_bind_lights()= every frame* after =lrg_light_set_apply()=; an unbound lit program draws nothing.
+- =lrg_light_pbr()= takes a *linear* albedo and returns *linear* radiance: convert with =lrg_to_linear()= / =lrg_to_display()=.
+- *Hot reload needs a pumped main context* and runs on the GL thread; nothing happens if the loop never iterates =g_main_context_iteration()=.
+- *Re-fetch the shader after =reloaded=*: the =GrlShader= is replaced, and a raylib material holding a copy of the old =Shader= struct draws with a deleted program.
+- *Call =lrg_shader_asset_release()= before =CloseWindow()=*, like every GPU object.
+- A one-line stage value is a *path*; inline GLSL must be a multi-line literal block (=fragment: |=).
+- Declaration detection is textual: a commented-out =uniform float x;= also counts as declared and is left out of the preamble.
+- =#extension= directives must come before declarations in GLSL; the preamble comes first, so an extension a stage needs may be rejected. GLSL 330 core rarely needs one.
+- Swizzling a =float= is not GLSL 330: write =vec3(x)=.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The shader code panel and the uniform inspector arrive in the next editor pass; the file-level workflow works today:
+
+- Put =.rshader= files (and their =.vert= / =.frag= files) under the project's asset folder; the asset database tracks them like any other file.
+- Edit the stage text in the editor's code panel or in an external editor (=lrgeditorctl= / Emacs). A game or tool that watches the asset (=lrg_shader_asset_set_watch()=) picks the change up within about 100 ms.
+- Validate a document without temporary files with =lrg_shader_asset_new_from_data()= on its text; compile errors map to =file:line:column=, which the code panel (and Emacs's =compilation-mode=) jump to.
+- Show the text the driver sees with =lrg_shader_asset_get_generated_source()= (lines before =out_preamble_lines= are engine text).
+- A material (=.rmat=) with the custom shading model references the shader by path or =guid:= and stores its uniform values; the uniform inspector edits those values with each uniform's range and hint.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:shader-graph.org][LrgShaderGraph]]: node graphs that generate shader assets
+- [[file:light-set.org][LrgLightSet]]: the lit library, =lrg_light_set_bind_shader()=
+- [[file:material.org][LrgMaterial]]: material assets and the custom shading model
+- [[file:../../guides/writing-a-data-format.org][Writing a data format]]

@@ -20,15 +20,29 @@
 #include "config.h"
 
 #include "lrg-editor-app-private.h"
+#include "../lrg-editor-export.h"
+#include "../lrg-editor-plugin.h"
 #include "lrg-editor-hierarchy-panel.h"
 #include "lrg-editor-inspector-panel.h"
 #include "lrg-editor-assets-panel.h"
 #include "lrg-editor-console-panel.h"
 #include "lrg-editor-tiles-panel.h"
+#include "lrg-editor-environment-panel.h"
+#include "lrg-editor-bake-panel.h"
+#include "lrg-editor-physics-panel.h"
+#include "lrg-editor-mixer-panel.h"
+#include "lrg-editor-terrain-panel.h"
+#include "lrg-editor-nav-panel.h"
+#include "lrg-editor-ai-debug-panel.h"
+#include "lrg-editor-sequencer-panel.h"
 #include "lrg-editor-timeline-panel.h"
 #include "lrg-editor-profiler-panel.h"
 #include "lrg-editor-code-panel.h"
+#include "lrg-editor-debug-panel.h"
+#include "lrg-editor-memory-panel.h"
+#include "lrg-editor-network-panel.h"
 #include "lrg-editor-sources-panel.h"
+#include "lrg-editor-m10-panels.h"
 #include "../../ui/lrg-label.h"
 #include "../../ui/lrg-toast-queue.h"
 #include "../../core/lrg-engine.h"
@@ -189,6 +203,18 @@ make_panel (LrgEditorApp *self,
 	g_hash_table_insert (self->panels, g_strdup (id), g_object_ref_sink (panel));
 }
 
+/* Same as make_panel, for a panel built outside this file. @content is
+ * (transfer full), matching make_panel. */
+void
+editor_app_own_panel (LrgEditorApp *self,
+                      const gchar  *id,
+                      const gchar  *title,
+                      const gchar  *icon,
+                      LrgWidget    *content)
+{
+	make_panel (self, id, title, icon, content, TRUE);
+}
+
 /* Every built-in panel, created once; docking happens in reset_layout. */
 static void
 create_panels (LrgEditorApp *self)
@@ -205,10 +231,30 @@ create_panels (LrgEditorApp *self)
 	make_panel (self, "problems", "Problems", "warning", LRG_WIDGET (lrg_editor_problems_panel_new (self)), TRUE);
 	make_panel (self, "history", "History", "undo", LRG_WIDGET (lrg_editor_history_panel_new (self)), TRUE);
 	make_panel (self, "timeline", "Timeline", "play", LRG_WIDGET (lrg_editor_timeline_panel_new (self)), TRUE);
+	make_panel (self, LRG_EDITOR_SEQUENCER_PANEL_ID, "Sequencer", "clock", LRG_WIDGET (lrg_editor_sequencer_panel_new (self)), TRUE);
 	make_panel (self, "profiler", "Profiler", "chart", LRG_WIDGET (lrg_editor_profiler_panel_new (self)), TRUE);
 	make_panel (self, "code", "Code", "code", LRG_WIDGET (lrg_editor_code_panel_new (self)), TRUE);
+	make_panel (self, "debug", "Debug", "warning", LRG_WIDGET (lrg_editor_debug_panel_new (self)), TRUE);
+	make_panel (self, "memory", "Memory", "info", LRG_WIDGET (lrg_editor_memory_panel_new (self)), TRUE);
+	make_panel (self, "network", "Network", "upload", LRG_WIDGET (lrg_editor_network_panel_new (self)), TRUE);
 	make_panel (self, "tiles", "Tiles", "grid", LRG_WIDGET (lrg_editor_tiles_panel_new (self)), TRUE);
+	make_panel (self, LRG_EDITOR_MIXER_PANEL_ID, "Mixer", "chart", LRG_WIDGET (lrg_editor_mixer_panel_new (self)), TRUE);
+	make_panel (self, "environment", "Environment", "star", LRG_WIDGET (lrg_editor_environment_panel_new (self)), TRUE);
+	make_panel (self, LRG_EDITOR_TERRAIN_PANEL_ID, "Terrain", "edit", LRG_WIDGET (lrg_editor_terrain_panel_new (self)), TRUE);
+	make_panel (self, LRG_EDITOR_BAKE_PANEL_ID, "Lighting", "refresh", LRG_WIDGET (lrg_editor_bake_panel_new (self)), TRUE);
+	make_panel (self, LRG_EDITOR_NAV_PANEL_ID, "Navigation", "arrow-right", LRG_WIDGET (lrg_editor_nav_panel_new (self)), TRUE);
+	make_panel (self, LRG_EDITOR_PHYSICS_PANEL_ID, "Physics", "download", LRG_WIDGET (lrg_editor_physics_panel_new (self)), TRUE);
+	make_panel (self, LRG_EDITOR_AI_DEBUG_PANEL_ID, "AI", "user", LRG_WIDGET (lrg_editor_ai_debug_panel_new (self)), TRUE);
 	make_panel (self, "sources", "Sources", "folder", LRG_WIDGET (lrg_editor_sources_panel_new (self)), TRUE);
+	{
+		LrgEditorInspectorPanel *second = lrg_editor_inspector_panel_new (self);
+
+		lrg_widget_set_name (LRG_WIDGET (second), "inspector-2");
+		make_panel (self, "inspector-2", "Inspector 2", "gear", LRG_WIDGET (second), TRUE);
+	}
+	make_panel (self, "vcs", "Version Control", "folder", lrg_editor_vcs_panel_new (), TRUE);
+	make_panel (self, "game-view", "Game", "eye", lrg_editor_game_view_panel_new (), TRUE);
+	make_panel (self, "scenes", "Scenes", "list", lrg_editor_scene_bar_new (self->editor), TRUE);
 }
 
 static LrgDockPanel *
@@ -216,6 +262,24 @@ panel (LrgEditorApp *self,
        const gchar  *id)
 {
 	return g_hash_table_lookup (self->panels, id);
+}
+
+/* The console owns the script API. Panels exist before a project opens,
+ * and the console's step (which also pushes the directory) only runs
+ * from a UI frame, so headless IPC has to reach it from here. */
+static LrgEditorScriptApi *
+app_script_api (LrgEditorApp *self)
+{
+	LrgDockPanel *dock;
+	LrgWidget    *child;
+
+	dock = panel (self, "console");
+	if (dock == NULL)
+		return NULL;
+	child = lrg_dock_panel_get_child (dock);
+	if (!LRG_IS_EDITOR_CONSOLE_PANEL (child))
+		return NULL;
+	return lrg_editor_console_panel_get_script_api (LRG_EDITOR_CONSOLE_PANEL (child));
 }
 
 /* Docks @id where the default layout has it. */
@@ -232,10 +296,26 @@ dock_default (LrgEditorApp *self,
 		{ "problems", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "history", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "timeline", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "sequencer", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "mixer", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "profiler", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "frame", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "code", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
-		{ "tiles", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "debug", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "memory", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "network", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "terrain", "inspector", LRG_DOCK_POSITION_BOTTOM, 0.42f },
+		{ "tiles", "terrain", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "environment", "terrain", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "navigation", "terrain", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "bake", "terrain", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "physics", "terrain", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "ai", "terrain", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "sources", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "inspector-2", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "vcs", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "game-view", "viewport", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "scenes", "hierarchy", LRG_DOCK_POSITION_CENTER, 0.0f },
 	};
 	LrgDockArea  *dock = lrg_editor_window_get_dock (self->window);
 	LrgDockPanel *p = panel (self, id);
@@ -268,7 +348,9 @@ editor_app_reset_layout (LrgEditorApp *self)
 {
 	static const gchar *order[] = {
 		"viewport", "hierarchy", "inspector", "assets", "console", "problems", "history",
-		"timeline", "profiler", "code", "tiles", "sources", NULL
+		"timeline", "sequencer", "profiler", "frame", "code", "debug", "memory", "network",
+		"mixer", "terrain", "tiles", "environment", "navigation", "bake", "physics", "ai", "sources",
+		"inspector-2", "vcs", "game-view", "scenes", NULL
 	};
 	LrgDockArea   *dock = lrg_editor_window_get_dock (self->window);
 	GList         *docked = lrg_dock_area_get_panels (dock);
@@ -289,6 +371,9 @@ editor_app_reset_layout (LrgEditorApp *self)
 
 	lrg_dock_area_present_panel (dock, panel (self, "assets"));
 	lrg_dock_area_present_panel (dock, panel (self, "inspector"));
+	/* Scenes shares the hierarchy stack and is added last, so it would
+	 * be the front tab. Hierarchy stays in front; Scenes is one click away. */
+	lrg_dock_area_present_panel (dock, panel (self, "hierarchy"));
 	lrg_dock_area_present_panel (dock, panel (self, "viewport"));
 }
 
@@ -398,6 +483,7 @@ lrg_editor_app_new (LrgEditor *editor)
 	self->log = g_object_ref (lrg_editor_log_install ());
 	self->actions = lrg_editor_actions_new (self->settings);
 	self->server = lrg_editor_server_new (self->editor);
+	lrg_editor_export_register (self->server, NULL);
 	lrg_editor_server_set_external_editor (self->server, self->external);
 	lrg_editor_server_set_log (self->server, self->log);
 
@@ -412,6 +498,7 @@ lrg_editor_app_new (LrgEditor *editor)
 	self->renderer = lrg_editor_scene_renderer_new (self->editor);
 	lrg_editor_scene_renderer_set_settings (self->renderer, self->settings);
 	lrg_editor_scene_renderer_set_gizmo (self->renderer, self->gizmo);
+	lrg_editor_scene_renderer_set_play_session (self->renderer, self->play);
 
 	g_signal_connect (self->editor, "changed", G_CALLBACK (on_editor_changed), self);
 	g_signal_connect (self->editor, "level-replaced", G_CALLBACK (on_level_replaced), self);
@@ -853,17 +940,174 @@ scan_project (LrgEditorApp *self)
 	lrg_editor_vcs_queue_refresh (self->vcs);
 }
 
+/* One registered plugin action. The array owns the struct; the action
+ * callback only receives this pointer. */
+typedef struct
+{
+	LrgEditorApp *app;
+	gchar        *id;
+} PluginHook;
+
+static void
+plugin_hook_free (gpointer data)
+{
+	PluginHook *hook = (PluginHook *) data;
+
+	g_free (hook->id);
+	g_free (hook);
+}
+
+static void
+on_plugin_action (gpointer data)
+{
+	PluginHook *hook = (PluginHook *) data;
+
+	g_object_set_data_full (G_OBJECT (hook->app), "lrg-plugin-last-action",
+	                        g_strdup (hook->id), g_free);
+}
+
+/* plugins/<name>/plugin.yaml under the project. Panels, actions, the
+ * Plugins menu and inspector rows are installed from the manager lists.
+ * A second open of the same project does not duplicate them. */
+static void
+install_project_plugins (LrgEditorApp *self)
+{
+	g_autoptr(LrgEditorPluginManager) manager = NULL;
+	g_autofree gchar *plugins_dir = NULL;
+	g_auto(GStrv) panel_ids = NULL;
+	g_auto(GStrv) action_ids = NULL;
+	g_auto(GStrv) inspectors = NULL;
+	GDir         *dir;
+	const gchar  *name;
+	GMenu        *menu;
+	GPtrArray    *hooks;
+	LrgDockPanel *inspector_dock;
+	LrgWidget    *inspector_child;
+	guint         i;
+
+	menu = (GMenu *) g_object_get_data (G_OBJECT (self), "lrg-editor-plugins-menu");
+	if (menu != NULL)
+		g_menu_remove_all (menu);
+	if (self->project_dir == NULL)
+		return;
+
+	plugins_dir = g_build_filename (self->project_dir, "plugins", NULL);
+	manager = lrg_editor_plugin_manager_new ();
+	dir = g_dir_open (plugins_dir, 0, NULL);
+	if (dir != NULL)
+	{
+		while ((name = g_dir_read_name (dir)) != NULL)
+		{
+			g_autofree gchar *sub = NULL;
+			g_autofree gchar *manifest = NULL;
+			g_autoptr(GError) error = NULL;
+
+			sub = g_build_filename (plugins_dir, name, NULL);
+			manifest = g_build_filename (sub, "plugin.yaml", NULL);
+			if (!g_file_test (manifest, G_FILE_TEST_EXISTS))
+				continue;
+			if (!lrg_editor_plugin_manager_load (manager, sub, &error) &&
+			    error != NULL && self->log != NULL)
+				lrg_editor_log_append (self->log, G_LOG_LEVEL_WARNING, "plugin", error->message);
+		}
+		g_dir_close (dir);
+	}
+
+	panel_ids = lrg_editor_plugin_manager_list_panels (manager);
+	for (i = 0; panel_ids != NULL && panel_ids[i] != NULL; i++)
+	{
+		const gchar *title;
+		LrgLabel    *label;
+
+		if (g_hash_table_contains (self->panels, panel_ids[i]))
+			continue;
+		title = lrg_editor_plugin_manager_panel_title (manager, panel_ids[i]);
+		if (title == NULL)
+			title = panel_ids[i];
+		label = lrg_label_new (title);
+		lrg_widget_set_name (LRG_WIDGET (label), panel_ids[i]);
+		editor_app_own_panel (self, panel_ids[i], title, "folder", LRG_WIDGET (label));
+		if (self->window != NULL)
+			dock_default (self, panel_ids[i]);
+	}
+
+	hooks = (GPtrArray *) g_object_get_data (G_OBJECT (self), "lrg-plugin-hooks");
+	if (hooks == NULL)
+	{
+		hooks = g_ptr_array_new_with_free_func (plugin_hook_free);
+		g_object_set_data_full (G_OBJECT (self), "lrg-plugin-hooks", hooks,
+		                        (GDestroyNotify) g_ptr_array_unref);
+	}
+	action_ids = lrg_editor_plugin_manager_list_actions (manager);
+	for (i = 0; action_ids != NULL && action_ids[i] != NULL; i++)
+	{
+		PluginHook  *hook;
+		const gchar *label;
+		g_autofree gchar *detailed = NULL;
+
+		label = lrg_editor_plugin_manager_action_label (manager, action_ids[i]);
+		if (label == NULL)
+			label = action_ids[i];
+		if (!lrg_editor_actions_has (self->actions, action_ids[i]))
+		{
+			hook = g_new0 (PluginHook, 1);
+			hook->app = self;
+			hook->id = g_strdup (action_ids[i]);
+			g_ptr_array_add (hooks, hook);
+			lrg_editor_actions_add (self->actions, action_ids[i], label, "Plugin",
+			                        NULL, on_plugin_action, NULL, NULL, hook);
+		}
+		if (menu != NULL)
+		{
+			detailed = g_strconcat ("editor.", action_ids[i], NULL);
+			g_menu_append (menu, label, detailed);
+		}
+	}
+
+	inspector_dock = panel (self, "inspector");
+	inspector_child = (inspector_dock != NULL) ? lrg_dock_panel_get_child (inspector_dock) : NULL;
+	inspectors = lrg_editor_plugin_manager_list_inspectors (manager);
+	if (LRG_IS_EDITOR_INSPECTOR_PANEL (inspector_child))
+	{
+		for (i = 0; inspectors != NULL && inspectors[i] != NULL; i++)
+		{
+			g_autofree gchar *widget_name = NULL;
+
+			widget_name = g_strconcat ("plugin-inspector-", inspectors[i], NULL);
+			if (self->canvas != NULL &&
+			    lrg_widget_find (LRG_WIDGET (self->canvas), widget_name) != NULL)
+				continue;
+			lrg_editor_inspector_panel_add_plugin_type (
+				LRG_EDITOR_INSPECTOR_PANEL (inspector_child), inspectors[i]);
+		}
+	}
+}
+
 static void
 set_project_dir (LrgEditorApp *self,
                  const gchar  *dir)
 {
+	LrgEditorScriptApi *scripts;
+
 	g_free (self->project_dir);
 	self->project_dir = g_canonicalize_filename (dir, NULL);
 	lrg_external_editor_set_project_dir (self->external, self->project_dir);
 	lrg_editor_server_set_project_dir (self->server, self->project_dir);
+	lrg_editor_export_register (self->server, self->project_dir);
 	lrg_editor_scene_renderer_set_base_dir (self->renderer, self->project_dir);
+	scripts = app_script_api (self);
+	if (scripts != NULL)
+		lrg_editor_script_api_set_project_dir (scripts, self->project_dir);
 	scan_project (self);
 	watch_project (self);
+	install_project_plugins (self);
+	{
+		LrgDockPanel *vcs_dock = panel (self, "vcs");
+		LrgWidget    *child = (vcs_dock != NULL) ? lrg_dock_panel_get_child (vcs_dock) : NULL;
+
+		if (child != NULL)
+			lrg_editor_vcs_panel_set_project (child, self->project_dir);
+	}
 	self->problems_dirty = TRUE;
 }
 
@@ -1317,6 +1561,10 @@ editor_app_open_asset (LrgEditorApp *self,
 	LrgAssetType      type = lrg_asset_database_classify (path);
 	g_autofree gchar *abs = editor_app_project_path (self, path);
 
+	/* .rseq sequences open in the docked sequencer panel */
+	if (g_str_has_suffix (abs, ".rseq") && lrg_editor_sequencer_panel_open_file (self, abs, NULL))
+		return;
+
 	switch (type)
 	{
 	case LRG_ASSET_TYPE_LEVEL:
@@ -1362,12 +1610,21 @@ editor_create_items (guint *n_items)
 		{ "rectangle", "Rectangle (2D)", "Rectangle", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_RECTANGLE_2D },
 		{ "circle", "Circle (2D)", "Circle", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_CIRCLE_2D },
 		{ "-", NULL, NULL, 0, 0 },
-		{ "light", "Light", "Light", LRG_NODE_VISUAL_LIGHT, 0 },
+		{ "light", "Point Light", "Light", LRG_NODE_VISUAL_LIGHT, 0 },
+		{ "spot-light", "Spot Light", "Spot Light", LRG_NODE_VISUAL_LIGHT, 0 },
+		{ "directional-light", "Directional Light", "Sun", LRG_NODE_VISUAL_LIGHT, 0 },
 		{ "camera", "Camera", "Camera", LRG_NODE_VISUAL_CAMERA, 0 },
 		{ "audio", "Audio Emitter", "Audio", LRG_NODE_VISUAL_AUDIO_EMITTER, 0 },
 		{ "sprite", "Sprite", "Sprite", LRG_NODE_VISUAL_SPRITE, 0 },
 		{ "mesh", "Mesh (asset)", "Mesh", LRG_NODE_VISUAL_MESH_ASSET, 0 },
 		{ "tilemap", "Tilemap", "Tilemap", LRG_NODE_VISUAL_TILEMAP, 0 },
+		{ "-", NULL, NULL, 0, 0 },
+		{ "decal", "Decal", "Decal", LRG_NODE_VISUAL_DECAL, 0 },
+		{ "reflection-probe", "Reflection Probe", "Reflection Probe", LRG_NODE_VISUAL_REFLECTION_PROBE, 0 },
+		{ "probe-volume", "Probe Volume", "Probe Volume", LRG_NODE_VISUAL_PROBE_VOLUME, 0 },
+		{ "-", NULL, NULL, 0, 0 },
+		{ "terrain", "Terrain", "Terrain", LRG_NODE_VISUAL_TERRAIN, 0 },
+		{ "water", "Water", "Water", LRG_NODE_VISUAL_WATER, 0 },
 	};
 
 	*n_items = G_N_ELEMENTS (items);
@@ -1431,8 +1688,51 @@ editor_app_create_node_kind (LrgEditorApp *self,
 
 	items = editor_create_items (&n);
 	for (i = 0; i < n; i++)
-		if (items[i].name != NULL && g_strcmp0 (items[i].id, kind) == 0)
-			return editor_app_create_node (self, items[i].name, items[i].kind, items[i].primitive, parent);
+	{
+		LrgNode       *node;
+		LrgNodeVisual *visual;
+		gboolean       spot;
+
+		if (items[i].name == NULL || g_strcmp0 (items[i].id, kind) != 0)
+			continue;
+
+		node = editor_app_create_node (self, items[i].name, items[i].kind, items[i].primitive, parent);
+		visual = (node != NULL) ? lrg_node_get_visual (node) : NULL;
+
+		/* Terrain and water nodes get a fresh .rterrain / .rwater under
+		 * the project's terrain/ folder (lrg-editor-terrain-panel.c) */
+		if (node != NULL && (items[i].kind == LRG_NODE_VISUAL_TERRAIN || items[i].kind == LRG_NODE_VISUAL_WATER))
+		{
+			g_autoptr(GError) error = NULL;
+
+			if (!lrg_editor_terrain_init_node (self, node, &error))
+				editor_app_notify (self, EDITOR_NOTIFY_ERROR, "%s: %s", items[i].label, error->message);
+			return node;
+		}
+
+		/* Light presets: a spot light and a sun are light nodes with a
+		 * light_type, tilted -90 degrees about X so their -Z axis points
+		 * down, and lifted 4 m.  The node was just inserted, so these
+		 * values belong to the object the create command restores. */
+		spot = g_strcmp0 (kind, "spot-light") == 0;
+		if (visual != NULL && (spot || g_strcmp0 (kind, "directional-light") == 0))
+		{
+			g_auto(GValue) type = G_VALUE_INIT;
+			GrlVector3    *loc = lrg_node_get_location (node);
+
+			g_value_init (&type, G_TYPE_STRING);
+			g_value_set_string (&type, spot ? "spot" : "directional");
+			lrg_node_visual_set_param (visual, "light_type", &type);
+			if (spot)
+			{
+				lrg_node_visual_set_param_double (visual, "spot_angle", 45.0);
+				lrg_node_visual_set_param_double (visual, "range", 12.0);
+			}
+			lrg_node_set_rotation_xyz (node, (gfloat)(-G_PI / 2.0), 0.0f, 0.0f);
+			lrg_node_set_location_xyz (node, loc->x, 4.0f, loc->z);
+		}
+		return node;
+	}
 	return NULL;
 }
 
@@ -2079,19 +2379,37 @@ typedef struct
 	gint64        last;
 } HeadlessData;
 
-/* The headless loop has no frames: timers run every 100 ms (play,
- * timeline playback, thumbnails, autosave, validation). view.*, play.*
- * and timeline.* IPC act on the same headless objects as the UI. */
+/* Headless has no window frames. The same 100 ms timeout ticks play,
+ * timeline playback, thumbnails, autosave, validation and tool scripts,
+ * and records a profiler frame so profiler.capture works over IPC.
+ * view.*, play.* and timeline.* still act on the same objects as the UI. */
 static gboolean
 headless_tick (gpointer user_data)
 {
-	HeadlessData *data = user_data;
-	gint64        now = g_get_monotonic_time ();
-	gfloat        delta = (data->last > 0) ? (gfloat) (now - data->last) / (gfloat) G_USEC_PER_SEC : 0.1f;
+	HeadlessData       *data = user_data;
+	LrgProfiler        *prof = lrg_profiler_get_default ();
+	LrgEditorScriptApi *scripts;
+	gint64              now = g_get_monotonic_time ();
+	gfloat              delta = (data->last > 0) ? (gfloat) (now - data->last) / (gfloat) G_USEC_PER_SEC : 0.1f;
 
 	data->last = now;
 	data->self->time = now / (gdouble) G_USEC_PER_SEC;
-	tick_timers (data->self, MIN (delta, 0.1f));
+	delta = MIN (delta, 0.1f);
+	lrg_profiler_begin_frame (prof);
+	lrg_profiler_begin_section (prof, "editor.tick");
+	tick_timers (data->self, delta);
+	scripts = app_script_api (data->self);
+	if (scripts != NULL)
+	{
+		lrg_editor_script_api_set_project_dir (scripts,
+		                                       lrg_editor_app_get_project_dir (data->self));
+		if (lrg_editor_app_is_playing (data->self))
+			lrg_editor_script_api_stop_editor_scripts (scripts);
+		else
+			lrg_editor_script_api_tick (scripts, delta);
+	}
+	lrg_profiler_end_section (prof, "editor.tick");
+	lrg_profiler_end_frame (prof);
 	if (data->self->quit_now)
 		g_main_loop_quit (data->loop);
 	return G_SOURCE_CONTINUE;
@@ -2121,4 +2439,12 @@ lrg_editor_app_run_headless (LrgEditorApp *self)
 	g_source_remove (sigint);
 	g_source_remove (sigterm);
 	return 0;
+}
+
+LrgEditorSceneRenderer *
+lrg_editor_app_get_scene_renderer (LrgEditorApp *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), NULL);
+
+	return self->renderer;
 }

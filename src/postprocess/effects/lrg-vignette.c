@@ -7,6 +7,37 @@
 
 #include "config.h"
 #include "lrg-vignette.h"
+#include <raylib.h>
+#include <rlgl.h>
+#include "core/lrg-prewarm.h"
+
+/*
+ * One pass: darken towards @color with distance from the centre. The
+ * distance is scaled so 1.0 is a corner of a square screen; @roundness
+ * blends between following the screen rectangle (0) and a true circle (1).
+ * The same arithmetic as the editor preview pass in LrgWorld3DRenderer.
+ */
+static const gchar vignette_fs[] =
+    "#version 330\n"
+    "in vec2 fragTexCoord;\n"
+    "in vec4 fragColor;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform vec2 resolution;\n"
+    "uniform vec4 params;\n"   /* intensity, radius, smoothness, roundness */
+    "uniform vec3 color;\n"
+    "out vec4 finalColor;\n"
+    "void main()\n"
+    "{\n"
+    "    vec4 c = texture(texture0, fragTexCoord);\n"
+    "    vec2 d = fragTexCoord - 0.5;\n"
+    "    float aspect = resolution.x / max(resolution.y, 1.0);\n"
+    "    float dist;\n"
+    "    float v;\n"
+    "    d.x *= mix(1.0, aspect, params.w);\n"
+    "    dist = length(d) * 1.41421;\n"
+    "    v = smoothstep(params.y, params.y + max(params.z, 0.001), dist) * params.x;\n"
+    "    finalColor = vec4(mix(c.rgb, color, v), c.a);\n"
+    "}\n";
 
 /**
  * SECTION:lrg-vignette
@@ -41,9 +72,19 @@ struct _LrgVignette
     gfloat         color_r;
     gfloat         color_g;
     gfloat         color_b;
+
+    GrlShader     *shader;
+    gboolean       shader_tried;
+    gint           loc_resolution;
+    gint           loc_params;
+    gint           loc_color;
 };
 
-G_DEFINE_TYPE (LrgVignette, lrg_vignette, LRG_TYPE_POST_EFFECT)
+static void lrg_vignette_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgVignette, lrg_vignette, LRG_TYPE_POST_EFFECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                lrg_vignette_prewarmable_init))
 
 enum
 {
@@ -52,6 +93,9 @@ enum
     PROP_RADIUS,
     PROP_SMOOTHNESS,
     PROP_ROUNDNESS,
+    PROP_COLOR_R,
+    PROP_COLOR_G,
+    PROP_COLOR_B,
     N_PROPS
 };
 
@@ -70,7 +114,31 @@ lrg_vignette_real_initialize (LrgPostEffect *effect,
 static void
 lrg_vignette_real_shutdown (LrgPostEffect *effect)
 {
-    /* Nothing to clean up */
+    LrgVignette *self = LRG_VIGNETTE (effect);
+
+    g_clear_object (&self->shader);
+    self->shader_tried = FALSE;
+}
+
+/* Compiles the pass shader once (needs a window) */
+static GrlShader *
+vignette_get_shader (LrgVignette *self)
+{
+    g_autoptr(GError) error = NULL;
+
+    if (self->shader != NULL || self->shader_tried || !IsWindowReady ())
+        return self->shader;
+    self->shader_tried = TRUE;
+    self->shader = lrg_post_effect_compile_shader (vignette_fs, &error);
+    if (self->shader == NULL)
+    {
+        g_warning ("vignette: %s", error->message);
+        return NULL;
+    }
+    self->loc_resolution = grl_shader_get_location (self->shader, "resolution");
+    self->loc_params = grl_shader_get_location (self->shader, "params");
+    self->loc_color = grl_shader_get_location (self->shader, "color");
+    return self->shader;
 }
 
 static void
@@ -81,41 +149,28 @@ lrg_vignette_real_apply (LrgPostEffect *effect,
                          guint          height,
                          gfloat         delta_time)
 {
-    /*
-     * Real implementation would use a shader like:
-     *
-     * #version 330
-     * uniform sampler2D texture0;
-     * uniform vec2 resolution;
-     * uniform float intensity;
-     * uniform float radius;
-     * uniform float smoothness;
-     * uniform float roundness;
-     * uniform vec3 color;
-     *
-     * void main() {
-     *     vec2 uv = gl_FragCoord.xy / resolution;
-     *     vec2 center = vec2(0.5, 0.5);
-     *     vec2 dist = uv - center;
-     *
-     *     // Apply roundness (mix between screen-aspect and circular)
-     *     float aspect = resolution.x / resolution.y;
-     *     dist.x *= mix(aspect, 1.0, roundness);
-     *
-     *     float d = length(dist);
-     *     float vignette = smoothstep(radius, radius - smoothness, d);
-     *     vignette = mix(1.0, vignette, intensity);
-     *
-     *     vec4 texColor = texture(texture0, uv);
-     *     gl_FragColor = vec4(mix(color, texColor.rgb, vignette), texColor.a);
-     * }
-     */
-    (void)effect;
-    (void)source_texture_id;
+    LrgVignette *self = LRG_VIGNETTE (effect);
+    GrlShader *shader;
+    gfloat strength;
+
     (void)target_texture_id;
-    (void)width;
-    (void)height;
     (void)delta_time;
+
+    /* the effect's own intensity scaled by the base (blend) intensity */
+    strength = self->intensity * lrg_post_effect_get_intensity (effect);
+    shader = strength > 0.0f ? vignette_get_shader (self) : NULL;
+    if (shader != NULL)
+    {
+        grl_shader_set_value_vec2 (shader, self->loc_resolution, (gfloat)width, (gfloat)height);
+        grl_shader_set_value_vec4 (shader, self->loc_params, strength, self->radius,
+                                   self->smoothness, self->roundness);
+        grl_shader_set_value_vec3 (shader, self->loc_color, self->color_r, self->color_g,
+                                   self->color_b);
+        grl_shader_begin (shader);
+    }
+    lrg_post_effect_draw_fullscreen (source_texture_id, width, height);
+    if (shader != NULL)
+        grl_shader_end (shader);
 }
 
 static const gchar *
@@ -158,6 +213,15 @@ lrg_vignette_get_property (GObject    *object,
     case PROP_ROUNDNESS:
         g_value_set_float (value, self->roundness);
         break;
+    case PROP_COLOR_R:
+        g_value_set_float (value, self->color_r);
+        break;
+    case PROP_COLOR_G:
+        g_value_set_float (value, self->color_g);
+        break;
+    case PROP_COLOR_B:
+        g_value_set_float (value, self->color_b);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -184,6 +248,15 @@ lrg_vignette_set_property (GObject      *object,
         break;
     case PROP_ROUNDNESS:
         lrg_vignette_set_roundness (self, g_value_get_float (value));
+        break;
+    case PROP_COLOR_R:
+        lrg_vignette_set_color (self, g_value_get_float (value), self->color_g, self->color_b);
+        break;
+    case PROP_COLOR_G:
+        lrg_vignette_set_color (self, self->color_r, g_value_get_float (value), self->color_b);
+        break;
+    case PROP_COLOR_B:
+        lrg_vignette_set_color (self, self->color_r, self->color_g, g_value_get_float (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -241,6 +314,33 @@ lrg_vignette_class_init (LrgVignetteClass *klass)
                             G_PARAM_STATIC_STRINGS |
                             G_PARAM_EXPLICIT_NOTIFY);
 
+    /**
+     * LrgVignette:color-r:
+     *
+     * Red component of the colour the edges fade to (0..1).
+     */
+    properties[PROP_COLOR_R] =
+        g_param_spec_float ("color-r", "Color R", "Edge colour red", 0.0f, 1.0f, 0.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgVignette:color-g:
+     *
+     * Green component of the colour the edges fade to (0..1).
+     */
+    properties[PROP_COLOR_G] =
+        g_param_spec_float ("color-g", "Color G", "Edge colour green", 0.0f, 1.0f, 0.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgVignette:color-b:
+     *
+     * Blue component of the colour the edges fade to (0..1).
+     */
+    properties[PROP_COLOR_B] =
+        g_param_spec_float ("color-b", "Color B", "Edge colour blue", 0.0f, 1.0f, 0.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -254,6 +354,9 @@ lrg_vignette_init (LrgVignette *self)
     self->color_r = 0.0f;
     self->color_g = 0.0f;
     self->color_b = 0.0f;
+
+    /* compile ahead of the first frame when a loading screen prewarms */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgVignette *
@@ -382,7 +485,38 @@ lrg_vignette_set_color (LrgVignette *self,
 {
     g_return_if_fail (LRG_IS_VIGNETTE (self));
 
-    self->color_r = CLAMP (r, 0.0f, 1.0f);
-    self->color_g = CLAMP (g, 0.0f, 1.0f);
-    self->color_b = CLAMP (b, 0.0f, 1.0f);
+    r = CLAMP (r, 0.0f, 1.0f);
+    g = CLAMP (g, 0.0f, 1.0f);
+    b = CLAMP (b, 0.0f, 1.0f);
+    g_object_freeze_notify (G_OBJECT (self));
+    if (self->color_r != r)
+    {
+        self->color_r = r;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_COLOR_R]);
+    }
+    if (self->color_g != g)
+    {
+        self->color_g = g;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_COLOR_G]);
+    }
+    if (self->color_b != b)
+    {
+        self->color_b = b;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_COLOR_B]);
+    }
+    g_object_thaw_notify (G_OBJECT (self));
+}
+
+/* lrg_vignette_prewarm: compiles the pass shader ahead of the first frame */
+static gboolean
+lrg_vignette_prewarm (LrgPrewarmable *prewarmable)
+{
+    vignette_get_shader (LRG_VIGNETTE (prewarmable));
+    return TRUE;
+}
+
+static void
+lrg_vignette_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_vignette_prewarm;
 }

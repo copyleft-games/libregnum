@@ -939,6 +939,14 @@ test_script_component (void)
 	g_assert_cmpint (lrg_script_component_get_language (comp), ==, LRG_SCRIPT_LANGUAGE_LUA);
 	g_assert_cmpstr (lrg_script_component_get_script (comp), ==, "scripts/x.lua");
 
+	/* Playing updates every script; authoring only run-in-editor ones. */
+	g_assert_false (lrg_script_component_get_run_in_editor (comp));
+	g_assert_true (lrg_script_component_should_update (comp, FALSE));
+	g_assert_false (lrg_script_component_should_update (comp, TRUE));
+	lrg_script_component_set_run_in_editor (comp, TRUE);
+	g_assert_true (lrg_script_component_get_run_in_editor (comp));
+	g_assert_true (lrg_script_component_should_update (comp, TRUE));
+
 	/* Attaching with an unavailable language is inert, not fatal. */
 	lrg_game_object_add_component (go, LRG_COMPONENT (comp));
 	lrg_component_update (LRG_COMPONENT (comp), 0.016f);
@@ -1064,6 +1072,49 @@ test_asset_database_scan (void)
 	g_remove (gltf);
 	g_rmdir (sprites);
 	g_rmdir (assets);
+	g_rmdir (dir);
+}
+
+/* lrg_project_save() keeps keys LrgProject does not model (0.9.0
+ * runtime settings, other tools' data) instead of dropping them */
+static void
+test_project_keeps_unknown_keys (void)
+{
+	g_autoptr(GError)     error = NULL;
+	g_autofree gchar     *dir = NULL;
+	g_autofree gchar     *manifest = NULL;
+	g_autofree gchar     *text = NULL;
+	g_autoptr(LrgProject) proj = NULL;
+
+	dir = g_dir_make_tmp ("lrg-proj-XXXXXX", &error);
+	g_assert_no_error (error);
+	manifest = g_build_filename (dir, LRG_PROJECT_MANIFEST, NULL);
+	g_assert_true (g_file_set_contents (manifest,
+		"project:\n"
+		"  name: Keep\n"
+		"  store_prefab_instances: reference\n"
+		"  apply_import_settings: false\n"
+		"  asset_dirs: [assets]\n"
+		"  plugin_data: {colour: red, list: [1, 2]}\n"
+		"tooling:\n"
+		"  lint: strict\n", -1, &error));
+
+	proj = lrg_project_open (dir, &error);
+	g_assert_no_error (error);
+	lrg_project_set_default_level (proj, "levels/main.rlevel");
+	g_assert_true (lrg_project_save (proj, &error));
+	g_assert_no_error (error);
+
+	g_assert_true (g_file_get_contents (manifest, &text, NULL, &error));
+	g_assert_nonnull (strstr (text, "store_prefab_instances: reference"));
+	g_assert_nonnull (strstr (text, "apply_import_settings: false"));
+	g_assert_nonnull (strstr (text, "plugin_data:"));
+	g_assert_nonnull (strstr (text, "colour: red"));
+	g_assert_nonnull (strstr (text, "tooling:"));
+	g_assert_nonnull (strstr (text, "lint: strict"));
+	g_assert_nonnull (strstr (text, "default_level: levels/main.rlevel"));
+
+	g_remove (manifest);
 	g_rmdir (dir);
 }
 
@@ -1416,6 +1467,7 @@ main (int argc, char *argv[])
 	g_test_add_func ("/editor/assets/classify", test_asset_classify);
 	g_test_add_func ("/editor/assets/scan", test_asset_database_scan);
 	g_test_add_func ("/editor/project/roundtrip", test_project_roundtrip);
+	g_test_add_func ("/editor/project/keeps-unknown-keys", test_project_keeps_unknown_keys);
 
 	g_test_add_func ("/editor/prefab/clone", test_prefab_clone);
 	g_test_add_func ("/editor/prefab/save-load", test_prefab_save_load);

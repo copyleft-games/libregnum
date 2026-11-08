@@ -1,0 +1,320 @@
+#+title: Tileset assets (.rtileset) and per-tile data
+#+description: The .rtileset format, per-tile flip/rotation bits, collision polygons, custom data, tile animation and rule tiles in LrgTileset
+#+created: 2026-11-07
+
+* Tileset assets (.rtileset) and per-tile data
+:PROPERTIES:
+:CUSTOM_ID: tileset-asset
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Tilemap]] > Tileset assets
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+Since 0.9.0 an =LrgTileset= is more than a texture cut into a grid. It carries everything a tile needs at runtime and in the editor, and it is saved as an =.rtileset= YAML file:
+
+- *Flip and rotation per cell.* A layer cell keeps three transform bits next to the tile id (Tiled's encoding), so one tile image can be drawn in all eight orientations.
+- *Collision shapes per tile.* Polygons in tile pixels; a solid tile without polygons collides over its whole cell.
+- *Custom data per tile.* Ordered key/value text (terrain kind, footstep sound, damage).
+- *Animated tiles.* A list of frames with durations in milliseconds; every cell of the tile plays it.
+- *Rule tiles.* Autotiling brushes (see [[file:rule-tile.org][Rule tiles]]) stored in the same file.
+- *Layout.* Margin and spacing in the image, and a draw offset for tall isometric tiles.
+
+The format follows the [[file:../../guides/writing-a-data-format.org][data format rules]]: strict errors with the key path, unknown keys kept and written back, byte-stable round trips.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+
+*** Tile ids and tile indices
+:PROPERTIES:
+:CUSTOM_ID: ids
+:END:
+There are two numberings and they differ by one:
+
+| Where | Numbering | Example |
+|-------+-----------+---------|
+| =LrgTileset= API (=tile_id= parameters), every tile reference inside an =.rtileset= | 0-based *tile index* into the image grid | =lrg_tileset_set_tile_data (ts, 4, ...)= |
+| =LrgTilemapLayer= cells, rule tile outputs (=lrg_tile_rule_add_output()=), =LrgRuleTile= API | 1-based *tile id* plus transform bits; 0 is an empty cell | =lrg_tilemap_layer_set_tile (layer, x, y, 5)= draws tile index 4 |
+
+=lrg_tile_get_id()= strips the transform bits from a cell value; the tile index is that id minus one.
+
+*** Transform bits
+:PROPERTIES:
+:CUSTOM_ID: transform-bits
+:END:
+The top three bits of a 32-bit cell value transform the tile when it is drawn, exactly like Tiled's GID flags:
+
+| Bit | Macro | Meaning |
+|-----+-------+---------|
+| 31 | =LRG_TILE_FLIP_HORIZONTAL= | mirror left to right |
+| 30 | =LRG_TILE_FLIP_VERTICAL= | mirror top to bottom |
+| 29 | =LRG_TILE_FLIP_DIAGONAL= | swap x and y (applied first) |
+| | =LRG_TILE_FLAGS_MASK= | the three bits |
+| | =LRG_TILE_ID_MASK= | the id bits (29 bits) |
+
+Working with the raw bits is error-prone, so the API speaks in a canonical form: *mirror left to right (optional), then rotate clockwise by 0-3 quarter turns*. Every one of the eight orientations of a square has exactly one such pair:
+
+| mirrored | rotation | bits |
+|----------+----------+------|
+| no | 0 | none |
+| no | 1 (90 degrees clockwise) | diagonal + horizontal |
+| no | 2 | horizontal + vertical |
+| no | 3 | diagonal + vertical |
+| yes | 0 | horizontal |
+| yes | 1 | all three |
+| yes | 2 | vertical |
+| yes | 3 | diagonal |
+
+=lrg_tile_make()= builds a cell value from an id and a transform, =lrg_tile_get_rotation()= and =lrg_tile_get_mirrored()= read it back, =lrg_tile_rotate()=, =lrg_tile_flip_horizontally()= and =lrg_tile_flip_vertically()= compose a transform on top of the current one (what a painter's rotate/flip keys do). =lrg_tile_transform_point()= maps a point of the tile image through the transform; collision polygons use it.
+
+The renderer draws a mirrored tile with a negative source width and rotates it about its centre. Rotating a non-square tile by a quarter turn swaps its extents; keep rotated tiles square.
+
+*** Collision
+:PROPERTIES:
+:CUSTOM_ID: collision
+:END:
+A tile collides when it has the =LRG_TILE_PROPERTY_SOLID= flag or at least one collision polygon (=lrg_tileset_tile_has_collision()=). Polygons are in tile-image pixels, origin top-left, either winding, at least three points. Consumers place them like the renderer places the image: the image's bottom-left corner on the cell's bottom-left corner plus the tileset's draw offset, transformed with the cell's flip/rotation. =lrg_shadow_occluder2d_add_tilemap()= is the first consumer (2D shadows); physics colliders can be built the same way.
+
+*** Animated tiles
+:PROPERTIES:
+:CUSTOM_ID: animation
+:END:
+=lrg_tileset_set_tile_animation()= gives a tile a frame list. Cells keep the animated tile's own id; at draw time =lrg_tileset_get_animated_tile()= maps it to the frame for the map's clock (=lrg_tilemap_update()=). The flag =LRG_TILE_PROPERTY_ANIMATED= follows the frame list.
+
+** The .rtileset format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+
+*** Annotated example
+:PROPERTIES:
+:CUSTOM_ID: format-example
+:END:
+#+begin_src yaml
+version: 1                 # optional; only 1 is accepted
+name: dungeon              # optional, LrgTileset name
+image: dungeon.png         # optional, relative to this file's directory
+tile_size: [16, 16]        # required: tile width and height in pixels (1..65536)
+columns: 8                 # required: tiles per image row (1..65536)
+tile_count: 64             # required: number of tiles (0..16777216)
+margin: 0                  # optional, default 0: pixels before the first tile
+spacing: 1                 # optional, default 0: pixels between tiles
+offset: [0, -8]            # optional, default [0, 0]: draw offset of every tile
+tiles:                     # optional: only tiles with something to say, ascending ids
+- id: 3                    # required: tile index 0..tile_count-1, each id once
+  flags: [solid]           # optional: solid, animated, hazard
+- id: 5
+  flags: [hazard]
+  collision:               # optional: polygons, x0, y0, x1, y1, ... (>= 3 points)
+  - [0, 8, 16, 8, 16, 16, 0, 16]
+  data:                    # optional: scalar values, kept in order, read as text
+    kind: water
+    damage: 2
+  animation:               # optional: frames (tile index, milliseconds >= 1)
+  - {tile: 5, duration: 200}
+  - {tile: 6, duration: 100}
+  note: keep me            # unknown keys of a tile entry are kept
+rule_tiles:                # optional, see rule-tile.org
+- name: grass
+  default: 20              # tile index, or {tile, rotate, flip}
+  seed: 7
+  match_tiles: [3]
+  rules:
+  - pattern: [".#.", "-@-", "..."]
+    transform: rotated
+    tiles: [21, {tile: 22, weight: 0.5, rotate: 1, flip: true}]
+  - tiles: [20]
+editor: {zoom: 2}          # unknown top-level keys are kept and written back
+#+end_src
+
+The writer emits the keys in the order above, block style, omits defaults (=margin=, =spacing=, =offset= and empty tile entries) and writes =animated= in =flags= only for tiles without frames (frames imply it). Data values are written as plain scalars; they always read back as text, so =damage: 2= and =damage: "2"= load the same.
+
+*** Errors
+:PROPERTIES:
+:CUSTOM_ID: format-errors
+:END:
+Load errors use =LRG_TILESET_ERROR= (=LrgTilesetError=, registered as =lrg_tileset_error_get_type()=, quark =lrg_tileset_error_quark()=):
+
+| Code | When |
+|------+------|
+| =LRG_TILESET_ERROR_IO= | the file or the image cannot be read or written; texture load without a GL context |
+| =LRG_TILESET_ERROR_PARSE= | the text is not YAML |
+| =LRG_TILESET_ERROR_INVALID= | a schema error; the message is =source: /key/path: what is wrong= |
+
+Examples of messages: =dungeon.rtileset: /tiles/0/id: expected a whole number from 0 to 15=, =/tiles/0/flags/1: expected solid, animated or hazard=, =/tiles/1: tile 2 is listed twice=, =/rule_tiles/0/rules/0/pattern/1: the centre character must be '@'=, =/rule_tiles/1: rule tile "a" is defined twice=.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+
+*** Cell transform functions
+:PROPERTIES:
+:CUSTOM_ID: api-transform
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_tile_get_id (tile)= | the 1-based id without transform bits |
+| =lrg_tile_make (tile_id, mirrored, rotation)= | cell value for an id and a transform (0 stays empty) |
+| =lrg_tile_get_rotation (tile)= / =lrg_tile_get_mirrored (tile)= | the canonical transform of a cell |
+| =lrg_tile_rotate (tile, quarter_turns)= | add clockwise quarter turns (negative: counter-clockwise) |
+| =lrg_tile_flip_horizontally (tile)= / =lrg_tile_flip_vertically (tile)= | mirror on top of the current transform |
+| =lrg_tile_transform_point (tile, width, height, &x, &y)= | map a tile-image point through the transform (about the centre) |
+| =lrg_tilemap_layer_get_tile_id (layer, x, y)= | a cell's id without bits (=lrg_tilemap_layer_get_tile()= returns the raw value) |
+| =lrg_tilemap_layer_set_tile_transform (layer, x, y, mirrored, rotation)= | replace a non-empty cell's transform |
+
+*** Construction, files and layout
+:PROPERTIES:
+:CUSTOM_ID: api-files
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_tileset_new_empty (tile_width, tile_height, columns, tile_count)= | a tileset without texture (tools, servers, tests) |
+| =lrg_tileset_new_from_asset_file (path, load_texture, error)= | load an =.rtileset=; the image is relative to the file; =load_texture= needs a window |
+| =lrg_tileset_new_from_asset_data (data, length, base_dir, source, load_texture, error)= | parse text; =source= names it in messages (default =<data>=) |
+| =lrg_tileset_save_to_file (self, path, error)= / =lrg_tileset_save_to_data (self, &length, error)= | write the format (deterministic, unknown keys kept) |
+| =lrg_tileset_set_texture (self, texture)= | attach or detach the image, keeping the grid |
+| =lrg_tileset_load_texture (self, error)= | load =image-path= relative to the load directory; needs a window |
+| =lrg_tileset_get_name= / =lrg_tileset_set_name= | the =name:= key |
+| =lrg_tileset_get_image_path= / =lrg_tileset_set_image_path= | the =image:= key as written |
+| =lrg_tileset_get_margin=, =lrg_tileset_get_spacing=, =lrg_tileset_set_margin_spacing (self, margin, spacing)= | image layout used by =lrg_tileset_get_tile_rect()= |
+| =lrg_tileset_get_draw_offset (self, &x, &y)= / =lrg_tileset_set_draw_offset= | offset tiles are drawn at relative to their cell |
+| =lrg_tileset_changed (self)= | emit =::changed= by hand |
+
+Signal: =changed= (no arguments) whenever flags, collision, data, animation, layout or a rule tile change (rule tiles' own =changed= is forwarded).
+
+*** Per-tile collision, data and animation
+:PROPERTIES:
+:CUSTOM_ID: api-tiles
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_tileset_add_tile_collision_polygon (self, tile_id, coords, n_coords)= | add a polygon (=n_coords= >= 6, even) |
+| =lrg_tileset_get_tile_collision_polygon_count (self, tile_id)= | polygons on a tile |
+| =lrg_tileset_get_tile_collision_polygon (self, tile_id, index, &n_coords)= | a polygon's coordinates (transfer none) |
+| =lrg_tileset_clear_tile_collision (self, tile_id)= | remove every polygon |
+| =lrg_tileset_tile_has_collision (self, tile_id)= | solid flag or polygons |
+| =lrg_tileset_set_tile_data (self, tile_id, key, value)= | set a key (=value= NULL removes it); keys keep first-set order |
+| =lrg_tileset_get_tile_data (self, tile_id, key)= | the text value or NULL |
+| =lrg_tileset_get_tile_data_double (self, tile_id, key, default)= / =lrg_tileset_get_tile_data_boolean= | typed reads with a default |
+| =lrg_tileset_get_tile_data_keys (self, tile_id)= | the keys in order (free with =g_strfreev()=) |
+| =lrg_tileset_find_tiles_with_data (self, key, value, &n)= | tile indices having the key (with that value), ascending (free with =g_free()=) |
+| =lrg_tileset_set_tile_animation (self, tile_id, frames, durations_ms, n)= | set (=n= 0 clears) the frame list |
+| =lrg_tileset_get_tile_animation_length (self, tile_id)= | frame count |
+| =lrg_tileset_get_tile_animation_frame (self, tile_id, index, &tile, &duration_ms)= | one frame |
+| =lrg_tileset_get_animated_tile (self, tile_id, time_ms)= | the tile shown at a clock (looping) |
+
+*** Rule tiles in the tileset
+:PROPERTIES:
+:CUSTOM_ID: api-rule-tiles
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_tileset_add_rule_tile (self, rule_tile)= / =lrg_tileset_remove_rule_tile= | manage the saved rule tiles |
+| =lrg_tileset_get_n_rule_tiles=, =lrg_tileset_get_rule_tile (self, index)=, =lrg_tileset_get_rule_tile_by_name= | lookups (transfer none) |
+| =lrg_tileset_find_rule_tile_for (self, tile)= | the rule tile that owns a cell value |
+| =lrg_tileset_apply_rule_tiles (self, tiles, n_tiles, width, layout, x, y, w, h)= | re-resolve every owned cell in a rectangle (all rule tiles) |
+
+The pre-0.9.0 functions (=lrg_tileset_new()=, =lrg_tileset_new_from_file()=, the getters, tile rectangles and =LrgTileProperty= flags) are documented in [[file:tileset.org][LrgTileset]]; =lrg_tileset_get_tile_rect()= now honours margin and spacing.
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+
+*** Loading a tileset and reading tile data
+:PROPERTIES:
+:CUSTOM_ID: example-load
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgTileset) tiles = NULL;
+guint tile_x, tile_y;
+guint cell;
+
+/* after InitWindow(): load the description and the image */
+tiles = lrg_tileset_new_from_asset_file ("assets/dungeon.rtileset", TRUE, &error);
+if (tiles == NULL)
+	g_error ("%s", error->message);   /* e.g. "dungeon.rtileset: /tiles/2/id: ..." */
+
+/* footstep sound of the tile under the player */
+lrg_tilemap_world_to_tile (map, player_x, player_y, &tile_x, &tile_y);
+cell = lrg_tilemap_layer_get_tile (ground, tile_x, tile_y);
+if (lrg_tile_get_id (cell) != 0)
+{
+	const gchar *sound = lrg_tileset_get_tile_data (tiles, lrg_tile_get_id (cell) - 1, "sound");
+
+	if (sound != NULL)
+		play_footstep (sound);
+}
+#+end_src
+
+*** Authoring a tileset in code and saving it
+:PROPERTIES:
+:CUSTOM_ID: example-save
+:END:
+#+begin_src C
+g_autoptr(LrgTileset) ts = lrg_tileset_new_empty (16, 16, 8, 64);
+gfloat ramp[6] = { 0, 16, 16, 0, 16, 16 };   /* a slope: bottom-left, top-right, bottom-right */
+guint water[3] = { 40, 41, 42 };
+guint ms[3] = { 150, 150, 150 };
+
+lrg_tileset_set_name (ts, "overworld");
+lrg_tileset_set_image_path (ts, "overworld.png");
+lrg_tileset_set_tile_properties (ts, 1, LRG_TILE_PROPERTY_SOLID);
+lrg_tileset_add_tile_collision_polygon (ts, 2, ramp, 6);
+lrg_tileset_set_tile_data (ts, 40, "kind", "water");
+lrg_tileset_set_tile_animation (ts, 40, water, ms, 3);
+lrg_tileset_save_to_file (ts, "assets/overworld.rtileset", NULL);
+#+end_src
+
+*** Rotating a painted tile
+:PROPERTIES:
+:CUSTOM_ID: example-rotate
+:END:
+#+begin_src C
+guint cell = lrg_tilemap_layer_get_tile (layer, x, y);
+
+/* R key: turn clockwise; F key: mirror */
+lrg_tilemap_layer_set_tile (layer, x, y, lrg_tile_rotate (cell, 1));
+lrg_tilemap_layer_set_tile (layer, x, y, lrg_tile_flip_horizontally (cell));
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Per-tile data lives in a sparse array of tile slots; a tile without data costs one NULL pointer. Lookups are O(1) (=lrg_tileset_get_tile_data()= is a hash lookup, collision polygons an array index). Animated tiles are resolved per drawn cell with a walk over the tile's frames (a handful of comparisons). Loading and saving are linear in the file size. The transform bits cost nothing at draw time beyond a negative source width and a rotation argument to the same draw call.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Off by one.* Tileset functions and the file take 0-based tile indices; cells and rule tile outputs hold 1-based ids. =lrg_tile_get_id (cell) - 1= is the index.
+- *Strip the bits before comparing ids.* =lrg_tilemap_layer_get_tile()= returns the raw cell; code that did arithmetic on raw values (=tile - 1=) breaks on flipped cells. Use =lrg_tilemap_layer_get_tile_id()= or =lrg_tile_get_id()=.
+- *=columns= and =tile_count= are required in the file* even when an image is present, so tools can work without decoding it; keep them in step with the image.
+- *Rotated non-square tiles* swap extents and will not fit their cell.
+- *Data values are text.* =lrg_tileset_get_tile_data_double()= parses; a value written as =2= reads back as ="2"=.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+- *Tiles panel*: an =.rtileset= dropped on the tileset zone becomes the node's tileset (the grid takes its tile size); the palette shows its tiles with badges for collision, data, animation and rule ownership, and the tile under the pointer's properties. The brush carries transform bits: X, Shift+X and Z compose =lrg_tile_flip_horizontally()=, =lrg_tile_flip_vertically()= and =lrg_tile_rotate()= on the brush value, and every tool paints them; the viewport draws them like =LrgTilemap= does.
+- *Tileset editor*: the =.rtileset= data tab ([[file:../../editor/2d-tools.org::#editor-2d-tileset-editor][2D Tools > The tileset editor]]): the tile sheet, layout fields, flags (=lrg_tileset_set_tile_properties()=), a polygon editor over the magnified tile (=lrg_tileset_add_tile_collision_polygon()=, =lrg_tileset_clear_tile_collision()=), a key/value table (=lrg_tileset_set_tile_data()=), animation frames (=lrg_tileset_set_tile_animation()=) and the rule tiles. Every edit parses the document with =lrg_tileset_new_from_asset_data()= and writes =lrg_tileset_save_to_data()= as one undo step; parse errors show with their key path.
+- *IPC*: =tileset.*= (create, get, set, tile, collision, rule_tile, rule, preview, save) and =tiles.tile_info=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:rule-tile.org][Rule tiles]] (autotiling)
+- [[file:iso-hex.org][Isometric and hexagonal maps]]
+- [[file:tileset.org][LrgTileset]] (base API) and [[file:tilemap-layer.org][LrgTilemapLayer]]
+- [[file:../lighting/2d-shadows.org][2D shadows]] (shadows from tile collision)
+- [[file:../../guides/2d.org][2D guide]]

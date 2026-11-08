@@ -35,6 +35,8 @@
 
 #include "lrg-nav-poly-mesh.h"
 #include "lrg-nav-poly-mesh-cache.h"
+#include "lrg-nav-poly-mesh-private.h"
+#include "../debug/lrg-debug-draw.h"
 #include <gio/gio.h>
 #include <math.h>
 #include <string.h>
@@ -144,6 +146,8 @@ struct _LrgNavPolyMesh
     /* staged input */
     GArray *triangles;      /* gfloat, nine per triangle */
     GArray *walkable;       /* guint8 per triangle */
+    GArray *solid_ids;      /* guint32 per triangle: 0, or its solid (0.9.0) */
+    guint32 n_solids;
     GArray *boxes;          /* AreaBox */
     GArray *links;          /* Link, the added ones (ids) */
 
@@ -174,6 +178,19 @@ struct _LrgNavPolyMesh
     guint8  *closed;
     guint32  generation;
     guint    scratch_size;
+
+    /* 0.9.0: area costs (queries only, survive rebakes) */
+    GHashTable *tag_costs;      /* tag -> gfloat* (owned) */
+    gfloat      min_tag_cost;   /* min (1, every cost): scales the heuristic */
+
+    /* 0.9.0: boundary segments for local avoidance, built lazily per bake */
+    GArray     *boundary;       /* gfloat, 6 per segment (a xyz, b xyz) */
+    GHashTable *boundary_grid;  /* packed bucket key -> GArray of guint32 */
+    guint32    *boundary_stamp; /* per segment, dedupes bucket queries */
+    guint32     boundary_gen;
+
+    /* 0.9.0: changes on every committed bake or load */
+    guint       serial;
 };
 
 G_DEFINE_FINAL_TYPE (LrgNavPolyMesh, lrg_nav_poly_mesh, G_TYPE_OBJECT)
@@ -196,8 +213,14 @@ free_bake (LrgNavPolyMesh *self)
     g_clear_pointer (&self->parent_via, g_free);
     g_clear_pointer (&self->node_pos, g_free);
     g_clear_pointer (&self->closed, g_free);
+    g_clear_pointer (&self->boundary, g_array_unref);
+    g_clear_pointer (&self->boundary_grid, g_hash_table_unref);
+    g_clear_pointer (&self->boundary_stamp, g_free);
+    self->boundary_gen = 0;
     self->scratch_size = 0;
     self->baked = FALSE;
+    /* every commit goes through here: agents watching the serial repath */
+    self->serial++;
 }
 
 static void
@@ -208,9 +231,11 @@ lrg_nav_poly_mesh_finalize (GObject *object)
     free_bake (self);
     g_array_unref (self->triangles);
     g_array_unref (self->walkable);
+    g_array_unref (self->solid_ids);
     g_array_unref (self->boxes);
     g_array_unref (self->links);
     g_hash_table_unref (self->disabled_tags);
+    g_hash_table_unref (self->tag_costs);
     G_OBJECT_CLASS (lrg_nav_poly_mesh_parent_class)->finalize (object);
 }
 
@@ -344,9 +369,12 @@ lrg_nav_poly_mesh_init (LrgNavPolyMesh *self)
     self->max_drop = 0.0f;
     self->triangles = g_array_new (FALSE, FALSE, sizeof (gfloat));
     self->walkable = g_array_new (FALSE, FALSE, sizeof (guint8));
+    self->solid_ids = g_array_new (FALSE, FALSE, sizeof (guint32));
     self->boxes = g_array_new (FALSE, FALSE, sizeof (AreaBox));
     self->links = g_array_new (FALSE, FALSE, sizeof (Link));
     self->disabled_tags = g_hash_table_new (g_direct_hash, g_direct_equal);
+    self->tag_costs = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, g_free);
+    self->min_tag_cost = 1.0f;
 }
 
 LrgNavPolyMesh *
@@ -365,6 +393,8 @@ lrg_nav_poly_mesh_clear_input (LrgNavPolyMesh *self)
 
     g_array_set_size (self->triangles, 0);
     g_array_set_size (self->walkable, 0);
+    g_array_set_size (self->solid_ids, 0);
+    self->n_solids = 0;
     g_array_set_size (self->boxes, 0);
 }
 
@@ -397,6 +427,30 @@ lrg_nav_poly_mesh_add_triangles (LrgNavPolyMesh *self,
         g_array_append_val (self->walkable, flag);
         added++;
     }
+    g_array_set_size (self->solid_ids, self->walkable->len);
+    return added;
+}
+
+guint
+lrg_nav_poly_mesh_add_solid (LrgNavPolyMesh *self,
+                             const gfloat   *vertices,
+                             guint           n_floats)
+{
+    guint before;
+    guint added;
+    guint i;
+    guint32 id;
+
+    g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), 0);
+    g_return_val_if_fail (vertices != NULL || n_floats == 0, 0);
+
+    before = self->walkable->len;
+    added = lrg_nav_poly_mesh_add_triangles (self, vertices, n_floats, TRUE);
+    if (added == 0)
+        return 0;
+    id = ++self->n_solids;
+    for (i = before; i < self->solid_ids->len; i++)
+        g_array_index (self->solid_ids, guint32, i) = id;
     return added;
 }
 
@@ -1019,6 +1073,15 @@ divide (const gfloat *in,
     *n_above = na;
 }
 
+/* one column of a solid being rasterised: its pieces' extent */
+typedef struct
+{
+    gint32 smin;
+    gint32 smax;
+    gfloat top;
+    guint8 walkable;
+} SolidColumn;
+
 static void
 rasterise_triangle (Heightfield  *hf,
                     const gfloat *origin,
@@ -1026,7 +1089,8 @@ rasterise_triangle (Heightfield  *hf,
                     gfloat        ch,
                     gint32        layers,
                     const gfloat *t,
-                    guint8        walkable)
+                    guint8        walkable,
+                    GHashTable   *solid)
 {
     gfloat in[CLIP_VERTS * 3];
     gfloat row[CLIP_VERTS * 3];
@@ -1105,6 +1169,33 @@ rasterise_triangle (Heightfield  *hf,
             smax = CLAMP (smax, 0, layers);
             if (smax <= smin)
                 smax = smin + 1;
+            if (solid != NULL)
+            {
+                /* a solid: one span per column from its lowest to its highest piece */
+                gpointer key = GINT_TO_POINTER (z * hf->width + x + 1);
+                SolidColumn *sc = g_hash_table_lookup (solid, key);
+
+                if (sc == NULL)
+                {
+                    sc = g_new (SolidColumn, 1);
+                    sc->smin = smin;
+                    sc->smax = smax;
+                    sc->top = ymax;
+                    sc->walkable = walkable;
+                    g_hash_table_insert (solid, key, sc);
+                }
+                else
+                {
+                    if (smax > sc->smax)
+                        sc->walkable = walkable;
+                    else if (smax == sc->smax)
+                        sc->walkable = sc->walkable | walkable;
+                    sc->smin = MIN (sc->smin, smin);
+                    sc->smax = MAX (sc->smax, smax);
+                    sc->top = MAX (sc->top, ymax);
+                }
+                continue;
+            }
             hf_add_span (hf, x, z, smin, smax, ymax, walkable);
         }
     }
@@ -1872,10 +1963,40 @@ index_links (LrgNavPolyMesh *self)
 /* ------------------------------------------------------------------ */
 /* Bake                                                                 */
 
+static gint
+compare_keys_int (gconstpointer a,
+                  gconstpointer b)
+{
+    gint x = GPOINTER_TO_INT (*(gconstpointer const *) a);
+    gint y = GPOINTER_TO_INT (*(gconstpointer const *) b);
+
+    return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+/* adds the accumulated columns of one solid as spans, in column order */
+static void
+flush_solid (Heightfield *hf,
+             GHashTable  *solid)
+{
+    g_autoptr(GPtrArray) keys = g_hash_table_get_keys_as_ptr_array (solid);
+    guint i;
+
+    g_ptr_array_sort (keys, compare_keys_int);
+    for (i = 0; i < keys->len; i++)
+    {
+        gint column = GPOINTER_TO_INT (g_ptr_array_index (keys, i)) - 1;
+        const SolidColumn *sc = g_hash_table_lookup (solid, g_ptr_array_index (keys, i));
+
+        hf_add_span (hf, column % hf->width, column / hf->width, sc->smin, sc->smax, sc->top, sc->walkable);
+    }
+    g_hash_table_remove_all (solid);
+}
+
 gboolean
 lrg_nav_poly_mesh_bake (LrgNavPolyMesh  *self,
                         GError         **error)
 {
+    g_autoptr(GHashTable) solid = NULL;
     Heightfield hf;
     Open open;
     gfloat bmin[3];
@@ -1958,9 +2079,11 @@ lrg_nav_poly_mesh_bake (LrgNavPolyMesh  *self,
 
     /* --- 1. rasterise --- */
     min_up = cosf (self->max_slope * (gfloat) G_PI / 180.0f);
+    solid = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, g_free);
     for (i = 0; i < n_tri; i++)
     {
         const gfloat *t = &g_array_index (self->triangles, gfloat, i * 9);
+        guint32 sid;
         gfloat e1[3];
         gfloat e2[3];
         gfloat n[3];
@@ -1979,7 +2102,11 @@ lrg_nav_poly_mesh_bake (LrgNavPolyMesh  *self,
         walk = 0;
         if (len > 1e-12f && g_array_index (self->walkable, guint8, i) && fabsf (n[1]) / len >= min_up)
             walk = 1;
-        rasterise_triangle (&hf, bmin, cs, ch, layers, t, walk);
+        sid = g_array_index (self->solid_ids, guint32, i);
+        rasterise_triangle (&hf, bmin, cs, ch, layers, t, walk, sid != 0 ? solid : NULL);
+        /* a solid ends: its columns become single spans */
+        if (sid != 0 && (i + 1 == n_tri || g_array_index (self->solid_ids, guint32, i + 1) != sid))
+            flush_solid (&hf, solid);
     }
 
     /* --- 2. low obstacles within the climb become walkable --- */
@@ -2182,6 +2309,15 @@ lrg_nav_poly_mesh_get_input_digest (LrgNavPolyMesh *self)
     digest_u32 (sum, self->walkable->len);
     digest_floats (sum, (const gfloat *) (gpointer) self->triangles->data, self->triangles->len);
     g_checksum_update (sum, (const guchar *) self->walkable->data, self->walkable->len);
+    /* solids (0.9.0): only when there are any, so older digests stay valid */
+    if (self->n_solids > 0)
+    {
+        guint j;
+
+        digest_u32 (sum, self->n_solids);
+        for (j = 0; j < self->solid_ids->len; j++)
+            digest_u32 (sum, g_array_index (self->solid_ids, guint32, j));
+    }
 
     /* the area boxes */
     digest_u32 (sum, self->boxes->len);
@@ -2645,17 +2781,38 @@ edge_portal (const Edge *e,
     }
 }
 
-gfloat *
-lrg_nav_poly_mesh_find_path (LrgNavPolyMesh        *self,
-                             const gfloat          *start,
-                             const gfloat          *goal,
-                             const gfloat          *extents,
-                             guint                  max_nodes,
-                             LrgNavPolyFilterFunc   filter,
-                             gpointer               user_data,
-                             guint                 *out_expanded,
-                             guint                 *n_floats,
-                             GError               **error)
+/* the A* cost multiplier of travelling inside @poly (its area's cost) */
+static gfloat
+poly_cost (LrgNavPolyMesh *self,
+           guint32         poly)
+{
+    const Poly *p = &g_array_index (self->polys, Poly, poly);
+    const gfloat *c;
+
+    if (p->tag == 0 || g_hash_table_size (self->tag_costs) == 0)
+        return 1.0f;
+    c = g_hash_table_lookup (self->tag_costs, GUINT_TO_POINTER (p->tag));
+    return c != NULL ? *c : 1.0f;
+}
+
+/*
+ * find_path_impl:
+ * lrg_nav_poly_mesh_find_path(), and when @link_starts is given, the
+ * index (in points) of every path point where an off-mesh link begins
+ * (the next point is the link's other end).
+ */
+static gfloat *
+find_path_impl (LrgNavPolyMesh        *self,
+                const gfloat          *start,
+                const gfloat          *goal,
+                const gfloat          *extents,
+                guint                  max_nodes,
+                LrgNavPolyFilterFunc   filter,
+                gpointer               user_data,
+                guint                 *out_expanded,
+                guint                 *n_floats,
+                GArray                *link_starts,
+                GError               **error)
 {
     g_autoptr(GHashTable) cache = NULL;
     g_autoptr(GArray) heap = NULL;
@@ -2719,7 +2876,7 @@ lrg_nav_poly_mesh_find_path (LrgNavPolyMesh        *self,
     self->parent_via[ps] = VIA_START;
     self->closed[ps] = 0;
     memcpy (self->node_pos + ps * 3, s, sizeof (gfloat) * 3);
-    heap_push (heap, dist3 (s, g), ps);
+    heap_push (heap, dist3 (s, g) * self->min_tag_cost, ps);
     expanded = 0;
     found = FALSE;
     while (heap->len > 0)
@@ -2763,9 +2920,9 @@ lrg_nav_poly_mesh_find_path (LrgNavPolyMesh        *self,
             mid[0] = (edge->a[0] + edge->b[0]) * 0.5f;
             mid[1] = (edge->a[1] + edge->b[1]) * 0.5f;
             mid[2] = (edge->a[2] + edge->b[2]) * 0.5f;
-            c = self->cost[cur] + dist3 (pos, mid);
+            c = self->cost[cur] + dist3 (pos, mid) * poly_cost (self, cur);
             if (to == pg)
-                c += dist3 (mid, g);
+                c += dist3 (mid, g) * poly_cost (self, pg);
             if (self->stamp[to] != self->generation || c < self->cost[to])
             {
                 self->stamp[to] = self->generation;
@@ -2774,7 +2931,7 @@ lrg_nav_poly_mesh_find_path (LrgNavPolyMesh        *self,
                 self->parent[to] = (gint32) cur;
                 self->parent_via[to] = ei;
                 memcpy (self->node_pos + to * 3, mid, sizeof (mid));
-                heap_push (heap, c + (to == pg ? 0.0f : dist3 (mid, g)), to);
+                heap_push (heap, c + (to == pg ? 0.0f : dist3 (mid, g) * self->min_tag_cost), to);
             }
         }
 
@@ -2796,9 +2953,10 @@ lrg_nav_poly_mesh_find_path (LrgNavPolyMesh        *self,
                 continue;
             if (!poly_usable (self, to, filter, user_data, cache))
                 continue;
-            c = self->cost[cur] + dist3 (pos, enter) + dist3 (enter, leave) + link->cost;
+            c = self->cost[cur] + dist3 (pos, enter) * poly_cost (self, cur) +
+                dist3 (enter, leave) + link->cost;
             if (to == pg)
-                c += dist3 (leave, g);
+                c += dist3 (leave, g) * poly_cost (self, pg);
             if (self->stamp[to] != self->generation || c < self->cost[to])
             {
                 self->stamp[to] = self->generation;
@@ -2808,7 +2966,7 @@ lrg_nav_poly_mesh_find_path (LrgNavPolyMesh        *self,
                 self->parent_via[to] = VIA_LINK | (use->ref & LINK_DROP_BIT ? 0x20000000u : 0u) |
                                        (use->ref & ~LINK_DROP_BIT) | (use->forward ? 0x10000000u : 0u);
                 memcpy (self->node_pos + to * 3, leave, sizeof (gfloat) * 3);
-                heap_push (heap, c + (to == pg ? 0.0f : dist3 (leave, g)), to);
+                heap_push (heap, c + (to == pg ? 0.0f : dist3 (leave, g) * self->min_tag_cost), to);
             }
         }
     }
@@ -2869,6 +3027,12 @@ lrg_nav_poly_mesh_find_path (LrgNavPolyMesh        *self,
                 e_on[1] = poly_height_at (self, prev->poly, e_on[0], e_on[2]);
                 l_on[1] = poly_height_at (self, step->poly, l_on[0], l_on[2]);
                 funnel (from, e_on, portals, out);
+                if (link_starts != NULL)
+                {
+                    guint at = out->len / 3 - 1;
+
+                    g_array_append_val (link_starts, at);
+                }
                 append_point (out, l_on);
                 g_array_set_size (portals, 0);
                 memcpy (from, l_on, sizeof (from));
@@ -2911,6 +3075,38 @@ lrg_nav_poly_mesh_find_path (LrgNavPolyMesh        *self,
         g_array_append_vals (out, g, 3);
     *n_floats = out->len;
     return (gfloat *) g_array_free (g_steal_pointer (&out), FALSE);
+}
+
+gfloat *
+lrg_nav_poly_mesh_find_path (LrgNavPolyMesh        *self,
+                             const gfloat          *start,
+                             const gfloat          *goal,
+                             const gfloat          *extents,
+                             guint                  max_nodes,
+                             LrgNavPolyFilterFunc   filter,
+                             gpointer               user_data,
+                             guint                 *out_expanded,
+                             guint                 *n_floats,
+                             GError               **error)
+{
+    return find_path_impl (self, start, goal, extents, max_nodes, filter, user_data,
+                           out_expanded, n_floats, NULL, error);
+}
+
+gfloat *
+_lrg_nav_poly_mesh_find_path_links (LrgNavPolyMesh        *self,
+                                    const gfloat          *start,
+                                    const gfloat          *goal,
+                                    const gfloat          *extents,
+                                    guint                  max_nodes,
+                                    LrgNavPolyFilterFunc   filter,
+                                    gpointer               user_data,
+                                    guint                 *n_floats,
+                                    GArray                *link_starts,
+                                    GError               **error)
+{
+    return find_path_impl (self, start, goal, extents, max_nodes, filter, user_data,
+                           NULL, n_floats, link_starts, error);
 }
 
 /* ------------------------------------------------------------------ */
@@ -3725,4 +3921,741 @@ invalid:
     g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
                          "navigation mesh: not a complete navigation mesh of this format version");
     return FALSE;
+}
+
+/* ------------------------------------------------------------------ */
+/* 0.9.0: area costs                                                    */
+
+void
+lrg_nav_poly_mesh_set_tag_cost (LrgNavPolyMesh *self,
+                                guint32         tag,
+                                gfloat          cost)
+{
+    GHashTableIter it;
+    gpointer value;
+
+    g_return_if_fail (LRG_IS_NAV_POLY_MESH (self));
+    g_return_if_fail (isfinite (cost) && cost > 0.0f);
+
+    if (tag == 0)
+        return;
+    /* 1 is the default: keep the table empty for meshes without costs */
+    if (cost == 1.0f)
+        g_hash_table_remove (self->tag_costs, GUINT_TO_POINTER (tag));
+    else
+    {
+        gfloat *c = g_new (gfloat, 1);
+
+        *c = cost;
+        g_hash_table_replace (self->tag_costs, GUINT_TO_POINTER (tag), c);
+    }
+
+    /* the heuristic is scaled by the cheapest cost so it stays admissible */
+    self->min_tag_cost = 1.0f;
+    g_hash_table_iter_init (&it, self->tag_costs);
+    while (g_hash_table_iter_next (&it, NULL, &value))
+        self->min_tag_cost = MIN (self->min_tag_cost, *(const gfloat *) value);
+}
+
+gfloat
+lrg_nav_poly_mesh_get_tag_cost (LrgNavPolyMesh *self,
+                                guint32         tag)
+{
+    const gfloat *c;
+
+    g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), 1.0f);
+
+    if (tag == 0)
+        return 1.0f;
+    c = g_hash_table_lookup (self->tag_costs, GUINT_TO_POINTER (tag));
+    return c != NULL ? *c : 1.0f;
+}
+
+guint
+lrg_nav_poly_mesh_get_serial (LrgNavPolyMesh *self)
+{
+    g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), 0);
+    return self->serial;
+}
+
+gboolean
+lrg_nav_poly_mesh_get_is_baked (LrgNavPolyMesh *self)
+{
+    g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), FALSE);
+    return self->baked;
+}
+
+gboolean
+lrg_nav_poly_mesh_get_polygon_corners (LrgNavPolyMesh *self,
+                                       guint           polygon,
+                                       gfloat         *corners)
+{
+    const Poly *p;
+    gfloat x0, z0, x1, z1;
+
+    g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), FALSE);
+    g_return_val_if_fail (corners != NULL, FALSE);
+
+    if (!self->baked || polygon >= self->polys->len)
+        return FALSE;
+    p = &g_array_index (self->polys, Poly, polygon);
+    poly_rect (self, p, &x0, &z0, &x1, &z1);
+    /* the order of lrg_nav_poly_mesh_to_obj(): (x0,z0) (x1,z0) (x1,z1) (x0,z1) */
+    corners[0] = x0;
+    corners[1] = poly_height (self, polygon, p->x0, p->z0);
+    corners[2] = z0;
+    corners[3] = x1;
+    corners[4] = poly_height (self, polygon, p->x0 + p->w - 1, p->z0);
+    corners[5] = z0;
+    corners[6] = x1;
+    corners[7] = poly_height (self, polygon, p->x0 + p->w - 1, p->z0 + p->h - 1);
+    corners[8] = z1;
+    corners[9] = x0;
+    corners[10] = poly_height (self, polygon, p->x0, p->z0 + p->h - 1);
+    corners[11] = z1;
+    return TRUE;
+}
+
+gboolean
+lrg_nav_poly_mesh_get_polygon_enabled (LrgNavPolyMesh *self,
+                                       guint           polygon)
+{
+    g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), FALSE);
+
+    if (!self->baked || polygon >= self->polys->len)
+        return FALSE;
+    return g_array_index (self->polys, Poly, polygon).enabled;
+}
+
+gboolean
+lrg_nav_poly_mesh_get_link (LrgNavPolyMesh *self,
+                            guint           link,
+                            gfloat         *start,
+                            gfloat         *end,
+                            gboolean       *bidirectional,
+                            gboolean       *enabled,
+                            guint32        *tag)
+{
+    const Link *l;
+    guint n_added;
+    guint n_drops;
+
+    g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), FALSE);
+
+    n_added = self->links->len;
+    n_drops = self->drops != NULL ? self->drops->len : 0;
+    if (link >= n_added + n_drops)
+        return FALSE;
+    l = link < n_added ? &g_array_index (self->links, Link, link)
+                       : &g_array_index (self->drops, Link, link - n_added);
+    if (start != NULL)
+        memcpy (start, l->start, sizeof (gfloat) * 3);
+    if (end != NULL)
+        memcpy (end, l->end, sizeof (gfloat) * 3);
+    if (bidirectional != NULL)
+        *bidirectional = l->bidirectional;
+    if (enabled != NULL)
+        *enabled = l->enabled && l->connected;
+    if (tag != NULL)
+        *tag = l->tag;
+    return TRUE;
+}
+
+/* ------------------------------------------------------------------ */
+/* 0.9.0: boundary segments (the walls local avoidance steers around)   */
+
+#define BOUNDARY_BUCKET (4.0f)    /* metres per spatial bucket side */
+
+/* a boundary run before merging: along one side of one polygon */
+typedef struct
+{
+    guint32 side;
+    gfloat  fixed;    /* X of a -X/+X side, Z of a +Z/-Z side */
+    gfloat  lo;       /* along the side: the smaller coordinate */
+    gfloat  hi;
+    gfloat  y_lo;     /* floor height at @lo */
+    gfloat  y_hi;
+} BoundaryRun;
+
+static gint
+compare_runs (gconstpointer a,
+              gconstpointer b)
+{
+    const BoundaryRun *x = a;
+    const BoundaryRun *y = b;
+
+    if (x->side != y->side)
+        return x->side < y->side ? -1 : 1;
+    if (x->fixed != y->fixed)
+        return x->fixed < y->fixed ? -1 : 1;
+    if (x->lo != y->lo)
+        return x->lo < y->lo ? -1 : 1;
+    return 0;
+}
+
+static gint
+compare_u32 (gconstpointer a,
+             gconstpointer b)
+{
+    guint32 x = *(const guint32 *) a;
+    guint32 y = *(const guint32 *) b;
+
+    return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+static guint32
+bucket_key (gint32 ix,
+            gint32 iz)
+{
+    return ((guint32) ix & 0xffffu) | (((guint32) iz & 0xffffu) << 16);
+}
+
+static void
+free_bucket (gpointer data)
+{
+    g_array_unref ((GArray *) data);
+}
+
+/*
+ * build_boundary:
+ * Every polygon side, cell by cell, minus the stretches its portals
+ * cover, becomes a wall run; collinear runs that touch (and whose
+ * floors meet within max-climb) merge into one segment.  Segments are
+ * oriented with the walkable side on their right (seen from above with
+ * X right and Z up, the convention of the RVO2 obstacles) and indexed
+ * in square buckets of BOUNDARY_BUCKET metres.
+ */
+static void
+build_boundary (LrgNavPolyMesh *self)
+{
+    g_autoptr(GArray) runs = NULL;
+    guint i;
+    guint k;
+
+    self->boundary = g_array_new (FALSE, FALSE, sizeof (gfloat));
+    self->boundary_grid = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, free_bucket);
+    runs = g_array_new (FALSE, FALSE, sizeof (BoundaryRun));
+
+    /* --- runs: the uncovered cells of every side --- */
+    for (i = 0; i < self->polys->len; i++)
+    {
+        const Poly *p = &g_array_index (self->polys, Poly, i);
+        gfloat x0, z0, x1, z1;
+        guint side;
+
+        poly_rect (self, p, &x0, &z0, &x1, &z1);
+        for (side = 0; side < 4; side++)
+        {
+            gboolean along_z = (side == 0 || side == 2);
+            guint n = (guint) (along_z ? p->h : p->w);
+            gfloat c0 = along_z ? z0 : x0;
+            guint8 covered[4 * MAX_SIDE];
+            guint e;
+            guint run_start;
+
+            n = MIN (n, (guint) G_N_ELEMENTS (covered));
+            memset (covered, 0, sizeof (covered));
+            for (e = 0; e < p->n_edges; e++)
+            {
+                const Edge *edge = &g_array_index (self->edges, Edge, p->first_edge + e);
+                gfloat lo;
+                gfloat hi;
+
+                if (edge->side != side)
+                    continue;
+                lo = along_z ? MIN (edge->a[2], edge->b[2]) : MIN (edge->a[0], edge->b[0]);
+                hi = along_z ? MAX (edge->a[2], edge->b[2]) : MAX (edge->a[0], edge->b[0]);
+                for (k = 0; k < n; k++)
+                {
+                    gfloat mid = c0 + ((gfloat) k + 0.5f) * self->bake_cs;
+
+                    if (mid >= lo - 1e-4f && mid <= hi + 1e-4f)
+                        covered[k] = 1;
+                }
+            }
+            run_start = G_MAXUINT;
+            for (k = 0; k <= n; k++)
+            {
+                if (k < n && !covered[k])
+                {
+                    if (run_start == G_MAXUINT)
+                        run_start = k;
+                    continue;
+                }
+                if (run_start != G_MAXUINT)
+                {
+                    BoundaryRun r;
+                    gint32 cx_lo, cz_lo, cx_hi, cz_hi;
+
+                    r.side = side;
+                    r.lo = c0 + (gfloat) run_start * self->bake_cs;
+                    r.hi = c0 + (gfloat) k * self->bake_cs;
+                    if (along_z)
+                    {
+                        r.fixed = side == 0 ? x0 : x1;
+                        cx_lo = cx_hi = side == 0 ? p->x0 : p->x0 + p->w - 1;
+                        cz_lo = p->z0 + (gint32) run_start;
+                        cz_hi = p->z0 + (gint32) k - 1;
+                    }
+                    else
+                    {
+                        r.fixed = side == 3 ? z0 : z1;
+                        cz_lo = cz_hi = side == 3 ? p->z0 : p->z0 + p->h - 1;
+                        cx_lo = p->x0 + (gint32) run_start;
+                        cx_hi = p->x0 + (gint32) k - 1;
+                    }
+                    r.y_lo = poly_height (self, i, cx_lo, cz_lo);
+                    r.y_hi = poly_height (self, i, cx_hi, cz_hi);
+                    g_array_append_val (runs, r);
+                    run_start = G_MAXUINT;
+                }
+            }
+        }
+    }
+
+    /* --- merge collinear touching runs --- */
+    g_array_sort (runs, compare_runs);
+    for (i = 0; i < runs->len; )
+    {
+        BoundaryRun cur = g_array_index (runs, BoundaryRun, i);
+        gfloat seg[6];
+        gfloat a_xz[2];
+        gfloat b_xz[2];
+        gfloat ya;
+        gfloat yb;
+        guint index;
+        gint32 bx0, bz0, bx1, bz1, bx, bz;
+
+        for (i = i + 1; i < runs->len; i++)
+        {
+            const BoundaryRun *next = &g_array_index (runs, BoundaryRun, i);
+
+            if (next->side != cur.side || fabsf (next->fixed - cur.fixed) > 1e-4f ||
+                fabsf (next->lo - cur.hi) > 1e-4f || fabsf (next->y_lo - cur.y_hi) > self->max_climb)
+                break;
+            cur.hi = next->hi;
+            cur.y_hi = next->y_hi;
+        }
+
+        /* orient: walkable on the right */
+        if (cur.side == 0 || cur.side == 2)
+        {
+            a_xz[0] = b_xz[0] = cur.fixed;
+            if (cur.side == 0)
+            {
+                a_xz[1] = cur.lo; b_xz[1] = cur.hi; ya = cur.y_lo; yb = cur.y_hi;
+            }
+            else
+            {
+                a_xz[1] = cur.hi; b_xz[1] = cur.lo; ya = cur.y_hi; yb = cur.y_lo;
+            }
+        }
+        else
+        {
+            a_xz[1] = b_xz[1] = cur.fixed;
+            if (cur.side == 1)
+            {
+                a_xz[0] = cur.lo; b_xz[0] = cur.hi; ya = cur.y_lo; yb = cur.y_hi;
+            }
+            else
+            {
+                a_xz[0] = cur.hi; b_xz[0] = cur.lo; ya = cur.y_hi; yb = cur.y_lo;
+            }
+        }
+        seg[0] = a_xz[0]; seg[1] = ya; seg[2] = a_xz[1];
+        seg[3] = b_xz[0]; seg[4] = yb; seg[5] = b_xz[1];
+        index = self->boundary->len / 6;
+        g_array_append_vals (self->boundary, seg, 6);
+
+        /* --- index in every bucket its bounds touch --- */
+        bx0 = (gint32) floorf (MIN (seg[0], seg[3]) / BOUNDARY_BUCKET);
+        bx1 = (gint32) floorf (MAX (seg[0], seg[3]) / BOUNDARY_BUCKET);
+        bz0 = (gint32) floorf (MIN (seg[2], seg[5]) / BOUNDARY_BUCKET);
+        bz1 = (gint32) floorf (MAX (seg[2], seg[5]) / BOUNDARY_BUCKET);
+        for (bz = bz0; bz <= bz1; bz++)
+        {
+            for (bx = bx0; bx <= bx1; bx++)
+            {
+                guint32 key = bucket_key (bx, bz);
+                GArray *bucket = g_hash_table_lookup (self->boundary_grid, GUINT_TO_POINTER (key));
+
+                if (bucket == NULL)
+                {
+                    bucket = g_array_new (FALSE, FALSE, sizeof (guint32));
+                    g_hash_table_insert (self->boundary_grid, GUINT_TO_POINTER (key), bucket);
+                }
+                g_array_append_val (bucket, index);
+            }
+        }
+    }
+    self->boundary_stamp = g_new0 (guint32, MAX (self->boundary->len / 6, 1u));
+    self->boundary_gen = 0;
+}
+
+static void
+ensure_boundary (LrgNavPolyMesh *self)
+{
+    if (self->boundary == NULL && self->baked)
+        build_boundary (self);
+}
+
+/* squared X/Z distance from @p to the segment @a .. @b */
+static gfloat
+dist_sq_point_segment_xz (const gfloat *a,
+                          const gfloat *b,
+                          const gfloat *p)
+{
+    gfloat dx = b[0] - a[0];
+    gfloat dz = b[2] - a[2];
+    gfloat len_sq = dx * dx + dz * dz;
+    gfloat t = 0.0f;
+    gfloat qx;
+    gfloat qz;
+
+    if (len_sq > 1e-12f)
+        t = CLAMP (((p[0] - a[0]) * dx + (p[2] - a[2]) * dz) / len_sq, 0.0f, 1.0f);
+    qx = a[0] + t * dx - p[0];
+    qz = a[2] + t * dz - p[2];
+    return qx * qx + qz * qz;
+}
+
+guint
+_lrg_nav_poly_mesh_query_boundary (LrgNavPolyMesh *self,
+                                   const gfloat   *center,
+                                   gfloat          radius,
+                                   gfloat          half_height,
+                                   GArray         *out)
+{
+    gint32 bx0, bz0, bx1, bz1, bx, bz;
+    gfloat radius_sq = radius * radius;
+    guint added = 0;
+
+    g_array_set_size (out, 0);
+    ensure_boundary (self);
+    if (self->boundary == NULL || self->boundary->len == 0)
+        return 0;
+    self->boundary_gen++;
+    if (self->boundary_gen == 0)
+    {
+        memset (self->boundary_stamp, 0, sizeof (guint32) * (self->boundary->len / 6));
+        self->boundary_gen = 1;
+    }
+    bx0 = (gint32) floorf ((center[0] - radius) / BOUNDARY_BUCKET);
+    bx1 = (gint32) floorf ((center[0] + radius) / BOUNDARY_BUCKET);
+    bz0 = (gint32) floorf ((center[2] - radius) / BOUNDARY_BUCKET);
+    bz1 = (gint32) floorf ((center[2] + radius) / BOUNDARY_BUCKET);
+    for (bz = bz0; bz <= bz1; bz++)
+    {
+        for (bx = bx0; bx <= bx1; bx++)
+        {
+            GArray *bucket = g_hash_table_lookup (self->boundary_grid,
+                                                  GUINT_TO_POINTER (bucket_key (bx, bz)));
+            guint j;
+
+            for (j = 0; bucket != NULL && j < bucket->len; j++)
+            {
+                guint32 index = g_array_index (bucket, guint32, j);
+                const gfloat *seg = &g_array_index (self->boundary, gfloat, index * 6);
+                gfloat ylo = MIN (seg[1], seg[4]);
+                gfloat yhi = MAX (seg[1], seg[4]);
+
+                if (self->boundary_stamp[index] == self->boundary_gen)
+                    continue;
+                self->boundary_stamp[index] = self->boundary_gen;
+                if (center[1] < ylo - half_height || center[1] > yhi + half_height)
+                    continue;
+                if (dist_sq_point_segment_xz (seg, seg + 3, center) >= radius_sq)
+                    continue;
+                g_array_append_val (out, index);
+                added++;
+            }
+        }
+    }
+    /* bucket order depends on the hash table: sort for determinism */
+    g_array_sort (out, compare_u32);
+    return added;
+}
+
+const gfloat *
+_lrg_nav_poly_mesh_get_boundary_segment (LrgNavPolyMesh *self,
+                                         guint           index)
+{
+    return &g_array_index (self->boundary, gfloat, index * 6);
+}
+
+guint
+lrg_nav_poly_mesh_get_boundary_count (LrgNavPolyMesh *self)
+{
+    g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), 0);
+
+    ensure_boundary (self);
+    return self->boundary != NULL ? self->boundary->len / 6 : 0;
+}
+
+gfloat *
+lrg_nav_poly_mesh_get_boundary_segments (LrgNavPolyMesh *self,
+                                         const gfloat   *center,
+                                         gfloat          radius,
+                                         gfloat          half_height,
+                                         guint          *n_floats)
+{
+    g_autoptr(GArray) found = NULL;
+    GArray *out;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (self), NULL);
+    g_return_val_if_fail (n_floats != NULL, NULL);
+
+    *n_floats = 0;
+    out = g_array_new (FALSE, FALSE, sizeof (gfloat));
+    ensure_boundary (self);
+    if (self->boundary == NULL)
+        return (gfloat *) g_array_free (out, FALSE);
+    if (center == NULL)
+        g_array_append_vals (out, self->boundary->data, self->boundary->len);
+    else
+    {
+        found = g_array_new (FALSE, FALSE, sizeof (guint32));
+        _lrg_nav_poly_mesh_query_boundary (self, center, radius, half_height, found);
+        for (i = 0; i < found->len; i++)
+            g_array_append_vals (out, _lrg_nav_poly_mesh_get_boundary_segment (self, g_array_index (found, guint32, i)), 6);
+    }
+    *n_floats = out->len;
+    return (gfloat *) g_array_free (out, FALSE);
+}
+
+/* ------------------------------------------------------------------ */
+/* 0.9.0: debug draw                                                    */
+
+GType
+lrg_nav_debug_flags_get_type (void)
+{
+    static gsize type_id = 0;
+
+    if (g_once_init_enter (&type_id))
+    {
+        static const GFlagsValue values[] = {
+            { LRG_NAV_DEBUG_POLYGONS, "LRG_NAV_DEBUG_POLYGONS", "polygons" },
+            { LRG_NAV_DEBUG_POLYGON_EDGES, "LRG_NAV_DEBUG_POLYGON_EDGES", "polygon-edges" },
+            { LRG_NAV_DEBUG_BOUNDARIES, "LRG_NAV_DEBUG_BOUNDARIES", "boundaries" },
+            { LRG_NAV_DEBUG_PORTALS, "LRG_NAV_DEBUG_PORTALS", "portals" },
+            { LRG_NAV_DEBUG_LINKS, "LRG_NAV_DEBUG_LINKS", "links" },
+            { LRG_NAV_DEBUG_AREAS, "LRG_NAV_DEBUG_AREAS", "areas" },
+            { LRG_NAV_DEBUG_AGENTS, "LRG_NAV_DEBUG_AGENTS", "agents" },
+            { LRG_NAV_DEBUG_PATHS, "LRG_NAV_DEBUG_PATHS", "paths" },
+            { LRG_NAV_DEBUG_VELOCITIES, "LRG_NAV_DEBUG_VELOCITIES", "velocities" },
+            { LRG_NAV_DEBUG_ORCA, "LRG_NAV_DEBUG_ORCA", "orca" },
+            { LRG_NAV_DEBUG_NEIGHBOURS, "LRG_NAV_DEBUG_NEIGHBOURS", "neighbours" },
+            { 0, NULL, NULL }
+        };
+        GType t = g_flags_register_static (g_intern_static_string ("LrgNavDebugFlags"), values);
+
+        g_once_init_leave (&type_id, t);
+    }
+    return (GType) type_id;
+}
+
+static GrlColor
+nav_rgba (guint8 r,
+          guint8 g,
+          guint8 b,
+          guint8 a)
+{
+    GrlColor c;
+
+    c.r = r;
+    c.g = g;
+    c.b = b;
+    c.a = a;
+    return c;
+}
+
+static GrlVector3
+nav_v3 (gfloat x,
+        gfloat y,
+        gfloat z)
+{
+    GrlVector3 v;
+
+    v.x = x;
+    v.y = y;
+    v.z = z;
+    return v;
+}
+
+/* a stable, well spread colour for index @n (golden-ratio hues) */
+static GrlColor
+index_color (guint  n,
+             guint8 alpha)
+{
+    gfloat h = fmodf ((gfloat) n * 0.618034f, 1.0f) * 6.0f;
+    gfloat s = 0.55f;
+    gfloat v = 0.95f;
+    gint sector = (gint) h;
+    gfloat f = h - (gfloat) sector;
+    gfloat p = v * (1.0f - s);
+    gfloat q = v * (1.0f - s * f);
+    gfloat t = v * (1.0f - s * (1.0f - f));
+    gfloat r, g, b;
+
+    switch (sector)
+    {
+    case 0:  r = v; g = t; b = p; break;
+    case 1:  r = q; g = v; b = p; break;
+    case 2:  r = p; g = v; b = t; break;
+    case 3:  r = p; g = q; b = v; break;
+    case 4:  r = t; g = p; b = v; break;
+    default: r = v; g = p; b = q; break;
+    }
+    return nav_rgba ((guint8) (r * 255.0f), (guint8) (g * 255.0f), (guint8) (b * 255.0f), alpha);
+}
+
+void
+lrg_nav_poly_mesh_debug_draw (LrgNavPolyMesh   *self,
+                              LrgDebugDraw     *draw,
+                              LrgNavDebugFlags  flags)
+{
+    const gfloat lift = 0.03f;
+    guint i;
+
+    g_return_if_fail (LRG_IS_NAV_POLY_MESH (self));
+    g_return_if_fail (LRG_IS_DEBUG_DRAW (draw));
+
+    if (!self->baked)
+        return;
+    lrg_debug_draw_push (draw);
+    lrg_debug_draw_set_category (draw, LRG_DEBUG_CATEGORY_NAVIGATION);
+
+    /* --- polygons: a thin translucent slab per flat polygon --- */
+    if (flags & (LRG_NAV_DEBUG_POLYGONS | LRG_NAV_DEBUG_POLYGON_EDGES))
+    {
+        for (i = 0; i < self->polys->len; i++)
+        {
+            const Poly *p = &g_array_index (self->polys, Poly, i);
+            gfloat c[12];
+            GrlColor col;
+            guint k;
+
+            lrg_nav_poly_mesh_get_polygon_corners (self, i, c);
+            if (!p->enabled || !lrg_nav_poly_mesh_get_tag_enabled (self, p->tag))
+                col = nav_rgba (200, 40, 40, 110);
+            else if ((flags & LRG_NAV_DEBUG_AREAS) != 0)
+                col = p->tag == 0 ? nav_rgba (60, 160, 255, 90) : index_color (p->tag + 7u, 120);
+            else
+                col = index_color (p->region, 90);
+            if (flags & LRG_NAV_DEBUG_POLYGONS)
+            {
+                gfloat ylo = MIN (MIN (c[1], c[4]), MIN (c[7], c[10]));
+                gfloat yhi = MAX (MAX (c[1], c[4]), MAX (c[7], c[10]));
+
+                if (yhi - ylo < 0.1f)
+                {
+                    GrlVector3 mn = nav_v3 (c[0], ylo + lift * 0.5f, c[2]);
+                    GrlVector3 mx = nav_v3 (c[6], yhi + lift, c[8]);
+
+                    lrg_debug_draw_set_solid (draw, TRUE);
+                    lrg_debug_draw_box (draw, &mn, &mx, &col, 0.0f);
+                    lrg_debug_draw_set_solid (draw, FALSE);
+                }
+                else
+                {
+                    /* a slope: its two diagonals instead of a slab */
+                    GrlVector3 a = nav_v3 (c[0], c[1] + lift, c[2]);
+                    GrlVector3 b = nav_v3 (c[6], c[7] + lift, c[8]);
+                    GrlVector3 d = nav_v3 (c[3], c[4] + lift, c[5]);
+                    GrlVector3 e = nav_v3 (c[9], c[10] + lift, c[11]);
+
+                    lrg_debug_draw_line (draw, &a, &b, &col, 0.0f);
+                    lrg_debug_draw_line (draw, &d, &e, &col, 0.0f);
+                }
+            }
+            if (flags & LRG_NAV_DEBUG_POLYGON_EDGES)
+            {
+                GrlVector3 pts[4];
+                GrlColor edge = nav_rgba ((guint8) (col.r / 2u), (guint8) (col.g / 2u), (guint8) (col.b / 2u), 200);
+
+                for (k = 0; k < 4; k++)
+                    pts[k] = nav_v3 (c[k * 3], c[k * 3 + 1] + lift, c[k * 3 + 2]);
+                lrg_debug_draw_polyline (draw, pts, 4, TRUE, &edge, 0.0f);
+            }
+        }
+    }
+
+    /* --- portals: each shared edge once --- */
+    if (flags & LRG_NAV_DEBUG_PORTALS)
+    {
+        GrlColor col = nav_rgba (120, 200, 255, 220);
+
+        for (i = 0; i < self->polys->len; i++)
+        {
+            const Poly *p = &g_array_index (self->polys, Poly, i);
+            guint e;
+
+            for (e = 0; e < p->n_edges; e++)
+            {
+                const Edge *edge = &g_array_index (self->edges, Edge, p->first_edge + e);
+                GrlVector3 a;
+                GrlVector3 b;
+
+                if ((guint) edge->to < i)
+                    continue;
+                a = nav_v3 (edge->a[0], edge->a[1] + lift * 2.0f, edge->a[2]);
+                b = nav_v3 (edge->b[0], edge->b[1] + lift * 2.0f, edge->b[2]);
+                lrg_debug_draw_line (draw, &a, &b, edge->enabled ? &col : NULL, 0.0f);
+            }
+        }
+    }
+
+    /* --- boundaries: the walls avoidance uses --- */
+    if (flags & LRG_NAV_DEBUG_BOUNDARIES)
+    {
+        GrlColor col = nav_rgba (255, 140, 30, 255);
+
+        ensure_boundary (self);
+        lrg_debug_draw_set_thickness (draw, 2.0f);
+        for (i = 0; self->boundary != NULL && i < self->boundary->len / 6; i++)
+        {
+            const gfloat *s = &g_array_index (self->boundary, gfloat, i * 6);
+            GrlVector3 a = nav_v3 (s[0], s[1] + lift * 2.0f, s[2]);
+            GrlVector3 b = nav_v3 (s[3], s[4] + lift * 2.0f, s[5]);
+
+            lrg_debug_draw_line (draw, &a, &b, &col, 0.0f);
+        }
+        lrg_debug_draw_set_thickness (draw, 1.0f);
+    }
+
+    /* --- off-mesh links: arrows (both ways when bidirectional) --- */
+    if (flags & LRG_NAV_DEBUG_LINKS)
+    {
+        guint n = lrg_nav_poly_mesh_get_link_count (self);
+        GrlVector3 up = nav_v3 (0.0f, 1.0f, 0.0f);
+
+        lrg_debug_draw_set_thickness (draw, 2.0f);
+        for (i = 0; i < n; i++)
+        {
+            gfloat s[3];
+            gfloat e[3];
+            gboolean bidi = FALSE;
+            gboolean on = FALSE;
+            GrlColor col;
+            GrlVector3 a;
+            GrlVector3 b;
+            GrlVector3 mid;
+
+            lrg_nav_poly_mesh_get_link (self, i, s, e, &bidi, &on, NULL);
+            col = !on ? nav_rgba (130, 130, 130, 255)
+                      : (i >= self->links->len ? nav_rgba (250, 220, 60, 255) : nav_rgba (40, 230, 220, 255));
+            /* an arc: up through a raised midpoint */
+            a = nav_v3 (s[0], s[1] + lift, s[2]);
+            b = nav_v3 (e[0], e[1] + lift, e[2]);
+            mid = nav_v3 ((s[0] + e[0]) * 0.5f, MAX (s[1], e[1]) + 0.5f, (s[2] + e[2]) * 0.5f);
+            lrg_debug_draw_line (draw, &a, &mid, &col, 0.0f);
+            lrg_debug_draw_arrow (draw, &mid, &b, 0.25f, &col, 0.0f);
+            if (bidi)
+                lrg_debug_draw_arrow (draw, &mid, &a, 0.25f, &col, 0.0f);
+            lrg_debug_draw_circle (draw, &a, &up, 0.2f, &col, 0.0f);
+            lrg_debug_draw_circle (draw, &b, &up, 0.2f, &col, 0.0f);
+        }
+    }
+    lrg_debug_draw_pop (draw);
 }

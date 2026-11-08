@@ -1,0 +1,278 @@
+#+title: LrgMeshSimplify - Mesh Simplification
+#+description: Quadric error metric edge-collapse simplification for LOD generation
+#+created: 2026-11-07
+
+* LrgMeshSimplify - Mesh Simplification
+:PROPERTIES:
+:CUSTOM_ID: lrgmeshsimplify
+:END:
+
+=LrgMeshSimplify= reduces the triangle count of a mesh while keeping its shape, its UV and normal seams and (optionally) its open borders. It is libregnum's own C implementation of quadric error metric (QEM) edge collapse, used to generate level-of-detail chains (see [[file:lod-group.org][LrgLodGroup]]) and usable on its own for any mesh.
+
+- *Header*: =graphics/lrg-mesh-simplify.h=
+- *Type*: =LrgMeshSimplify=, final GObject, =LRG_TYPE_MESH_SIMPLIFY=, GIR =Libregnum.MeshSimplify=
+- *Since*: 0.9.0
+- *Headless*: everything except =lrg_mesh_simplify_mesh()= and =lrg_mesh_simplify_wrap_raylib_mesh()= runs without a graphics context
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+
+The simplifier repeatedly merges a vertex onto one of its neighbours (an /edge collapse/), always choosing the merge that moves the surface the least. It stops when the triangle count reaches the target ratio or when the next cheapest merge would exceed the error budget, whichever comes first.
+
+Vertices are never moved and never created: a collapse re-points every triangle of the removed vertex to an existing neighbour. The output is therefore a new index buffer over a subset of the original vertices, so every per-vertex attribute (normals, UVs, second UVs, tangents, colours, bone indices and weights) stays exactly valid with no interpolation.
+
+Three entry points cover the common cases:
+
+| Function | Input | Output | GPU |
+|----------+-------+--------+-----|
+| =lrg_mesh_simplify_indices()= | 32-bit triangle list + positions (any stride) | 32-bit triangle list over the same vertices | no |
+| =lrg_mesh_simplify_raylib_mesh()= | a raylib =Mesh= with CPU data (indexed or not) | a compacted raylib =Mesh= with every attribute | no |
+| =lrg_mesh_simplify_mesh()= | a =GrlMesh= | a new uploaded =GrlMesh= | yes |
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+
+*** The algorithm
+:PROPERTIES:
+:CUSTOM_ID: algorithm
+:END:
+
+1. *Normalisation.* Positions are mapped into the unit cube of the mesh bounds, so every error is a fraction of the mesh's largest bounding-box side. A target error of 0.01 means "never move the surface by more than 1% of the object's size", whatever the object's units.
+2. *Positions and wedges.* Vertices whose positions are bit-identical are grouped. One position with several vertices is a /seam/: the vertices (/wedges/) differ in UV, normal or another attribute (a UV island edge, a hard edge with split normals, a cube corner).
+3. *Quadrics.* Each position accumulates the planes of the triangles around it (Garland and Heckbert's quadric), weighted by triangle area; for every open edge (a border, or a seam edge) a plane through the edge perpendicular to its triangle is added too, weighted by the squared edge length, so borders and seams keep their outline when they slide. The quadric gives, for any candidate point, the weighted mean squared distance to all those planes.
+4. *Classification.* Each pass classifies every vertex (=LrgMeshVertexKind=, see [[#vertex-kinds][Vertex kinds]]).
+5. *Candidates.* Each edge yields its cheaper legal direction; its cost is the sum of both endpoints' quadrics evaluated at the destination.
+6. *Collapses.* Candidates run cheapest first while under the error limit and until enough triangles are gone. Each is checked for the /link condition/ (the positions adjacent to both endpoints must be exactly the corners opposite the edge; this keeps the surface 2-manifold and never creates fins or T-junctions) and for triangle flips (no surviving triangle around the moved vertex may turn its normal by more than about 75°). A collapse locks the neighbourhood it touched for the rest of the pass, so every check reads current adjacency.
+7. *Rewrite.* Collapsed indices are re-pointed and triangles that became degenerate are dropped. Quadrics are kept (the merged vertex inherits the removed one's), so errors are always measured against the original surface.
+
+Passes repeat until the target is met or a pass collapses nothing. Ties are broken by vertex index, so the result is deterministic.
+
+*** Vertex kinds
+:PROPERTIES:
+:CUSTOM_ID: vertex-kinds
+:END:
+
+| Kind | When | May collapse onto |
+|------+------+-------------------|
+| =LRG_MESH_VERTEX_KIND_MANIFOLD= | one wedge, no open edge | any neighbour |
+| =LRG_MESH_VERTEX_KIND_BORDER= | one wedge, exactly one open edge in and one out | a border or locked neighbour, along the open edge |
+| =LRG_MESH_VERTEX_KIND_SEAM= | two wedges whose open edges match each other reversed | a seam or locked neighbour, along the seam; both wedges move together, each onto the wedge of the destination it is connected to |
+| =LRG_MESH_VERTEX_KIND_LOCKED= | three or more wedges (seam corners), a seam meeting a border, non-manifold fans, or a border/seam pinned by the lock settings | never |
+
+A seam is never torn open: the two sides of the seam collapse in lockstep. =lrg_mesh_simplify_classify()= returns the kind of every vertex, which is handy for debugging a mesh that refuses to simplify (an all-LOCKED mesh is usually one exported with split vertices everywhere, such as flat-shaded per-face normals).
+
+** Parameters and their visual effect
+:PROPERTIES:
+:CUSTOM_ID: parameters
+:END:
+
+| Property | Type | Default | Effect |
+|----------+------+---------+--------|
+| =target-ratio= | float 0..1 | 0.5 | Fraction of triangles to keep. 0.5 halves the mesh; 0 means "as far as the error allows". |
+| =target-error= | float >= 0 | 0.01 | Largest allowed deviation, relative to the mesh extent. Small values keep silhouettes and fine bumps (the ratio may not be reached); large values (>= 1 disables the limit) reach the ratio at any visual cost. |
+| =lock-border= | boolean | TRUE | Pins vertices on open boundaries. Keep it on for pieces that must meet other geometry without cracks (terrain tiles, modular kits, model parts split by material); turn it off for free-standing open meshes (a cloth, a leaf card) to let the outline simplify too (straight border runs then collapse at zero error, corners stay). |
+| =lock-seams= | boolean | FALSE | Pins every UV/normal seam vertex. Seams never open either way; locking keeps the exact seam polyline (texture borders stay pixel-exact) at the cost of reduction on heavily unwrapped meshes. |
+| =result-error= | float, read-only | 0 | Relative error of the last run (largest collapse cost, as a distance). |
+| =result-ratio= | float, read-only | 1 | Output triangles over input triangles of the last run. |
+
+Rules of thumb for LOD chains: 0.5, 0.25, 0.1 ratios with a 2-5% error cap work for most props; characters and anything with thin features want a lower error cap (1%) and fewer levels; flat architectural pieces simplify almost for free (coplanar collapses cost zero).
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+
+#+begin_src C
+/* Construction and settings */
+LrgMeshSimplify *lrg_mesh_simplify_new (void);
+gfloat   lrg_mesh_simplify_get_target_ratio (LrgMeshSimplify *self);
+void     lrg_mesh_simplify_set_target_ratio (LrgMeshSimplify *self, gfloat ratio);
+gfloat   lrg_mesh_simplify_get_target_error (LrgMeshSimplify *self);
+void     lrg_mesh_simplify_set_target_error (LrgMeshSimplify *self, gfloat error);
+gboolean lrg_mesh_simplify_get_lock_border  (LrgMeshSimplify *self);
+void     lrg_mesh_simplify_set_lock_border  (LrgMeshSimplify *self, gboolean lock);
+gboolean lrg_mesh_simplify_get_lock_seams   (LrgMeshSimplify *self);
+void     lrg_mesh_simplify_set_lock_seams   (LrgMeshSimplify *self, gboolean lock);
+gfloat   lrg_mesh_simplify_get_result_error (LrgMeshSimplify *self);
+gfloat   lrg_mesh_simplify_get_result_ratio (LrgMeshSimplify *self);
+
+/* Headless */
+gboolean lrg_mesh_simplify_indices (LrgMeshSimplify *self,
+                                    const guint32 *indices, gsize n_indices,
+                                    const gfloat *positions, gsize n_floats, guint stride,
+                                    guint32 **out_indices, gsize *out_n_indices,
+                                    GError **error);
+gboolean lrg_mesh_simplify_classify (LrgMeshSimplify *self,
+                                     const guint32 *indices, gsize n_indices,
+                                     const gfloat *positions, gsize n_floats, guint stride,
+                                     guint8 **out_kinds, gsize *out_n_kinds,
+                                     GError **error);
+gboolean lrg_mesh_simplify_raylib_mesh (LrgMeshSimplify *self,
+                                        gconstpointer src /* const Mesh * */,
+                                        gpointer dst      /* Mesh *       */,
+                                        GError **error);
+
+/* GPU */
+GrlMesh *lrg_mesh_simplify_mesh (LrgMeshSimplify *self, GrlMesh *mesh, GError **error);
+GrlMesh *lrg_mesh_simplify_wrap_raylib_mesh (gpointer mesh /* Mesh *, taken over */, GError **error);
+
+/* Types */
+GType  lrg_mesh_simplify_get_type (void);
+GType  lrg_mesh_vertex_kind_get_type (void);       /* LrgMeshVertexKind */
+GType  lrg_mesh_simplify_error_get_type (void);    /* LrgMeshSimplifyError */
+GQuark lrg_mesh_simplify_error_quark (void);       /* LRG_MESH_SIMPLIFY_ERROR */
+#+end_src
+
+| Function | Notes |
+|----------+-------|
+| =lrg_mesh_simplify_new()= | ratio 0.5, error 0.01, borders locked, seams sliding |
+| =lrg_mesh_simplify_get_target_ratio()= / =lrg_mesh_simplify_set_target_ratio()= | clamped to 0..1 |
+| =lrg_mesh_simplify_get_target_error()= / =lrg_mesh_simplify_set_target_error()= | relative distance; negative clamps to 0 |
+| =lrg_mesh_simplify_get_lock_border()= / =lrg_mesh_simplify_set_lock_border()= | pin open boundaries |
+| =lrg_mesh_simplify_get_lock_seams()= / =lrg_mesh_simplify_set_lock_seams()= | pin UV/normal seams |
+| =lrg_mesh_simplify_get_result_error()= / =lrg_mesh_simplify_get_result_ratio()= | outcome of the last run (also notified as properties) |
+| =lrg_mesh_simplify_indices()= | the core: output indexes the input vertices; =stride= is in floats (3 for packed positions, 8 for position+normal+UV interleaved, ...); the output array is =g_free()= -able |
+| =lrg_mesh_simplify_classify()= | one =LrgMeshVertexKind= per vertex (as =guint8=) with the current lock settings |
+| =lrg_mesh_simplify_raylib_mesh()= | welds unindexed meshes first (vertices with byte-identical attributes merge), simplifies, compacts to the used vertices, copies every attribute; =dst= gets =RL_MALLOC= arrays, no GPU buffers; 16-bit indices when at most 65535 vertices remain, unindexed otherwise; CPU-skinning buffers (=animVertices=, =animNormals=) are not copied |
+| =lrg_mesh_simplify_mesh()= | =raylib_mesh= + =wrap_raylib_mesh=; the source's CPU arrays must still exist (raylib keeps them after loading) |
+| =lrg_mesh_simplify_wrap_raylib_mesh()= | uploads a CPU-only raylib =Mesh= and wraps it in a =GrlMesh= that owns and unloads it; the struct is zeroed; on failure the data is freed |
+
+Errors (=LRG_MESH_SIMPLIFY_ERROR=): =LRG_MESH_SIMPLIFY_ERROR_INVALID_INPUT= (index count not a multiple of 3, index out of range, no positions, stride below 3, no triangles left) and =LRG_MESH_SIMPLIFY_ERROR_NO_GPU= (an upload without a graphics context).
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+
+*** Simplify raw arrays (headless, e.g. in a build tool)
+:PROPERTIES:
+:CUSTOM_ID: example-indices
+:END:
+
+#+begin_src C
+#include <libregnum.h>
+
+/* Halve a mesh given as interleaved position(3) + normal(3) + uv(2). */
+static gboolean
+halve_mesh (const gfloat   *vertices,
+            gsize           n_vertices,
+            const guint32  *indices,
+            gsize           n_indices,
+            guint32       **out_indices,
+            gsize          *out_n_indices,
+            GError        **error)
+{
+	g_autoptr(LrgMeshSimplify) s = lrg_mesh_simplify_new ();
+
+	lrg_mesh_simplify_set_target_ratio (s, 0.5f);
+	lrg_mesh_simplify_set_target_error (s, 0.02f);   /* 2% of the size */
+	if (!lrg_mesh_simplify_indices (s, indices, n_indices,
+	                                vertices, n_vertices * 8, 8,
+	                                out_indices, out_n_indices, error))
+		return FALSE;
+
+	g_message ("kept %.0f%% of the triangles, error %.3f%%",
+	           100.0 * lrg_mesh_simplify_get_result_ratio (s),
+	           100.0 * lrg_mesh_simplify_get_result_error (s));
+	/* The vertex buffer is unchanged: draw it with *out_indices. */
+	return TRUE;
+}
+#+end_src
+
+*** Simplify a GrlMesh (with a window open)
+:PROPERTIES:
+:CUSTOM_ID: example-mesh
+:END:
+
+#+begin_src C
+g_autoptr(LrgMeshSimplify) s = lrg_mesh_simplify_new ();
+g_autoptr(GrlMesh)         sphere = grl_mesh_new_sphere (1.0f, 32, 32);
+g_autoptr(GrlMesh)         low = NULL;
+g_autoptr(GError)          error = NULL;
+
+g_object_set (s, "target-ratio", 0.25f, "target-error", 0.05f, NULL);
+low = lrg_mesh_simplify_mesh (s, sphere, &error);
+if (low == NULL)
+	g_warning ("simplify: %s", error->message);
+else
+	g_message ("%d -> %d triangles", grl_mesh_get_triangle_count (sphere),
+	           grl_mesh_get_triangle_count (low));
+#+end_src
+
+*** Inspect why a mesh does not simplify
+:PROPERTIES:
+:CUSTOM_ID: example-classify
+:END:
+
+#+begin_src C
+g_autofree guint8 *kinds = NULL;
+gsize              n = 0;
+gsize              locked = 0;
+gsize              i;
+
+if (lrg_mesh_simplify_classify (s, indices, n_indices, positions, n_vertices * 3, 3,
+                                &kinds, &n, NULL))
+{
+	for (i = 0; i < n; i++)
+		if (kinds[i] == LRG_MESH_VERTEX_KIND_LOCKED)
+			locked++;
+	/* Mostly LOCKED: split normals everywhere (flat shading) or a
+	 * per-face UV layout; weld or smooth the normals before importing. */
+	g_message ("%" G_GSIZE_FORMAT " of %" G_GSIZE_FORMAT " vertices locked", locked, n);
+}
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+
+Measured with =tests/test-mesh-simplify -m perf= (release build, =-O2=, one core of a desktop x86_64 CPU, 2026-11): a non-planar height-field grid reduced to 25% with no error cap.
+
+| Input triangles | Output triangles | Time | Per input triangle |
+|-----------------+------------------+------+--------------------|
+| 2 048 | 512 | 6.5 ms | 3.2 µs |
+| 20 000 | 5 000 | 49 ms | 2.4 µs |
+| 199 712 | 49 928 | 592 ms | 3.0 µs |
+| 1 002 528 | 250 632 | 3.4 s | 3.4 µs |
+
+Cost grows roughly linearly with the triangle count (about 3 µs per triangle; each pass is O(n log n) for the candidate sort and the number of passes grows slowly). Memory is about 200 bytes per vertex plus 16 bytes per index during the run. A LOD chain of k levels costs k times one simplification, since every level starts from the original (errors do not stack).
+
+Practical consequences:
+
+- Generating LODs for a typical prop (5-50k triangles) at load time costs a few to a few tens of milliseconds per level; for big scenes generate once and cache (wave 2b's import pipeline), or generate on a worker thread (the headless entry points touch no global state; only the GPU upload must run on the GL thread).
+- Hundreds of thousands of triangles take about a second: do it at import, not every load.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+
+- *Flat-shaded or per-face-UV meshes barely simplify.* Every vertex is split per face, so every position has three or more wedges and is LOCKED. Export with smooth normals (or weld before import) for good LODs.
+- *Positions must be bit-identical to form a seam.* Two vertices 1e-7 apart are separate positions and the mesh has a crack there; the simplifier treats both sides as borders (locked by default) instead of a seam.
+- *Borders are locked by default.* An open mesh (a terrain tile, a plane) keeps its whole outline. Turn =lock-border= off for free-standing open meshes.
+- *The ratio is a ceiling, the error a hard limit.* With a small =target-error= the ratio is often not reached; check =result-ratio=.
+- *Skinned meshes:* bone indices and weights are carried, but simplification ignores joint influence and can merge vertices driven by different bones; give characters a conservative error cap. LrgLodGroup refuses skinned models.
+- *CPU data must exist.* =lrg_mesh_simplify_mesh()= reads the =GrlMesh='s CPU arrays; a mesh whose arrays were freed after upload cannot be simplified.
+- *16-bit limit.* A raylib result with more than 65535 used vertices comes back unindexed (3 vertices per triangle) because raylib meshes have 16-bit indices.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+
+In 0.9.0 wave 2a the simplifier is reached through a model's =.meta= LOD keys (=lod-levels=, =lod-ratios=, =lod-max-error=, =lod-lock-border=; see [[file:lod-group.org::#meta-keys][LOD import keys]]): they already appear as rows of the asset inspector's import settings for models, and an =LrgLodComponent= with a =mesh-asset= generates the chain on its first draw. Wave 2b adds the LOD preview (cycle levels, triangle counts and errors per level in the viewport) and dedicated import settings controls.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+
+- [[file:lod-group.org][LrgLodGroup]] (LOD chains, selection and cross-fade)
+- [[file:../world3d/components.org::#lod][LrgLodComponent]] (drawing a LOD chain in an LrgWorld3D)
+- [[file:../../editor/projects-and-assets.org::#import-settings][Import settings]] (the =.meta= sidecar)
+- Garland and Heckbert, /Surface Simplification Using Quadric Error Metrics/, SIGGRAPH 1997

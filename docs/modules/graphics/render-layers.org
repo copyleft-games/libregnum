@@ -1,0 +1,293 @@
+* Render Layers and Camera Cull Masks
+:PROPERTIES:
+:CUSTOM_ID: render-layers-and-camera-cull-masks
+:END:
+Render layers let one scene be seen differently by different cameras: a minimap camera that leaves out the sky and particles, a game camera that never shows editor-only helpers, a reflection camera without water, a shadow pass where UI quads cast nothing. Every drawable sits on one of 32 layers; every camera has a 32-bit *cull mask*; a drawable draws only while its layer's bit is set in the mask that is active.
+
+- 32 layers (0 .. 31), named in a process-wide registry with built-in defaults ("default", "ui", "editor-only", "ignore-raycast", "transparent-fx", "water", "sky").
+- A =cull-mask= property on every =LrgCamera= (so =LrgCamera2D=, =LrgCamera3D= and all their subclasses), all layers by default.
+- The *active mask*: =lrg_camera_begin()= installs the camera's mask, =lrg_camera_end()= restores the previous one, a shadow pass installs the shadow renderer's *caster mask*. Render code that opens its own 3D mode sets it directly.
+- Honoured by =LrgStaticBatch= chunks, =LrgBillboardBatch=, =LrgTerrain= chunks, =LrgParticleSystem= (and =LrgParticleBillboardRenderer=), and shadow casters drawn inside an =LrgShadowRenderer= pass.
+- Defaults keep the pre-0.9 behaviour: every drawable on layer 0, every mask all ones.
+
+Not to be confused with =LrgRenderLayer= (=lrg-enums.h=, =LRG_RENDER_LAYER_BACKGROUND= … =LRG_RENDER_LAYER_DEBUG=), which is =LrgRenderer='s fixed *draw order* of passes. Render layers here are a visibility filter and use the =LRG_RENDER_LAYERS_= (plural) prefix.
+
+** Types and constants
+:PROPERTIES:
+:CUSTOM_ID: types-and-constants
+:END:
+- *Header* - =graphics/lrg-camera.h= (registry and camera mask), plus the drawable headers below.
+
+| Constant                            | Value        | Name / meaning                                                         |
+|-------------------------------------+--------------+------------------------------------------------------------------------|
+| =LRG_RENDER_LAYERS_COUNT=           | 32           | layers are 0 .. 31                                                     |
+| =LRG_RENDER_LAYERS_MASK_ALL=        | =0xFFFFFFFF= | every layer (default camera, active and caster mask)                   |
+| =LRG_RENDER_LAYERS_MASK_NONE=       | 0            | no layer                                                               |
+| =LRG_RENDER_LAYERS_BIT(layer)=      | =1u << layer= | the mask bit of a layer                                               |
+| =LRG_RENDER_LAYERS_DEFAULT=         | 0            | ="default"=: every drawable until moved                               |
+| =LRG_RENDER_LAYERS_UI=              | 1            | ="ui"=: world-space UI (name plates, 3D menus)                        |
+| =LRG_RENDER_LAYERS_EDITOR_ONLY=     | 2            | ="editor-only"=: gizmos and helpers a game camera should leave out    |
+| =LRG_RENDER_LAYERS_IGNORE_RAYCAST=  | 3            | ="ignore-raycast"=: drawn, skipped by layer-aware picking and raycasts |
+| =LRG_RENDER_LAYERS_TRANSPARENT_FX=  | 4            | ="transparent-fx"=: particles and other blended effects               |
+| =LRG_RENDER_LAYERS_WATER=           | 5            | ="water"=: water surfaces (leave out of reflection cameras)           |
+| =LRG_RENDER_LAYERS_SKY=             | 6            | ="sky"=: sky domes and far backdrops                                  |
+| 7 .. 31                             |              | unnamed, free for the game (name them with =lrg_render_layers_set_name()=) |
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** The active mask
+:PROPERTIES:
+:CUSTOM_ID: the-active-mask
+:END:
+Drawables do not receive a camera (=lrg_static_batch_draw()= and =lrg_terrain_draw()= only see rlgl's matrices), so the mask travels as process state: =lrg_render_layers_get_active_mask()=. Rendering is single-threaded, so it is a plain variable, not locked.
+
+- =lrg_camera_begin()= saves the active mask and installs the camera's =cull-mask=; =lrg_camera_end()= restores the saved one. Changing the mask of a begun camera applies at once. An =end= without a =begin= leaves the mask alone.
+- =lrg_shadow_renderer_begin_pass()= installs =lrg_shadow_renderer_get_caster_mask()= and =lrg_shadow_renderer_end_pass()= restores the previous mask.
+- Code that opens a 3D mode itself (raw =BeginMode3D()=, the editor's scene renderer) brackets its drawing with =lrg_render_layers_set_active_mask()=, which returns the previous mask to restore.
+- Outside all of these the mask is =LRG_RENDER_LAYERS_MASK_ALL=, so drawing without cameras behaves as before.
+
+*** Drawables and their layers
+:PROPERTIES:
+:CUSTOM_ID: drawables-and-their-layers
+:END:
+| Drawable                     | Layer API                                                                 | Granularity                                  | Default |
+|------------------------------+---------------------------------------------------------------------------+----------------------------------------------+---------|
+| =LrgStaticBatch=             | the =layer= argument of =lrg_static_batch_add_mesh()= / =_add_grl_mesh()= / =_add_model()=; =lrg_static_batch_get_chunk_layer()= | per chunk (chunks never mix layers) | as added |
+| =LrgBillboardBatch=          | =lrg_billboard_batch_set_layer()= / =lrg_billboard_batch_get_layer()=     | per batch                                    | 0       |
+| =LrgTerrain=                 | =lrg_terrain_set_layer()= / =lrg_terrain_get_layer()=, =lrg_terrain_set_chunk_layer()= / =lrg_terrain_get_chunk_layer()= | per terrain, overridable per chunk | 0 |
+| =LrgParticleSystem=          | property =layer=, =lrg_particle_system_set_layer()= / =lrg_particle_system_get_layer()=, =lrg_particle_system_is_layer_visible()= | per system | 0 |
+| shadow casters               | the caster's own layer, tested against =lrg_shadow_renderer_set_caster_mask()= during a pass | per drawable                 | all cast |
+
+*Static batch reconciliation*: =LrgStaticBatch= already had 32 per-chunk layers and a =layer_mask= argument to =lrg_static_batch_draw()=. Those layers *are* render layers: the mask a caller passes is ANDed with the active mask, so =lrg_static_batch_draw (batch, LRG_STATIC_BATCH_ALL_LAYERS)= inside a camera draws exactly the chunks the camera's cull mask selects, and existing callers that pass their own mask keep filtering by it. =lrg_static_batch_draw_chunk()= skips a chunk whose layer is masked out. Per-layer tints (=lrg_static_batch_set_layer_tint()=) are unchanged.
+
+*Terrain chunk overrides* are remembered by chunk coordinates: they apply to a chunk loaded there later and survive =lrg_terrain_set_chunk()= replacing the data (streaming). =-1= clears an override.
+
+*** What "skip" means
+:PROPERTIES:
+:CUSTOM_ID: what-skip-means
+:END:
+A masked-out drawable returns from its draw call before touching GL: no binds, no uniforms, no batch flush. For the billboard batch the masked draw also does not count towards its GPU-path settling. Culling by layer happens before frustum culling in the terrain's chunk loop, and only when the active mask is not all ones (the common case costs nothing).
+
+*** The registry
+:PROPERTIES:
+:CUSTOM_ID: the-registry
+:END:
+Names are interned strings, so =lrg_render_layers_get_name()= pointers stay valid for the process. Two layers may share a name; =lrg_render_layers_lookup()= returns the lowest index. =lrg_render_layers_set_name (layer, NULL)= restores the built-in name (or none for 7 .. 31); =lrg_render_layers_reset_names()= restores them all. =lrg_render_layers_mask_from_names()= turns a list of names (a level's or project's YAML) into a mask and reports unknown names.
+
+** Format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+Render layers add no file format in M0. Projects and levels that need custom names or per-camera masks store them as names, resolved with =lrg_render_layers_mask_from_names()= at load; the planned =project.ryaml= block (M1, with =LrgWorld3D= cameras) is:
+
+#+begin_src yaml
+render-layers:            # optional; names for layers 7 .. 31 (0 .. 6 may be renamed too)
+  7: minimap-only
+  12: interior
+cameras:
+  minimap:
+    cull-mask: [default, minimap-only]   # names, not bits: survives renumbering
+#+end_src
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+#+begin_src C
+/* Registry (graphics/lrg-camera.h) */
+void         lrg_render_layers_set_name        (guint layer, const gchar *name);  /* NULL: built-in */
+const gchar *lrg_render_layers_get_name        (guint layer);                     /* interned, nullable */
+gint         lrg_render_layers_lookup          (const gchar *name);               /* -1: unknown */
+gboolean     lrg_render_layers_mask_from_names (const gchar * const *names, guint32 *out_mask);
+void         lrg_render_layers_reset_names     (void);
+
+/* The active mask */
+guint32      lrg_render_layers_get_active_mask (void);
+guint32      lrg_render_layers_set_active_mask (guint32 mask);   /* returns the previous mask */
+gboolean     lrg_render_layers_is_visible      (guint layer);    /* bit set in the active mask */
+
+/* Cameras (property "cull-mask", guint, default 0xFFFFFFFF) */
+void         lrg_camera_set_cull_mask          (LrgCamera *self, guint32 mask);
+guint32      lrg_camera_get_cull_mask          (LrgCamera *self);
+void         lrg_camera_set_layer_visible      (LrgCamera *self, guint layer, gboolean visible);
+gboolean     lrg_camera_get_layer_visible      (LrgCamera *self, guint layer);
+void         lrg_camera_begin                  (LrgCamera *self);   /* installs the cull mask */
+void         lrg_camera_end                    (LrgCamera *self);   /* restores the previous mask */
+
+/* Drawables */
+void     lrg_billboard_batch_set_layer        (LrgBillboardBatch *self, guint layer);
+guint    lrg_billboard_batch_get_layer        (LrgBillboardBatch *self);
+void     lrg_terrain_set_layer                (LrgTerrain *self, guint layer);
+guint    lrg_terrain_get_layer                (LrgTerrain *self);
+void     lrg_terrain_set_chunk_layer          (LrgTerrain *self, gint cx, gint cz, gint layer); /* -1: inherit */
+guint    lrg_terrain_get_chunk_layer          (LrgTerrain *self, gint cx, gint cz);
+void     lrg_particle_system_set_layer        (LrgParticleSystem *self, guint layer);
+guint    lrg_particle_system_get_layer        (LrgParticleSystem *self);
+gboolean lrg_particle_system_is_layer_visible (LrgParticleSystem *self);
+guint    lrg_static_batch_get_chunk_layer     (LrgStaticBatch *self, guint chunk);
+void     lrg_static_batch_draw                (LrgStaticBatch *self, guint32 layer_mask); /* & active mask */
+
+/* Shadows */
+void     lrg_shadow_renderer_set_caster_mask  (LrgShadowRenderer *self, guint32 mask); /* drops the pass cache */
+guint32  lrg_shadow_renderer_get_caster_mask  (LrgShadowRenderer *self);
+#+end_src
+
+- =LrgCamera:cull-mask= - =guint=, read-write, =G_PARAM_EXPLICIT_NOTIFY=, default =0xFFFFFFFF=.
+- =LrgParticleSystem:layer= - =guint= 0 .. 31, read-write, =G_PARAM_EXPLICIT_NOTIFY=, default 0.
+- Setters reject layers above 31 with a critical warning (=g_return_if_fail=); getters of the registry return =NULL= / =FALSE= out of range.
+- =lrg_shadow_renderer_set_caster_mask()= invalidates every cached shadow tile (they hold the old casters) and, inside a pass, changes the active mask at once.
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: worked-examples
+:END:
+*** A game camera without editor helpers, a minimap without effects
+:PROPERTIES:
+:CUSTOM_ID: a-game-camera-without-editor-helpers-a-minimap-without-effects
+:END:
+#+begin_src C
+static void
+setup_cameras (LrgCamera3D *game,
+               LrgCamera3D *minimap)
+{
+	const gchar *minimap_layers[] = { "default", "minimap-only", NULL };
+	guint32      mask = 0;
+
+	/* the game never shows gizmos */
+	lrg_camera_set_layer_visible (LRG_CAMERA (game), LRG_RENDER_LAYERS_EDITOR_ONLY, FALSE);
+
+	/* the minimap sees the ground and its own markers only */
+	lrg_render_layers_set_name (7, "minimap-only");
+	if (!lrg_render_layers_mask_from_names (minimap_layers, &mask))
+		g_warning ("unknown render layer in the minimap's list");
+	lrg_camera_set_cull_mask (LRG_CAMERA (minimap), mask);
+}
+
+static void
+render_view (LrgCamera3D       *camera,
+             LrgStaticBatch    *level,
+             LrgBillboardBatch *trees,
+             LrgParticleSystem *smoke)
+{
+	g_autoptr(GrlVector3) eye = lrg_camera3d_get_position (camera);
+
+	lrg_camera_begin (LRG_CAMERA (camera));   /* its cull mask is now active */
+	lrg_static_batch_draw (level, LRG_STATIC_BATCH_ALL_LAYERS);
+	lrg_billboard_batch_draw (trees, eye);
+	lrg_particle_system_draw (smoke);         /* skipped on the minimap */
+	lrg_camera_end (LRG_CAMERA (camera));     /* previous mask restored */
+}
+#+end_src
+
+*** Moving drawables between layers
+:PROPERTIES:
+:CUSTOM_ID: moving-drawables-between-layers
+:END:
+#+begin_src C
+static void
+assign_layers (LrgBillboardBatch *markers,
+               LrgTerrain        *terrain,
+               LrgParticleSystem *smoke)
+{
+	lrg_billboard_batch_set_layer (markers, 7);                        /* minimap-only */
+	lrg_terrain_set_chunk_layer (terrain, 4, -2, 12);                  /* the cave mouth chunk */
+	g_object_set (smoke, "layer", (guint)LRG_RENDER_LAYERS_TRANSPARENT_FX, NULL);
+}
+#+end_src
+
+*** Shadow casters by layer
+:PROPERTIES:
+:CUSTOM_ID: shadow-casters-by-layer
+:END:
+#+begin_src C
+static void
+render_shadows (LrgShadowRenderer *shadows,
+                LrgStaticBatch    *level,
+                LrgBillboardBatch *trees,
+                const GrlVector3  *eye)
+{
+	guint pass;
+
+	/* world-space UI and particles cast nothing */
+	lrg_shadow_renderer_set_caster_mask (shadows,
+	                                     ~(LRG_RENDER_LAYERS_BIT (LRG_RENDER_LAYERS_UI)
+	                                       | LRG_RENDER_LAYERS_BIT (LRG_RENDER_LAYERS_TRANSPARENT_FX)));
+	for (pass = 0; pass < lrg_shadow_renderer_get_pass_count (shadows); pass++)
+	{
+		if (!lrg_shadow_renderer_begin_pass (shadows, pass))
+			continue;
+		lrg_static_batch_draw (level, LRG_STATIC_BATCH_ALL_LAYERS);
+		lrg_billboard_batch_draw_shadow (trees, shadows, eye);
+		lrg_shadow_renderer_end_pass (shadows);
+	}
+}
+#+end_src
+
+*** Custom render code
+:PROPERTIES:
+:CUSTOM_ID: custom-render-code
+:END:
+#+begin_src C
+static void
+draw_reflection (Camera3D        reflected,
+                 guint32         reflection_mask,
+                 LrgStaticBatch *level)
+{
+	guint32 previous;
+
+	BeginMode3D (reflected);
+	previous = lrg_render_layers_set_active_mask (reflection_mask);
+	lrg_static_batch_draw (level, LRG_STATIC_BATCH_ALL_LAYERS);
+	/* hand-drawn meshes test their own layer */
+	if (lrg_render_layers_is_visible (LRG_RENDER_LAYERS_WATER))
+		draw_my_water ();
+	lrg_render_layers_set_active_mask (previous);
+	EndMode3D ();
+}
+#+end_src
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: using-it-from-the-editor
+:END:
+Editor viewport cameras keep every layer, so gizmos on ="editor-only"= stay visible while editing, and the play session's game camera clears that bit. The per-viewport layer picker (gap analysis: "layer picker per viewport and camera") toggles bits with =lrg_camera_set_layer_visible()= and labels them with =lrg_render_layers_get_name()=; the viewport's scene renderer brackets its own drawing with =lrg_render_layers_set_active_mask()= since it opens its 3D mode itself. The picker UI and its IPC verbs land with the viewport work after M1; until then the masks are reachable from C and from GObject property access (=cull-mask=, =layer=).
+
+** Performance notes
+:PROPERTIES:
+:CUSTOM_ID: performance-notes
+:END:
+- Testing a layer is one AND against a global; the terrain skips even that while the mask is all ones.
+- Masked static batch chunks and terrain chunks are skipped before frustum culling; a masked billboard batch or particle system returns before building any vertices.
+- Changing the caster mask drops every cached shadow tile: set it once, not per frame.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Raw =BeginMode3D()=* does not install a camera's mask; use =lrg_camera_begin()= or =lrg_render_layers_set_active_mask()=.
+- *Nesting*: a camera begun twice without an end restores the mask from before the first begin; a shadow pass begun inside a camera replaces (not intersects) the camera's mask until =end_pass()=.
+- *Hand-drawn geometry* (=DrawModel()=, =DrawMesh()=) knows nothing about layers: test =lrg_render_layers_is_visible()= yourself.
+- *Billboards* are layered per batch: put differently layered billboards in separate batches.
+- *Debug draw* ignores the cull mask (see [[file:../debug/debug-draw.org][LrgDebugDraw]] categories instead).
+- *Names are global*: libraries should not rename layers 0 .. 6 behind the game's back.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:static-batch.org][LrgStaticBatch]], [[file:billboard-batch.org][LrgBillboardBatch]], [[file:terrain.org][LrgTerrain]]
+- [[file:../particles/system.org][LrgParticleSystem]], [[file:../particles/billboard-renderer.org][LrgParticleBillboardRenderer]]
+- [[file:../lighting/shadow-renderer.org][LrgShadowRenderer]]
+- [[file:index.org][Graphics module]] (cameras, renderer)
+- [[file:../debug/debug-draw.org][LrgDebugDraw]]
+
+** Further API
+:PROPERTIES:
+:CUSTOM_ID: further-api
+:END:
+Accessors and helpers not covered above (the header holds the full GIR documentation):
+
+- =lrg_camera_screen_to_world()= - Convert screen coordinates to world coordinates.
+- =lrg_camera_world_to_screen()= - Convert world coordinates to screen coordinates.

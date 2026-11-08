@@ -421,8 +421,10 @@ guint lrg_canvas_get_n_overlays (LrgCanvas *self);
  *   reference is consumed)
  *
  * Binds a keyboard shortcut. Binding an accelerator that is already
- * bound replaces the old binding. The action is resolved from the
- * focused widget (so widget-scoped groups apply), else from the canvas.
+ * bound replaces the old binding (every binding of that key, when
+ * several were added with lrg_canvas_add_shortcut_full()); the new one
+ * has priority 0. The action is resolved from the focused widget (so
+ * widget-scoped groups apply), else from the canvas.
  *
  * Dispatch rule: on each key press the focused widget sees the key
  * first. If it consumes it (returns %TRUE) no shortcut fires; that is
@@ -434,6 +436,12 @@ guint lrg_canvas_get_n_overlays (LrgCanvas *self);
  * no widget accepted a typed character, so typing into a text field
  * never triggers them.
  *
+ * Shared keys: when several bindings share a key (see
+ * lrg_canvas_add_shortcut_full()), they are tried in order of priority
+ * (higher first), then registration (earlier first), and the first
+ * whose action resolves and is enabled fires; disabled or missing
+ * actions are skipped.
+ *
  * Returns: %TRUE if @accel was valid and the shortcut was added
  */
 LRG_AVAILABLE_IN_ALL
@@ -443,12 +451,77 @@ gboolean lrg_canvas_add_shortcut (LrgCanvas   *self,
                                   GVariant    *target);
 
 /**
+ * lrg_canvas_add_shortcut_full:
+ * @self: an #LrgCanvas
+ * @accel: an accelerator such as "<Ctrl>s" or "y" (see lrg_accel_parse())
+ * @action: the action to activate, "prefix.action"
+ * @target: (nullable): the parameter to activate it with (a floating
+ *   reference is consumed)
+ * @priority: dispatch priority among bindings of the same key; higher
+ *   is tried first, equal priorities in registration order
+ *
+ * Binds a keyboard shortcut ALONGSIDE any other bindings of the same
+ * key: one key can serve several actions that apply in different
+ * situations (a tile flip while painting tiles, snapping otherwise).
+ * On a key press the bindings are tried in priority order and the
+ * first whose action resolves and is enabled fires; the others are
+ * skipped. Adding the same @action and @target to the same key again
+ * only moves that binding to @priority. Dispatch otherwise follows
+ * lrg_canvas_add_shortcut() (focused widget first, printable keys held
+ * back while typing).
+ *
+ * Returns: %TRUE if @accel was valid and the shortcut was added
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_canvas_add_shortcut_full (LrgCanvas   *self,
+                                       const gchar *accel,
+                                       const gchar *action,
+                                       GVariant    *target,
+                                       gint         priority);
+
+/**
+ * lrg_canvas_remove_shortcut_for_action:
+ * @self: an #LrgCanvas
+ * @accel: an accelerator
+ * @action: the bound action, "prefix.action"
+ * @target: (nullable): the bound parameter (a floating reference is
+ *   consumed), %NULL for a binding without one
+ *
+ * Removes the one binding of @accel to @action with @target, leaving
+ * other bindings of the same key in place.
+ *
+ * Returns: %TRUE if a binding was removed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_canvas_remove_shortcut_for_action (LrgCanvas   *self,
+                                                const gchar *accel,
+                                                const gchar *action,
+                                                GVariant    *target);
+
+/**
+ * lrg_canvas_list_shortcut_actions:
+ * @self: an #LrgCanvas
+ * @accel: an accelerator
+ *
+ * Lists the actions bound to @accel's key in the order a key press
+ * tries them.
+ *
+ * Returns: (transfer full) (array zero-terminated=1): the action names,
+ *   empty when nothing is bound (or @accel does not parse)
+ */
+LRG_AVAILABLE_IN_ALL
+gchar ** lrg_canvas_list_shortcut_actions (LrgCanvas   *self,
+                                           const gchar *accel);
+
+/**
  * lrg_canvas_remove_shortcut:
  * @self: an #LrgCanvas
  * @accel: an accelerator added with lrg_canvas_add_shortcut()
  *
- * Removes the binding of @accel. Spellings that parse to the same key
- * and modifiers ("<Primary>s", "<Control>S") match.
+ * Removes the binding of @accel, every binding of that key when
+ * several share it (lrg_canvas_remove_shortcut_for_action() removes
+ * one). Spellings that parse to the same key and modifiers
+ * ("<Primary>s", "<Control>S") match.
  *
  * Returns: %TRUE if a binding was removed
  */

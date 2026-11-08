@@ -721,4 +721,352 @@ LRG_AVAILABLE_IN_ALL
 void lrg_text_editor_set_auto_indent (LrgTextEditor *self,
                                       gboolean       auto_indent);
 
+/* ==========================================================================
+ * Gutter marks, diagnostics, completion and hover
+ *
+ * Positions here are 0-based, the same as lrg_text_editor_set_cursor().
+ * The extra gutter column is off unless show-gutter-marks is set, so
+ * existing editors keep their layout. Marks, diagnostics and the
+ * completion list are owned by the editor (callers pass copies in and
+ * get copies out). set_text() does not clear them.
+ * ========================================================================== */
+
+/**
+ * LrgTextGutterMark:
+ * @LRG_TEXT_GUTTER_MARK_NONE: no mark (removes the line's entry)
+ * @LRG_TEXT_GUTTER_MARK_BREAKPOINT: a filled breakpoint
+ * @LRG_TEXT_GUTTER_MARK_BREAKPOINT_DISABLED: a breakpoint that will not fire
+ * @LRG_TEXT_GUTTER_MARK_CURRENT: the line the debugger is stopped on
+ *
+ * Flags painted in the gutter's marker column. Combine breakpoint and
+ * current when both apply.
+ */
+typedef enum
+{
+	LRG_TEXT_GUTTER_MARK_NONE                = 0,
+	LRG_TEXT_GUTTER_MARK_BREAKPOINT          = 1 << 0,
+	LRG_TEXT_GUTTER_MARK_BREAKPOINT_DISABLED = 1 << 1,
+	LRG_TEXT_GUTTER_MARK_CURRENT             = 1 << 2
+} LrgTextGutterMark;
+
+/**
+ * lrg_text_gutter_mark_get_type:
+ *
+ * Returns: the #GType of #LrgTextGutterMark
+ */
+LRG_AVAILABLE_IN_ALL
+GType lrg_text_gutter_mark_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TEXT_GUTTER_MARK (lrg_text_gutter_mark_get_type ())
+
+/**
+ * LrgTextDiagnosticSeverity:
+ * @LRG_TEXT_DIAGNOSTIC_ERROR: an error (LSP DiagnosticSeverity 1)
+ * @LRG_TEXT_DIAGNOSTIC_WARNING: a warning (2)
+ * @LRG_TEXT_DIAGNOSTIC_INFO: an informational message (3)
+ * @LRG_TEXT_DIAGNOSTIC_HINT: a hint (4)
+ *
+ * How a diagnostic is drawn. The values match the Language Server
+ * Protocol so a server's number converts with a cast.
+ */
+typedef enum
+{
+	LRG_TEXT_DIAGNOSTIC_ERROR   = 1,
+	LRG_TEXT_DIAGNOSTIC_WARNING = 2,
+	LRG_TEXT_DIAGNOSTIC_INFO    = 3,
+	LRG_TEXT_DIAGNOSTIC_HINT    = 4
+} LrgTextDiagnosticSeverity;
+
+/**
+ * lrg_text_diagnostic_severity_get_type:
+ *
+ * Returns: the #GType of #LrgTextDiagnosticSeverity
+ */
+LRG_AVAILABLE_IN_ALL
+GType lrg_text_diagnostic_severity_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TEXT_DIAGNOSTIC_SEVERITY (lrg_text_diagnostic_severity_get_type ())
+
+/**
+ * LrgTextDiagnostic:
+ * @line: 0-based start line
+ * @column: 0-based start column, in characters
+ * @end_line: 0-based end line
+ * @end_column: 0-based end column (exclusive), in characters
+ * @severity: how the squiggle is coloured
+ * @message: the message (shown by the caller; the editor draws the span)
+ *
+ * One diagnostic squiggle. A zero-width span on a line is drawn as one
+ * character.
+ */
+typedef struct
+{
+	guint                      line;
+	guint                      column;
+	guint                      end_line;
+	guint                      end_column;
+	LrgTextDiagnosticSeverity  severity;
+	gchar                     *message;
+} LrgTextDiagnostic;
+
+/**
+ * lrg_text_diagnostic_get_type:
+ *
+ * Returns: the boxed #GType of #LrgTextDiagnostic
+ */
+LRG_AVAILABLE_IN_ALL
+GType lrg_text_diagnostic_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TEXT_DIAGNOSTIC (lrg_text_diagnostic_get_type ())
+
+/**
+ * lrg_text_diagnostic_copy:
+ * @diagnostic: (nullable): a #LrgTextDiagnostic
+ *
+ * Returns: (transfer full) (nullable): a copy of @diagnostic
+ */
+LRG_AVAILABLE_IN_ALL
+LrgTextDiagnostic * lrg_text_diagnostic_copy (const LrgTextDiagnostic *diagnostic);
+
+/**
+ * lrg_text_diagnostic_free:
+ * @diagnostic: (nullable): a #LrgTextDiagnostic
+ *
+ * Frees a diagnostic returned by lrg_text_diagnostic_copy().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_diagnostic_free (LrgTextDiagnostic *diagnostic);
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (LrgTextDiagnostic, lrg_text_diagnostic_free)
+
+/**
+ * LrgTextCompletion:
+ * @label: what the popup shows
+ * @detail: (nullable): a short type or signature beside the label
+ * @insert_text: (nullable): the text that replaces the word at the caret;
+ *   %NULL uses @label
+ *
+ * One row of the completion popup.
+ */
+typedef struct
+{
+	gchar *label;
+	gchar *detail;
+	gchar *insert_text;
+} LrgTextCompletion;
+
+/**
+ * lrg_text_completion_get_type:
+ *
+ * Returns: the boxed #GType of #LrgTextCompletion
+ */
+LRG_AVAILABLE_IN_ALL
+GType lrg_text_completion_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TEXT_COMPLETION (lrg_text_completion_get_type ())
+
+/**
+ * lrg_text_completion_copy:
+ * @item: (nullable): a #LrgTextCompletion
+ *
+ * Returns: (transfer full) (nullable): a copy of @item
+ */
+LRG_AVAILABLE_IN_ALL
+LrgTextCompletion * lrg_text_completion_copy (const LrgTextCompletion *item);
+
+/**
+ * lrg_text_completion_free:
+ * @item: (nullable): a #LrgTextCompletion
+ *
+ * Frees a completion row returned by lrg_text_completion_copy().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_completion_free (LrgTextCompletion *item);
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (LrgTextCompletion, lrg_text_completion_free)
+
+/**
+ * lrg_text_editor_get_show_gutter_marks:
+ * @self: an #LrgTextEditor
+ *
+ * Returns: whether the marker column is shown
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_text_editor_get_show_gutter_marks (LrgTextEditor *self);
+
+/**
+ * lrg_text_editor_set_show_gutter_marks:
+ * @self: an #LrgTextEditor
+ * @show: whether to reserve a column for breakpoint markers
+ *
+ * The column is off by default. Turning it on widens the gutter and
+ * makes a click in that column emit #LrgTextEditor::gutter-clicked
+ * instead of moving the caret. F9 does the same when a handler is
+ * connected.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_editor_set_show_gutter_marks (LrgTextEditor *self,
+                                            gboolean       show);
+
+/**
+ * lrg_text_editor_set_gutter_mark:
+ * @self: an #LrgTextEditor
+ * @line: a 0-based line (stored even when the line does not exist yet)
+ * @mark: the flags to paint; %LRG_TEXT_GUTTER_MARK_NONE removes the mark
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_editor_set_gutter_mark (LrgTextEditor     *self,
+                                      guint              line,
+                                      LrgTextGutterMark  mark);
+
+/**
+ * lrg_text_editor_get_gutter_mark:
+ * @self: an #LrgTextEditor
+ * @line: a 0-based line
+ *
+ * Returns: the flags on @line, or %LRG_TEXT_GUTTER_MARK_NONE
+ */
+LRG_AVAILABLE_IN_ALL
+LrgTextGutterMark lrg_text_editor_get_gutter_mark (LrgTextEditor *self,
+                                                   guint          line);
+
+/**
+ * lrg_text_editor_clear_gutter_marks:
+ * @self: an #LrgTextEditor
+ *
+ * Removes every gutter mark. Does not clear the execution line.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_editor_clear_gutter_marks (LrgTextEditor *self);
+
+/**
+ * lrg_text_editor_set_execution_line:
+ * @self: an #LrgTextEditor
+ * @line: a 0-based line to highlight as the stopped line, or -1 to clear
+ *
+ * Drawn as a selection band, separate from the caret's current-line
+ * tint. A negative value other than -1 is stored as -1.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_editor_set_execution_line (LrgTextEditor *self,
+                                         gint           line);
+
+/**
+ * lrg_text_editor_get_execution_line:
+ * @self: an #LrgTextEditor
+ *
+ * Returns: the stopped line, or -1
+ */
+LRG_AVAILABLE_IN_ALL
+gint lrg_text_editor_get_execution_line (LrgTextEditor *self);
+
+/**
+ * lrg_text_editor_set_diagnostics:
+ * @self: an #LrgTextEditor
+ * @diagnostics: (nullable) (element-type LrgTextDiagnostic) (transfer none):
+ *   the squiggles to draw, or %NULL to clear them
+ *
+ * Copies @diagnostics. The caller keeps its array.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_editor_set_diagnostics (LrgTextEditor *self,
+                                      GPtrArray     *diagnostics);
+
+/**
+ * lrg_text_editor_get_diagnostics:
+ * @self: an #LrgTextEditor
+ *
+ * Returns: (transfer full) (element-type LrgTextDiagnostic): a new array
+ *   of copies (free the array; it frees the elements)
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_text_editor_get_diagnostics (LrgTextEditor *self);
+
+/**
+ * lrg_text_editor_show_completion:
+ * @self: an #LrgTextEditor
+ * @items: (nullable) (element-type LrgTextCompletion) (transfer none):
+ *   the candidates, or %NULL
+ *
+ * Shows the completion popup. %NULL or an empty array hides it. The
+ * items are copied. While the popup is visible, Up, Down, Enter, Tab
+ * and Escape are consumed by it.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_editor_show_completion (LrgTextEditor *self,
+                                      GPtrArray     *items);
+
+/**
+ * lrg_text_editor_hide_completion:
+ * @self: an #LrgTextEditor
+ *
+ * Hides the completion popup.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_editor_hide_completion (LrgTextEditor *self);
+
+/**
+ * lrg_text_editor_get_completion_visible:
+ * @self: an #LrgTextEditor
+ *
+ * Returns: whether the popup is showing
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_text_editor_get_completion_visible (LrgTextEditor *self);
+
+/**
+ * lrg_text_editor_get_completion_selected:
+ * @self: an #LrgTextEditor
+ *
+ * Returns: the selected row, or -1 when the popup is hidden
+ */
+LRG_AVAILABLE_IN_ALL
+gint lrg_text_editor_get_completion_selected (LrgTextEditor *self);
+
+/**
+ * lrg_text_editor_completion_move:
+ * @self: an #LrgTextEditor
+ * @delta: rows to move (negative is up); clamped, not wrapped
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_editor_completion_move (LrgTextEditor *self,
+                                      gint           delta);
+
+/**
+ * lrg_text_editor_completion_accept:
+ * @self: an #LrgTextEditor
+ *
+ * Replaces the word at the caret (letters, digits, underscore) with the
+ * selected item's insert text, as one undo step, and hides the popup.
+ *
+ * Returns: %FALSE when the popup is hidden
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_text_editor_completion_accept (LrgTextEditor *self);
+
+/**
+ * lrg_text_editor_show_hover:
+ * @self: an #LrgTextEditor
+ * @text: (nullable): the tooltip text, or %NULL to hide it
+ *
+ * The editor displays the string; it does not fetch it. %NULL hides.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_editor_show_hover (LrgTextEditor *self,
+                                 const gchar   *text);
+
+/**
+ * lrg_text_editor_hide_hover:
+ * @self: an #LrgTextEditor
+ *
+ * Hides the hover tooltip.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_editor_hide_hover (LrgTextEditor *self);
+
+/**
+ * lrg_text_editor_get_hover_text:
+ * @self: an #LrgTextEditor
+ *
+ * Returns: (transfer none) (nullable): the tooltip text
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_text_editor_get_hover_text (LrgTextEditor *self);
+
 G_END_DECLS

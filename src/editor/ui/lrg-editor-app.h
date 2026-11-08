@@ -43,6 +43,7 @@
 #include "../lrg-editor-view-state.h"
 #include "../lrg-editor-viewport-nav.h"
 #include "../lrg-editor-play-session.h"
+#include "lrg-editor-scene-renderer.h"
 #include "../lrg-asset-source.h"
 #include "../../gamemodule/lrg-loaded-game.h"
 
@@ -188,6 +189,18 @@ LrgEditorViewportNav * lrg_editor_app_get_viewport_nav (LrgEditorApp *self);
  */
 LRG_AVAILABLE_IN_ALL
 LrgEditorPlaySession * lrg_editor_app_get_play_session (LrgEditorApp *self);
+
+/**
+ * lrg_editor_app_get_scene_renderer:
+ * @self: an #LrgEditorApp
+ *
+ * The renderer every viewport draws through (authoring nodes, the play
+ * world, baked lighting while authoring, thumbnails).
+ *
+ * Returns: (transfer none): the scene renderer
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorSceneRenderer * lrg_editor_app_get_scene_renderer (LrgEditorApp *self);
 
 /**
  * lrg_editor_app_add_panel:

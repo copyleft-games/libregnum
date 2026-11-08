@@ -1,0 +1,274 @@
+#+title: Rule tiles (autotiling)
+#+description: LrgRuleTile and LrgTileRule: 3x3 neighbour rules, 16-tile and 47-tile presets, weighted variants, rotated and mirrored rules, hexagonal and staggered neighbours
+#+created: 2026-11-07
+
+* Rule tiles (autotiling)
+:PROPERTIES:
+:CUSTOM_ID: rule-tile
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Tilemap]] > Rule tiles
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+A rule tile is a brush whose cells choose their own tile from their neighbours, the way Unity's RuleTile and Godot's terrain sets do. You paint "grass" and every grass cell picks the edge, corner or inner tile that fits what is around it; erasing a cell fixes up its neighbours.
+
+An =LrgRuleTile= holds an ordered list of =LrgTileRule=s. Each rule is a 3x3 pattern (for each of the eight neighbours: this, not this, or don't care), a transform mode (match as written, or also rotated or mirrored) and one or more weighted output tiles. For a cell, the first matching rule wins; with several outputs a deterministic weighted pick per cell gives random variants that do not reshuffle on repaint. Presets build the classic 16-tile (edges) and 47-tile ("blob") sets.
+
+All the work is done on plain row-major cell arrays, so the same code serves =LrgTilemap= at runtime, level data and the editor's tile painter. Rule tiles are saved in the [[file:tileset-asset.org][.rtileset]].
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+
+*** Neighbours and masks
+:PROPERTIES:
+:CUSTOM_ID: neighbours
+:END:
+=LrgTileNeighbor= names the eight neighbours as bits, clockwise from north: =LRG_TILE_NEIGHBOR_N= (bit 0), =_NE=, =_E=, =_SE=, =_S=, =_SW=, =_W=, =_NW= (bit 7), plus =LRG_TILE_NEIGHBOR_NONE= and =LRG_TILE_NEIGHBOR_ALL=. A cell's *neighbour mask* has a bit set for every neighbour that counts as "this" rule tile. Turning a pattern a quarter turn clockwise is rotating the mask left by two bits.
+
+A neighbour counts as "this" when its tile id is *owned* by the rule tile (the default tile or any rule output, =lrg_rule_tile_owns_tile()=) or is one of its *match tiles* (=lrg_rule_tile_add_match_tile()=, other terrains the rule tile should join, =lrg_rule_tile_matches_tile()=). Cells outside the layer count as "this" only with =LrgRuleTile:border-is-this=. =lrg_rule_tile_compute_mask()= returns a cell's mask.
+
+*** Grid layouts
+:PROPERTIES:
+:CUSTOM_ID: layouts
+:END:
+Directions are logical grid directions. =LrgTileNeighborLayout= decides where they point (=lrg_tile_neighbor_offset()=) and which exist (=lrg_tile_neighbor_layout_get_mask()=); =lrg_tilemap_get_neighbor_layout()= picks the layout for a map:
+
+| Layout | Maps | Directions |
+|--------+------+------------|
+| =LRG_TILE_NEIGHBOR_LAYOUT_SQUARE= | orthogonal, isometric (diamond) | all eight; on an isometric map N is (x, y-1), up-right on screen |
+| =LRG_TILE_NEIGHBOR_LAYOUT_STAGGERED_ODD= / =_EVEN= | staggered isometric (odd/even rows shifted) | all eight, mapped onto the diamond directions, so rules written for diamond maps work unchanged |
+| =LRG_TILE_NEIGHBOR_LAYOUT_HEX_ROWS_ODD= / =_EVEN= | pointy-top hexagons in rows | E, W, NE, NW, SE, SW (no N, S) |
+| =LRG_TILE_NEIGHBOR_LAYOUT_HEX_COLUMNS_ODD= / =_EVEN= | flat-top hexagons in columns | N, S, NE, NW, SE, SW (no E, W) |
+
+On hexagonal layouts requirements on missing directions are ignored and rotated rules are matched as written only (a quarter turn is not a hexagon symmetry); mirrored rules work.
+
+*** Rules
+:PROPERTIES:
+:CUSTOM_ID: rules
+:END:
+- *Pattern*: =lrg_tile_rule_set_neighbor()= with =LrgTileRuleMatch= =LRG_TILE_RULE_MATCH_ANY=, =_THIS= or =_NOT_THIS= for one or more directions; =lrg_tile_rule_get_this_mask()= and =lrg_tile_rule_get_not_this_mask()= read it back.
+- *Transform* (=LrgTileRuleTransform=): =LRG_TILE_RULE_TRANSFORM_FIXED=; =_ROTATED= also tries the pattern turned 90, 180 and 270 degrees and turns the output tile the same way; =_MIRROR_X=, =_MIRROR_Y= and =_MIRROR_XY= also try mirrored patterns and flip the output. Variants are tried unchanged first. =lrg_tile_rule_match()= tests a mask and reports the output transform.
+- *Outputs*: =lrg_tile_rule_add_output (rule, tile, weight)= with a cell value (a 1-based id, optionally with transform bits from =lrg_tile_make()=) and a positive weight.
+- *Order*: rules are tried in order; the first match wins, so put specific rules first. When nothing matches the cell gets =LrgRuleTile:default-tile= (0: the first output of the first rule).
+
+*** Weighted variants
+:PROPERTIES:
+:CUSTOM_ID: variants
+:END:
+With several outputs, the pick is a weighted choice driven by a hash of the cell coordinates, the rule's index and =LrgRuleTile:seed=. The same cell always gets the same variant (repainting a neighbour does not reshuffle the floor); change the seed to reshuffle.
+
+*** Presets
+:PROPERTIES:
+:CUSTOM_ID: presets
+:END:
+- =lrg_rule_tile_new_edges16 (name, first_tile)=: 16 tiles, only the four edges matter. Tile =first_tile + m= is used for edge mask m = N*1 + E*2 + S*4 + W*8. Lay the set out in the image in that order: isolated, N, E, N+E, S, N+S, E+S, N+E+S, W, ...
+- =lrg_rule_tile_new_blob47 (name, first_tile)=: 47 tiles, edges and corners; a corner counts only when both edges beside it are set. The 47 reduced masks are sorted ascending; tile =first_tile + rank= is the mask of that rank. =lrg_rule_tile_blob47_mask (rank)= and =lrg_rule_tile_blob47_rank (mask)= convert, so a tool can draw a template sheet (=LRG_RULE_TILE_BLOB47_COUNT= = 47, =LRG_RULE_TILE_EDGES16_COUNT= = 16). Rank 0 is the isolated tile, rank 46 the all-neighbours centre.
+
+Presets produce ordinary rules: edit them like any others (and they are saved as explicit rules).
+
+*** Painting and refreshing
+:PROPERTIES:
+:CUSTOM_ID: painting
+:END:
+- =lrg_rule_tile_paint()= sets one cell (to the default tile when it is not already owned) and re-resolves the 5x5 block around it, which covers staggered layouts whose N/S neighbours are two rows away.
+- =lrg_rule_tile_erase()= empties a cell and re-resolves the block.
+- =lrg_rule_tile_apply()= re-resolves every owned cell of a rectangle; masks are computed from a snapshot, so the result does not depend on scan order.
+- =lrg_tileset_apply_rule_tiles()= runs every rule tile of a tileset (a full refresh after loading or bulk edits).
+- On an =LrgTilemap=: =lrg_tilemap_paint_rule_tile()=, =lrg_tilemap_erase_rule_tile()= and =lrg_tilemap_refresh_rule_tiles()= use the map's layout and emit =LrgTilemap::tile-changed= per changed cell.
+
+All of them return the number of cells whose value changed (an editor uses that to decide whether to push an undo step).
+
+** File format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+Rule tiles are the =rule_tiles:= list of an =.rtileset= (see [[file:tileset-asset.org::#format][the format page]]). In the file every tile reference is a 0-based tile index:
+
+#+begin_src yaml
+rule_tiles:
+- name: grass                # required, unique in the tileset
+  default: 20                # optional: tile index or {tile, rotate (0-3), flip (bool)}
+  seed: 7                    # optional, default 0
+  border_is_this: true       # optional, default false
+  match_tiles: [3, 4]        # optional: tile indices that count as "this"
+  rules:                     # tried in order
+  - pattern:                 # optional (absent: matches anything)
+    - ".#."                  # row 1: NW N NE
+    - "-@-"                  # row 2: W, the cell itself ('@'), E
+    - "..."                  # row 3: SW S SE
+                             # '#' this, '-' not this, '.' don't care
+    transform: rotated       # optional: fixed (default), rotated, mirror-x, mirror-y, mirror-xy
+    tiles:                   # required, non-empty: outputs
+    - 21                     # tile index, weight 1, untransformed
+    - {tile: 22, weight: 0.5, rotate: 1, flip: true}   # weight > 0; flip mirrors before rotating
+    comment: end cap         # unknown keys of rules and rule tiles are kept
+  - tiles: [20]
+#+end_src
+
+The writer writes patterns as double-quoted strings, omits defaults and writes outputs as plain indices when they have weight 1 and no transform.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+
+*** Enums and neighbours
+:PROPERTIES:
+:CUSTOM_ID: api-enums
+:END:
+| Symbol | Description |
+|--------+-------------|
+| =LrgTileNeighbor=, =lrg_tile_neighbor_get_type()= | neighbour bits (flags) |
+| =LrgTileNeighborLayout=, =lrg_tile_neighbor_layout_get_type()= | grid layouts |
+| =LrgTileRuleMatch=, =lrg_tile_rule_match_get_type()= | =ANY=, =THIS=, =NOT_THIS= |
+| =LrgTileRuleTransform=, =lrg_tile_rule_transform_get_type()= | =FIXED=, =ROTATED=, =MIRROR_X=, =MIRROR_Y=, =MIRROR_XY= |
+| =lrg_tile_neighbor_offset (layout, x, y, direction, &nx, &ny)= | a neighbour's cell; FALSE when the layout lacks the direction |
+| =lrg_tile_neighbor_layout_get_mask (layout)= | the directions a layout has |
+
+*** LrgTileRule (boxed, reference counted)
+:PROPERTIES:
+:CUSTOM_ID: api-rule
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_tile_rule_new ()= | a rule matching anything, no outputs |
+| =lrg_tile_rule_ref=, =lrg_tile_rule_unref=, =lrg_tile_rule_copy=, =lrg_tile_rule_get_type()= | memory management (=g_autoptr(LrgTileRule)= works) |
+| =lrg_tile_rule_set_neighbor (self, directions, match)= / =lrg_tile_rule_get_neighbor (self, direction)= | the pattern |
+| =lrg_tile_rule_get_this_mask=, =lrg_tile_rule_get_not_this_mask= | the pattern as masks |
+| =lrg_tile_rule_set_transform= / =lrg_tile_rule_get_transform= | transform mode |
+| =lrg_tile_rule_add_output (self, tile, weight)= | append an output (1-based cell value) |
+| =lrg_tile_rule_get_n_outputs=, =lrg_tile_rule_get_output (self, index, &weight)= | read outputs |
+| =lrg_tile_rule_remove_output (self, index)=, =lrg_tile_rule_clear_outputs= | edit outputs |
+| =lrg_tile_rule_match (self, mask, valid, &rotation, &mirrored)= | test a mask; =valid= is the layout's direction mask |
+
+*** LrgRuleTile
+:PROPERTIES:
+:CUSTOM_ID: api-rule-tile
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_rule_tile_new (name)= | empty rule tile |
+| =lrg_rule_tile_new_edges16 (name, first_tile)=, =lrg_rule_tile_new_blob47 (name, first_tile)= | presets (=first_tile= is a 1-based id) |
+| =lrg_rule_tile_blob47_mask (rank)=, =lrg_rule_tile_blob47_rank (mask)= | blob set ordering |
+| =lrg_rule_tile_get_name= / =lrg_rule_tile_set_name= | property =name= |
+| =lrg_rule_tile_get_default_tile= / =lrg_rule_tile_set_default_tile= | property =default-tile= |
+| =lrg_rule_tile_get_seed= / =lrg_rule_tile_set_seed= | property =seed= |
+| =lrg_rule_tile_get_border_is_this= / =lrg_rule_tile_set_border_is_this= | property =border-is-this= |
+| =lrg_rule_tile_add_match_tile=, =lrg_rule_tile_get_match_tiles (self, &n)=, =lrg_rule_tile_clear_match_tiles= | extra "this" tiles |
+| =lrg_rule_tile_add_rule=, =lrg_rule_tile_insert_rule (self, index, rule)=, =lrg_rule_tile_remove_rule=, =lrg_rule_tile_move_rule (self, from, to)= | edit the rule list (each emits =changed=) |
+| =lrg_rule_tile_get_rule (self, index)=, =lrg_rule_tile_get_n_rules=, =lrg_rule_tile_clear_rules= | rule access (rules are shared, edit in place) |
+| =lrg_rule_tile_changed (self)= | emit =changed= after editing a rule in place |
+| =lrg_rule_tile_owns_tile (self, tile)=, =lrg_rule_tile_matches_tile (self, tile)= | membership |
+| =lrg_rule_tile_resolve (self, mask, layout, x, y, &rule)= | the cell value for a mask (=rule= gets the matching index or -1) |
+| =lrg_rule_tile_compute_mask (self, tiles, n_tiles, width, layout, x, y)= | a cell's mask |
+| =lrg_rule_tile_apply (self, tiles, n_tiles, width, layout, x, y, w, h)= | re-resolve a rectangle (=G_MAXUINT= sizes: to the edge) |
+| =lrg_rule_tile_paint (self, tiles, n_tiles, width, layout, x, y)= / =lrg_rule_tile_erase= | brush operations |
+
+Signal: =changed= (no arguments) on any change that alters resolution: rules, match tiles, default tile, seed, border. =LrgTileset= forwards it as its own =changed=.
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+
+*** A blob terrain on a runtime map
+:PROPERTIES:
+:CUSTOM_ID: example-blob
+:END:
+#+begin_src C
+/* tiles 1..47 of the tileset are the blob set in rank order */
+g_autoptr(LrgRuleTile) ground = lrg_rule_tile_new_blob47 ("ground", 1);
+gint x;
+
+lrg_rule_tile_set_border_is_this (ground, TRUE);
+lrg_tileset_add_rule_tile (tileset, ground);
+
+for (x = 4; x < 12; x++)
+	lrg_tilemap_paint_rule_tile (map, 0, ground, x, 6);
+lrg_tilemap_erase_rule_tile (map, 0, 8, 6);   /* splits the strip, ends fix themselves */
+#+end_src
+
+*** One corner tile for all four corners
+:PROPERTIES:
+:CUSTOM_ID: example-rotated
+:END:
+#+begin_src C
+g_autoptr(LrgRuleTile) wall = lrg_rule_tile_new ("wall");
+g_autoptr(LrgTileRule) corner = lrg_tile_rule_new ();
+g_autoptr(LrgTileRule) fill = lrg_tile_rule_new ();
+
+/* drawn as the corner with walls to the north and east */
+lrg_tile_rule_set_neighbor (corner, LRG_TILE_NEIGHBOR_N | LRG_TILE_NEIGHBOR_E, LRG_TILE_RULE_MATCH_THIS);
+lrg_tile_rule_set_neighbor (corner, LRG_TILE_NEIGHBOR_S | LRG_TILE_NEIGHBOR_W, LRG_TILE_RULE_MATCH_NOT_THIS);
+lrg_tile_rule_set_transform (corner, LRG_TILE_RULE_TRANSFORM_ROTATED);
+lrg_tile_rule_add_output (corner, 12, 1.0f);
+lrg_rule_tile_add_rule (wall, corner);
+
+/* everything else: plain wall with two cracked variants */
+lrg_tile_rule_add_output (fill, 10, 8.0f);
+lrg_tile_rule_add_output (fill, 11, 1.0f);
+lrg_tile_rule_add_output (fill, lrg_tile_make (11, TRUE, 0), 1.0f);
+lrg_rule_tile_add_rule (wall, fill);
+#+end_src
+
+*** Editing level data directly
+:PROPERTIES:
+:CUSTOM_ID: example-array
+:END:
+#+begin_src C
+/* the same brush on any row-major cell array, e.g. a level node's layer */
+gsize n = 0;
+const guint *cells = lrg_node_tilemap_get_layer_tiles (node, layer, &n);
+g_autofree guint *copy = g_memdup2 (cells, n * sizeof (guint));
+
+if (lrg_rule_tile_paint (grass, copy, n, lrg_node_tilemap_get_width (node),
+                         LRG_TILE_NEIGHBOR_LAYOUT_SQUARE, cx, cy) > 0)
+	lrg_node_tilemap_set_layer_tiles (node, layer, copy, n);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Measured with =taskset -c 2= on the release build (x86_64, one core), blob47 preset:
+
+| Work | Time |
+|------+------|
+| Full refresh of a 256x256 layer (65536 cells, about a third owned) | 14 ms |
+| Painting one cell (5x5 re-resolve) | 12 µs |
+
+Resolution walks the rules in order with two mask comparisons each, so a cell costs O(rules); a rotated or mirrored rule costs up to four comparisons. Ownership is a hash set built once per =apply= call. Painting touches 25 cells, so brush strokes of hundreds of cells per frame stay well under a millisecond.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Keep rule tiles' tile ranges apart.* Ownership is decided by tile id; a tile used by two rule tiles is repainted by the first one in the tileset.
+- *Order matters.* A general rule (a bare =tiles:= with no pattern) placed first matches everything.
+- *Outputs are 1-based cell values in code, 0-based indices in files.*
+- *Hexagonal maps ignore rotated variants* and requirements on the missing directions.
+- *Change the seed to reshuffle*, not the rule order: variant picks also depend on the rule's index.
+- *Masks are computed from what is in the layer*: cells painted with plain tiles of the rule tile's range count as "this" and get re-resolved by =apply=.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+- *Rule tile editor*: the Rule tiles page of the =.rtileset= editor ([[file:../../editor/2d-tools.org::#editor-2d-tileset-editor][2D Tools > The tileset editor]]): a rule list (=lrg_rule_tile_insert_rule()=, =lrg_rule_tile_move_rule()=, =lrg_rule_tile_remove_rule()=), a clickable 3x3 mask per rule (=lrg_tile_rule_set_neighbor()=: any, this, not this), the transform, weighted outputs (=lrg_tile_rule_add_output()= / =lrg_tile_rule_remove_output()=), the 16 / 47 presets (=lrg_rule_tile_new_edges16()=, =lrg_rule_tile_new_blob47()=), seed, default tile and border, and a preview grid resolved with =lrg_rule_tile_paint()= on a scratch map.
+- *Painting*: picking a rule tile in the Tiles panel makes it the brush; the viewport wraps every tool gesture so the painted cells and their neighbours are re-resolved with =lrg_rule_tile_apply()= on a copy of the layer and committed in the same undo step ([[file:../../editor/2d-tools.org::#editor-2d-rules][2D Tools > Rule tile painting]]). "Refresh all" runs =lrg_tileset_apply_rule_tiles()= over the whole map.
+- *IPC*: =tiles.paint= with =rule_tile=, =tiles.refresh=, =tileset.rule_tile=, =tileset.rule=, =tileset.preview=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:tileset-asset.org][Tileset assets (.rtileset)]]
+- [[file:iso-hex.org][Isometric and hexagonal maps]]
+- [[file:tilemap.org][LrgTilemap]]
+- [[file:../../guides/2d.org][2D guide]]

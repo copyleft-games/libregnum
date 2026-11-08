@@ -217,6 +217,16 @@ if (lrg_bt_node_is_running(node)) {
 }
 #+end_src
 
+** Tick Count (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: tick-count
+:END:
+#+begin_src C
+guint64 lrg_bt_node_get_tick_count (LrgBTNode *self);
+#+end_src
+
+How many times =lrg_bt_node_tick()= ran on the node since it was created (resets do not clear it). Debug views compare it before and after a tree tick to know which nodes the tick reached; =LrgBtRunner= does exactly that ([[file:bt-asset.org#api-runner][lrg_bt_runner_get_node_visited()]]).
+
 ** Node Class Structure
 :PROPERTIES:
 :CUSTOM_ID: node-class-structure

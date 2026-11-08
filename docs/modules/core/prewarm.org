@@ -92,14 +92,13 @@ loading_update (MyGame *game)
 | =LrgHorizonRing= | the upload of its built static batch |
 | =LrgSphere3D=, =LrgCylinder3D=, =LrgCone3D= | the shared mesh of their parameters, in the current context |
 | =LrgTorus3D=, =LrgIcoSphere3D= | their generated mesh |
-| =LrgColorGrade=, =LrgColorblindFilter=, =LrgHeatHaze=, =LrgSharpen= | the effect's shader, compiled before the first non-identity frame |
+| =LrgColorGrade=, =LrgColorblindFilter=, =LrgHeatHaze=, =LrgSharpen=, =LrgPalettize=, =LrgBloom=, =LrgTonemap=, =LrgVignette=, =LrgFxaa=, =LrgFilmGrain=, =LrgScreenShake= | the effect's pass shaders (bloom: its four), compiled before the first frame |
 | =LrgPalettize= | the shader, and the lookup table once a palette is set |
 | =LrgPhotoDof=, =LrgPhotoLook= | the photo-mode shaders |
 
 Not covered, and why:
 
 - =LrgStaticBatch= and =LrgTerrain= have no lazy path: their draws skip what is not uploaded, and the game uploads them (=lrg_static_batch_upload()=, =lrg_terrain_upload()=) when it builds them, normally in a loading task. The horizon ring, which does upload its batch lazily, is covered.
-- The post effects that compile in =initialize()= (bloom, FXAA, film grain, vignette, screen shake) already do so when the post processor initializes.
 - Small first-use textures (the particle billboard renderer's dot, a light grid's data textures, the colour grade's LUT strip) cost well under a millisecond; the light grid's size also depends on the lights at the time.
 - Driver-side shader variants: see [[#hidden-draw][The hidden draw]].
 

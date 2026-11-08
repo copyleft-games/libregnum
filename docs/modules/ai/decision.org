@@ -87,6 +87,45 @@ lrg_decision_request_add_choice (request, "role", "What is the spell for?", role
 - *Signals*: =::answered (topic, judgments)= for an answer from the model, =::failed (topic, message)=.
 - =cancel()= drops every question out; =dup_status()= is YAML: the provider and model, the totals (asked, answered, cached, failed, tokens, mean seconds), each topic (busy, the age of its answers, the model, the last error).
 
+The brain's full API: =lrg_decision_brain_new (decider)=, =lrg_decision_brain_get_decider()=, =lrg_decision_brain_set_blackboard()=, =lrg_decision_brain_set_cache_seconds()=, =lrg_decision_brain_set_journal()=, =lrg_decision_brain_ask()=, =lrg_decision_brain_is_busy()=, =lrg_decision_brain_get_latest()=, =lrg_decision_brain_get_last_error()=, =lrg_decision_brain_cancel()=, =lrg_decision_brain_dup_status()=, and the inspector functions below.
+
+** Inspecting decisions (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: inspector
+:END:
+What an LLM decisions inspector shows comes straight from the brain, per topic:
+
+| Function | Gives |
+|----------+-------|
+| =gchar **lrg_decision_brain_dup_topics (brain)= | every topic asked, sorted: the inspector's rows |
+| =const gchar *lrg_decision_brain_get_request (brain, topic)= | the last question as JSON: the state and the typed questions the decider turns into the model prompt (also set by cache hits) |
+| =lrg_decision_brain_get_latest (brain, topic, &age)=, =lrg_judgments_dup_json()= | the last decision and its age |
+| =gdouble lrg_decision_brain_get_latency (brain, topic)= | seconds the last model answer took (-1 none) |
+| =gdouble lrg_decision_brain_get_pending_seconds (brain, topic)= | how long the question out has been waiting (-1 not busy) |
+| =gboolean lrg_decision_brain_get_topic_counts (brain, topic, &asked, &answered, &cached, &failed)= | per-topic counters |
+| =void lrg_decision_brain_get_totals (brain, &asked, &answered, &cached, &failed, &in_tokens, &out_tokens, &mean_seconds)= | the brain-wide counters |
+| =lrg_decision_brain_get_last_error (brain, topic)= | why the last question failed |
+| =gchar *lrg_decision_brain_dup_topic_state (brain, topic)= | all of it as YAML (the IPC payload) |
+| signal =::asked (topic, request_json)= | a question went out to the model (cache hits do not emit it) |
+
+#+begin_src yaml
+topic: "guard"
+busy: false
+pending-seconds: -1.000
+latency: 0.412
+age: 3.250
+asked: 4
+answered: 3
+cached: 6
+failed: 1
+model: "jev-1.14.0"
+error: ~
+request: "{\"state\":\"a stranger with a drawn sword\",\"questions\":[...]}"
+latest: "{\"model\":\"jev-1.14.0\",\"answers\":{\"hostile\":{\"type\":\"noul\",\"noul\":0.9}}}"
+#+end_src
+
+The prompt text itself is built inside ai-glib's backend from the request JSON; the request is the stable, reproducible part (the journal stores the same).
+
 ** Behavior trees
 :PROPERTIES:
 :CUSTOM_ID: behavior-trees
@@ -98,6 +137,17 @@ lrg_decision_request_add_choice (request, "role", "What is the spell for?", role
 lrg_bt_composite_add_child (pull, LRG_BT_NODE (lrg_bt_condition_new_judgment (
     "world.kill_c1", LRG_JUDGMENT_BAND_YES, LRG_JUDGMENT_YES, LRG_JUDGMENT_NO)));
 #+end_src
+
+** Function index
+:PROPERTIES:
+:CUSTOM_ID: function-index
+:END:
+| Type | Functions |
+|------+-----------|
+| =LrgDecisionRequest= | =lrg_decision_request_new()=, =lrg_decision_request_set_state_text()=, =lrg_decision_request_set_state_json()=, =lrg_decision_request_add_noul()=, =lrg_decision_request_add_choice()=, =lrg_decision_request_add_score()=, =lrg_decision_request_get_n_questions()=, =lrg_decision_request_dup_json()= (the wire JSON) |
+| =LrgJudgments= | =lrg_judgments_new_from_json()=, =lrg_judgments_get_model()=, =lrg_judgments_has()=, =lrg_judgments_get_noul()=, =lrg_judgments_get_band()=, =lrg_judgments_get_choice()=, =lrg_judgments_get_probability()=, =lrg_judgments_get_score()=, =lrg_judgments_get_tokens()=, =lrg_judgments_dup_ids()=, =lrg_judgments_dup_json()=, =lrg_judgments_to_blackboard()= (Nouls and Scores as floats, Choices as their option, under a prefix) |
+| =LrgDecider= | =lrg_decider_new()=, =lrg_decider_new_scripted()=, =lrg_decider_is_built_in()=, =lrg_decider_get_provider()=, =lrg_decider_get_model()=, =lrg_decider_set_model()=, =lrg_decider_get_timeout_ms()=, =lrg_decider_set_timeout_ms()=, =lrg_decider_decide_async()=, =lrg_decider_decide_finish()=, =lrg_decider_error_quark()= (=LRG_DECIDER_ERROR=) |
+| =LrgDecisionBrain= | see [[#brain][the brain]] and [[#inspector][inspecting decisions]] |
 
 ** Building
 :PROPERTIES:

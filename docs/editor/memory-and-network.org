@@ -1,0 +1,55 @@
+* Memory and network panels
+:PROPERTIES:
+:CUSTOM_ID: memory-and-network-panels
+:END:
+=LrgEditorMemoryPanel= and =LrgEditorNetworkPanel= are docked editor panels. They do not dock themselves. The shell adds them with =lrg_editor_app_add_panel()=, or a test does. The shell wiring is =handoff/v0.9.0/scratch/m8-patches/lrg-editor-window.MEMNET.patch= and is not applied in this tree, so a stock =lrgeditor= does not show the panels until that patch lands.
+
+** Memory panel
+:PROPERTIES:
+:CUSTOM_ID: memory-panel
+:END:
+=LRG_EDITOR_MEMORY_PANEL_ID= is ="memory"=. =lrg_editor_memory_panel_new()= creates the panel for an =LrgEditorApp=, or returns another full reference to the one already created for that app. The second call does not register IPC or actions again. =lrg_editor_memory_panel_find()= returns that panel (transfer none) or null. =lrg_editor_memory_panel_get_profiler()= is the panel's own =LrgMemoryProfiler= from =lrg_memory_profiler_new()=, not =lrg_memory_profiler_get_default()=. Snapshots taken from the panel stay on that instance.
+
+At construction the panel binds an asset manager once: the play session engine's manager when a play session exists, otherwise =lrg_engine_get_default()='s manager. Later frames do not replace it, so a caller that set a different manager on this profiler keeps it. =memory.status='s =asset_manager= field is whether one is set.
+
+The toolbar chips are Snapshot (=LRG_ICON_DOWNLOAD=) and Clear (=LRG_ICON_TRASH=). The sparkline plots instance counts (accent) and GPU bytes (warning), each scaled to its own max from =lrg_memory_profiler_get_history()=. The types table is Type, Count, Size, Bytes, Source, default sort count descending. The resources table is Name, Kind, Refs, CPU, GPU. Tables refresh about four times a second while the panel is shown. Samples are recorded about once a second while the panel is shown or the editor is playing. The ring is =LRG_MEMORY_HISTORY_CAP= (120).
+
+Widget names: =memory-toolbar=, =memory-snapshot=, =memory-clear=, =memory-readout=, =memory-graph=, =memory-types=, =memory-resources=, =memory-frame-tap=.
+
+Actions, registered from the panel file: =memory.show-panel= calls =editor_app_show_panel()= with ="memory"=. =memory.snapshot= stores a snapshot on the panel profiler.
+
+** Network panel
+:PROPERTIES:
+:CUSTOM_ID: network-panel
+:END:
+=LRG_EDITOR_NETWORK_PANEL_ID= is ="network"=. =lrg_editor_network_panel_new()=, =lrg_editor_network_panel_find()= and =lrg_editor_network_panel_get_stats()= match the memory panel. =lrg_editor_network_panel_get_stats()= is =lrg_net_stats_get_default()= (transfer none). The panel does not ref or unref it.
+
+While the panel is shown, or while the user has pinned recording, the panel enables the default collector unless the user toggled recording off (=suppressed=). Pinning keeps collection after the panel is hidden. Dispose turns the collector off only if this panel was the one that enabled it. =network.enable= always sets the requested value and remembers that ownership, so a later dispose turns it off even if it was already on before the call.
+
+The sparkline is bytes in and bytes out. A selected peer row graphs that peer. Otherwise a selected message row graphs that type. Otherwise the graph is global. Per-peer type history is not kept, so the panel never passes both filters. The peers table and the messages table split the space under the graph.
+
+Widget names: =network-toolbar=, =network-toggle=, =network-reset=, =network-readout=, =network-graph=, =network-peers=, =network-messages=, =network-frame-tap=. The toggle chip uses =LRG_ICON_UPLOAD= and reads Record / Recording / Idle. Reset uses =LRG_ICON_REFRESH=.
+
+Actions: =network.show-panel=, =network.toggle= (checked, follows =lrg_net_stats_get_enabled()=), =network.reset=.
+
+** IPC
+:PROPERTIES:
+:CUSTOM_ID: ipc
+:END:
+Methods are registered from the panel =.c= files at the first =lrg_editor_memory_panel_new()= / =lrg_editor_network_panel_new()= for that app. The contract is =handoff/v0.9.0/scratch/m8-ipc/MEMNET.md=.
+
+Memory: =memory.status=, =memory.types=, =memory.resources=, =memory.snapshot=, =memory.snapshots=, =memory.diff=, =memory.clear_snapshots=, =memory.history=, =memory.show=. Network: =network.stats=, =network.history=, =network.enable=, =network.reset=, =network.show=. =memory.show= and =network.show= report =shown= from =editor_app_panel_is_shown()= after =editor_app_show_panel()=. That is false when the panel was never added to the shell hash. Read-only methods are status, types, resources, snapshots, diff, history, stats and network history.
+
+** Docking
+:PROPERTIES:
+:CUSTOM_ID: docking
+:END:
+Suggested shell placement, in the unapplied patch: =make_panel()= ids =memory= (title Memory, icon =info=) and =network= (title Network, icon =upload=), both closable, tabbed on the assets dock (=LRG_DOCK_POSITION_CENTER= against =assets=), listed in View > Panels, and appended to the reset-layout order. Includes of =lrg-editor-memory-panel.h= and =lrg-editor-network-panel.h= belong next to the profiler include in =lrg-editor-app.c=. Tests dock with =lrg_editor_app_add_panel()= at =tab:assets= and do not require the shell patch.
+
+Instance counts in the editor need =GOBJECT_DEBUG=instance-count= before GObject init. =handoff/v0.9.0/scratch/m8-patches/lrg-editor-main.MEMNET.patch= appends that token at the top of =lrgeditor= =main()=, before =g_option_context_new()=. A library constructor is too late, and =main()= itself is late if a constructor already initialised GObject. See [[file:../modules/debug/memory-profiler.org][LrgMemoryProfiler]].
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+[[file:../modules/debug/memory-profiler.org][LrgMemoryProfiler]]. [[file:../modules/net/net-stats.org][LrgNetStats]]. [[file:editor-app.org][Editor application]].

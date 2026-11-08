@@ -93,6 +93,8 @@ peer_connection_free (PeerConnection *pc)
         g_object_unref (pc->cancellable);
     }
 
+    /* LrgNetStats: the peer is gone however the connection ended */
+    _lrg_net_stats_hook_peer (pc->buffer.stats_peer, FALSE);
     _lrg_net_buffer_clear (&pc->buffer);
     g_io_stream_close (G_IO_STREAM (pc->connection), NULL, NULL);
     g_clear_object (&pc->input);
@@ -165,6 +167,14 @@ admit_connection (LrgNetServer      *self,
     /* Keep references */
     g_object_ref (pc->input);
     g_object_ref (pc->output);
+
+    /* LrgNetStats counts this connection's traffic under "address:port" */
+    {
+        g_autofree gchar *stats_peer = g_strdup_printf ("%s:%u", address_str, port);
+
+        _lrg_net_buffer_set_stats_peer (&pc->buffer, stats_peer);
+        _lrg_net_stats_hook_peer (stats_peer, TRUE);
+    }
 
     g_free (address_str);
 

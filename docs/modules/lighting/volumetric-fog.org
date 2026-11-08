@@ -1,0 +1,173 @@
+* LrgVolumetricFog - Screen-Space Height Fog with Sun Shafts
+:PROPERTIES:
+:CUSTOM_ID: lrgvolumetricfog
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Lighting]]* > Volumetric fog
+#+end_quote
+
+=LrgVolumetricFog= is a post-scene pass that ray-marches an exponential height fog in screen space, lights it with the directional light of an [[file:../graphics/light-set.org][LrgLightSet]] through its cascaded shadow map (so light shafts form behind casters) plus an isotropic ambient term, and composites the result over the frame: =colour x transmittance + in-scattered light=.
+
+- *Type* - =LrgVolumetricFog=, final GObject, =LRG_TYPE_VOLUMETRIC_FOG=, GIR =Libregnum.VolumetricFog=
+- *Header* - =lighting/lrg-volumetric-fog.h=
+- *Since* - 0.9.0
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: volumetric-fog-concepts
+:END:
+*** The medium
+:PROPERTIES:
+:CUSTOM_ID: volumetric-fog-medium
+:END:
+The extinction coefficient at a point at height y is =sigma(y) = density x exp (-falloff x max (y - base, 0))=: full density at and below the base height, thinning exponentially above (falloff 0 is a uniform fog). Scattering equals extinction (no absorption term). Along a view ray of length L (the distance to the depth buffer's surface, or the march distance for sky pixels, cut at the march distance) split into =steps= segments of length dt:
+
+#+begin_example
+T  = 1, S = 0
+for each step:  t_i = (i + jitter) dt,  p = eye + rd t_i
+    st = exp (-sigma(p) dt)
+    L_i = (sun x phase(g, cos) x shadow(p) + ambient / 4 pi) x tint x intensity
+    S += T x (1 - st) x L_i
+    T *= st
+#+end_example
+
+=phase= is the Henyey-Greenstein function with anisotropy g (=(1 - g^2) / (4 pi (1 + g^2 - 2 g cos)^1.5)=, the same as the light set's air), cos is the cosine between the direction the sun light travels and the ray toward the eye (g > 0 scatters forward: brightest when looking toward the sun). =(1 - st)= is the exact integral of a step of constant density, so the result does not darken or brighten with the step count. The per-pixel jitter (interleaved gradient noise, changing every frame) turns step banding into fine noise.
+
+*** Resolution and the bilateral upsample
+:PROPERTIES:
+:CUSTOM_ID: volumetric-fog-upsample
+:END:
+The march runs into an RGBA16F target (in-scattered light in RGB, transmittance in alpha) at =resolution_scale= of the screen (0.5 by default: a quarter of the pixels). The composite pass reconstructs each full-resolution pixel from the four nearest march texels, weighting each by its bilinear weight times =1 / (0.001 + |d_texel - d_pixel| / d_pixel)=, where d is the distance from the eye to the surface seen through that texel: fog does not bleed across silhouettes. The composite blends with =ONE, SRC_ALPHA= (=rlSetBlendFactors()=), i.e. =dst x T + S= with S encoded for display.
+
+*** Relation to the light set's air and the environment
+:PROPERTIES:
+:CUSTOM_ID: volumetric-fog-vs-air
+:END:
+=lrg_light_set_set_air()= marches the same kind of medium per lit fragment inside the lit shader; =LrgVolumetricFog= marches once per (reduced) screen pixel after the scene, so its cost does not grow with overdraw and the sky is fogged too. Use one or the other. Parameters normally come from the [[file:environment.org][environment]]'s =volumetric:= block through =lrg_volumetric_fog_set_from_environment()= (density, anisotropy, steps, distance, intensity, the fog height shape, the fog colour as the tint and the ambient light).
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: volumetric-fog-api
+:END:
+#+begin_src C
+LrgVolumetricFog *lrg_volumetric_fog_new (void);
+
+void   lrg_volumetric_fog_set_density      (LrgVolumetricFog *self, gfloat density);
+gfloat lrg_volumetric_fog_get_density      (LrgVolumetricFog *self);
+void   lrg_volumetric_fog_set_anisotropy   (LrgVolumetricFog *self, gfloat g);
+gfloat lrg_volumetric_fog_get_anisotropy   (LrgVolumetricFog *self);
+void   lrg_volumetric_fog_set_steps        (LrgVolumetricFog *self, guint steps);
+guint  lrg_volumetric_fog_get_steps        (LrgVolumetricFog *self);
+void   lrg_volumetric_fog_set_max_distance (LrgVolumetricFog *self, gfloat distance);
+gfloat lrg_volumetric_fog_get_max_distance (LrgVolumetricFog *self);
+void   lrg_volumetric_fog_set_intensity    (LrgVolumetricFog *self, gfloat intensity);
+gfloat lrg_volumetric_fog_get_intensity    (LrgVolumetricFog *self);
+void   lrg_volumetric_fog_set_height       (LrgVolumetricFog *self, gfloat base_height, gfloat falloff);
+void   lrg_volumetric_fog_set_tint         (LrgVolumetricFog *self, const gfloat *rgb);
+void   lrg_volumetric_fog_set_ambient      (LrgVolumetricFog *self, const gfloat *rgb);
+void   lrg_volumetric_fog_set_resolution_scale (LrgVolumetricFog *self, gfloat scale);
+gfloat lrg_volumetric_fog_get_resolution_scale (LrgVolumetricFog *self);
+gboolean lrg_volumetric_fog_set_from_environment (LrgVolumetricFog *self, LrgEnvironment *environment);
+
+/* headless mirror of the march (no shadows, no jitter) */
+gfloat lrg_volumetric_fog_sample (LrgVolumetricFog *self, const gfloat *from, const gfloat *to,
+                                  const gfloat *sun_direction, const gfloat *sun_rgb,
+                                  gfloat *out_rgb);
+
+/* GPU */
+gboolean lrg_volumetric_fog_render        (LrgVolumetricFog *self, guint depth_texture,
+                                           gint width, gint height, const gfloat *view,
+                                           const gfloat *projection, LrgLightSet *lights,
+                                           GError **error);
+gboolean lrg_volumetric_fog_render_camera (LrgVolumetricFog *self, guint depth_texture,
+                                           gint width, gint height, LrgCamera3D *camera,
+                                           LrgLightSet *lights, GError **error);
+guint    lrg_volumetric_fog_get_scatter_texture_id (LrgVolumetricFog *self);
+void     lrg_volumetric_fog_release_gpu   (LrgVolumetricFog *self);
+#+end_src
+
+| Parameter | Default | Range |
+|-----------+---------+-------|
+| density | 0.02 | >= 0 (per world unit) |
+| anisotropy | 0.6 | -0.95 .. 0.95 |
+| steps | 32 | 4 .. 128 |
+| max distance | 100 | > 0 |
+| intensity | 1 | >= 0 |
+| base height / falloff | 0 / 0.1 | falloff >= 0 |
+| tint | white | linear |
+| ambient | black | linear |
+| resolution scale | 0.5 | 0.25 .. 1 |
+
+=lrg_volumetric_fog_render()= takes the scene's depth texture (window depth 0..1 of =projection=, e.g. from the depth prepass), the target size, and the view and projection matrices in draw space (world minus the light set's origin, the space the shadow cascades use); =lrg_volumetric_fog_render_camera()= builds them from an =LrgCamera3D= like =BeginMode3D()= (render pose, fovy, aspect width / height, rlgl's cull distances) and subtracts the light set's origin. Both composite onto the bound framebuffer with the viewport set to width x height. Errors use the =LRG_ENVIRONMENT_ERROR= domain.
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: volumetric-fog-examples
+:END:
+*** Fog from the level's environment
+:PROPERTIES:
+:CUSTOM_ID: volumetric-fog-example-level
+:END:
+#+begin_src C
+g_autoptr(LrgVolumetricFog) fog = lrg_volumetric_fog_new ();
+gboolean fog_on = lrg_volumetric_fog_set_from_environment (fog, lrg_level_get_environment (level));
+
+/* per frame, after the opaque scene, before transparents and post */
+if (fog_on)
+{
+    g_autoptr(GError) error = NULL;
+
+    if (!lrg_volumetric_fog_render_camera (fog, lrg_depth_prepass_get_depth_texture_id (prepass),
+                                           GetScreenWidth (), GetScreenHeight (),
+                                           camera, lights, &error))
+        g_warning ("fog: %s", error->message);
+}
+#+end_src
+
+*** Tuning on the CPU
+:PROPERTIES:
+:CUSTOM_ID: volumetric-fog-example-cpu
+:END:
+#+begin_src C
+gfloat eye[3] = { 0, 1.7f, 0 };
+gfloat far_wall[3] = { 0, 1.7f, -60 };
+gfloat sun_dir[3] = { 0.3f, -0.5f, 0.8f };   /* the direction the light travels */
+gfloat sun[3] = { 1.0f, 0.95f, 0.8f };
+gfloat glow[3];
+gfloat t = lrg_volumetric_fog_sample (fog, eye, far_wall, sun_dir, sun, glow);
+
+g_print ("the wall keeps %.0f%% of its colour and gains %.3f\n", t * 100.0f, glow[0]);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: volumetric-fog-performance
+:END:
+- March: (scale^2 x pixels) x steps x (one shadow-map tap + a few ALU); at 1080p, scale 0.5 and 32 steps that is about 16.6M shadow taps per frame.
+- Composite: full resolution, 9 depth fetches and 4 target fetches per pixel.
+- Memory: one RGBA16F target at the march resolution (1080p at 0.5: about 4 MB) and two small programs; the target follows the size passed to render.
+- Lower =steps= and =scale= first; anisotropy and intensity are free.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: volumetric-fog-pitfalls
+:END:
+- The depth texture must be a sampled texture (not a renderbuffer) of the same projection as the matrices passed in; a mismatched near/far plane misplaces the fog.
+- Matrices are in draw space when the light set uses a floating origin, or the shadow lookups miss.
+- The sun colour comes from the light set's directional light (=lrg_light_set_get_directional()=), linearized; without a light set or a sun only the ambient term lights the fog, and without an ambient the fog only darkens.
+- The composite works on display-encoded colour (like the light set's air): very dense fog over bright HDR content is approximate.
+- Call =lrg_volumetric_fog_release_gpu()= before =CloseWindow()=.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: volumetric-fog-editor
+:END:
+The volumetric parameters are edited in the level's environment (=environment.volumetric= in the =.rlevel=); wave 2b wires the pass into =LrgWorld3DRenderer= and the editor viewport (with a depth prepass) and exposes the parameters on the environment page.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: volumetric-fog-see-also
+:END:
+- [[file:environment.org][LrgEnvironment]] - the =volumetric:= and =fog:= settings
+- [[file:shadow-renderer.org][LrgShadowRenderer]] - the cascades the shafts come from
+- [[file:../graphics/light-set.org][LrgLightSet]] - the in-shader alternative (=lrg_light_set_set_air()=)

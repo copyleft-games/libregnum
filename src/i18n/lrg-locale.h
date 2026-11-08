@@ -154,6 +154,62 @@ LrgLocale *lrg_locale_new_from_file (const gchar  *path,
                                      GError      **error);
 
 /**
+ * lrg_locale_new_from_data:
+ * @data: (array length=length) (element-type guint8): YAML locale text
+ * @length: length of @data in bytes, or -1 when it is nul-terminated
+ * @error: return location for a #GError, or %NULL
+ *
+ * Creates a locale from YAML text in the format of
+ * lrg_locale_new_from_file(): `code` and `name` (required), an optional
+ * `plural_rule` (an #LrgPluralRule nick such as `east-slavic`; the default
+ * comes from the language code) and a `strings` mapping of key to string,
+ * or of key to a mapping of plural form (`zero`, `one`, `two`, `few`,
+ * `many`, `other`) to string.
+ *
+ * Returns: (transfer full) (nullable): a new #LrgLocale, or %NULL on error
+ */
+LRG_AVAILABLE_IN_ALL
+LrgLocale *lrg_locale_new_from_data (const gchar  *data,
+                                     gssize        length,
+                                     GError      **error);
+
+/**
+ * lrg_locale_save_to_data:
+ * @self: a #LrgLocale
+ * @length: (out) (optional): return location for the text length
+ * @error: return location for a #GError, or %NULL
+ *
+ * Writes the locale in the format lrg_locale_new_from_data() reads:
+ * `code`, `name`, `plural_rule` (only when it differs from the language's
+ * default) and `strings`, with keys in the order they were first set (the
+ * file order for a loaded locale) and plural forms in CLDR order. A key
+ * that has both a plain string and plural forms is written with its plural
+ * forms, the only one of the two the format can hold. Saving a locale that
+ * was loaded from saved text gives the same bytes.
+ *
+ * Returns: (transfer full) (nullable): the YAML text, or %NULL on error
+ */
+LRG_AVAILABLE_IN_ALL
+gchar *lrg_locale_save_to_data (LrgLocale  *self,
+                                gsize      *length,
+                                GError    **error);
+
+/**
+ * lrg_locale_save_to_file:
+ * @self: a #LrgLocale
+ * @path: (type filename): the file to write
+ * @error: return location for a #GError, or %NULL
+ *
+ * Writes the locale to @path; see lrg_locale_save_to_data().
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_locale_save_to_file (LrgLocale    *self,
+                                  const gchar  *path,
+                                  GError      **error);
+
+/**
  * lrg_locale_get_code:
  * @self: a #LrgLocale
  *

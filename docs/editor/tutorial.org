@@ -159,6 +159,12 @@ A locale opens as a key by language grid; missing translations are flagged and l
 
 The other editors cover input maps, sound banks, themes, HUD layouts, UI layouts and procgen dungeons. See [[file:data-editors.org][Data Editors]].
 
+** Step 11a: 0.9.0 workflows
+:PROPERTIES:
+:CUSTOM_ID: tutorial-editor-090
+:END:
+File > Export picks a profile (=rres=, =vfs=, =tar=, =zip=, =flatpak=, =appimage=), writes the pack and leaves the log on screen. Project Settings > Steam shows the app id and the achievement list from =project.ryaml=. The outliner filter =tag:= hides nodes that lack that tag. The scene bar opens a second level and makes one of them active. The game view letterboxes a preset such as =16:9= or =steam-deck=. Drag a widget on a UI layout to write its =x= and =y=. The VCS panel shows the diff, the log and git-lfs locks, and can commit. =lrgeditorctl merge= three-way-merges a =.rlevel= by GUID. A plugin dropped in =plugins/= adds a dock panel, a Plugins menu row and an inspector section. See [[file:workflows.org][Workflows]] and [[file:assets-and-export.org][Assets and Export]].
+
 ** Step 11: Drive it from the shell
 :PROPERTIES:
 :CUSTOM_ID: tutorial-editor-automation
@@ -421,3 +427,6 @@ main (int argc, char *argv[])
 - [[file:editor-runtime.org][Editor Runtime]]: =LrgEditor= and undo/redo
 - [[file:lrgeditorctl.org][lrgeditorctl and MCP]]: scripting the editor
 - [[file:../concepts/level-scene-world.org][Level, Scene, and World]]: three-layer rationale
+- [[file:workflows.org][0.9.0 workflows]]: tags, streaming, merge, PO, packs
+- [[file:../examples/game-showcase-3d.org][3D showcase]]: the same systems from a game binary
+- [[file:../guides/migration-0-8-to-0-9.org][Migrating from 0.8 to 0.9]]

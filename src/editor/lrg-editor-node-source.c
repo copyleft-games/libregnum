@@ -161,16 +161,137 @@ static const struct
 } suggested_params[] = {
 	{ LRG_NODE_VISUAL_LIGHT, "intensity", 1.0, "range:0,100,0.01", "Light intensity" },
 	{ LRG_NODE_VISUAL_LIGHT, "range", 10.0, "range:0,1000,0.1", "Reach of a point or spot light, in units" },
-	{ LRG_NODE_VISUAL_LIGHT, "spot_angle", 0.0, "angle:degrees", "Spot cone angle; 0 for a point light" },
+	{ LRG_NODE_VISUAL_LIGHT, "spot_angle", 0.0, "angle:degrees", "Spot cone angle (full); 0 for a point light" },
+	{ LRG_NODE_VISUAL_LIGHT, "spot_inner_angle", 0.0, "angle:degrees",
+	  "Full-brightness inner cone (full angle); unset = 0.8 x the outer cone" },
+	{ LRG_NODE_VISUAL_LIGHT, "shadow_bias", 0.005, "range:0,0.05,0.0005", "Depth bias of the shadow map lookups" },
+	/* 0.9.0: decals (LrgDecalComponent) and reflection probes */
+	{ LRG_NODE_VISUAL_DECAL, "size_x", 1.0, "range:0.01,100,0.01", "Box width along local X" },
+	{ LRG_NODE_VISUAL_DECAL, "size_y", 1.0, "range:0.01,100,0.01", "Projection depth along local Y" },
+	{ LRG_NODE_VISUAL_DECAL, "size_z", 1.0, "range:0.01,100,0.01", "Box height along local Z" },
+	{ LRG_NODE_VISUAL_DECAL, "opacity", 1.0, "range:0,1,0.01", "How strongly the decal covers the surface" },
+	{ LRG_NODE_VISUAL_DECAL, "fade_angle", 60.0, "range:0,180,1",
+	  "Surfaces turned less than this from the projection get the full decal" },
+	{ LRG_NODE_VISUAL_DECAL, "fade_width", 20.0, "range:0,180,1", "Degrees over which the decal fades out past it" },
+	{ LRG_NODE_VISUAL_DECAL, "sort_order", 0.0, "range:-100,100,1", "Higher draws on top of overlapping decals" },
+	{ LRG_NODE_VISUAL_DECAL, "roughness", 0.5, "range:0,1,0.01", "Roughness the decal writes" },
+	{ LRG_NODE_VISUAL_DECAL, "metallic", 0.0, "range:0,1,0.01", "Metallic the decal writes" },
+	{ LRG_NODE_VISUAL_REFLECTION_PROBE, "extents_x", 5.0, "range:0.05,1000,0.05", "Half size of the box along X" },
+	{ LRG_NODE_VISUAL_REFLECTION_PROBE, "extents_y", 5.0, "range:0.05,1000,0.05", "Half size of the box along Y" },
+	{ LRG_NODE_VISUAL_REFLECTION_PROBE, "extents_z", 5.0, "range:0.05,1000,0.05", "Half size of the box along Z" },
+	{ LRG_NODE_VISUAL_REFLECTION_PROBE, "blend_distance", 1.0, "range:0,100,0.05",
+	  "Band inside the box over which the probe fades into its neighbours" },
+	{ LRG_NODE_VISUAL_REFLECTION_PROBE, "intensity", 1.0, "range:0,8,0.01", "Multiplier of the captured reflections" },
+	{ LRG_NODE_VISUAL_REFLECTION_PROBE, "box_projection", 1.0, "range:0,1,1",
+	  "1 = parallax-correct reflections against the box, 0 = infinitely far" },
+	{ LRG_NODE_VISUAL_REFLECTION_PROBE, "resolution", 128.0, "range:16,1024,16", "Cubemap edge of a capture, in pixels" },
+	/* 0.9.0 M3: the lighting bake (LrgMeshRendererComponent:lightmap-scale)
+	 * and probe volumes (lrg_node_visual_get_probe_volume()) */
+	{ LRG_NODE_VISUAL_PRIMITIVE, "lightmap_scale", 1.0, "range:0,16,0.05",
+	  "Lightmap resolution relative to the bake's texels per unit; 0 = lit by probes only" },
+	{ LRG_NODE_VISUAL_MESH_ASSET, "lightmap_scale", 1.0, "range:0,16,0.05",
+	  "Lightmap resolution relative to the bake's texels per unit; 0 = lit by probes only" },
+	{ LRG_NODE_VISUAL_PROBE_VOLUME, "extents_x", 5.0, "range:0.05,1000,0.05", "Half size of the probe box along X" },
+	{ LRG_NODE_VISUAL_PROBE_VOLUME, "extents_y", 5.0, "range:0.05,1000,0.05", "Half size of the probe box along Y" },
+	{ LRG_NODE_VISUAL_PROBE_VOLUME, "extents_z", 5.0, "range:0.05,1000,0.05", "Half size of the probe box along Z" },
+	{ LRG_NODE_VISUAL_PROBE_VOLUME, "spacing", 0.0, "range:0,64,0.05",
+	  "Distance between probes; 0 = the level's probe spacing (Bake panel)" },
+	{ LRG_NODE_VISUAL_PROBE_VOLUME, "resolution", 0.0, "range:0,64,1",
+	  "Probes along each axis (2 .. 64); 0 = from the spacing" },
 	{ LRG_NODE_VISUAL_CAMERA, "fov", 60.0, "range:1,179,0.5", "Vertical field of view in degrees" },
 	{ LRG_NODE_VISUAL_CAMERA, "near", 0.1, "range:0.001,100,0.01", "Near clip plane" },
 	{ LRG_NODE_VISUAL_CAMERA, "far", 1000.0, "range:1,100000,1", "Far clip plane" },
 	{ LRG_NODE_VISUAL_AUDIO_EMITTER, "volume", 1.0, "range:0,4,0.01", "Playback volume" },
-	{ LRG_NODE_VISUAL_AUDIO_EMITTER, "radius", 10.0, "range:0,1000,0.1", "Audible radius" },
+	/* Same default as LrgAudioSourceComponent:max-distance
+	 * (LRG_AUDIO_DEFAULT_MAX_DISTANCE). The node's radius is that
+	 * distance. */
+	{ LRG_NODE_VISUAL_AUDIO_EMITTER, "radius", 50.0, "range:0,1000,0.1", "Audible radius" },
 	{ LRG_NODE_VISUAL_SPRITE, "frame", 0.0, "range:0,10000,1", "Animation frame" },
 	{ LRG_NODE_VISUAL_SPRITE, "pixels_per_unit", 32.0, "range:1,4096,1", "Texture pixels per world unit" },
 	{ LRG_NODE_VISUAL_TILEMAP, "tile_size", 1.0, "range:0.01,100,0.01", "Tile size in world units" },
 };
+
+/* String params a kind usually has (listed even when unset). */
+static const struct
+{
+	LrgNodeVisualKind  kind;
+	const gchar       *param;
+	const gchar       *value;
+	const gchar       *hint;
+	const gchar       *tooltip;
+} suggested_strings[] = {
+	{ LRG_NODE_VISUAL_LIGHT, "light_type", "point", "enum-strings:point,spot,directional",
+	  "Point, spot (a cone down local -Z) or directional (a sun shining down local -Z)" },
+	{ LRG_NODE_VISUAL_LIGHT, "bake_mode", "realtime", "enum-strings:realtime,mixed,baked",
+	  "Lighting bake: realtime (not baked), mixed (bounce baked, direct light realtime) or baked "
+	  "(direct and bounce in lightmaps)" },
+	{ LRG_NODE_VISUAL_DECAL, "normal", "", "asset:texture", "Normal map the decal blends in" },
+	{ LRG_NODE_VISUAL_DECAL, "orm", "", "asset:texture", "Occlusion / roughness / metallic map" },
+};
+
+/* Boolean params a kind usually has (listed even when unset). */
+static const struct
+{
+	LrgNodeVisualKind  kind;
+	const gchar       *param;
+	gboolean           value;
+	const gchar       *tooltip;
+} suggested_bools[] = {
+	{ LRG_NODE_VISUAL_PRIMITIVE, "static_lighting", FALSE,
+	  "Takes part in the lighting bake: blocks and bounces light and gets a lightmap" },
+	{ LRG_NODE_VISUAL_MESH_ASSET, "static_lighting", FALSE,
+	  "Takes part in the lighting bake: blocks and bounces light and gets a lightmap" },
+};
+
+static gint
+find_suggested_bool (LrgNodeVisualKind  kind,
+                     const gchar       *param)
+{
+	guint i;
+
+	for (i = 0; i < G_N_ELEMENTS (suggested_bools); i++)
+		if (suggested_bools[i].kind == kind && g_strcmp0 (suggested_bools[i].param, param) == 0)
+			return (gint) i;
+	return -1;
+}
+
+/* The inspector group of a param row: the bake's switches go under
+ * "Lighting", everything else under "Parameters". */
+static const gchar *
+param_group (const gchar *key)
+{
+	if (g_strcmp0 (key, "static_lighting") == 0 || g_strcmp0 (key, "lightmap_scale") == 0 ||
+	    g_strcmp0 (key, "bake_mode") == 0)
+		return "Lighting";
+	return "Parameters";
+}
+
+/* A row label for a well-known param: "blend_distance" -> "Blend distance",
+ * "size_x" -> "Size X". Custom keys keep their raw name. */
+static gchar *
+pretty_param (const gchar *key)
+{
+	gchar *s = g_strdelimit (g_strdup (key), "_", ' ');
+	gsize  n = strlen (s);
+
+	if (n > 0)
+		s[0] = g_ascii_toupper (s[0]);
+	if (n > 2 && s[n - 2] == ' ')
+		s[n - 1] = g_ascii_toupper (s[n - 1]);
+	return s;
+}
+
+static gint
+find_suggested_string (LrgNodeVisualKind  kind,
+                       const gchar       *param)
+{
+	guint i;
+
+	for (i = 0; i < G_N_ELEMENTS (suggested_strings); i++)
+		if (suggested_strings[i].kind == kind && g_strcmp0 (suggested_strings[i].param, param) == 0)
+			return (gint) i;
+	return -1;
+}
 
 static gint
 find_suggested (LrgNodeVisualKind  kind,
@@ -184,12 +305,63 @@ find_suggested (LrgNodeVisualKind  kind,
 	return -1;
 }
 
+gboolean
+lrg_editor_node_source_get_suggested_double (LrgNodeVisualKind  kind,
+                                            const gchar       *param,
+                                            gdouble           *out)
+{
+	gint i;
+
+	g_return_val_if_fail (param != NULL, FALSE);
+
+	i = find_suggested (kind, param);
+	if (i < 0)
+		return FALSE;
+	if (out != NULL)
+		*out = suggested_params[i].value;
+	return TRUE;
+}
+
+/*
+ * suggested_applies:
+ *
+ * Light rows by kind: a point light has no inner cone (its "spot_angle"
+ * stays, since a positive one turns it into a spot), a directional light
+ * neither cones nor range (it reaches everywhere). The kind is the
+ * "light_type" param, else a positive "spot_angle" makes a spot (the
+ * viewport's rule). Other kinds list every suggested row.
+ */
+static gboolean
+suggested_applies (LrgNodeVisual *visual,
+                   const gchar   *param)
+{
+	const GValue *lt;
+	const gchar  *type;
+	gboolean      spot;
+
+	if (lrg_node_visual_get_kind (visual) != LRG_NODE_VISUAL_LIGHT)
+		return TRUE;
+	lt = lrg_node_visual_get_param (visual, "light_type");
+	type = (lt != NULL && G_VALUE_HOLDS_STRING (lt)) ? g_value_get_string (lt) : NULL;
+	spot = g_strcmp0 (type, "spot") == 0 ||
+	       (type == NULL && lrg_node_visual_get_param_double (visual, "spot_angle", 0.0) > 0.0);
+	if (g_strcmp0 (type, "directional") == 0)
+		return g_strcmp0 (param, "range") != 0 && g_strcmp0 (param, "spot_angle") != 0 &&
+		       g_strcmp0 (param, "spot_inner_angle") != 0;
+	/* a point light keeps "spot_angle" (a positive one makes it a spot,
+	 * the 0.8 rule) but has no inner cone */
+	if (!spot)
+		return g_strcmp0 (param, "spot_inner_angle") != 0;
+	return TRUE;
+}
+
 static gboolean
 kind_has_asset (LrgNodeVisualKind kind)
 {
 	return kind == LRG_NODE_VISUAL_MESH_ASSET || kind == LRG_NODE_VISUAL_SPRITE ||
 	       kind == LRG_NODE_VISUAL_TILEMAP || kind == LRG_NODE_VISUAL_PREFAB_INSTANCE ||
-	       kind == LRG_NODE_VISUAL_CAD_PART || kind == LRG_NODE_VISUAL_AUDIO_EMITTER;
+	       kind == LRG_NODE_VISUAL_CAD_PART || kind == LRG_NODE_VISUAL_AUDIO_EMITTER ||
+	       kind == LRG_NODE_VISUAL_DECAL;
 }
 
 /* The asset kind of the "asset:<kind>" hint (the asset database's
@@ -205,6 +377,7 @@ asset_hint_for_kind (LrgNodeVisualKind kind)
 	case LRG_NODE_VISUAL_PREFAB_INSTANCE: return "asset:prefab";
 	case LRG_NODE_VISUAL_CAD_PART:        return "asset:cad";
 	case LRG_NODE_VISUAL_AUDIO_EMITTER:   return "asset:audio";
+	case LRG_NODE_VISUAL_DECAL:           return "asset:texture";
 	default:                              return "asset";
 	}
 }
@@ -213,7 +386,7 @@ static gboolean
 kind_has_material (LrgNodeVisualKind kind)
 {
 	return kind == LRG_NODE_VISUAL_PRIMITIVE || kind == LRG_NODE_VISUAL_MESH_ASSET ||
-	       kind == LRG_NODE_VISUAL_SPRITE || kind == LRG_NODE_VISUAL_LIGHT;
+	       kind == LRG_NODE_VISUAL_SPRITE || kind == LRG_NODE_VISUAL_LIGHT || kind == LRG_NODE_VISUAL_DECAL;
 }
 
 /* ==========================================================================
@@ -975,7 +1148,9 @@ build_visual (Builder *b)
 		g_value_init (&e->def, GRL_TYPE_COLOR);
 		g_value_take_boxed (&e->def, grl_color_new (255, 255, 255, 255));
 		e->has_default = TRUE;
-		if (kind != LRG_NODE_VISUAL_LIGHT)
+		/* lights and decals only use the colour (decals carry their own
+		 * roughness / metallic params) */
+		if (kind != LRG_NODE_VISUAL_LIGHT && kind != LRG_NODE_VISUAL_DECAL)
 		{
 			e = add_entry (b, SLOT_ROUGHNESS, g_param_spec_double ("roughness", NULL, NULL, 0.0, 1.0, 0.5, RW),
 			               "Roughness", "Material", "range:0,1,0.01", NULL);
@@ -998,9 +1173,17 @@ build_visual (Builder *b)
 			g_ptr_array_add (keys, g_strdup (l->data));
 	g_list_free (names);
 	for (i = 0; i < G_N_ELEMENTS (suggested_params); i++)
-		if (suggested_params[i].kind == kind &&
+		if (suggested_params[i].kind == kind && suggested_applies (visual, suggested_params[i].param) &&
 		    !g_ptr_array_find_with_equal_func (keys, suggested_params[i].param, g_str_equal, NULL))
 			g_ptr_array_add (keys, g_strdup (suggested_params[i].param));
+	for (i = 0; i < G_N_ELEMENTS (suggested_strings); i++)
+		if (suggested_strings[i].kind == kind &&
+		    !g_ptr_array_find_with_equal_func (keys, suggested_strings[i].param, g_str_equal, NULL))
+			g_ptr_array_add (keys, g_strdup (suggested_strings[i].param));
+	for (i = 0; i < G_N_ELEMENTS (suggested_bools); i++)
+		if (suggested_bools[i].kind == kind &&
+		    !g_ptr_array_find_with_equal_func (keys, suggested_bools[i].param, g_str_equal, NULL))
+			g_ptr_array_add (keys, g_strdup (suggested_bools[i].param));
 	g_ptr_array_sort_values (keys, (GCompareFunc) g_strcmp0);
 
 	for (i = 0; i < keys->len; i++)
@@ -1008,18 +1191,35 @@ build_visual (Builder *b)
 		const gchar      *key = g_ptr_array_index (keys, i);
 		const GValue     *stored = lrg_node_visual_get_param (visual, key);
 		gint              sug = find_suggested (kind, key);
-		GType             type = (stored != NULL) ? G_VALUE_TYPE (stored) : G_TYPE_DOUBLE;
+		gint              ssug = find_suggested_string (kind, key);
+		gint              bsug = find_suggested_bool (kind, key);
+		GType             type = (stored != NULL) ? G_VALUE_TYPE (stored)
+		                         : (ssug >= 0) ? G_TYPE_STRING : (bsug >= 0) ? G_TYPE_BOOLEAN : G_TYPE_DOUBLE;
 		g_autofree gchar *name = unique_name (b, "param-", key);
 		GParamSpec       *pspec = make_pspec_for_type (name, type, FALSE);
+		g_autofree gchar *label = (sug >= 0 || ssug >= 0 || bsug >= 0) ? pretty_param (key) : g_strdup (key);
 
 		if (pspec == NULL)
 			continue;
-		e = add_entry (b, SLOT_PARAM, pspec, key, "Parameters",
-		               sug >= 0 ? suggested_params[sug].hint : NULL,
-		               sug >= 0 ? suggested_params[sug].tooltip : NULL);
+		e = add_entry (b, SLOT_PARAM, pspec, label, param_group (key),
+		               sug >= 0 ? suggested_params[sug].hint : ssug >= 0 ? suggested_strings[ssug].hint : NULL,
+		               sug >= 0 ? suggested_params[sug].tooltip : ssug >= 0 ? suggested_strings[ssug].tooltip
+		               : bsug >= 0 ? suggested_bools[bsug].tooltip : NULL);
 		e->key = g_strdup (key);
-		if (sug >= 0)
+		if (bsug >= 0 && G_TYPE_FUNDAMENTAL (type) == G_TYPE_BOOLEAN)
+		{
+			g_value_init (&e->def, G_TYPE_BOOLEAN);
+			g_value_set_boolean (&e->def, suggested_bools[bsug].value);
+			e->has_default = TRUE;
+		}
+		else if (sug >= 0)
 			default_double (e, suggested_params[sug].value);
+		else if (ssug >= 0 && G_TYPE_FUNDAMENTAL (type) == G_TYPE_STRING)
+		{
+			g_value_init (&e->def, G_TYPE_STRING);
+			g_value_set_string (&e->def, suggested_strings[ssug].value);
+			e->has_default = TRUE;
+		}
 		else if (G_TYPE_FUNDAMENTAL (type) != G_TYPE_STRING && G_TYPE_FUNDAMENTAL (type) != G_TYPE_BOXED)
 			default_from_pspec (e);
 	}

@@ -23,6 +23,7 @@
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
+#include "../animation/lrg-sequence.h"
 
 G_BEGIN_DECLS
 
@@ -152,7 +153,9 @@ guint lrg_editor_timeline_remove_key (LrgEditor   *self,
  * @to_time: the new time (>= 0)
  * @merge: %TRUE while dragging, so the drag is one undo step
  *
- * Retimes matching keys, keeping value and easing.
+ * Retimes matching keys with lrg_timeline_track_move_key(), keeping
+ * their value, easing and Bézier handles (a key already at @to_time on
+ * the same track is replaced).
  *
  * Returns: the number of keys moved
  */
@@ -174,6 +177,9 @@ guint lrg_editor_timeline_move_key (LrgEditor   *self,
  * @time: the key time (keys within 1 ms match)
  * @easing: the new easing to the next key
  *
+ * Sets the easing of matching keys. A Bézier key (see
+ * lrg_editor_timeline_set_tangents()) becomes an eased key again.
+ *
  * Returns: the number of keys changed
  */
 LRG_AVAILABLE_IN_ALL
@@ -183,6 +189,59 @@ guint lrg_editor_timeline_set_easing (LrgEditor     *self,
                                       const gchar   *channel,
                                       gfloat         time,
                                       LrgEasingType  easing);
+
+/**
+ * lrg_editor_timeline_set_tangents:
+ * @self: an #LrgEditor
+ * @name: a timeline name
+ * @node: the animated node
+ * @channel: (nullable): a channel, or %NULL for every track of @node
+ * @time: the key time (keys within 1 ms match)
+ * @mode: the tangent mode
+ * @in_tangent: incoming slope in value per second (%LRG_SEQUENCE_TANGENT_USER
+ *   uses it for both sides, %LRG_SEQUENCE_TANGENT_BROKEN for the in side)
+ * @out_tangent: outgoing slope (%LRG_SEQUENCE_TANGENT_BROKEN only)
+ *
+ * Makes matching keys Bézier keys with lrg_timeline_track_set_key_tangents()
+ * (the segment after each one follows the handles instead of its
+ * easing), as one undo step ("Set Tangents"). Setting the same mode and
+ * slopes again records nothing.
+ *
+ * Since: 0.9.0
+ *
+ * Returns: the number of keys matched
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_timeline_set_tangents (LrgEditor              *self,
+                                        const gchar            *name,
+                                        LrgNode                *node,
+                                        const gchar            *channel,
+                                        gfloat                  time,
+                                        LrgSequenceTangentMode  mode,
+                                        gfloat                  in_tangent,
+                                        gfloat                  out_tangent);
+
+/**
+ * lrg_editor_timeline_clear_tangents:
+ * @self: an #LrgEditor
+ * @name: a timeline name
+ * @node: the animated node
+ * @channel: (nullable): a channel, or %NULL for every track of @node
+ * @time: the key time (keys within 1 ms match)
+ *
+ * Turns matching Bézier keys back into eased keys (their easing is used
+ * again), as one undo step ("Clear Tangents").
+ *
+ * Since: 0.9.0
+ *
+ * Returns: the number of keys that were Bézier keys
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_timeline_clear_tangents (LrgEditor   *self,
+                                          const gchar *name,
+                                          LrgNode     *node,
+                                          const gchar *channel,
+                                          gfloat       time);
 
 /**
  * lrg_editor_timeline_remove_track:

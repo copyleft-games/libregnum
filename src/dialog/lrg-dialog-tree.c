@@ -12,6 +12,7 @@
 #endif
 #include "dialog/lrg-dialog-tree.h"
 #include "lrg-enums.h"
+#include "core/lrg-data-loader.h"
 
 #include <gio/gio.h>
 #include <yaml-glib.h>
@@ -30,6 +31,7 @@ struct _LrgDialogTree
     gchar      *description;
     gchar      *start_node_id;
     GHashTable *nodes;    /* string -> LrgDialogNode */
+    GPtrArray  *order;    /* node ids, in the order added */
 };
 
 G_DEFINE_TYPE (LrgDialogTree, lrg_dialog_tree, G_TYPE_OBJECT)
@@ -56,6 +58,7 @@ lrg_dialog_tree_finalize (GObject *object)
     g_clear_pointer (&self->description, g_free);
     g_clear_pointer (&self->start_node_id, g_free);
     g_clear_pointer (&self->nodes, g_hash_table_unref);
+    g_clear_pointer (&self->order, g_ptr_array_unref);
 
     G_OBJECT_CLASS (lrg_dialog_tree_parent_class)->finalize (object);
 }
@@ -183,6 +186,7 @@ lrg_dialog_tree_init (LrgDialogTree *self)
 {
     self->nodes = g_hash_table_new_full (g_str_hash, g_str_equal,
                                          g_free, g_object_unref);
+    self->order = g_ptr_array_new_with_free_func (g_free);
 }
 
 /*
@@ -397,6 +401,9 @@ lrg_dialog_tree_build_from_yaml (YamlParser   *parser,
     if (title != NULL)
         lrg_dialog_tree_set_title (tree, title);
 
+    if (yaml_mapping_get_string_member (mapping, "description") != NULL)
+        lrg_dialog_tree_set_description (tree, yaml_mapping_get_string_member (mapping, "description"));
+
     n_nodes = yaml_sequence_get_length (nodes_seq);
     for (i = 0; i < n_nodes; i++)
     {
@@ -489,9 +496,10 @@ lrg_dialog_tree_build_from_yaml (YamlParser   *parser,
         /*
          * Linear-scene authoring convenience: a node with neither
          * 'next' nor 'responses' auto-chains to the node that follows
-         * it in the sequence. The last node stays terminal.
+         * it in the sequence. The last node stays terminal, and so does
+         * a node with an explicit `next: null`.
          */
-        if (next == NULL &&
+        if (next == NULL && !yaml_mapping_has_member (node_map, "next") &&
             lrg_dialog_node_get_response_count (node) == 0 &&
             i + 1 < n_nodes)
         {
@@ -650,6 +658,10 @@ lrg_dialog_tree_add_node (LrgDialogTree *self,
     node_id = lrg_dialog_node_get_id (node);
     g_return_if_fail (node_id != NULL);
 
+    /* a new id goes last; a replaced node keeps its place */
+    if (!g_hash_table_contains (self->nodes, node_id))
+        g_ptr_array_add (self->order, g_strdup (node_id));
+
     /* Takes ownership of node */
     g_hash_table_replace (self->nodes, g_strdup (node_id), node);
 }
@@ -705,9 +717,19 @@ gboolean
 lrg_dialog_tree_remove_node (LrgDialogTree *self,
                              const gchar   *node_id)
 {
+    guint i;
+
     g_return_val_if_fail (LRG_IS_DIALOG_TREE (self), FALSE);
     g_return_val_if_fail (node_id != NULL, FALSE);
 
+    for (i = 0; i < self->order->len; i++)
+    {
+        if (g_str_equal (g_ptr_array_index (self->order, i), node_id))
+        {
+            g_ptr_array_remove_index (self->order, i);
+            break;
+        }
+    }
     return g_hash_table_remove (self->nodes, node_id);
 }
 
@@ -737,8 +759,14 @@ lrg_dialog_tree_get_node_count (LrgDialogTree *self)
 GList *
 lrg_dialog_tree_get_node_ids (LrgDialogTree *self)
 {
+    GList *ids = NULL;
+    guint  i;
+
     g_return_val_if_fail (LRG_IS_DIALOG_TREE (self), NULL);
-    return g_hash_table_get_keys (self->nodes);
+
+    for (i = self->order->len; i > 0; i--)
+        ids = g_list_prepend (ids, g_ptr_array_index (self->order, i - 1));
+    return ids;
 }
 
 /*
@@ -886,4 +914,224 @@ lrg_dialog_tree_validate (LrgDialogTree  *self,
     }
 
     return TRUE;
+}
+
+/* ==========================================================================
+ * Saving
+ * ========================================================================== */
+
+/* a sequence of strings, or %NULL when @strings is empty */
+static YamlNode *
+string_sequence (GPtrArray *strings)
+{
+    g_autoptr(YamlSequence) sequence = NULL;
+    guint i;
+
+    if (strings == NULL || strings->len == 0)
+        return NULL;
+    sequence = yaml_sequence_new ();
+    for (i = 0; i < strings->len; i++)
+    {
+        g_autoptr(YamlNode) element = lrg_data_yaml_string (g_ptr_array_index (strings, i));
+
+        yaml_sequence_add_element (sequence, element);
+    }
+    return yaml_node_new_sequence (sequence);
+}
+
+/* sets @key of @mapping to @node when it is not %NULL (consumes @node) */
+static void
+set_member_take (YamlMapping *mapping,
+                 const gchar *key,
+                 YamlNode    *node)
+{
+    if (node == NULL)
+        return;
+    yaml_mapping_set_member (mapping, key, node);
+    yaml_node_unref (node);
+}
+
+/* the mapping of one node; @following is the next node's id, or %NULL */
+static YamlNode *
+node_to_yaml (LrgDialogNode  *node,
+              const gchar    *following,
+              GError        **error)
+{
+    g_autoptr(YamlMapping) mapping = yaml_mapping_new ();
+    GPtrArray *responses;
+    const gchar *next;
+    GList *keys;
+    GList *l;
+    guint i;
+
+    set_member_take (mapping, "id", lrg_data_yaml_string (lrg_dialog_node_get_id (node)));
+    if (lrg_dialog_node_get_speaker (node) != NULL)
+        set_member_take (mapping, "speaker", lrg_data_yaml_string (lrg_dialog_node_get_speaker (node)));
+    set_member_take (mapping, "text", lrg_data_yaml_string (lrg_dialog_node_get_text (node) != NULL ?
+                                                            lrg_dialog_node_get_text (node) : ""));
+
+    /*
+     * `next`, written so the loader rebuilds exactly this link: a node
+     * without responses auto-chains to the following node when `next` is
+     * absent, so that case is left out and a mid-list terminal node gets
+     * an explicit null.
+     */
+    next = lrg_dialog_node_get_next_node_id (node);
+    if (lrg_dialog_node_get_response_count (node) > 0)
+    {
+        if (next != NULL)
+            set_member_take (mapping, "next", lrg_data_yaml_string (next));
+    }
+    else if (next != NULL)
+    {
+        if (g_strcmp0 (next, following) != 0)
+            set_member_take (mapping, "next", lrg_data_yaml_string (next));
+    }
+    else if (following != NULL)
+    {
+        set_member_take (mapping, "next", yaml_node_new_null ());
+    }
+
+    /* metadata, keys sorted (the node keeps them unordered) */
+    keys = g_list_sort (lrg_dialog_node_get_metadata_keys (node), (GCompareFunc)g_strcmp0);
+    if (keys != NULL)
+    {
+        g_autoptr(YamlMapping) meta = yaml_mapping_new ();
+
+        for (l = keys; l != NULL; l = l->next)
+            set_member_take (meta, l->data,
+                             lrg_data_yaml_string (lrg_dialog_node_get_metadata_value (node, l->data)));
+        set_member_take (mapping, "metadata", yaml_node_new_mapping (meta));
+    }
+    g_list_free (keys);
+
+    set_member_take (mapping, "conditions", string_sequence (lrg_dialog_node_get_conditions (node)));
+    set_member_take (mapping, "effects", string_sequence (lrg_dialog_node_get_effects (node)));
+
+    /* responses: text and next are required by the loader */
+    responses = lrg_dialog_node_get_responses (node);
+    if (responses != NULL && responses->len > 0)
+    {
+        g_autoptr(YamlSequence) list = yaml_sequence_new ();
+
+        for (i = 0; i < responses->len; i++)
+        {
+            LrgDialogResponse *response = g_ptr_array_index (responses, i);
+            g_autoptr(YamlMapping) entry = yaml_mapping_new ();
+            g_autoptr(YamlNode) entry_node = NULL;
+
+            if (lrg_dialog_response_get_next_node_id (response) == NULL)
+            {
+                g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                             "Response %u of node '%s' has no next node, which the format requires",
+                             i, lrg_dialog_node_get_id (node));
+                return NULL;
+            }
+            set_member_take (entry, "text",
+                             lrg_data_yaml_string (lrg_dialog_response_get_text (response) != NULL ?
+                                                   lrg_dialog_response_get_text (response) : ""));
+            set_member_take (entry, "next", lrg_data_yaml_string (lrg_dialog_response_get_next_node_id (response)));
+            set_member_take (entry, "conditions", string_sequence (lrg_dialog_response_get_conditions (response)));
+            set_member_take (entry, "effects", string_sequence (lrg_dialog_response_get_effects (response)));
+            entry_node = yaml_node_new_mapping (entry);
+            yaml_sequence_add_element (list, entry_node);
+        }
+        set_member_take (mapping, "responses", yaml_node_new_sequence (list));
+    }
+
+    return yaml_node_new_mapping (mapping);
+}
+
+/* the document tree of @self in the loader's format */
+static YamlNode *
+tree_to_yaml (LrgDialogTree  *self,
+              GError        **error)
+{
+    g_autoptr(YamlMapping) root = yaml_mapping_new ();
+    g_autoptr(YamlSequence) nodes = yaml_sequence_new ();
+    const gchar *first;
+    guint i;
+
+    if (self->order->len == 0)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Dialog tree '%s' has no nodes, which the format requires", self->id);
+        return NULL;
+    }
+
+    set_member_take (root, "id", lrg_data_yaml_string (self->id != NULL ? self->id : ""));
+    if (self->title != NULL)
+        set_member_take (root, "title", lrg_data_yaml_string (self->title));
+    if (self->description != NULL)
+        set_member_take (root, "description", lrg_data_yaml_string (self->description));
+    first = g_ptr_array_index (self->order, 0);
+    if (self->start_node_id != NULL && g_strcmp0 (self->start_node_id, first) != 0)
+        set_member_take (root, "start", lrg_data_yaml_string (self->start_node_id));
+
+    for (i = 0; i < self->order->len; i++)
+    {
+        LrgDialogNode *node = g_hash_table_lookup (self->nodes, g_ptr_array_index (self->order, i));
+        const gchar *following = i + 1 < self->order->len ? g_ptr_array_index (self->order, i + 1) : NULL;
+        g_autoptr(YamlNode) element = node_to_yaml (node, following, error);
+
+        if (element == NULL)
+            return NULL;
+        yaml_sequence_add_element (nodes, element);
+    }
+    set_member_take (root, "nodes", yaml_node_new_sequence (nodes));
+
+    return yaml_node_new_mapping (root);
+}
+
+/*
+ * lrg_dialog_tree_save_to_data:
+ * @self: an #LrgDialogTree
+ * @length: (out) (optional): return location for the text length
+ * @error: (nullable): return location for error
+ *
+ * Writes the tree as YAML in the loader's format.
+ *
+ * Returns: (transfer full) (nullable): the YAML text, or %NULL on error
+ */
+gchar *
+lrg_dialog_tree_save_to_data (LrgDialogTree  *self,
+                              gsize          *length,
+                              GError        **error)
+{
+    g_autoptr(YamlNode) root = NULL;
+
+    g_return_val_if_fail (LRG_IS_DIALOG_TREE (self), NULL);
+    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+    root = tree_to_yaml (self, error);
+    if (root == NULL)
+        return NULL;
+    return lrg_data_yaml_to_data (root, length, error);
+}
+
+/*
+ * lrg_dialog_tree_save_to_file:
+ * @self: an #LrgDialogTree
+ * @path: (type filename): the file to write
+ * @error: (nullable): return location for error
+ *
+ * Writes the tree to @path.
+ *
+ * Returns: %TRUE on success
+ */
+gboolean
+lrg_dialog_tree_save_to_file (LrgDialogTree  *self,
+                              const gchar    *path,
+                              GError        **error)
+{
+    g_autoptr(YamlNode) root = NULL;
+
+    g_return_val_if_fail (LRG_IS_DIALOG_TREE (self), FALSE);
+    g_return_val_if_fail (path != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    root = tree_to_yaml (self, error);
+    if (root == NULL)
+        return FALSE;
+    return lrg_data_yaml_to_file (root, path, error);
 }

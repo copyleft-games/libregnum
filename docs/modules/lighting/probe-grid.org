@@ -1,0 +1,253 @@
+* LrgProbeGrid - Baked Irradiance Probes (L2 SH)
+:PROPERTIES:
+:CUSTOM_ID: lrgprobegrid
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Lighting]]* > Probe grid
+#+end_quote
+
+A probe grid is a box filled with a regular lattice of light probes. Each probe holds the irradiance around one point as nine L2 spherical-harmonic coefficients per colour channel, baked by the [[file:../../guides/lighting-bake.org][lighting bake]]. Objects without a [[file:lightmap3d.org][lightmap]] entry (characters, props that move, small clutter left out of the lightmaps) take their indirect light from the grid around them, so they match the baked scene instead of the flat ambient. Several grids may exist per world (a coarse one over a whole level, finer ones in rooms). The 2D [[file:index.org][LrgLightProbe]] is a separate, unrelated type.
+
+- *Type* - =LrgProbeGrid=, final GObject, =LRG_TYPE_PROBE_GRID=, GIR =Libregnum.ProbeGrid=
+- *Header* - =lighting/lrg-probe-grid.h=
+- *Enum* - =LrgProbeGridError= (=LRG_TYPE_PROBE_GRID_ERROR=, domain =LRG_PROBE_GRID_ERROR=)
+- *Properties* - =intensity= (gfloat, read-write, default 1), =n-probes= (guint, read-only)
+- *Signal* - =changed= (no arguments): the box, the resolution or probe data changed
+- *File format* - =.rprobes= (YAML with base64 data)
+- *Since* - 0.9.0
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-concepts
+:END:
+*** Lattice
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-lattice
+:END:
+The grid spans an axis-aligned box =min= .. =max= with =nx x ny x nz= probes (1 .. =LRG_PROBE_GRID_MAX_RESOLUTION= = 64 per axis) on the lattice points, box corners included: probe =(x, y, z)= sits at =min + (max - min) * (x, y, z) / (n - 1)=; an axis with one probe puts it at the box centre. Probes are stored in linear order =index = x + nx (y + ny z)= (=lrg_probe_grid_get_index()=). A new grid is 2 x 2 x 2 over -1 .. 1 with every probe invalid.
+
+*** Coefficients (the LrgEnvironment convention)
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-sh
+:END:
+A probe is =LRG_PROBE_GRID_SH_FLOATS= (27) floats, coefficient-major (=c0.rgb, c1.rgb, ... c8.rgb=), basis order Y00, Y1-1 (y), Y10 (z), Y11 (x), Y2-2 (xy), Y2-1 (yz), Y20, Y21 (xz), Y22, in world axes, already convolved with the clamped cosine and divided by pi: exactly what =lrg_environment_sh_project_cubemap()= produces, so =lrg_environment_sh_irradiance (sh, n, rgb)= gives the irradiance / pi a surface facing =n= receives (see [[file:environment.org::#environment-irradiance][the environment's SH section]]). A constant surrounding colour C is =c0 = C / 0.282095= with the other coefficients zero.
+
+Probes hold the *indirect* light of mixed and baked lights plus the sky, never the direct light of baked lights: dynamic objects still get those lights at runtime (see [[file:lightmap3d.org::#lightmap3d-light-modes][light modes]]).
+
+*** Validity and the resolved data
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-validity
+:END:
+A probe the baker found inside geometry (most of its rays hit back faces) is marked invalid: its black would darken everything nearby. Before sampling or uploading, the grid *resolves* its data: valid probes keep their coefficients, and each invalid probe takes the average of its already-filled 6-neighbours, wave after wave outward from the valid ones. The stored data (=lrg_probe_grid_get_probe()=, the file) is untouched; the resolved copy is rebuilt after every change. A grid without any valid probe does not light (sampling returns =FALSE=, the renderer skips it).
+
+*** Sampling
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-sampling
+:END:
+=lrg_probe_grid_sample_sh()= clamps the position into the box, finds the lattice cell and blends the eight resolved corner probes trilinearly (SH is linear, so blending coefficients equals blending irradiance), times the intensity. =lrg_probe_grid_sample()= evaluates that at a normal. The shader does the same with hardware trilinear filtering of the 3D texture, so CPU and GPU agree within RGBA16F precision.
+
+*** Several grids
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-several
+:END:
+=lrg_world3d_find_probe_grid()= picks, among the world's grids that contain a point and have a valid probe, the one with the smallest box (the most detailed), ties to the earliest added. The renderer asks it once per item with the item's bounds centre, so one draw reads one grid; there is no blending across grid borders in 0.9.0 (let detailed grids overlap the coarse one by a probe spacing).
+
+*** GPU layout
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-gpu
+:END:
+=lrg_probe_grid_upload()= pads each probe to 28 floats (the 28th is its validity) and stores them in one RGBA16F 3D texture of =nx x ny x 7 nz= texels: group g (floats 4g .. 4g + 3) of probe (x, y, z) is texel =(x, y, g nz + z)=. The shader samples each group at =((f.xy + 0.5) / n.xy, (g nz + f.z + 0.5) / (7 nz))= with =f= the lattice coordinate clamped to =0 .. n - 1=, so linear filtering never mixes two groups. Seven fetches and the nine-term SH sum per fragment. rlgl has no 3D texture API: the upload and bind go through =glTexImage3D= / =glBindTexture (GL_TEXTURE_3D)= from =rlGetProcAddress()=.
+
+** Format: =.rprobes=
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-format
+:END:
+One YAML file. The coefficients are inline base64 of little-endian float32 rather than a sidecar binary: a grid is one asset (one GUID, one file to copy), the data is bit exact, and YAML parsers handle a long scalar fine. A 16 x 8 x 16 grid is 221 KB of floats (about 295 KB of base64); the 64^3 maximum is 28 MB (37 MB base64), so keep grids coarse (one probe per 1 .. 4 units).
+
+#+begin_src yaml
+version: 1                          # LRG_PROBE_GRID_FORMAT_VERSION; newer files are refused
+bounds:
+  min: [-8, 0, -8]                  # world-space box
+  max: [8, 4, 8]
+resolution: [9, 3, 9]               # probes per axis (1 .. 64)
+intensity: 1                        # multiplier on every probe
+encoding: base64-f32le              # the only encoding; other values are refused
+sh: AAAAPwAAAD8AAAA/...             # 27 floats x probes, probe after probe (x fastest)
+valid: AQEBAQAB...                  # one byte per probe, 0 = invalid
+#+end_src
+
+| Key | Type | Meaning |
+|-+-+-|
+| =version= | int | 1 |
+| =bounds.min=, =bounds.max= | 3 numbers each | the box (swapped components are sorted) |
+| =resolution= | 3 integers | nx, ny, nz |
+| =intensity= | float | =LrgProbeGrid:intensity= |
+| =encoding= | string | =base64-f32le= (optional, the default) |
+| =sh= | base64 | exactly =27 x 4 x nx ny nz= bytes; missing: all zero |
+| =valid= | base64 | exactly =nx ny nz= bytes; missing: all invalid |
+
+Errors: =LRG_PROBE_GRID_ERROR_IO= (unreadable), =_FORMAT= (no bounds / resolution, sizes that do not match, unknown encoding), =_VERSION=, =_GPU=.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-api
+:END:
+#+begin_src C
+#define LRG_PROBE_GRID_SH_FLOATS       (27)
+#define LRG_PROBE_GRID_MAX_RESOLUTION  (64)
+#define LRG_PROBE_GRID_FORMAT_VERSION  (1)
+
+typedef enum {
+	LRG_PROBE_GRID_ERROR_FAILED, LRG_PROBE_GRID_ERROR_IO, LRG_PROBE_GRID_ERROR_FORMAT,
+	LRG_PROBE_GRID_ERROR_VERSION, LRG_PROBE_GRID_ERROR_GPU
+} LrgProbeGridError;
+GType  lrg_probe_grid_error_get_type (void);
+GQuark lrg_probe_grid_error_quark (void);
+
+LrgProbeGrid *lrg_probe_grid_new             (void);
+LrgProbeGrid *lrg_probe_grid_new_with_bounds (const gfloat *min, const gfloat *max, guint nx, guint ny, guint nz);
+LrgProbeGrid *lrg_probe_grid_new_from_file   (const gchar *path, GError **error);
+gboolean      lrg_probe_grid_save            (LrgProbeGrid *self, const gchar *path, GError **error);
+const gchar  *lrg_probe_grid_get_path        (LrgProbeGrid *self);
+
+/* layout */
+void     lrg_probe_grid_set_bounds         (LrgProbeGrid *self, const gfloat *min, const gfloat *max);
+void     lrg_probe_grid_get_bounds         (LrgProbeGrid *self, gfloat *out_min, gfloat *out_max);
+void     lrg_probe_grid_set_resolution     (LrgProbeGrid *self, guint nx, guint ny, guint nz);
+void     lrg_probe_grid_get_resolution     (LrgProbeGrid *self, guint *out_nx, guint *out_ny, guint *out_nz);
+guint    lrg_probe_grid_get_n_probes       (LrgProbeGrid *self);
+guint    lrg_probe_grid_get_index          (LrgProbeGrid *self, guint x, guint y, guint z);
+gboolean lrg_probe_grid_get_probe_position (LrgProbeGrid *self, guint index, gfloat *out_position);
+
+/* probe data */
+gboolean lrg_probe_grid_set_probe      (LrgProbeGrid *self, guint index, const gfloat *sh, gboolean valid);
+gboolean lrg_probe_grid_get_probe      (LrgProbeGrid *self, guint index, gfloat *out_sh);
+void     lrg_probe_grid_set_valid      (LrgProbeGrid *self, guint index, gboolean valid);
+guint    lrg_probe_grid_get_n_valid    (LrgProbeGrid *self);
+gfloat  *lrg_probe_grid_get_data       (LrgProbeGrid *self, gsize *n_floats);
+guint8  *lrg_probe_grid_get_validity   (LrgProbeGrid *self, guint *n_probes);
+void     lrg_probe_grid_notify_changed (LrgProbeGrid *self);
+
+/* sampling */
+gboolean lrg_probe_grid_contains   (LrgProbeGrid *self, const gfloat *position);
+gboolean lrg_probe_grid_sample_sh  (LrgProbeGrid *self, const gfloat *position, gfloat *out_sh);
+gboolean lrg_probe_grid_sample     (LrgProbeGrid *self, const gfloat *position, const gfloat *normal,
+                                    gfloat *out_rgb);
+void     lrg_probe_grid_set_intensity (LrgProbeGrid *self, gfloat intensity);
+gfloat   lrg_probe_grid_get_intensity (LrgProbeGrid *self);
+
+/* GPU */
+gboolean lrg_probe_grid_upload      (LrgProbeGrid *self, GError **error);
+void     lrg_probe_grid_unload_gpu  (LrgProbeGrid *self);
+guint    lrg_probe_grid_get_texture (LrgProbeGrid *self);
+#+end_src
+
+| Function | Notes |
+|-+-|
+| =lrg_probe_grid_new_with_bounds()= | corners may be given in any order; resolution clamped to 1 .. 64 |
+| =lrg_probe_grid_new_from_file()= / =lrg_probe_grid_save()= | the =.rprobes= format above; both remember the path |
+| =lrg_probe_grid_set_bounds()= | moves the box, keeps the data; emits =changed= |
+| =lrg_probe_grid_set_resolution()= | reallocates: every probe black and invalid; emits =changed=, notifies =n-probes= |
+| =lrg_probe_grid_get_index()= | =G_MAXUINT= out of range |
+| =lrg_probe_grid_get_probe_position()= | world position of a probe; =FALSE= out of range |
+| =lrg_probe_grid_set_probe()= | 27 floats + validity; emits =changed= (use =get_data()= + =notify_changed()= for bulk writes) |
+| =lrg_probe_grid_get_probe()= | the *stored* coefficients (optional out); returns the validity |
+| =lrg_probe_grid_get_n_valid()= | cached until the next change |
+| =lrg_probe_grid_get_data()= / =get_validity()= | writable storage (transfer none); call =notify_changed()= after writing |
+| =lrg_probe_grid_contains()= | borders included |
+| =lrg_probe_grid_sample_sh()= | trilinear blend of the resolved coefficients, times the intensity; zeros and =FALSE= without a valid probe |
+| =lrg_probe_grid_sample()= | =sample_sh()= evaluated with =lrg_environment_sh_irradiance()=: irradiance / pi |
+| =lrg_probe_grid_upload()= | needs a GL 3.3 context; re-uploads only after a change; the renderer calls it lazily |
+| =lrg_probe_grid_get_texture()= | GL id, 0 when not uploaded or stale |
+
+World side (=world3d/lrg-world3d.h=): =lrg_world3d_add_probe_grid()=, =lrg_world3d_remove_probe_grid()=, =lrg_world3d_clear_probe_grids()=, =lrg_world3d_get_probe_grids()= (transfer none, element type =LrgProbeGrid=) and =lrg_world3d_find_probe_grid()=.
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-examples
+:END:
+*** A grid lit by the environment's sky
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-example-sky
+:END:
+Without a baker, every probe can take the sky's own irradiance: dynamic objects in the box then match the sky, and a baker later only refines it.
+
+#+begin_src C
+gfloat mn[3] = { -8, 0, -8 }, mx[3] = { 8, 4, 8 };
+gfloat sh[LRG_PROBE_GRID_SH_FLOATS];
+g_autoptr(LrgProbeGrid) grid = lrg_probe_grid_new_with_bounds (mn, mx, 9, 3, 9);
+guint i;
+
+lrg_environment_get_sh (env, sh);
+for (i = 0; i < lrg_probe_grid_get_n_probes (grid); i++)
+	lrg_probe_grid_set_probe (grid, i, sh, TRUE);
+lrg_probe_grid_save (grid, "maps/yard.rprobes", &error);
+lrg_world3d_add_probe_grid (world, grid);
+#+end_src
+
+*** Lighting a CPU-side effect from the grid
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-example-cpu
+:END:
+#+begin_src C
+gfloat up[3] = { 0, 1, 0 }, rgb[3];
+LrgProbeGrid *grid = lrg_world3d_find_probe_grid (world, position);
+
+if (grid != NULL && lrg_probe_grid_sample (grid, position, up, rgb))
+	tint_particles (rgb);       /* linear irradiance / pi */
+#+end_src
+
+*** Writing a whole grid at once (a baker)
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-example-bulk
+:END:
+#+begin_src C
+gsize   nf;
+guint   n;
+gfloat *data = lrg_probe_grid_get_data (grid, &nf);
+guint8 *valid = lrg_probe_grid_get_validity (grid, &n);
+
+for (i = 0; i < n; i++)
+{
+	bake_probe (i, data + i * LRG_PROBE_GRID_SH_FLOATS);
+	valid[i] = probe_outside_geometry (i);
+}
+lrg_probe_grid_notify_changed (grid);   /* one changed signal, one re-resolve */
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-performance
+:END:
+- Shader: seven filtered 3D fetches plus the SH sum per fragment of a probe-lit draw (comparable to the environment's own SH sum plus one texture lookup per coefficient group).
+- Renderer: one =lrg_world3d_find_probe_grid()= per item without a lightmap entry, linear in the number of grids (each test is a box check and a cached count); the bind (batch flush, five uniforms, one texture) happens only when the bound grid changes.
+- Resolve (measured, release build): 6.7 ms for 32^3 probes with a third invalid, done once after each change.
+- CPU sampling: about 0.67 us per =lrg_probe_grid_sample()= (trilinear + SH evaluation).
+- Files: a 32^3 grid is 4.8 MB of =.rprobes= and takes about 150 ms to save and 130 ms to load (base64 + YAML); keep grids coarse.
+- GPU memory: 7 x 8 bytes per probe (RGBA16F): 448 B, 1.8 MB for 32^3.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-pitfalls
+:END:
+- The grid is picked per item by its bounds centre: a large object straddling two grids reads one of them. Keep large static objects lightmapped.
+- An item outside every grid falls back to the environment or the ambient: cover the playable space.
+- Writes through =get_data()= / =get_validity()= are invisible until =notify_changed()=.
+- =set_resolution()= discards the data.
+- The probes are indirect light only for baked lights; do not expect a baked lamp's direct light on a dynamic object from the grid (the lamp lights it at runtime).
+- =unload_gpu()= before closing the window when the grid outlives it.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-editor
+:END:
+The next 0.9.0 wave adds *probe volumes*: a node kind whose box and spacing (=probe_spacing= in =lighting: settings:= as the default) the bake panel turns into a grid, written as =<level>-<n>.rprobes= and listed in =lighting: probes:=, plus a viewport visualisation drawing each probe as a small sphere shaded with =lrg_probe_grid_sample()= (invalid probes crossed out). =lrg_probe_grid_get_probe_position()=, =get_probe()= and the =changed= signal are what that overlay reads. Today, list grids in the level's =lighting: probes:= by hand; play-in-editor loads them.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: probe-grid-see-also
+:END:
+- [[file:lightmap3d.org][LrgLightmap3D]] - light modes, the runtime path
+- [[file:../../guides/lighting-bake.org][Lighting bake guide]]
+- [[file:environment.org][LrgEnvironment]] - the SH convention
+- [[file:../graphics/light-set.org::#hooks][LrgLightSet hooks]] - =LRG_BAKED_GLSL=

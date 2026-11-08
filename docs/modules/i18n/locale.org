@@ -72,13 +72,14 @@ strings:
   greeting: Hello
   farewell: Goodbye
   welcome: Welcome, %s!
-  inventory:
-    open: Open Inventory
-    close: Close Inventory
+  inventory.open: Open Inventory
+  inventory.close: Close Inventory
   items:
     one: "1 item"
     other: "%d items"
 #+end_src
+
+A mapping under =strings= is always a set of plural forms (=zero=, =one=, =two=, =few=, =many=, =other=), never a namespace: group keys with dots (=inventory.open=) instead. =lrg_locale_new_from_data()= reads the same format from memory, and =lrg_locale_save_to_data()= / =lrg_locale_save_to_file()= write it (see [[#saving][Saving]]).
 
 ** Properties
 :PROPERTIES:
@@ -263,6 +264,14 @@ my_locale_get_plural_form(LrgLocale *self, gint count)
 :END:
 - =lrg_locale_new(const gchar *code, const gchar *name)= → =LrgLocale *= (transfer full)
 - =lrg_locale_new_from_file(const gchar *path, GError **error)= → =LrgLocale *= (transfer full, nullable)
+- =lrg_locale_new_from_data(const gchar *data, gssize length, GError **error)= → =LrgLocale *= (transfer full, nullable); =length= -1 for nul-terminated text
+
+*** Saving
+:PROPERTIES:
+:CUSTOM_ID: api-saving
+:END:
+- =lrg_locale_save_to_data(LrgLocale *self, gsize *length, GError **error)= → =gchar *= (transfer full, nullable); =length= optional
+- =lrg_locale_save_to_file(LrgLocale *self, const gchar *path, GError **error)= → =gboolean=
 
 *** Properties
 :PROPERTIES:
@@ -288,6 +297,15 @@ my_locale_get_plural_form(LrgLocale *self, gint count)
 - =lrg_locale_set_plural(LrgLocale *self, const gchar *key, LrgPluralForm form, const gchar *value)= → =void=
 - =lrg_locale_get_plural(LrgLocale *self, const gchar *key, gint count)= → =const gchar *= (transfer none, nullable)
 - =lrg_locale_get_plural_form(LrgLocale *self, gint count)= → =LrgPluralForm=
+- =lrg_locale_set_plural_rule(LrgLocale *self, LrgPluralRule rule)= → =void=; =lrg_locale_get_plural_rule(LrgLocale *self)= → =LrgPluralRule=
+- =lrg_plural_rule_for_language(const gchar *code)= → =LrgPluralRule=; =lrg_plural_rule_select(LrgPluralRule rule, gint count)= → =LrgPluralForm=
+- =lrg_plural_rule_get_type()= / =LRG_TYPE_PLURAL_RULE=: the =GEnum= of =LrgPluralRule= (nicks =one-other=, =none=, =zero-one-other=, =east-slavic=, =polish=, =czech=, as written in =plural_rule:=)
+
+*** Key order
+:PROPERTIES:
+:CUSTOM_ID: key-order
+:END:
+=lrg_locale_get_keys()= returns every key once (plain and plural keys together) in the order it was first set: file order for a loaded locale. The writer uses the same order.
 
 ** Example: Complete Locale Setup
 :PROPERTIES:
@@ -361,32 +379,21 @@ code: en_US
 name: English (United States)
 
 strings:
-  # UI strings
-  ui:
-    button:
-      ok: OK
-      cancel: Cancel
-      save: Save
-      load: Load
-    menu:
-      file: File
-      edit: Edit
-      help: Help
+  # UI strings (dotted keys group them)
+  ui.button.ok: OK
+  ui.button.cancel: Cancel
+  ui.button.save: Save
+  ui.menu.file: File
+  ui.menu.help: Help
 
   # Game strings
-  game:
-    title: My Awesome Game
-    start: Start Game
-    quit: Quit
+  game.title: My Awesome Game
+  game.start: Start Game
+  game.quit: Quit
 
   # Dialog strings
-  dialog:
-    confirm:
-      title: Confirm Action
-      message: Are you sure?
-    error:
-      title: Error
-      notfound: File not found
+  dialog.confirm.title: Confirm Action
+  dialog.confirm.message: Are you sure?
 
   # Plural strings
   items:
@@ -437,3 +444,42 @@ if (lrg_locale_merge_csv_file (fr, "Text/Strings.csv", &error) < 0)
 #+end_src
 
 =lrg_locale_merge_csv()= applies a two-column =Key,Value= table ([[file:csv.org][csv.org]]): each row sets its key's string (replacing an earlier one); the =Key,Value= header row, rows with an empty key and columns past the second are ignored; =%d day#one= / =%d day#other= set plural forms of =%d day=; a value's trailing line breaks are removed.  It returns the number of rows applied, or -1 with an =LRG_I18N_ERROR_PARSE= error (the locale is then unchanged); the file variant reports file errors as they are.
+
+** Saving
+:PROPERTIES:
+:CUSTOM_ID: saving
+:END:
+=lrg_locale_save_to_data()= returns the locale as YAML text and =lrg_locale_save_to_file()= writes it (atomically, =g_file_set_contents()=), in exactly the format =lrg_locale_new_from_file()= and =lrg_locale_new_from_data()= read:
+
+#+begin_src yaml
+code: en                    # required; the language picks the default plural rule
+name: Test                  # required
+plural_rule: east-slavic    # only written when it differs from the language's default
+strings:                    # keys in the order they were first set
+  apples:                   # a key with plural forms: a mapping, forms in CLDR order
+    one: '%d apple'         # zero, one, two, few, many, other (only the forms set)
+    few: '%d apples (few)'
+    other: '%d apples'
+  title: Orchard            # a plain string
+  empty: ""                 # text that would read back as null is double-quoted
+#+end_src
+
+- =plural_rule= is optional on load too: an =LrgPluralRule= nick that overrides the rule =lrg_locale_new()= picks from =code=; an unknown nick fails with =LRG_I18N_ERROR_PARSE=. A locale subclass that overrides =get_plural_form= is not described by the file: the writer writes the rule field only.
+- A key that has both a plain string and plural forms (possible through =lrg_locale_set_string()= plus =lrg_locale_set_plural()=, or a CSV merge) is written with its plural forms, the only one of the two the format can hold.
+- The output is deterministic: saving a locale loaded from saved text gives the same bytes (=tests/test-format-writers.c= checks this on real-format fixtures). Comments and keys other than =code=, =name=, =plural_rule= and =strings= are not kept: a game or tool that rewrites hand-edited files and must keep them edits the YAML instead (the editor's document model does).
+
+#+begin_src c
+g_autoptr(LrgLocale) de = lrg_locale_new_from_data (text, -1, &error);
+
+if (de == NULL)
+    return FALSE;
+lrg_locale_set_string (de, "menu.new", "Neues Spiel");
+if (!lrg_locale_save_to_file (de, "data/locales/de.yaml", &error))
+    return FALSE;
+#+end_src
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: using-it-from-the-editor
+:END:
+The editor's locale data editor ([[file:../../editor/data-editors.org][Data editors]]) edits locale files as documents (comments and unknown keys kept) and validates them by running =lrg_locale_new_from_data()= on the document text, so a passing document is one the game loads; its messages carry the document's name. The engine writer is what a game or a build step uses to produce locale files (for example from a CSV merge with =lrg_locale_merge_csv()=).

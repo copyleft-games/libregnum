@@ -622,6 +622,72 @@ test_math_compose_decompose (void)
 	}
 }
 
+/* A tilemap's selection box is the grid, not a unit sprite. */
+static void
+test_math_tilemap_bounds (void)
+{
+	g_autoptr(LrgNode)         node = lrg_node_new ("Map");
+	g_autoptr(LrgNodeVisual)   visual = lrg_node_visual_new (LRG_NODE_VISUAL_TILEMAP);
+	g_autoptr(LrgNodeTilemap)  grid = lrg_node_tilemap_new (4, 3);
+	gfloat                     bmin[3];
+	gfloat                     bmax[3];
+
+	lrg_node_visual_set_tilemap (visual, grid);
+	lrg_node_set_visual (node, visual);
+
+	g_assert_true (lrg_editor_node_get_local_bounds (node, bmin, bmax));
+	g_assert_cmpfloat (bmin[0], ==, 0.0f);
+	g_assert_cmpfloat (bmax[0], ==, 4.0f);
+	g_assert_cmpfloat (bmin[1], ==, -3.0f);
+	g_assert_cmpfloat (bmax[1], ==, 0.0f);
+}
+
+/* A terrain pick hits the heightfield. The icon box at the origin does not
+ * cover a point out on the grid, and a miss on a loaded asset stays a miss. */
+static void
+test_math_terrain_pick (void)
+{
+	g_autoptr(LrgTerrainAsset) asset = lrg_terrain_asset_new (8, 16.0f, 1, 1);
+	g_autoptr(LrgNode)         node = lrg_node_new ("Ground");
+	g_autoptr(LrgNodeVisual)   visual = lrg_node_visual_new (LRG_NODE_VISUAL_TERRAIN);
+	g_autoptr(GError)          error = NULL;
+	g_autoptr(GDir)            listing = NULL;
+	g_autofree gchar          *dir = g_dir_make_tmp ("lrg-terrain-pick-XXXXXX", NULL);
+	g_autofree gchar          *path = NULL;
+	const gfloat               down[3] = { 0.0f, -1.0f, 0.0f };
+	const gfloat               over_field[3] = { 10.0f, 50.0f, 6.0f };
+	const gfloat               far[3] = { 1000.0f, 50.0f, 1000.0f };
+	const gfloat               over_icon[3] = { 0.0f, 50.0f, 0.0f };
+	const gchar               *name;
+	gfloat                     distance = -1.0f;
+
+	g_assert_nonnull (dir);
+	path = g_build_filename (dir, "ground.rterrain", NULL);
+	g_assert_true (lrg_terrain_asset_save_to_file (asset, path, &error));
+	g_assert_no_error (error);
+
+	lrg_node_visual_set_asset (visual, path);
+	lrg_node_set_visual (node, visual);
+
+	g_assert_true (lrg_editor_ray_node (node, over_field, down, &distance));
+	g_assert_cmpfloat_with_epsilon (distance, 50.0f, 1e-2f);
+	g_assert_false (lrg_editor_ray_node (node, far, down, &distance));
+
+	lrg_node_visual_set_asset (visual, "/no/such/terrain.rterrain");
+	g_assert_true (lrg_editor_ray_node (node, over_icon, down, &distance));
+	g_assert_false (lrg_editor_ray_node (node, over_field, down, &distance));
+
+	listing = g_dir_open (dir, 0, NULL);
+	g_assert_nonnull (listing);
+	while ((name = g_dir_read_name (listing)) != NULL)
+	{
+		g_autofree gchar *child = g_build_filename (dir, name, NULL);
+
+		g_unlink (child);
+	}
+	g_rmdir (dir);
+}
+
 static void
 test_math_world_matrix_hierarchy (void)
 {
@@ -1029,6 +1095,8 @@ main (int   argc,
 	g_test_add_func ("/editor-core/structure/prefab-source", test_prefab_instantiate_records_source);
 
 	g_test_add_func ("/editor-core/math/compose-decompose", test_math_compose_decompose);
+	g_test_add_func ("/editor-core/math/tilemap-bounds", test_math_tilemap_bounds);
+	g_test_add_func ("/editor-core/math/terrain-pick", test_math_terrain_pick);
 	g_test_add_func ("/editor-core/math/world-hierarchy", test_math_world_matrix_hierarchy);
 	g_test_add_func ("/editor-core/math/view-project-ray", test_view_project_and_ray);
 	g_test_add_func ("/editor-core/math/view-navigation", test_view_navigation);

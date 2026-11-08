@@ -89,3 +89,20 @@ lrg_particle_billboard_renderer_release_gpu (renderer);
 :CUSTOM_ID: tests
 :END:
 =tests/test-particle-billboard-renderer.c=: =foreach_active= (alive particles only), =emit()= calling =on_particle_spawn= and a subclass getting its pool from =max-particles=, an empty system, camera-facing quads of the particle's size and colour from two eyes, a straight-down eye, flipbook UVs by age (fps and lifetime modes, wrapping), back-to-front order and =max_quads= (run under ASAN with =make SANITIZE=1 test-sanitize=).
+
+** Further API
+:PROPERTIES:
+:CUSTOM_ID: further-api
+:END:
+Accessors and helpers not covered above (the header holds the full GIR documentation):
+
+- =lrg_particle_billboard_renderer_build()= - builds the camera-facing quads of every active particle on the CPU, back to front, exactly as =draw()= submits them (NULL vertices only counts)
+- =lrg_particle_billboard_renderer_get_frames()= - Reads the flipbook layout set by lrg_particle_billboard_renderer_set_frames().
+- =lrg_particle_billboard_renderer_get_texture()= - the texture every particle samples, NULL for the generated soft dot
+
+** Drawing without a camera (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: draw-view
+:END:
+=lrg_particle_billboard_renderer_draw_view (renderer, system, eye, up)= is =lrg_particle_billboard_renderer_draw()= with an explicit eye position and up vector, for passes that have no =GrlCamera3D= (the particle component's custom draw inside =LrgWorld3DRenderer=, which reads them from rlgl's view matrix). It also turns back-face culling off for the quads. The generated soft dot is 64 x 64 and bilinear-filtered, so large particles (smoke) show no texel grid.
+

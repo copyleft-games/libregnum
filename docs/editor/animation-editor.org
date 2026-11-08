@@ -1,0 +1,397 @@
+#+title: Animation Tools in the Editor
+#+description: The lrgeditor animation tools of 0.9.0: the .ranim animation graph editor (layers, nested machines, states, transitions with conditions, parameters with live values, blend trees with a blend-space view, live skinned preview), the .rbonemap bone map editor with live retargeting, the clip preview of glTF assets, the inspector's Animator section, the viewport's bone and IK overlays, and the anim.*, bonemap.* and clip.* IPC methods
+#+authors: Zach Podbielniak
+#+categories: libregnum editor animation
+#+created: 2026-11-07T00:00:00-05:00
+#+updated: 2026-11-07T00:00:00-05:00
+#+version: 0.9.0
+
+* Animation Tools in the Editor
+:PROPERTIES:
+:CUSTOM_ID: animation-editor
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Animation Tools
+#+end_quote
+
+Since 0.9.0 the editor authors the whole 3D animation pipeline of [[file:../guides/animation-pipeline.org][the animation pipeline guide]] without leaving =lrgeditor=:
+
+- the *animation graph editor* (=LrgEditorAnimGraphEditor=, =src/editor/ui/data/lrg-editor-anim-graph-editor.{h,c}=) edits =.ranim= files ([[file:../modules/animation/anim-graph.org][LrgAnimGraph]]): one state machine at a time on an =LrgNodeGraph= canvas, layers and nested machines with breadcrumbs, transitions with a conditions editor, parameters with live values, blend trees with a blend-space view, and a live preview of a skinned model driven by the graph itself with the active state highlighted;
+- the *bone map editor* (=LrgEditorBoneMapEditor=, =src/editor/ui/data/lrg-editor-bone-map-editor.{h,c}=) edits =.rbonemap= files ([[file:../modules/animation/retargeter.org][LrgBoneMap]]) with source and target skeleton pickers, explicit and rule pairs, unmapped warnings, auto map and a live retarget preview;
+- the *Assets panel* previews the clips of any glTF model (a turntable, the clip list, a scrub bar, morph target sliders) and creates animation graphs, bone maps, sequences and 2D skeletons;
+- the *inspector* gains an *Animator* section for nodes with an =animator3d= component (the graph's parameters, layers and IK goals; live while playing);
+- the *viewport* draws the selected characters' bones and their IK targets.
+
+All of it is scriptable through the =anim.*=, =bonemap.*= and =clip.*= IPC methods ([[file:ipc-protocol.org::#ipc-animation][IPC: animation methods]]) and therefore through =lrgeditorctl= and the MCP server.
+
+#+begin_example
++-------------+-------------------------------------------+------------------+
+| PARAMETERS  | [base][upper][+ Layer]   base > air       |  (skinned model) |
+|  speed [0.5]|                                           |  Idle -> Walk 40%|
+|  jump [Fire]|    *Idle -----> Walk                      |  [Pause][Bones]  |
+|  + Float .. |      ^  \        |        [Any State]    | [hero.glb v]---o-|
+| CLIP SLOTS  |      |   `--> locomotion  <---'           +------------------+
+|  Idle <- .. |    air (machine . 2 states)               | State . locomotion
+|  Walk <- .. |                                           |  ( blend space ) |
+| [+ Slots]   |  green card = active state, wire glows    |  Type  1d  ...   |
++-------------+-------------------------------------------+------------------+
+#+end_example
+
+** Animation graph editor
+:PROPERTIES:
+:CUSTOM_ID: anim-graph-editor
+:END:
+The graph editor is a [[file:data-editors.org][data editor]]: it edits the =.ranim= text through an =LrgEditorDocument= (=LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH=, recognised by the =.ranim= extension before any content sniffing), so it shares the data editors' toolbar (Save, Revert, Validate, the issue chip), the external-change banner, the issues list and the per-document undo stack (Ctrl+Z inside the tab undoes the graph, never the level). Its tab id is =data:<absolute path>=.
+
+*** Opening and creating
+:PROPERTIES:
+:CUSTOM_ID: anim-graph-editor-open
+:END:
+- Double click a =.ranim= in the Assets panel, call =lrg_editor_anim_graph_editor_open (app, path, &error)= (or =lrg_editor_data_editor_open()=), or use =anim.open=.
+- *New Animation Graph* (Assets background menu, =assets.new-anim-graph=) writes =new_anim_graph.ranim= with one =base= layer and an empty =idle= state, then starts the inline rename.
+- *New Animation Graph from Model* (entry menu of a =.glb= / =.gltf=, =assets.anim-graph-from-model=) and =lrg_editor_anim_graph_editor_create (app, path, model, &error)= / =anim.create= with =model= declare one clip slot per animation of the model (keyed by the animation name: ="Armature|Walk Cycle"= becomes =Walk_Cycle=), add one state per clip laid out in a row, make the first the default and remember the model as the preview model.
+- =lrg_editor_anim_graph_editor_new (app, document)= builds an editor without docking it.
+
+*** The canvas
+:PROPERTIES:
+:CUSTOM_ID: anim-graph-editor-canvas
+:END:
+The middle column is an =LrgNodeGraph= (=lrg_editor_anim_graph_editor_get_canvas()=, widget =anim-canvas=) showing *one* state machine: a layer's top-level machine or the nested machine of a state.
+
+| Element | What it is |
+|-+-|
+| State card | id and title = the state name; category =clip=, =blend=, =machine= or =state= (empty) picks the header colour; icon: a star on the machine's default state, a menu glyph on nested machines, a half star on blend trees, a play glyph on clips; the body line says what it plays (=clip · Walk=, =blend 1d · 3 clips=, =machine · 2 states=, =empty (bind pose)=), in the danger colour when its clip is missing |
+| Ports | every state has an input =in= and an output =out=, both multi-link, of type =state= |
+| Wire | one transition, from the source's =out= to the target's =in= |
+| Any State card | id =*= (=LRG_EDITOR_ANIM_GRAPH_ANY_STATE=): only an output; its wires are the machine's =any_state:= transitions |
+
+Gestures, each one undo step of the document (gestures that make several writes, such as a Delete that removes a state and its wires, are grouped until the next idle):
+
+- *drag a wire* from a state's =out= (or the Any State card) to another state's =in=: adds a transition with a 0.25 s cross-fade (=transitions:= or =any_state:=) and selects it; wires into the Any State card or onto the card they start from are refused;
+- *drop a wire on empty canvas*: adds an empty state there (=state=, =state2=, ...) and the transition to it;
+- *move a card*: writes =editor_pos: [x, y]= on the state (=editor_any_pos= on the machine for the Any State card); the engine loader keeps these unknown keys, so positions survive engine round trips;
+- *Delete* on a card removes the state, every transition from or to it and its =default:= mention; on a wire it removes that transition; the Any State card cannot be deleted;
+- *Ctrl+D* duplicates a state as =<name>_copy= with all its settings;
+- *double click* a nested machine card to enter it.
+
+While the preview runs, the card of the state each shown machine is in gets the success accent, the state being blended in the warning accent and the wire of the running transition the success colour; the highlights refresh every frame.
+
+*** Layers and nested machines
+:PROPERTIES:
+:CUSTOM_ID: anim-graph-editor-layers
+:END:
+The bar above the canvas (=anim-topbar=) holds one chip per layer (=anim-layer-0=, =anim-layer-1=, ...; the shown layer is checked), a =+ Layer= chip (=anim-layer-add=; adds =layerN= with an =idle= state) and the breadcrumb (=anim-crumbs=): the layer name, then one segment per nested machine down to the shown one. Clicking a segment goes back up to it.
+
+- =lrg_editor_anim_graph_editor_set_layer()= shows a layer's machine; =lrg_editor_anim_graph_editor_enter_state()= enters the nested machine of a state; =lrg_editor_anim_graph_editor_go_up()= returns to the parent machine and selects the state you came from.
+- =lrg_editor_anim_graph_editor_get_machine_path()= is the YAML path of the shown machine (=/layers/0=, =/layers/0/states/3/machine=), =lrg_editor_anim_graph_editor_get_breadcrumbs()= the bar's labels, =lrg_editor_anim_graph_editor_get_layer()= the layer index.
+- =lrg_editor_anim_graph_editor_add_layer()= / =lrg_editor_anim_graph_editor_remove_layer()= edit layers (the last layer stays).
+
+*** The inspector
+:PROPERTIES:
+:CUSTOM_ID: anim-graph-editor-inspector
+:END:
+The lower right (=anim-inspector=, scrollable) shows the selection in a property grid (=anim-grid=) bound to the document through =LrgEditorDataSource= (every edit an undo step, a drag one step), under a title (=anim-inspector-title=):
+
+| Selection | Rows |
+|-+-|
+| A state | Name (renames the state and every transition and =default:= naming it), Plays (=clip= / =blend_tree= / =machine= / =empty=: converts the state, keeping one motion), Default state, Clip (the clip slots), Speed, Speed parameter (the numeric parameters), Mirror |
+| A blend tree state | the state rows, then *Blend tree*: Type (=1d=, =2d_directional=, =2d_cartesian=, =direct=), Parameter (X), Parameter Y (2D), Sync phases; one group per child: Clip, Threshold (1D) or Position X / Y (2D) or Weight parameter (direct), Speed. The blend-space view (=anim-blend-space=) appears above the grid |
+| A transition | From, To (read only), Duration, Has exit time (adds =exit_time: 0.9= or removes it), Exit time, Offset, Priority, Interruption (=none=, =source=, =destination=, =source_then_destination=, =destination_then_source=), To itself (any-state transitions); then the *conditions editor* |
+| Nothing | *Layer*: Name, Weight, Blend (=override= / =additive=), Enabled, Mask bones (comma separated), Mask children; *Graph*: Name; *Root motion*: Root bone, Mode (=none= / =xz= / =xyz=), Extract turn, Move the entity |
+
+The *conditions editor* (=anim-conditions=) lists one row per condition (=anim-cond-<i>=): the parameter (=anim-cond-<i>-param=; picking another writes that parameter's default form), the operator (=anim-cond-<i>-op=: the six comparisons for float and int, "is true" / "is false" for bools, "fired" for triggers), the value for numbers (=anim-cond-<i>-value=; a typing session is one undo step) and a remove button (=anim-cond-<i>-remove=). =+ Condition= (=anim-cond-add=) appends a condition on the first parameter. Without conditions the editor says whether the transition fires at once or at its exit time. =lrg_editor_anim_graph_editor_add_condition()= does the same from C.
+
+The *blend-space view* plots a 1D tree as a strip with the children at their thresholds, a 2D tree as a plane with axes through the origin and the children at their positions, a direct tree as weight bars. Each child dot grows and brightens with its current weight (=lrg_blend_tree_compute_weights()= on the preview graph); the ring is the current parameter value. *Drag in the view* to set the live parameters (X and, for 2D, Y) and watch the weights and the preview follow.
+
+*** Parameters and clip slots
+:PROPERTIES:
+:CUSTOM_ID: anim-graph-editor-parameters
+:END:
+The left column (=anim-left=) lists the parameters (=anim-params=, a row =anim-param-<name>= each) with a live control (=anim-param-<name>-value=): a spin box for floats and ints, a check box for bools (it follows the graph: a bool a script changes updates), a *Fire* button for triggers (consumed by the transition it fires), and a remove button (=anim-param-<name>-remove=). =+ Float=, =+ Int=, =+ Bool=, =+ Trigger= (=anim-add-float= ...) declare =float=, =float2=, ... Live values are *not saved*: they live in the editor (=lrg_editor_anim_graph_editor_set_parameter_value()=, =get_parameter_value()=) and are pushed into every reparsed graph, so editing the graph keeps the preview where it was (triggers excepted). Defaults are edited in the YAML or through =anim.add_parameter='s =default=.
+
+Below, the clip slots (=anim-clips=, a label =anim-clip-<key>= each: key, source and animation), with a warning sign and the warning colour on slots that did not load (=lrg_anim_graph_get_missing_clips()=). *+ Slots from preview model* (=anim-clips-from-model=, =lrg_editor_anim_graph_editor_declare_model_clips()=) adds a slot for every animation of the preview model that has none (one undo step).
+
+*** Live preview
+:PROPERTIES:
+:CUSTOM_ID: anim-graph-editor-preview
+:END:
+The upper right (=anim-preview=) draws a skinned model posed by the graph:
+
+- *Model.* =editor_preview:= in the file (relative to the =.ranim=; written by the model picker =anim-model= under the view, =lrg_editor_anim_graph_editor_set_preview_model()= or =anim.preview='s =model=), else the first clip slot's source. Skin 0 of the glTF is the skeleton and the mesh; a file without a skin shows its first mesh unposed.
+- *Graph.* After every document change the text is parsed into a fresh =LrgAnimGraph= (=lrg_editor_anim_graph_editor_get_graph()=; do not keep it), its base directory the =.ranim='s folder, its clips resolved through a per-editor cache of glTF files (each file is read once while the editor is open), the live values applied, and started. While playing, each frame updates the graph by the frame time and evaluates it into the model's skeleton (root motion is ignored: the model stays in place; IK goals are not applied in the preview).
+- *Controls.* Drag to orbit, scroll to zoom. The chip bar: *Play / Pause* (=anim-preview-play=), *Bones* (=anim-preview-bones=, the skeleton over the mesh), *Turntable* (=anim-preview-turntable=). The scrub bar (=anim-scrub=) follows the base layer's state while playing; dragging it pauses and moves that state (=lrg_editor_anim_graph_editor_scrub()=). The toolbar's *Restart* chip (=anim-restart=) reparses and restarts the graph (=lrg_editor_anim_graph_editor_restart()=).
+- *Caption.* The current state per layer and the blend in progress ("Idle → Walk 40%").
+- From C: =set_playing()=, =get_playing()=, =advance (seconds)= (steps time also while paused, in steps of at most 1/30 s), =get_preview_time()=, =get_active_state (layer)=, =get_preview_skeleton()=, =set_show_bones()=, =render_preview (size)= (an off-screen image; needs a window).
+
+*** Validation
+:PROPERTIES:
+:CUSTOM_ID: anim-graph-editor-validation
+:END:
+Validate (and every save) reports, in the issues list:
+- the loader's error while the text does not load, at the YAML path its message names (=layers[0].transitions[2].conditions[0]: unknown parameter 'sped'= points at =/layers/0/transitions/2/conditions/0=, or its deepest existing ancestor);
+- a warning per clip slot without an animation (wrong source or animation name);
+- with a preview model, =lrg_anim_graph_validate_skeleton()=: masks, the root motion bone and IK bones that the model's skeleton does not have.
+
+Clicking an issue (=data.reveal=) walks to the machine holding the path and selects the state or transition. =lrg_editor_data_editor_get_state()= returns =machine=… =states= =transitions= =selected= =active=.
+
+*** What the editor adds to the file
+:PROPERTIES:
+:CUSTOM_ID: anim-graph-editor-format
+:END:
+#+begin_src yaml
+version: 1
+name: hero
+editor_preview: hero.glb          # the preview model, relative to this file
+clips:
+  Idle: {source: hero.glb, animation: Idle}
+layers:
+  - name: base
+    default: Idle
+    editor_any_pos: [-250, 0]     # the Any State card of this machine
+    states:
+      - name: Idle
+        clip: Idle
+        editor_pos: [0, 0]        # the card position, graph units
+      - name: air
+        machine:
+          default: entry
+          editor_any_pos: [-250, 0]
+          states:
+            - {name: entry, editor_pos: [0, 0]}
+#+end_src
+The engine keeps =editor_*= keys as unknown keys (=lrg_anim_graph_to_data()= writes them back after the known keys), so a graph saved by code keeps its layout. The editor writes the document's YAML directly; it never reformats the file through =lrg_anim_graph_to_data()=.
+
+** Bone map editor
+:PROPERTIES:
+:CUSTOM_ID: bone-map-editor
+:END:
+=LrgEditorBoneMapEditor= is the data editor of =.rbonemap= files (=LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP=):
+
+#+begin_example
++------------------------------------------+--------------------------+
+| [anims/mocap.glb v]  [chars/hero.glb v]  | NAME RULES               |
+| TARGET BONE  <-  DRIVEN BY SOURCE BONE   |  Ignore case    [x]      |
+|  Hips            [Hips        v]  pair   |  Split words    [x]      |
+|    Spine         [Spine       v]  rule   |  Left / right   [x]      |
+|      Head        [(none)      v]  unmapped  Strip prefixes mixamorig:|
+|                                          | [Auto map from the rules]|
+|                                          | UNMAPPED  1 target ...   |
++-------------------+----------------------+--------------------------+
+|  source preview   |  target preview (live retargeted)  [Walk v]     |
++-------------------+-------------------------------------------------+
+#+end_example
+
+- *Opening and creating.* Double click a =.rbonemap=, =lrg_editor_bone_map_editor_open()= or =bonemap.open=. *New Bone Map* (Assets, =assets.new-bone-map=) writes the default rules; =lrg_editor_bone_map_editor_create (app, path, source, target, auto_fill, &n_added, &error)= / =bonemap.create= also remembers two models and, with =auto_fill=, writes every rule match as an explicit pair.
+- *Skeleton pickers* (=bonemap-source=, =bonemap-target=) list the project's glTF files; the choice is written under =editor: {source, target, clip}= (relative to the bone map; the engine ignores the key) as one undo step. =lrg_editor_bone_map_editor_set_models()= does the same from C.
+- *Rows* (=bonemap-rows=, a row =bonemap-row-<target bone>= each, in tree order, indented by depth): the target bone, a combo of the source bones (=bonemap-row-<bone>-source=; =(none)= removes the explicit pair) and a badge: =pair= (an explicit pair decides, accent), =rule= (a name rule matched, muted) or =unmapped= (warning: the bone keeps its bind pose). Picking a source writes =bones: {source: target}= and drops any other explicit pair onto that target (=lrg_editor_bone_map_editor_set_pair()=). =lrg_editor_bone_map_editor_get_driver()= answers which source bone drives a target bone and whether by an explicit pair.
+- *Rules* (=bonemap-rules=): Ignore case, Split words, Left / right, Strip prefixes (one comma separated field written as the =strip_prefixes= list). *Auto map from the rules* (=bonemap-auto=, =lrg_editor_bone_map_editor_auto_fill()=) turns every rule match into an explicit pair, one undo step.
+- *Unmapped* (=bonemap-unmapped=): the target bones nothing drives and the source bones that drive nothing (=get_unmapped_targets()=, =get_unmapped_sources()=); validation lists unmapped target bones as infos and pairs naming bones a skeleton lacks as warnings.
+- *Live retarget preview*: the source model (=bonemap-source-preview=) plays the clip picked under it (=bonemap-clip=, =set_preview_clip()=), the target model (=bonemap-target-preview=, tinted blue) is posed every frame by an =LrgRetargeter= built from the current map (=lrg_editor_bone_map_editor_get_retargeter()=, =lrg_retargeter_retarget_skeleton()=); both show their bones. Play / pause is shared; =set_preview_time()= scrubs both.
+
+** Clip preview and New entries in the Assets panel
+:PROPERTIES:
+:CUSTOM_ID: assets-animation
+:END:
+- *Glyphs and names.* =.ranim= (=AG=, "Animation graph"), =.rbonemap= (=BM=, "Bone map"), =.rseq= (=Sq=, "Sequence"), =.rskel2d= (=2D=, "2D skeleton").
+- *Double click* opens the editors: =.ranim=, =.rbonemap=, =.rskel2d= as data editor tabs, =.rseq= in the docked sequencer (=lrg_editor_sequencer_panel_open_file()=).
+- *Background menu → Animation section*: New Animation Graph, New Bone Map, New Sequence (through the sequencer: =lrg_editor_sequencer_panel_create()=, then opened), New 2D Skeleton (=lrg_editor_skeleton2d_editor_create()=); each starts the inline rename.
+- *Entry menu of a glTF model*: *Preview Animations...* (=assets.preview-clips=) and *New Animation Graph from Model*.
+- *The Animations dialog* (=assets-clip-dialog=, =lrg_editor_assets_panel_preview_clips (panel, path, clip)=): the model on a turntable (=assets-clip-preview=, drag to orbit, scroll to zoom, Play / Bones / Turntable chips), the clip list (=assets-clip-list=), a scrub bar (=assets-clip-scrub=; dragging pauses), a summary line (=assets-clip-info=: name, length, tracks, morph weights, events, looping) and, for meshes with blend shapes, one slider per morph target (=assets-clip-morph-<i>=). A clip's morph weight channels drive the mesh while it plays. =lrg_editor_assets_panel_get_clip_preview_model()= says which model the open dialog shows.
+
+** The inspector's Animator section
+:PROPERTIES:
+:CUSTOM_ID: inspector-animator
+:END:
+For one inspected node with an =animator3d= component (=LrgAnimatorComponent3D=), the inspector shows *Animator* (=inspector-section-animator=) under the LOD section:
+
+- the graph path (=inspector-animator-graph=, the component's =graph-path=) and *Open Graph* (=inspector-animator-open=);
+- a painted list (=inspector-animator-list=): *Parameters* (defaults from the =.ranim= while authoring; live values while the play world runs), *Layers* (each with its current state while playing, else its default state, and a weight bar), *IK goals* (name, chain, weight; the last solved target while playing).
+- While playing, the list is interactive: click a bool to toggle it, click a trigger to fire it, drag a number sideways to change it (0.01 per unit), click a layer's weight bar to set the weight (=lrg_animator_component3d_set_layer_weight()=). It keeps redrawing while the play world runs.
+- =lrg_editor_inspector_panel_get_animator_rows()= returns the list as text (=param <name> <type> <value>=, =layer <name> <weight> <state>=, =ik <name> <kind> <bones> <weight>[ off][ @ x y z]=).
+
+The live object is the play world's entity of the inspected node (or the entity picked in the hierarchy's live tree).
+
+** Bones and IK targets in the viewport
+:PROPERTIES:
+:CUSTOM_ID: viewport-animation
+:END:
+The overlays menu of every viewport has an *Animation* section with two per-viewport toggles (not saved):
+
+- *Bones* (=vp.anim-bones=, =lrg_editor_viewport_panel_set_show_bones()=, off by default): the selected nodes' skeletons as joint dots and bone lines in the warning colour. While playing: the entity's animated skeleton (its animator's, else its skinned model's) placed by the entity's world matrix. While authoring: the bind pose of a mesh-asset node's glTF model, placed by the node's world matrix (each model's skeleton is read once per viewport).
+- *IK Targets* (=vp.anim-ik=, =lrg_editor_viewport_panel_set_show_ik_targets()=, on by default): while playing, every enabled IK goal of a selected node's animator draws its last solved target (=lrg_ik_goal_get_last_target()=, else its static target) as a ring with the goal's name, and a line from the effector bone (or the chain's last bone) to it.
+
+Both are painted in the 2D overlay pass (no extra scene render). =lrg_editor_viewport_panel_get_anim_overlay_counts()= reports how many joints and targets the last pass drew.
+
+** Using it from C
+:PROPERTIES:
+:CUSTOM_ID: animation-editor-c
+:END:
+#+begin_src c
+/* Build a locomotion graph for a character, preview it, save it. */
+g_autoptr(GError)          error = NULL;
+LrgEditorAnimGraphEditor *ed;
+
+if (!lrg_editor_anim_graph_editor_create (app, "chars/hero.ranim", "chars/hero.glb", &error))
+	g_error ("%s", error->message);
+ed = lrg_editor_anim_graph_editor_open (app, "chars/hero.ranim", &error);
+
+lrg_editor_anim_graph_editor_add_parameter (ed, "speed", "float", NULL);
+lrg_editor_anim_graph_editor_add_transition (ed, "Idle", "Walk", 0.2f, NULL);
+lrg_editor_anim_graph_editor_add_condition (ed, "Idle", "Walk", "speed", ">", "0.1", NULL);
+lrg_editor_anim_graph_editor_add_transition (ed, "Walk", "Idle", 0.2f, NULL);
+lrg_editor_anim_graph_editor_add_condition (ed, "Walk", "Idle", "speed", "<=", "0.1", NULL);
+
+/* drive the preview */
+lrg_editor_anim_graph_editor_set_parameter_value (ed, "speed", g_variant_new_double (1.0));
+lrg_editor_anim_graph_editor_advance (ed, 0.5f);
+g_assert_cmpstr (lrg_editor_anim_graph_editor_get_active_state (ed, "base"), ==, "Walk");
+
+lrg_editor_data_editor_save (LRG_EDITOR_DATA_EDITOR (ed), &error);
+#+end_src
+
+#+begin_src c
+/* A bone map between a mocap rig and a character, checked live. */
+guint                   added = 0;
+LrgEditorBoneMapEditor *bm;
+
+lrg_editor_bone_map_editor_create (app, "chars/hero.rbonemap", "anims/mocap.glb", "chars/hero.glb",
+                                   TRUE, &added, &error);
+bm = lrg_editor_bone_map_editor_open (app, "chars/hero.rbonemap", &error);
+lrg_editor_bone_map_editor_set_pair (bm, "Spine2", "chest", NULL);
+if (lrg_editor_bone_map_editor_get_driver (bm, "head", NULL) == NULL)
+	g_message ("head is unmapped");
+lrg_editor_bone_map_editor_set_preview_clip (bm, "Walk");
+lrg_editor_bone_map_editor_set_preview_time (bm, 0.5f);   /* both models posed at 0.5 s */
+#+end_src
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: animation-editor-api
+:END:
+*** =lrg-editor-anim-graph-editor.h=
+:PROPERTIES:
+:CUSTOM_ID: animation-editor-api-graph
+:END:
+| Function | Summary |
+|-+-|
+| =LRG_EDITOR_ANIM_GRAPH_ANY_STATE= | the card id and =from= value of any-state transitions (="*"=) |
+| =lrg_editor_anim_graph_editor_new (app, document)= | an editor without docking it |
+| =lrg_editor_anim_graph_editor_install (app)= | registers =anim.*= (the Assets panel does it) |
+| =lrg_editor_anim_graph_editor_open (app, path, error)= | opens or presents the tab |
+| =lrg_editor_anim_graph_editor_create (app, path, model, error)= | writes a new graph (with =model=: a slot and a state per clip) |
+| =lrg_editor_anim_graph_editor_get_graph()= | the parsed preview graph (replaced after every edit) |
+| =lrg_editor_anim_graph_editor_get_load_error()= | the loader's message while the text does not load |
+| =lrg_editor_anim_graph_editor_get_canvas()= | the =LrgNodeGraph= |
+| =lrg_editor_anim_graph_editor_get_machine_path()= | YAML path of the shown machine |
+| =lrg_editor_anim_graph_editor_get_layer()= / =lrg_editor_anim_graph_editor_set_layer()= | the shown layer |
+| =lrg_editor_anim_graph_editor_enter_state()= / =lrg_editor_anim_graph_editor_go_up()= | nested machine navigation |
+| =lrg_editor_anim_graph_editor_get_breadcrumbs()= | the breadcrumb labels |
+| =lrg_editor_anim_graph_editor_add_layer()= / =lrg_editor_anim_graph_editor_remove_layer()= | layers |
+| =lrg_editor_anim_graph_editor_add_state (self, name, kind, clip, x, y, error)= | a state in the shown machine (=clip=, =blend_tree=, =machine=, =empty=) |
+| =lrg_editor_anim_graph_editor_remove_state()= | a state and its transitions |
+| =lrg_editor_anim_graph_editor_rename_state()= | renames and follows references |
+| =lrg_editor_anim_graph_editor_set_default_state()= | the machine's start state |
+| =lrg_editor_anim_graph_editor_set_state_position()= | the card position (=editor_pos=) |
+| =lrg_editor_anim_graph_editor_get_state_path()= | YAML path of a state |
+| =lrg_editor_anim_graph_editor_add_transition (self, from, to, duration, error)= | a transition (=from= ="*"= for any state) |
+| =lrg_editor_anim_graph_editor_remove_transition()= | removes the first =from= → =to= |
+| =lrg_editor_anim_graph_editor_get_transition_path()= | YAML path of a transition |
+| =lrg_editor_anim_graph_editor_add_condition (self, from, to, parameter, op, value, error)= | appends a condition |
+| =lrg_editor_anim_graph_editor_add_parameter()= / =lrg_editor_anim_graph_editor_remove_parameter()= | parameter declarations |
+| =lrg_editor_anim_graph_editor_declare_model_clips()= | clip slots for a model's animations |
+| =lrg_editor_anim_graph_editor_select_state()= / =lrg_editor_anim_graph_editor_select_transition()= | the selection |
+| =lrg_editor_anim_graph_editor_get_selected_state()= / =lrg_editor_anim_graph_editor_get_selected_transition()= | the selection |
+| =lrg_editor_anim_graph_editor_set_parameter_value()= / =lrg_editor_anim_graph_editor_get_parameter_value()= | live preview values (=GVariant= double, int32, boolean) |
+| =lrg_editor_anim_graph_editor_set_preview_model()= / =lrg_editor_anim_graph_editor_get_preview_model()= | the preview model |
+| =lrg_editor_anim_graph_editor_set_playing()= / =lrg_editor_anim_graph_editor_get_playing()= | play / pause |
+| =lrg_editor_anim_graph_editor_restart()= / =lrg_editor_anim_graph_editor_advance()= / =lrg_editor_anim_graph_editor_scrub()= | preview time |
+| =lrg_editor_anim_graph_editor_get_preview_time()= | seconds since the last restart |
+| =lrg_editor_anim_graph_editor_get_active_state()= | a layer's current state |
+| =lrg_editor_anim_graph_editor_get_preview_skeleton()= | the posed skeleton |
+| =lrg_editor_anim_graph_editor_set_show_bones()= / =lrg_editor_anim_graph_editor_get_show_bones()= | the preview's bone overlay |
+| =lrg_editor_anim_graph_editor_render_preview()= | the preview as an image (needs a window) |
+
+*** =lrg-editor-bone-map-editor.h=
+:PROPERTIES:
+:CUSTOM_ID: animation-editor-api-bonemap
+:END:
+| Function | Summary |
+|-+-|
+| =lrg_editor_bone_map_editor_new (app, document)= | an editor without docking it |
+| =lrg_editor_bone_map_editor_install (app)= | registers =bonemap.*= |
+| =lrg_editor_bone_map_editor_open (app, path, error)= | opens or presents the tab |
+| =lrg_editor_bone_map_editor_create (app, path, source, target, auto_fill, n_added, error)= | writes a new bone map |
+| =lrg_editor_bone_map_editor_get_map()= | the parsed map (replaced after every edit) |
+| =lrg_editor_bone_map_editor_set_models()= | the two skeletons (=editor:= key) |
+| =lrg_editor_bone_map_editor_get_source_model()= / =lrg_editor_bone_map_editor_get_target_model()= | absolute model paths |
+| =lrg_editor_bone_map_editor_get_source_skeleton()= / =lrg_editor_bone_map_editor_get_target_skeleton()= | the posed skeletons |
+| =lrg_editor_bone_map_editor_set_pair()= | an explicit pair (=NULL= target removes it) |
+| =lrg_editor_bone_map_editor_auto_fill()= | rule matches to explicit pairs |
+| =lrg_editor_bone_map_editor_get_driver()= | the source bone driving a target bone |
+| =lrg_editor_bone_map_editor_get_unmapped_targets()= / =lrg_editor_bone_map_editor_get_unmapped_sources()= | the warnings |
+| =lrg_editor_bone_map_editor_get_retargeter()= | the live preview's =LrgRetargeter= |
+| =lrg_editor_bone_map_editor_set_preview_clip()= / =lrg_editor_bone_map_editor_get_preview_clip()= | the source clip |
+| =lrg_editor_bone_map_editor_set_preview_time()= | scrub both models |
+| =lrg_editor_bone_map_editor_set_playing()= / =lrg_editor_bone_map_editor_get_playing()= | play / pause |
+
+*** Other headers
+:PROPERTIES:
+:CUSTOM_ID: animation-editor-api-other
+:END:
+| Function | Summary |
+|-+-|
+| =LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH= ("anim-graph"), =LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP= ("bone-map"), =LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE= ("sequence"), =LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D= ("skeleton2d") | the four document formats; =.ranim=, =.rbonemap=, =.rseq=, =.rskel2d= decide by extension, =type: sequence= and =rskel2d:= also by content |
+| =lrg_editor_assets_panel_preview_clips (panel, path, clip)= | opens the Animations dialog of a glTF model |
+| =lrg_editor_assets_panel_get_clip_preview_model()= | the model the open dialog shows |
+| =lrg_editor_inspector_panel_get_animator_rows()= | the Animator section as text |
+| =lrg_editor_viewport_panel_set_show_bones()= / =lrg_editor_viewport_panel_get_show_bones()= | the Bones overlay |
+| =lrg_editor_viewport_panel_set_show_ik_targets()= / =lrg_editor_viewport_panel_get_show_ik_targets()= | the IK Targets overlay |
+| =lrg_editor_viewport_panel_get_anim_overlay_counts()= | joints and targets of the last overlay pass |
+
+** IPC methods
+:PROPERTIES:
+:CUSTOM_ID: animation-editor-ipc
+:END:
+The =anim.*=, =bonemap.*= and =clip.*= methods are listed with their parameters and results in [[file:ipc-protocol.org::#ipc-animation][IPC: animation methods]]. A session that builds and previews a graph:
+
+#+begin_src json
+{"id":1,"method":"anim.create","params":{"path":"chars/hero.ranim","model":"chars/hero.glb"}}
+{"id":2,"method":"anim.add_parameter","params":{"path":"chars/hero.ranim","name":"speed","type":"float"}}
+{"id":3,"method":"anim.add_state","params":{"path":"chars/hero.ranim","name":"locomotion","kind":"blend_tree"}}
+{"id":4,"method":"anim.set_blend_tree","params":{"path":"chars/hero.ranim","state":"locomotion","parameter":"speed","children":[{"clip":"Idle","threshold":0},{"clip":"Walk","threshold":1.5}]}}
+{"id":5,"method":"anim.add_transition","params":{"path":"chars/hero.ranim","from":"Idle","to":"locomotion","conditions":[{"parameter":"speed","op":">","value":0.1}]}}
+{"id":6,"method":"anim.set_parameter","params":{"path":"chars/hero.ranim","name":"speed","value":1.0}}
+{"id":7,"method":"anim.preview","params":{"path":"chars/hero.ranim","advance":1.0}}
+{"id":8,"method":"anim.save","params":{"path":"chars/hero.ranim"}}
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: animation-editor-performance
+:END:
+- Every document change reparses the =.ranim= (the loader is linear in the file; a graph of a few hundred states parses in well under a millisecond) and rebuilds the canvas only when the change did not come from the canvas. Clips come from the per-editor glTF cache, so a reparse never reads a model again.
+- The preview costs one graph update and evaluation per frame (about 20 µs for a 16-bone character, see [[file:../modules/animation/anim-graph.org::#performance][LrgAnimGraph performance]]) plus the GPU skinned draw; highlights compare a signature and touch the cards only when the active state or transition changes.
+- The inspector's Animator list repaints every frame only while the play world runs; the viewport's bone overlay projects each joint once per paint and reads each model's skeleton once per viewport.
+- The bone map editor re-resolves the map and rebuilds its retargeter after each change; the rows are rebuilt only when the mapping changes.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: animation-editor-pitfalls
+:END:
+- *Live values are not defaults.* The parameter controls and =anim.set_parameter= drive the preview only; defaults live in the file (=default:=).
+- *One wire per pair.* The canvas shows one transition per source and target; a second =from=/=to= duplicate written in YAML is kept but not drawn (and =add_transition= refuses it). A transition from a state to itself is an any-state transition with =can_transition_to_self=.
+- *The preview ignores root motion and IK.* Clips with travel walk in place; check IK in the play world (the viewport's IK Targets overlay and the inspector's Animator section).
+- *Removing a parameter* that conditions or blend trees still name makes the graph fail to load until you fix them; the issues list points at them.
+- *Bone map pickers* only list glTF files under the project folder; =bonemap.set_models= accepts any absolute path.
+- *The Bones overlay while authoring* shows the model's bind pose; the authoring scene does not run animators.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: animation-editor-see-also
+:END:
+- [[file:../guides/animation-pipeline.org][Guide: the animation pipeline]]
+- [[file:../modules/animation/anim-graph.org][LrgAnimGraph (.ranim)]], [[file:../modules/animation/retargeter.org][LrgBoneMap and LrgRetargeter]], [[file:../modules/animation/gltf-animation.org][glTF animation import]]
+- [[file:../modules/world3d/components.org::#animator][LrgAnimatorComponent3D]]
+- [[file:data-editors.org][Data editors]], [[file:sequencer.org][Sequencer]], [[file:skeleton2d-editor.org][2D Rig Editor]]
+- [[file:editor-app.org::#editor-panel-animation][Editor application: animation tools]]
+- [[file:ipc-protocol.org::#ipc-animation][IPC: animation methods]]

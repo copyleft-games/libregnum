@@ -1,0 +1,238 @@
+#+title: LrgSsao
+#+description: Screen-space ambient occlusion from a depth prepass, sampled by the lit shader
+#+authors: Zach Podbielniak
+#+categories: graphics rendering lighting
+#+created: 2026-11-07
+#+version: 0.9.0
+
+* LrgSsao - Screen-Space Ambient Occlusion
+:PROPERTIES:
+:CUSTOM_ID: lrgssao
+:END:
+
+=LrgSsao= computes screen-space ambient occlusion (SSAO) from an [[file:depth-prepass.org][LrgDepthPrepass]]: how much of the hemisphere above each visible point is blocked by nearby geometry. The result is a texture of /ambient visibility/ (1 = open, 0 = fully enclosed) that the lit shader of [[file:light-set.org][LrgLightSet]] reads through the =lrg_ssao()= hook to darken indirect light (ambient and image-based lighting) in creases, corners, under furniture and where objects meet the ground. Direct light (sun, point and spot lights) is not darkened: shadows handle that.
+
+The kernel and noise are generated on the CPU from a seed (identical on every machine) and are inspectable headless; the passes need GL 3.3 (no compute).
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgSsao= - *Final GObject Class*, =LRG_TYPE_SSAO=, GIR =Libregnum.Ssao=
+- *Header* - =graphics/lrg-ssao.h= (through =<libregnum.h>=)
+
+| Constant              | Value | Meaning                                        |
+|-----------------------+-------+------------------------------------------------|
+| =LRG_SSAO_MAX_KERNEL= | 64    | most hemisphere samples per pixel              |
+| =LRG_SSAO_NOISE_SIZE= | 4     | side of the tiled rotation-noise texture (px)  |
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+
+*** The algorithm
+:PROPERTIES:
+:CUSTOM_ID: concepts-algorithm
+:END:
+=lrg_ssao_render()= runs two fullscreen passes:
+
+1. *Occlusion.* For every output pixel the view-space position =p= is rebuilt from the prepass depth and the inverse of the recorded projection. The normal =n= comes from the prepass normal texture, or, when the prepass says its normals are not valid, from the neighbouring depths (the smaller of the left/right and up/down differences, which keeps silhouettes clean). A 4 x 4 tiled noise vector rotates the kernel around =n= (Gram-Schmidt into a TBN frame). Each kernel sample =s = p + TBN * k * radius= is projected to the screen; it is occluded when the surface stored there is at least =bias= in front of it. A range check (=smoothstep (0, 1, radius / |p.z - stored z|)=) stops distant geometry in front (a pillar far ahead of a wall) from darkening the wall's edge. The visibility is =clamp (1 - intensity * occluded / samples, 0, 1) ^ power=.
+2. *Blur.* A depth-aware 4 x 4 box blur (one noise tile) removes the noise pattern: each tap is weighted by =max (1 - |z - z_centre| / radius, 0)=, so the blur does not bleed across silhouettes.
+
+*** Kernel and noise
+:PROPERTIES:
+:CUSTOM_ID: concepts-kernel
+:END:
+The kernel is =kernel-size= vectors in the +Z hemisphere (tangent space, +Z along the normal). Directions are random with z / length >= 0.15 (grazing samples only test the surface itself); sample /i/ has length =0.1 + 0.9 * ((i + 1) / n)^2=, so most samples sit close to the point where small creases are, and the last reaches the full radius. The noise is 16 unit vectors in the tangent plane. Both come from =GRand= (Mersenne Twister) seeded with =seed= (the noise from =seed ^ 0x9e3779b9=, so changing the kernel size does not change it). Inspect them with =lrg_ssao_get_kernel_sample()= and =lrg_ssao_get_noise_sample()=.
+
+*** How the lit shader reads it
+:PROPERTIES:
+:CUSTOM_ID: concepts-hook
+:END:
+The light set pastes =LRG_SSAO_GLSL= (also =lrg_ssao_get_glsl()=) into its fragment shader and calls the binder every draw-state change. The hook defines:
+
+#+begin_src glsl
+uniform int lrgSsaoOn;            /* 0: lrg_ssao() returns 1.0 */
+uniform sampler2D lrgSsaoTexture; /* the result, bilinear */
+uniform vec4 lrgSsaoViewport;     /* lit pass x, y, width, height in framebuffer pixels */
+float lrg_ssao();                 /* visibility at gl_FragCoord, 1.0 outside the viewport */
+#+end_src
+
+=lrg_ssao()= multiplies the indirect term and the material's own ambient occlusion (see the [[file:light-set.org::#shader-contract-090][contract]]). It returns 1.0 while no result exists, so binding an =LrgSsao= before its first render is harmless. The binder takes one texture unit from the light set's hook window (=lrg_light_set_hook_unit_usable()=); when none is left it binds the inactive state.
+
+*** Viewport mapping
+:PROPERTIES:
+:CUSTOM_ID: concepts-viewport
+:END:
+=lrg_ssao()= maps =gl_FragCoord= through =lrgSsaoViewport=. By default that is (0, 0, prepass width, prepass height) - right whenever the lit pass draws into a target of the prepass size from the same camera. When the lit pass draws into a sub-rectangle of a larger framebuffer (an editor viewport inside the window), call =lrg_ssao_set_viewport()= with that rectangle in GL convention (y from the bottom).
+
+** Parameters
+:PROPERTIES:
+:CUSTOM_ID: parameters
+:END:
+
+| Property          | Type    | Default | Range      | Visual effect                                                                                                                  |
+|-------------------+---------+---------+------------+--------------------------------------------------------------------------------------------------------------------------------|
+| =radius=          | float   | 0.5     | > 0        | world distance occluders count over: 0.1 - 0.3 gives contact shadows and tight creases, 1 - 2 darkens whole corners and rooms |
+| =bias=            | float   | 0.025   | >= 0       | removes speckled self-occlusion on flat or curved surfaces; too high and shallow creases stop darkening                        |
+| =intensity=       | float   | 1       | >= 0       | scales occlusion; 0 disables the effect, 1.5 - 2 gives a stylised, heavy look                                                 |
+| =power=           | float   | 1.5     | 0.01 .. 16 | contrast: higher deepens the darkest creases and leaves open areas bright                                                     |
+| =kernel-size=     | uint    | 16      | 4 .. 64    | samples per pixel: fewer is noisier (the blur hides up to about 8), more is smoother and slower                               |
+| =seed=            | uint    | 1       | any        | changes the noise pattern; keep it fixed for reproducible screenshots and tests                                               |
+| =half-resolution= | boolean | TRUE    |            | compute at half width and height (quarter cost); slightly softer occlusion at silhouettes                                     |
+| =blur=            | boolean | TRUE    |            | the depth-aware blur; off shows the raw 4 x 4 noise pattern (useful when tuning)                                              |
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+
+#+begin_src C
+LrgSsao *    lrg_ssao_new                  (void);
+void         lrg_ssao_set_radius           (LrgSsao *self, gfloat radius);
+gfloat       lrg_ssao_get_radius           (LrgSsao *self);
+void         lrg_ssao_set_bias             (LrgSsao *self, gfloat bias);
+gfloat       lrg_ssao_get_bias             (LrgSsao *self);
+void         lrg_ssao_set_intensity        (LrgSsao *self, gfloat intensity);
+gfloat       lrg_ssao_get_intensity        (LrgSsao *self);
+void         lrg_ssao_set_power            (LrgSsao *self, gfloat power);
+gfloat       lrg_ssao_get_power            (LrgSsao *self);
+void         lrg_ssao_set_kernel_size      (LrgSsao *self, guint samples);
+guint        lrg_ssao_get_kernel_size      (LrgSsao *self);
+void         lrg_ssao_set_seed             (LrgSsao *self, guint32 seed);
+guint32      lrg_ssao_get_seed             (LrgSsao *self);
+void         lrg_ssao_set_half_resolution  (LrgSsao *self, gboolean half);
+gboolean     lrg_ssao_get_half_resolution  (LrgSsao *self);
+void         lrg_ssao_set_blur             (LrgSsao *self, gboolean blur);
+gboolean     lrg_ssao_get_blur             (LrgSsao *self);
+void         lrg_ssao_get_kernel_sample    (LrgSsao *self, guint index, gfloat *out_xyz);
+void         lrg_ssao_get_noise_sample     (LrgSsao *self, guint index, gfloat *out_xy);
+gboolean     lrg_ssao_render               (LrgSsao *self, LrgDepthPrepass *prepass);
+gboolean     lrg_ssao_has_result           (LrgSsao *self);
+guint        lrg_ssao_get_texture_id       (LrgSsao *self);
+gint         lrg_ssao_get_width            (LrgSsao *self);
+gint         lrg_ssao_get_height           (LrgSsao *self);
+void         lrg_ssao_set_viewport         (LrgSsao *self, gint x, gint y, gint width, gint height);
+gint         lrg_ssao_bind                 (LrgSsao *self, guint shader_id, gint first_unit);
+void         lrg_ssao_bind_inactive        (guint shader_id);
+const gchar *lrg_ssao_get_glsl             (void);
+void         lrg_ssao_release              (LrgSsao *self);
+#+end_src
+
+| Function | Description |
+|----------+-------------|
+| =lrg_ssao_new()= | an SSAO pass with the defaults above |
+| =lrg_ssao_set_radius()= ... =lrg_ssao_get_blur()= | the parameters (setters clamp, notify only on change) |
+| =lrg_ssao_get_kernel_sample()= | kernel sample /index/ (tangent space, float[3]) |
+| =lrg_ssao_get_noise_sample()= | noise texel /index/ (row-major, float[2]) |
+| =lrg_ssao_render()= | runs the passes from a valid prepass; call after the prepass, before the lit pass, outside texture modes; FALSE without GL or a valid prepass |
+| =lrg_ssao_has_result()= | a render succeeded (the hook is active) |
+| =lrg_ssao_get_texture_id()= | the result texture (visibility in red), 0 before the first render |
+| =lrg_ssao_get_width()= / =lrg_ssao_get_height()= | the result size (half the prepass with =half-resolution=) |
+| =lrg_ssao_set_viewport()= | the lit pass rectangle for =lrg_ssao()=; width or height 0 = automatic |
+| =lrg_ssao_bind()= | binds the result into your own shader that pasted =lrg_ssao_get_glsl()=; returns the next free unit (unchanged when inactive) |
+| =lrg_ssao_bind_inactive()= | turns =lrg_ssao()= off in a shader |
+| =lrg_ssao_get_glsl()= | the hook source |
+| =lrg_ssao_release()= | frees the GPU objects (before =CloseWindow()=) |
+
+The light set's binder =lrg_ssao_bind_private()= (private header =graphics/lrg-ssao-glsl-private.h=) is what =lrg_light_set_apply()= calls; =lrg_light_set_set_ssao()= attaches an =LrgSsao= to a light set.
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+
+*** SSAO in a game frame
+:PROPERTIES:
+:CUSTOM_ID: example-frame
+:END:
+#+begin_src C
+/* setup, after InitWindow () */
+g_autoptr(LrgDepthPrepass) prepass = lrg_depth_prepass_new (GetScreenWidth (), GetScreenHeight ());
+g_autoptr(LrgSsao)         ssao = lrg_ssao_new ();
+
+lrg_ssao_set_radius (ssao, 0.4f);      /* furniture-scale creases */
+lrg_ssao_set_intensity (ssao, 1.2f);
+lrg_light_set_set_ssao (lights, ssao); /* the lit shader samples it */
+
+/* every frame */
+lrg_depth_prepass_record (prepass, LRG_CAMERA (camera), draw_opaque, &scene);
+lrg_ssao_render (ssao, prepass);
+
+BeginDrawing ();
+ClearBackground (BLACK);
+lrg_light_set_apply (lights, cam_x, cam_y, cam_z);   /* binds lrg_ssao() too */
+lrg_camera_begin (LRG_CAMERA (camera));
+draw_lit_scene (&scene);
+lrg_camera_end (LRG_CAMERA (camera));
+EndDrawing ();
+
+/* shutdown, before CloseWindow () */
+lrg_ssao_release (ssao);
+lrg_depth_prepass_release (prepass);
+#+end_src
+
+*** Your own shader reading the occlusion
+:PROPERTIES:
+:CUSTOM_ID: example-own-shader
+:END:
+#+begin_src C
+g_autofree gchar *fs = g_strconcat (
+	"#version 330\n"
+	"out vec4 finalColor;\n",
+	lrg_ssao_get_glsl (),
+	"void main () { float a = lrg_ssao (); finalColor = vec4 (a, a, a, 1.0); }\n",
+	NULL);
+Shader debug = LoadShaderFromMemory (vertex_source, fs);
+
+/* after lrg_ssao_render (): units from LRG_LIGHT_SET_HOOK_UNIT on are free for hooks */
+gint next = lrg_ssao_bind (ssao, debug.id, LRG_LIGHT_SET_HOOK_UNIT);
+#+end_src
+
+*** Editor-style viewport inside the window
+:PROPERTIES:
+:CUSTOM_ID: example-viewport
+:END:
+#+begin_src C
+/* the lit pass draws into a 800 x 600 rectangle whose bottom-left corner
+ * is at (320, 40) of the window (GL convention) */
+lrg_depth_prepass_resize (prepass, 800, 600);
+lrg_ssao_set_viewport (ssao, 320, 40, 800, 600);
+#+end_src
+
+** Performance notes
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- Cost is about =output pixels x (kernel-size + 1)= depth fetches plus 32 fetches per pixel for the blur. At 1920 x 1080 with half resolution and 16 samples that is roughly 9 million fetches per frame - a fraction of a millisecond on a desktop GPU, a few ms on integrated or software GL.
+- Half resolution (default) quarters the occlusion pass; the lit shader upsamples bilinearly. Turn it off only for close-up, high-frequency geometry where halos at silhouettes show.
+- Kernel size: 8 with the blur is the cheap setting, 16 the default, 32+ for screenshots. Above 32 returns diminish because the noise rotation already decorrelates samples.
+- The prepass itself (an extra opaque geometry pass) usually costs more than SSAO; see [[file:depth-prepass.org::#performance][prepass performance]].
+- Parameters are uniforms: changing them per frame costs nothing; only =kernel-size= and =seed= regenerate the (tiny) kernel on the CPU.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Indirect light only.* A scene lit only by a strong sun and point lights barely shows SSAO; it lives in ambient and IBL. Raise the ambient or use an [[file:../lighting/environment.org][environment]].
+- *Mismatched cameras or sizes.* The prepass must be recorded from the camera the lit pass draws with, at the lit target's size (or set the viewport); otherwise the occlusion slides off its geometry.
+- *Halos at silhouettes* come from a radius large relative to the object; lower =radius= or enable the blur (which respects depth).
+- *Banding/self-occlusion on curved surfaces:* raise =bias= slightly (0.02 - 0.05 in metre-scale scenes).
+- *Render outside texture modes.* =lrg_ssao_render()= uses its own render targets; calling it inside another =BeginTextureMode()= breaks the outer pass.
+- *No hook unit left.* On a 16-unit driver the environment, SSAO and decals share 4 units; SSAO takes one. When none is free the hook is simply off.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+Wave 2a ships SSAO as an engine API. Wave 2b turns it on in [[file:../world3d/renderer.org][LrgWorld3DRenderer]] (and so in the editor viewport and play-in-editor) with a renderer flag, exposes radius/intensity/power in the viewport's render settings and adds an "Ambient occlusion" debug view mode that shows the result texture.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:depth-prepass.org][LrgDepthPrepass]] - the input
+- [[file:light-set.org::#shader-contract-090][Light-set shader contract]] - =lrg_ssao()= in the lit shader
+- [[file:decal.org][LrgDecalSet]] - the other wave 2a hook
+- [[file:../../guides/materials-and-pbr.org][Materials and PBR]] - how occlusion fits the lighting model

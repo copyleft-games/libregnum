@@ -21,6 +21,7 @@
 #include <graylib.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "lrg-material.h"
 
 G_BEGIN_DECLS
 
@@ -419,6 +420,41 @@ lrg_static_batch_get_chunk_texcoords(
 );
 
 /**
+ * lrg_static_batch_set_material:
+ * @self: an #LrgStaticBatch
+ * @material: material id
+ * @asset: (nullable): the #LrgMaterial chunks of @material draw with,
+ *   %NULL to unset
+ *
+ * Binds a runtime material to a material id (the batch keeps a
+ * reference). Chunks of @material then draw with lrg_material_apply()
+ * (base colour times the layer tint, texture slots, PBR parameters,
+ * emission) and lrg_material_apply_state() around the draw, instead of
+ * the per-id texture/emission/map setters, which it replaces for that
+ * id. Without a batch shader (lrg_static_batch_set_shader()) only the
+ * albedo map, base colour and render state apply (raylib's default
+ * shader has no PBR uniforms).
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_static_batch_set_material (LrgStaticBatch *self,
+                               guint           material,
+                               LrgMaterial    *asset);
+
+/**
+ * lrg_static_batch_get_material:
+ * @self: an #LrgStaticBatch
+ * @material: material id
+ *
+ * Returns: (transfer none) (nullable): the #LrgMaterial bound to
+ *   @material
+ */
+LRG_AVAILABLE_IN_ALL
+LrgMaterial *
+lrg_static_batch_get_material (LrgStaticBatch *self,
+                               guint           material);
+
+/**
  * lrg_static_batch_set_material_texture:
  * @self: an #LrgStaticBatch
  * @material: material id
@@ -631,6 +667,11 @@ lrg_static_batch_unload (LrgStaticBatch *self);
  * Draws every uploaded chunk whose layer is selected, in chunk order, with
  * its material texture, its layer tint and the batch shader. Must be
  * called inside a 3D mode. Chunks not yet uploaded are skipped.
+ *
+ * Chunk layers are render layers (see lrg_render_layers_get_name()):
+ * @layer_mask is ANDed with lrg_render_layers_get_active_mask(), so a
+ * chunk whose layer the begun camera's #LrgCamera:cull-mask (or a
+ * shadow pass's caster mask) leaves out is not drawn.
  */
 LRG_AVAILABLE_IN_ALL
 void
@@ -643,7 +684,8 @@ lrg_static_batch_draw (LrgStaticBatch *self,
  * @chunk: chunk index
  *
  * Draws one uploaded chunk (for callers that cull with
- * lrg_static_batch_get_chunk_bounds()).
+ * lrg_static_batch_get_chunk_bounds()).  Nothing is drawn when the
+ * chunk's layer is outside lrg_render_layers_get_active_mask().
  */
 LRG_AVAILABLE_IN_ALL
 void

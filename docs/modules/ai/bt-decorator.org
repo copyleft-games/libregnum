@@ -279,6 +279,55 @@ LrgBTRepeater *triple_attack = lrg_bt_repeater_new(LRG_BT_NODE(attack), 3);
 LrgBTRepeater *infinite = lrg_bt_repeater_new(LRG_BT_NODE(attack), 0);
 #+end_src
 
+** Cooldown Decorator (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: cooldown
+:END:
+#+begin_src C
+LrgBTCooldown *lrg_bt_cooldown_new (LrgBTNode *child, gfloat seconds);
+gfloat         lrg_bt_cooldown_get_seconds   (LrgBTCooldown *self);
+void           lrg_bt_cooldown_set_seconds   (LrgBTCooldown *self, gfloat seconds);
+gfloat         lrg_bt_cooldown_get_remaining (LrgBTCooldown *self);
+#+end_src
+
+After its child completes (success or failure) the cooldown fails without ticking the child until =seconds= of *tick time* have passed: the delta of each tick that reaches the node is counted off. =lrg_bt_cooldown_get_remaining()= is what is left (0 when ready); a reset clears it. In =.rbt=: =type: cooldown= with =seconds:=.
+
+#+begin_src C
+/* swing at most every 0.8 s; the selector falls through to the next branch meanwhile */
+LrgBTCooldown *cd = lrg_bt_cooldown_new (LRG_BT_NODE (swing), 0.8f);
+#+end_src
+
+** Time Limit Decorator (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: time-limit
+:END:
+#+begin_src C
+LrgBTTimeLimit *lrg_bt_time_limit_new (LrgBTNode *child, gfloat seconds);
+gfloat          lrg_bt_time_limit_get_seconds (LrgBTTimeLimit *self);
+void            lrg_bt_time_limit_set_seconds (LrgBTTimeLimit *self, gfloat seconds);
+#+end_src
+
+Ticks the child; while it keeps running, its tick time is summed, and past =seconds= the child is aborted and reset and the node fails. A completed child resets the clock. In =.rbt=: =type: time_limit= with =seconds:=.
+
+** Guard Decorator (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: guard
+:END:
+#+begin_src C
+LrgBTGuard     *lrg_bt_guard_new (LrgBTNode *child, const gchar *key, LrgBlackboardOp op, GVariant *operand);
+const gchar    *lrg_bt_guard_get_key     (LrgBTGuard *self);
+LrgBlackboardOp lrg_bt_guard_get_op      (LrgBTGuard *self);
+GVariant       *lrg_bt_guard_get_operand (LrgBTGuard *self);
+#+end_src
+
+On every tick the guard tests the blackboard with =lrg_blackboard_test (bb, key, op, operand)=. While it holds the child is ticked and its status returned; when it stops holding, a running child is aborted and reset and the guard fails. A =sequence= of a condition and a running action only re-checks the condition when the action finishes; a guard re-checks it on every tick, which makes the branch reactive. In =.rbt=: =type: guard= with =key:=, =op:= and =value:=.
+
+#+begin_src C
+/* chase only while the target is visible */
+LrgBTGuard *g = lrg_bt_guard_new (LRG_BT_NODE (chase), "target_visible", LRG_BLACKBOARD_OP_EQ,
+                                  g_variant_new_boolean (TRUE));
+#+end_src
+
 ** Complete Example
 :PROPERTIES:
 :CUSTOM_ID: complete-example

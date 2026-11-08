@@ -1,0 +1,280 @@
+* LrgGltfAnimation - glTF Skins, Clips and Morph Targets
+:PROPERTIES:
+:CUSTOM_ID: lrggltfanimation
+:END:
+=LrgGltfAnimation= imports the animation data of a glTF 2.0 file (=.gltf= or =.glb=) into the engine's own animation types, so a character exported from Blender, Maya or any DCC tool plays through =LrgAnimator=, the state machine, blend trees and the 3D animator component exactly like hand-built data:
+
+| glTF                                    | becomes                                                                                      |
+|-----------------------------------------+----------------------------------------------------------------------------------------------|
+| a skin (=skins[i]=)                     | an [[file:skeleton.org][LrgSkeleton]]: hierarchy, bind pose, inverse bind matrices                         |
+| an animation (=animations[i]=)          | an [[file:clip.org][LrgAnimationClip]]: TRS channels (step, linear, cubic spline) and morph weight channels |
+| the meshes using a skin                 | an [[file:../graphics/skinned-mesh.org][LrgSkinnedMesh]] with four influences per vertex and its inverse binds |
+| morph targets (=primitives[].targets=)  | an =LrgMorphTargets= on that mesh, one group per node                                         |
+| a mesh without a skin                   | a rigid, single-bone =LrgSkinnedMesh= with its morph targets                                  |
+
+Parsing and validation go through cgltf, the copy already compiled into raylib (graylib links it; libregnum calls its exported functions and includes only its declarations), so no second glTF parser is added. Nothing needs a graphics context: import in tests, tools and on worker threads.
+
+The loader keeps the glTF keys exactly. A clip's channels are the file's channels with their own key times and interpolation; nothing is resampled, so a 3-key cubic spline stays a 3-key cubic spline and sampling it gives the same curve the DCC tool exported.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Bones are joints
+:PROPERTIES:
+:CUSTOM_ID: bones-are-joints
+:END:
+Bone /i/ of the skeleton is joint /i/ of the skin. That index is also the =JOINTS_0= index of the skinned mesh and the mesh's bone index, so =lrg_skinned_mesh_apply_skeleton()= pairs them without a lookup. A bone's parent is its nearest ancestor node that is a joint of the same skin; non-joint nodes between joints are skipped (their transform is not part of the skeleton, which matches every exporter's output in practice).
+
+*** Names
+:PROPERTIES:
+:CUSTOM_ID: names
+:END:
+Bones, clip tracks and morph target groups all take the node's name from =lrg_gltf_animation_get_node_name()=: the glTF ="name"=, ="node_<index>"= when it has none, and ="<name>_<index>"= when an earlier node already uses the name. One rule for all three means an imported clip binds to an imported skeleton by name (=LrgAnimator=, =LrgAnimationState= and the blend tree resolve tracks by bone name) and a weight channel finds its morph group by name.
+
+*** Armature folding
+:PROPERTIES:
+:CUSTOM_ID: armature-folding
+:END:
+Exporters usually put the root joint under a non-joint node: Blender's ="Armature"= with a 90 degree rotation (Z-up to Y-up) and a 0.01 or 100 scale. glTF skinning works in scene space (joint world matrix times inverse bind matrix), so the world transform of those ancestors is folded into the root joint:
+
+- its bind pose is =ancestor * rest= (position, rotation and scale);
+- every key of its translation, rotation and scale channels is folded the same way: =t' = T + R (s t)=, =q' = R q=, =v' = s v=; cubic spline tangents take only the linear part (no =T=).
+
+With a uniform ancestor scale this is exact per component, so the three channels stay independent and keep their interpolation. A non-uniformly scaled ancestor is approximated by its mean scale and logged with =g_warning()=. Animating the armature node itself is not folded (see [[#pitfalls][Pitfalls]]).
+
+*** Channels and base poses
+:PROPERTIES:
+:CUSTOM_ID: channels-and-base-poses
+:END:
+Each animated node gets one track. Its glTF channels become clip channels (=lrg_animation_clip_set_track_channel()=); the components without a channel come from the track's base pose, which the importer sets to the node's rest transform (folded for root joints). A rotation-only track therefore keeps the bone's rest position and scale, as glTF requires. Sampling still goes through =lrg_animation_clip_sample_track()=, so every existing consumer works unchanged. See [[file:clip.org::#channels][Channels]] for the evaluation rules.
+
+*** Morph targets
+:PROPERTIES:
+:CUSTOM_ID: morph-targets
+:END:
+Morph targets (blend shapes) of the meshes become one =LrgMorphTargets= on the skinned mesh. Targets are grouped by the node that places the mesh; the group name is the node name, which is also the target name of that node's ="weights"= channel in a clip. Target names come from the mesh's =extras.targetNames= (the de-facto convention Blender writes), else ="<group>.<index>"=. Default weights come from the node's ="weights"=, else the mesh's, else 0. Position and normal deltas are kept; tangent deltas are ignored. Blending is documented in [[file:../graphics/skinned-mesh.org::#morph-targets][LrgSkinnedMesh: Morph targets]].
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+- =LrgGltfAnimation= - *Final GObject class*, =LRG_TYPE_GLTF_ANIMATION=, GIR =Libregnum.GltfAnimation=
+- *Header* - =animation/lrg-gltf-animation.h= (through =<libregnum.h>=)
+- *Errors* - =LRG_GLTF_ERROR= (=LrgGltfError=, shared with =LrgGltfInfo= and =LrgGltfGeometry=), =G_FILE_ERROR_NOENT= for a missing file
+
+*** Loading
+:PROPERTIES:
+:CUSTOM_ID: loading
+:END:
+#+begin_src C
+LrgGltfAnimation *lrg_gltf_animation_new_from_file  (const gchar *path, GError **error);
+LrgGltfAnimation *lrg_gltf_animation_new_from_bytes (GBytes *data, const gchar *base_dir, GError **error);
+#+end_src
+The GLB binary chunk and ="data:"= URIs are read in place. External buffer files resolve against the file's directory (or =base_dir=); absolute paths, URLs (="://"=) and =..= components are refused with =LRG_GLTF_ERROR_UNSUPPORTED=, and =new_from_bytes()= without a base directory refuses external files altogether. After loading the buffers the document is validated with =cgltf_validate()= (accessor ranges, buffer view bounds, index ranges), so the converters never read out of bounds.
+
+| Failure                          | Error                                 |
+|----------------------------------+---------------------------------------|
+| file missing                     | =G_FILE_ERROR_NOENT=                  |
+| not JSON / not glTF              | =LRG_GLTF_ERROR_INVALID_JSON=         |
+| truncated or unknown container   | =LRG_GLTF_ERROR_INVALID_CONTAINER=    |
+| glTF 1.0                         | =LRG_GLTF_ERROR_UNSUPPORTED_VERSION=  |
+| refused buffer URI               | =LRG_GLTF_ERROR_UNSUPPORTED=          |
+| buffer or validation failure     | =LRG_GLTF_ERROR_INVALID_DATA=         |
+| skin/clip/mesh index too large   | =LRG_GLTF_ERROR_INVALID_REFERENCE=    |
+
+*** Queries
+:PROPERTIES:
+:CUSTOM_ID: queries
+:END:
+#+begin_src C
+guint        lrg_gltf_animation_get_node_count (LrgGltfAnimation *self);
+const gchar *lrg_gltf_animation_get_node_name  (LrgGltfAnimation *self, guint node);
+guint        lrg_gltf_animation_get_skin_count (LrgGltfAnimation *self);
+const gchar *lrg_gltf_animation_get_skin_name  (LrgGltfAnimation *self, guint skin);   /* or "skin_<i>" */
+guint        lrg_gltf_animation_get_skin_joint_count (LrgGltfAnimation *self, guint skin);
+guint        lrg_gltf_animation_get_clip_count (LrgGltfAnimation *self);
+const gchar *lrg_gltf_animation_get_clip_name  (LrgGltfAnimation *self, guint clip);   /* or "clip_<i>" */
+gint         lrg_gltf_animation_find_clip      (LrgGltfAnimation *self, const gchar *name);
+guint        lrg_gltf_animation_get_mesh_count (LrgGltfAnimation *self);
+guint        lrg_gltf_animation_get_mesh_morph_target_count (LrgGltfAnimation *self, guint mesh);
+#+end_src
+
+*** Converters
+:PROPERTIES:
+:CUSTOM_ID: converters
+:END:
+#+begin_src C
+LrgSkeleton      *lrg_gltf_animation_create_skeleton     (LrgGltfAnimation *self, guint skin, GError **error);
+LrgAnimationClip *lrg_gltf_animation_create_clip         (LrgGltfAnimation *self, guint clip, GError **error);
+GPtrArray        *lrg_gltf_animation_create_clips        (LrgGltfAnimation *self, GError **error);
+LrgSkinnedMesh   *lrg_gltf_animation_create_skinned_mesh (LrgGltfAnimation *self, guint skin, GError **error);
+LrgSkinnedMesh   *lrg_gltf_animation_create_mesh         (LrgGltfAnimation *self, guint mesh, GError **error);
+#+end_src
+- =create_skeleton()= :: bones named and parented as described above; bind pose = local pose = node rest TRS (a ="matrix"= node is decomposed); bone length = distance to the first child with a non-zero offset (0.1 for leaves); inverse bind matrices from the skin (identity when the skin has none) stored with =lrg_skeleton_set_inverse_bind_matrix()=; world poses calculated.
+- =create_clip()= :: one track per animated node, channels kept exactly, ="weights"= channels as weight channels; duration = last key; loop mode =LRG_ANIMATION_LOOP_REPEAT=. A sampler whose output count does not match its keys (times three for cubic spline, times the target count for weights) is =LRG_GLTF_ERROR_INVALID_DATA=. Channels without a target node, and paths from extensions (=KHR_animation_pointer=), are skipped.
+- =create_clips()= :: every clip in file order; the array owns its clips (=g_ptr_array_unref()= frees them).
+- =create_skinned_mesh()= :: merges the triangle primitives of every node using the skin (points, lines and strips are skipped): mesh-space =POSITION=, =NORMAL=, =TEXCOORD_0=, =COLOR_0= (to RGBA8), =JOINTS_0=/=WEIGHTS_0= (renormalised), indices; inverse binds and a bind-pose palette from =create_skeleton()=; morph targets as one =LrgMorphTargets=. At most 65535 vertices and 255 joints (the =LrgSkinnedMesh= limits).
+- =create_mesh()= :: one glTF mesh as a one-bone mesh (identity inverse bind; place it with =lrg_skinned_mesh_draw()='s transform) with its morph targets, for faces and props driven only by blend shapes.
+
+*** Convenience
+:PROPERTIES:
+:CUSTOM_ID: convenience
+:END:
+#+begin_src C
+LrgSkeleton *lrg_gltf_load_skeleton (const gchar *path, guint skin, GError **error);
+GPtrArray   *lrg_gltf_load_clips    (const gchar *path, GError **error);   /* element-type LrgAnimationClip */
+#+end_src
+Each parses the file once; load through an =LrgGltfAnimation= when you need several things from the same file.
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: worked-examples
+:END:
+*** A character in one go
+:PROPERTIES:
+:CUSTOM_ID: a-character-in-one-go
+:END:
+#+begin_src C
+g_autoptr(GError)           error = NULL;
+g_autoptr(LrgGltfAnimation) gltf = lrg_gltf_animation_new_from_file ("data/hero.glb", &error);
+g_autoptr(LrgSkeleton)      skeleton = NULL;
+g_autoptr(LrgSkinnedMesh)   body = NULL;
+g_autoptr(GPtrArray)        clips = NULL;
+g_autoptr(LrgAnimator)      animator = NULL;
+guint                       i;
+
+if (gltf == NULL)
+	g_error ("%s", error->message);
+skeleton = lrg_gltf_animation_create_skeleton (gltf, 0, &error);
+body = lrg_gltf_animation_create_skinned_mesh (gltf, 0, &error);
+clips = lrg_gltf_animation_create_clips (gltf, &error);
+
+animator = lrg_animator_new (skeleton);
+for (i = 0; i < clips->len; i++)
+{
+	LrgAnimationClip *clip = g_ptr_array_index (clips, i);
+
+	lrg_animator_add_clip (animator, lrg_animation_clip_get_name (clip), clip);
+}
+lrg_animator_play (animator, "Walk");
+
+/* every frame */
+lrg_animator_update (animator, dt);
+lrg_skeleton_calculate_world_poses (skeleton);
+lrg_skinned_mesh_apply_skeleton (body, skeleton);
+lrg_skinned_mesh_draw (body, &model_matrix);
+#+end_src
+
+*** Sampling a clip by hand
+:PROPERTIES:
+:CUSTOM_ID: sampling-a-clip-by-hand
+:END:
+#+begin_src C
+/* pose the skeleton from a clip at time t (what LrgAnimator does) */
+lrg_skeleton_reset_to_bind (skeleton);
+for (guint tr = 0; tr < lrg_animation_clip_get_track_count (clip); tr++)
+{
+	LrgBone    *bone = lrg_skeleton_get_bone_by_name (skeleton, lrg_animation_clip_get_track_bone_name (clip, tr));
+	LrgBonePose pose;
+
+	if (bone == NULL)
+		continue;   /* a rigid node animated in the same file */
+	lrg_animation_clip_sample_track (clip, tr, t, &pose);
+	lrg_skeleton_set_pose (skeleton, lrg_bone_get_index (bone), &pose);
+}
+lrg_skeleton_calculate_world_poses (skeleton);
+#+end_src
+
+*** Morph weights from a clip
+:PROPERTIES:
+:CUSTOM_ID: morph-weights-from-a-clip
+:END:
+#+begin_src C
+for (guint ch = 0; ch < lrg_animation_clip_get_weights_channel_count (clip); ch++)
+{
+	guint  n = lrg_animation_clip_get_weights_channel_width (clip, ch);
+	gfloat w[64];
+
+	if (n > G_N_ELEMENTS (w))
+		continue;
+	lrg_animation_clip_sample_weights (clip, ch, t, w);
+	lrg_skinned_mesh_set_morph_group_weights (body, lrg_animation_clip_get_weights_channel_target (clip, ch), w, n);
+}
+#+end_src
+
+*** A blend-shape face without a skin
+:PROPERTIES:
+:CUSTOM_ID: a-blend-shape-face-without-a-skin
+:END:
+#+begin_src C
+g_autoptr(LrgSkinnedMesh) face = lrg_gltf_animation_create_mesh (gltf, 0, &error);
+LrgMorphTargets *targets = lrg_skinned_mesh_get_morph_targets (face);
+gint smile = lrg_morph_targets_find_target (targets, "Smile");
+
+lrg_skinned_mesh_set_morph_weight (face, (guint)smile, 0.8f);
+lrg_skinned_mesh_draw (face, &head_matrix);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- Import is linear in the file size: one cgltf parse (JSON tokenising dominates), one validation pass and one unpack per accessor. Hold on to the =LrgGltfAnimation= while you convert several things; =lrg_gltf_load_skeleton()= and =lrg_gltf_load_clips()= each parse the file again.
+- Channel sampling is a binary search over the key times plus one interpolation per component: O(log keys) per track. No per-sample allocation; =lrg_animation_clip_sample_track()= writes into the caller's pose.
+- Cubic spline costs four extra multiply-adds per component over linear; step is a copy.
+- Merging primitives into one =LrgSkinnedMesh= gives one draw call per skin.
+- Measured with =tests/test-gltf-animation -m perf -p /gltf-animation/perf= (release build, i7-1280P, one thread), on the 11-bone box character (264 vertices, a 6-channel walk clip):
+
+| Operation                                                         | Time     |
+|-------------------------------------------------------------------+----------|
+| import: parse + validate + skeleton + clip + skinned mesh         | 349 us   |
+| sample one channel track (=lrg_animation_clip_sample_track()=)    | 251 ns   |
+| pose 11 bones from the clip, world poses, palette                 | 6.7 us   |
+| CPU skinning of 264 vertices (=lrg_skinned_mesh_skin()=)          | 9.9 us   |
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *An animated armature node is not folded.* Folding uses the ancestors' rest transform. If a clip animates the =Armature= node itself (root motion baked onto it), that track is a separate rigid-node track; move the motion onto the root joint in the DCC tool, or apply it to the entity (the 3D animator's root motion extraction does this for the root bone).
+- *Non-uniform armature scale* is approximated by its mean; a warning is logged. Apply scale in the DCC tool before export.
+- *Joint ordering.* Bone indices follow the skin's =joints= array, not the node order; the parent of a bone can have a larger index than the bone. =LrgSkeleton= handles any order.
+- *Several skins.* Each skin is its own skeleton; a node can be a joint of several skins. Clips are per file, not per skin: tracks of other skins' joints simply find no bone.
+- *More than four influences.* Only =JOINTS_0=/=WEIGHTS_0= are read; =JOINTS_1= weights are dropped and the four kept are renormalised.
+- *Vertex limit.* A skinned mesh holds at most 65535 vertices (16-bit indices); split huge characters into several skins or meshes.
+- *Unsupported data.* Draco (=KHR_draco_mesh_compression=) and meshopt-compressed buffers are not decoded by this path; =LrgGltfGeometry= reads meshopt for static geometry. Sparse accessors are supported (cgltf unpacks them).
+- *Morph targets on several primitives* of a mesh must have the same count and order (glTF requires it); names come from =extras.targetNames= only.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-gltf-animation.c= writes every fixture itself (GLB built in memory with =tests/lrg-test-glb.h=):
+- */gltf-animation/skeleton-hierarchy* - a 3-bone chain under an =Armature= translated by (1, 0, 0), rotated 90 degrees about Z and scaled 2: names, parents, lengths, the folded root bind pose, world rest positions against hand-computed matrices, inverse bind times world = identity, =lrg_skeleton_copy()= keeping inverse binds, =lrg_skeleton_compute_inverse_bind_matrices()= agreeing with the file.
+- */gltf-animation/clip-channels* - linear rotation (45 degrees half way), step translation (holds until the key, folded to (1, 0, 2)), cubic spline scale with tangents (1.625 at s = 0.5), base pose components, looping, a step clip, invalid channel input.
+- */gltf-animation/skinning-matches-reference* - clip -> skeleton -> palette -> CPU skinning at five times equals =LrgGltfGeometry='s independent posing of the same file (2e-4), and the bind pose skins to the bind positions.
+- */gltf-animation/morph-targets* - target names, groups and default weights from the file, the weights channel half way, group weights, skinned morph result against =LrgGltfGeometry=, removal and count mismatch.
+- */gltf-animation/bone-map* and */gltf-animation/retarget* - see [[file:retargeter.org][Retargeting]].
+- */gltf-animation/load-file-and-errors* - the convenience loaders, missing file, junk data, refused buffer URIs.
+- */gltf-animation/gpu-character* (display only) - an 11-bone box character imported with a walk clip, uploaded and drawn by the GPU skinning path at three times; frames differ, the CPU bounds agree; a morph mesh draws after a weight change. With =LRG_TEST_SHOT_DIR= set the frames are saved as =m34-animimport-walk.png=.
+- */gltf-animation/perf* (only with =-m perf=) - the timings in [[#performance][Performance]].
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: using-it-from-the-editor
+:END:
+- *Clip preview in the Assets panel* - "Preview Animations..." on a =.glb= / =.gltf= opens a dialog with the model (=lrg_gltf_animation_create_skinned_mesh()=) on a turntable playing a clip (=lrg_anim_pose_sample_clip()=), the clip list, a scrub bar, a track summary and one slider per morph target (=lrg_morph_targets_get_target_name()=, =lrg_skinned_mesh_set_morph_weight()=); the =clip.*= IPC methods read clips, tracks, channels and events without UI. See [[file:../../editor/animation-editor.org::#assets-animation][Animation tools: clip preview]].
+- *Bone map editor* - two skeletons (=create_skeleton()= of two files) with =LrgBoneMap= pairs, auto map and a live retarget preview; see [[file:retargeter.org#using-it-from-the-editor][Retargeting]].
+- *New Animation Graph from Model* - a =.ranim= with one clip slot and one state per animation of the file.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:skeleton.org][Skeleton and bones]] (inverse bind matrices, bind world poses)
+- [[file:clip.org][Animation clips]] (channels, interpolation, weight channels)
+- [[file:retargeter.org][Retargeting]]
+- [[file:../graphics/skinned-mesh.org][LrgSkinnedMesh]] (palette, morph targets)
+- [[file:../graphics/gltf-geometry.org][LrgGltfGeometry]] (static glTF geometry and reference posing)
+- [[file:../../guides/animation-pipeline.org][Animation pipeline guide]]
