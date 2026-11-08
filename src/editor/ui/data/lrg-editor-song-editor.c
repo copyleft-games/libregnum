@@ -2727,7 +2727,20 @@ m_export (LrgEditorServer  *server,
 				lrg_song_render_options_free (opts);
 				return music_bad (error, "formats: unknown format (audio.formats lists them)");
 			}
-			g_ptr_array_add (files, g_strconcat (stem, ".", lrg_audio_file_format_get_extension (f), NULL));
+			{
+				/* AAC and ALAC share .m4a: the second becomes <stem>.alac.m4a */
+				gchar *out = g_strconcat (stem, ".", lrg_audio_file_format_get_extension (f), NULL);
+				guint  j;
+
+				for (j = 0; j < files->len; j++)
+					if (g_str_equal (g_ptr_array_index (files, j), out))
+					{
+						g_free (out);
+						out = g_strconcat (stem, ".", name, ".", lrg_audio_file_format_get_extension (f), NULL);
+						break;
+					}
+				g_ptr_array_add (files, out);
+			}
 		}
 
 	wave = lrg_song_render (self->song, opts, NULL, NULL, NULL, &err);
