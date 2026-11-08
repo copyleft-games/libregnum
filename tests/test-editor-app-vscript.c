@@ -134,6 +134,137 @@ test_vscript_canvas (EditorAppFixture *f,
 	g_clear_pointer (&result, json_node_unref);
 }
 
+/* undo_count: how many steps data.undo can take back right now */
+static guint
+undo_steps (EditorAppFixture *f)
+{
+	guint n = 0;
+
+	for (;;)
+	{
+		g_autofree gchar *reply = efx_ipc (f, "{'id':99,'method':'data.undo','params':{'path':'scripts/drag.rvscript'}}");
+
+		if (strstr (reply, "\"ok\":true") == NULL)
+			return n;
+		n++;
+	}
+}
+
+/*
+ * Mouse edits on the canvas reach the program: a moved card, a deleted
+ * wire, a new wire, a deleted card, a duplicated card, and a wire dropped
+ * on empty canvas followed by a pick from Add Node. Each gesture is one
+ * undo step.
+ */
+static void
+test_vscript_canvas_edits (EditorAppFixture *f,
+                           gconstpointer     data)
+{
+	g_autoptr(JsonNode)     result = NULL;
+	LrgEditorVscriptEditor *editor;
+	LrgNodeGraph           *canvas;
+	LrgVscriptGraph        *main_graph;
+	LrgVscriptNode         *node;
+	LrgGraphLink           *wire;
+	g_autofree gchar       *id = NULL;
+	g_autoptr(GError)       error = NULL;
+	gdouble                 x = 0.0;
+	gdouble                 y = 0.0;
+
+	(void) data;
+	g_free (write_project_file (f, "readme.txt", "x"));
+	result = efx_ipc_result (f, "{'id':1,'method':'vscript.create','params':{'path':'scripts/drag.rvscript'}}");
+	g_clear_pointer (&result, json_node_unref);
+	result = efx_ipc_result (f, "{'id':2,'method':'vscript.add_node','params':{'path':'scripts/drag.rvscript',"
+	                            "'type':'value.float','id':'num','x':40,'y':200,'params':{'value':5}}}");
+	g_clear_pointer (&result, json_node_unref);
+	editor = lrg_editor_vscript_editor_open (f->app, "scripts/drag.rvscript", NULL);
+	g_assert_nonnull (editor);
+	canvas = lrg_editor_vscript_editor_get_canvas (editor);
+#define MAIN_GRAPH() lrg_vscript_program_get_main (lrg_editor_vscript_editor_get_program (editor))
+
+	/* --- drag a card --- */
+	lrg_graph_node_set_position (lrg_node_graph_get_node (canvas, "log"), 480.0f, 312.0f);
+	lrg_editor_vscript_editor_flush (editor);
+	lrg_vscript_node_get_position (lrg_vscript_graph_get_node (MAIN_GRAPH (), "log"), &x, &y);
+	g_assert_cmpfloat_with_epsilon (x, 480.0, 0.01);
+	g_assert_cmpfloat_with_epsilon (y, 312.0, 0.01);
+
+	/* --- delete the wire, then draw it again --- */
+	wire = lrg_node_graph_get_nth_link (canvas, 0);
+	g_assert_nonnull (wire);
+	lrg_node_graph_disconnect (canvas, wire);
+	lrg_editor_vscript_editor_flush (editor);
+	g_assert_cmpuint (lrg_vscript_graph_get_links (MAIN_GRAPH ())->len, ==, 0);
+	g_assert_nonnull (lrg_node_graph_connect_by_name (canvas, "start", "then", "log", "exec", NULL));
+	lrg_editor_vscript_editor_flush (editor);
+	g_assert_cmpuint (lrg_vscript_graph_get_links (MAIN_GRAPH ())->len, ==, 1);
+
+	/* --- a value wire into an "any" input --- */
+	g_assert_nonnull (lrg_node_graph_connect_by_name (canvas, "num", "value", "log", "text", NULL));
+	lrg_editor_vscript_editor_flush (editor);
+	g_assert_cmpuint (lrg_vscript_graph_get_links (MAIN_GRAPH ())->len, ==, 2);
+	g_assert_cmpuint (lrg_node_graph_get_n_links (canvas), ==, 2);
+
+	/* --- duplicate a card: same kind and values, a free id --- */
+	lrg_node_graph_unselect_all (canvas);
+	lrg_node_graph_select_node (canvas, lrg_node_graph_get_node (canvas, "num"), FALSE);
+	lrg_node_graph_duplicate_selection (canvas);
+	lrg_editor_vscript_editor_flush (editor);
+	node = lrg_vscript_graph_get_node (MAIN_GRAPH (), "num2");
+	g_assert_nonnull (node);
+	g_assert_cmpstr (lrg_vscript_node_get_kind (node), ==, "value.float");
+	{
+		GVariant *v = lrg_vscript_node_get_param (node, "value");
+
+		g_assert_nonnull (v);
+		if (g_variant_is_of_type (v, G_VARIANT_TYPE_DOUBLE))
+			g_assert_cmpfloat_with_epsilon (g_variant_get_double (v), 5.0, 0.0001);
+		else
+			g_assert_cmpint (g_variant_get_int64 (v), ==, 5);
+	}
+
+	/* --- delete a card: its node and its wires go --- */
+	lrg_node_graph_remove_node (canvas, lrg_node_graph_get_node (canvas, "num"));
+	lrg_editor_vscript_editor_flush (editor);
+	main_graph = MAIN_GRAPH ();
+	g_assert_null (lrg_vscript_graph_get_node (main_graph, "num"));
+	g_assert_cmpuint (lrg_vscript_graph_get_links (main_graph)->len, ==, 1);
+
+	/* --- drop a wire from start.then on empty canvas, pick a Branch --- */
+	lrg_editor_vscript_editor_set_drop (editor, "start", "then", TRUE);
+	id = lrg_editor_vscript_editor_add_node_at (editor, "flow.branch", 300.0, 400.0, &error);
+	g_assert_no_error (error);
+	g_assert_cmpstr (id, ==, "branch");
+	main_graph = MAIN_GRAPH ();
+	{
+		GPtrArray *links = lrg_vscript_graph_get_links (main_graph);
+		gboolean   wired = FALSE;
+		guint      i;
+
+		/* an exec output holds one link: start now leads to the branch */
+		for (i = 0; i < links->len; i++)
+		{
+			LrgVscriptLink *l = g_ptr_array_index (links, i);
+
+			if (g_strcmp0 (l->from_node, "start") == 0)
+			{
+				g_assert_cmpstr (l->to_node, ==, "branch");
+				g_assert_cmpstr (l->to_pin, ==, "exec");
+				wired = TRUE;
+			}
+		}
+		g_assert_true (wired);
+	}
+	g_assert_nonnull (lrg_node_graph_get_node (canvas, "branch"));
+
+	/* --- one undo step per gesture: move, unwire, wire, wire, duplicate,
+	 *     delete, add (on top of create's edits: add_node) --- */
+	g_assert_cmpuint (undo_steps (f), ==, 8);
+	g_assert_cmpuint (lrg_vscript_graph_get_n_nodes (MAIN_GRAPH ()), ==, 2);
+#undef MAIN_GRAPH
+}
+
 static void
 test_vscript_ipc (EditorAppFixture *f,
                   gconstpointer     data)
@@ -307,7 +438,10 @@ int
 main (int argc, char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
+	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 	g_test_add ("/editor-app/vscript/ipc", EditorAppFixture, NULL, efx_setup, test_vscript_ipc, efx_teardown);
 	g_test_add ("/editor-app/vscript/canvas", EditorAppFixture, NULL, efx_setup, test_vscript_canvas, efx_teardown);
+	g_test_add ("/editor-app/vscript/canvas-edits", EditorAppFixture, NULL, efx_setup, test_vscript_canvas_edits,
+	            efx_teardown);
 	return g_test_run ();
 }

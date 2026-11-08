@@ -2060,7 +2060,44 @@ int
 main (int   argc,
       char *argv[])
 {
+	/* The notification tests talk to a fake org.freedesktop.Notifications
+	 * on a private GTestDBus bus. Nothing may reach the user's session bus
+	 * first: GIO's gvfs module would open it (and GLib caches that
+	 * connection as the session bus), sending real desktop notifications
+	 * and failing the id checks. So: local VFS, and a session bus address
+	 * that leads nowhere until a fixture's GTestDBus replaces it
+	 * (g_test_dbus_unset () would also drop XDG_RUNTIME_DIR and DISPLAY,
+	 * which the window needs). */
+	g_setenv ("GIO_USE_VFS", "local", TRUE);
+	g_setenv ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/lrg-test-no-session-bus", TRUE);
+	g_unsetenv ("DBUS_STARTER_ADDRESS");
+	g_unsetenv ("DBUS_STARTER_BUS_TYPE");
 	g_test_init (&argc, &argv, NULL);
+
+	/* GTestDBus forks its watcher process on the first g_test_dbus_up ().
+	 * Fork it now, before the GL context starts Mesa's worker threads: a
+	 * watcher forked after that inherits Mesa's atexit handler, and when
+	 * it exits with the test it deadlocks joining threads that do not
+	 * exist in it, leaving one stuck process behind per run. */
+	{
+		static const gchar *keep[] = { "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR" };
+		g_autoptr(GTestDBus) warm = g_test_dbus_new (G_TEST_DBUS_NONE);
+		gchar               *saved[G_N_ELEMENTS (keep)];
+		guint                i;
+
+		/* g_test_dbus_down () unsets these too; the window needs them */
+		for (i = 0; i < G_N_ELEMENTS (keep); i++)
+			saved[i] = g_strdup (g_getenv (keep[i]));
+		g_test_dbus_up (warm);
+		g_test_dbus_down (warm);
+		for (i = 0; i < G_N_ELEMENTS (keep); i++)
+		{
+			if (saved[i] != NULL)
+				g_setenv (keep[i], saved[i], TRUE);
+			g_free (saved[i]);
+		}
+		g_setenv ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/lrg-test-no-session-bus", TRUE);
+	}
 	graphics_available = init_graphics_context ();
 
 	g_test_add_func ("/ui/pagination/compute-items", test_pagination_compute_items);

@@ -18,11 +18,24 @@
 
 =lrg_editor_vscript_editor_new()= takes the app and the document (construct-only properties =app= and =document=). =lrg_editor_vscript_editor_install()= registers the =vscript.*= IPC methods once per app. The assets panel calls it next to the other data-editor installs. =lrg_editor_vscript_editor_open()= opens or focuses the tab (transfer none) and returns =NULL= with =LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND= when the file is not a visual script. =lrg_editor_vscript_editor_create()= writes a starter program at =path= and refuses to overwrite. It does not open a tab and it does not take a name: the IPC method =vscript.create= applies =name= itself after the file exists. The starter is an =event.start= node wired to a =debug.log= whose text is =hello=.
 
-=lrg_editor_vscript_editor_get_program()= is the program the editor last refreshed (transfer none). =lrg_editor_vscript_editor_get_canvas()= is the =LrgNodeGraph= and =lrg_editor_vscript_editor_get_blocks()= is the =LrgBlockEditor=. The content widget is one or the other, chosen by the program's =view=. Refresh rebuilds that widget from the document, so canvas gestures are not the mutation path. IPC commits are.
+=lrg_editor_vscript_editor_get_program()= is the program the editor last refreshed (transfer none). =lrg_editor_vscript_editor_get_canvas()= is the =LrgNodeGraph= and =lrg_editor_vscript_editor_get_blocks()= is the =LrgBlockEditor=. The content widget is one or the other, chosen by the program's =view=. Refresh rebuilds that widget from the document.
 
 =lrg_editor_blocks_editor_new()= constructs the separate =LrgEditorBlocksEditor= =GObject=. That type is not a document editor and it is not registered as a format. The blocks view of a =.rvscript= is this visual-script editor with =view= set to blocks.
 
 Undo, save and the dirty flag are the document's. Each IPC edit copies the program, changes the copy and commits it as one step (gesture 0). =data.undo= with the file's path reverts that step. =vscript.select= only changes which nodes are selected and is not a step.
+
+** Editing with the mouse
+:PROPERTIES:
+:CUSTOM_ID: vscript-mouse
+:END:
+
+Since 0.9.2 the graph view is a two-way editor: what you do to the canvas is committed to the program.
+
+- *Move* a card (or a selection) by dragging it. *Delete* cards or a selected wire with Delete. *Duplicate* with Ctrl+D: the copy keeps the original's kind, parameters and literals and gets a free id (=num= becomes =num2=). *Wire* by dragging from a pin to a pin; the drag only lands where the program's type rule allows it. Dragging onto a data input or out of an exec output that already has a wire replaces it, as the program does.
+- *Add Node* in the toolbar opens the node picker (one submenu per category); the node lands at the centre of the view. Dropping a wire on empty canvas opens the same picker at the drop point, and the new node is wired to the pin the wire came from: the first pin on the other side that the program accepts, exec to exec first.
+- The canvas does not write the program from inside its own signals. A change marks the canvas as ahead; an idle compares canvas and program (missing cards, moved cards, duplicated cards, the set of wires) and commits the difference as *one undo step* per gesture (a Delete over five cards and their wires is one step). A wire the program refuses is reported as an error toast and disappears when the canvas is rebuilt.
+- Selection on the canvas is the editor's selection (=vscript.get= returns it) and is not an undo step.
+- =lrg_editor_vscript_editor_add_node_at()= is the picker's action, =lrg_editor_vscript_editor_set_drop()= records a dropped wire, and =lrg_editor_vscript_editor_flush()= commits pending canvas edits immediately (tests and tools use it instead of waiting for the idle).
 
 ** IPC
 :PROPERTIES:

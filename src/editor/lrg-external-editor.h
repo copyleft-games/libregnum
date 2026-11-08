@@ -191,6 +191,11 @@ gchar ** lrg_external_editor_build_argv (LrgExternalEditor  *self,
  * description); otherwise the command is spawned detached. The child is
  * reaped asynchronously; a failing emacsclient falls back to `emacs`.
  *
+ * With the environment variable `LRG_EXTERNAL_EDITOR` set to `none`
+ * no program is started (a connected Emacs may still take the request)
+ * and the call returns %TRUE (since 0.9.2); the test suite sets it so
+ * no editor window opens while tests run.
+ *
  * Returns: %TRUE if a handler took the request or the process started
  */
 LRG_AVAILABLE_IN_ALL

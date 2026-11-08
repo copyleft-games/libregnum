@@ -1028,6 +1028,7 @@ main (int   argc,
 	gint result;
 
 	g_test_init (&argc, &argv, NULL);
+	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 	gpu_ready = gpu_init ();
 	/* the registry instantiation and play mode create "nav-agent" from */
 	lrg_engine_startup (lrg_engine_get_default (), NULL);

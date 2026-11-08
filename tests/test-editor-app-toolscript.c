@@ -434,6 +434,7 @@ int
 main (int argc, char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
+	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 	g_test_add_func ("/toolscript/language-names", test_language_names);
 	g_test_add_func ("/toolscript/binding-flag", test_binding_flag);
 	g_test_add_func ("/toolscript/set-run-in-editor-undo", test_set_run_in_editor_undo);

@@ -8,6 +8,7 @@
  */
 
 #include "config.h"
+#include "../lrg-dex-private.h"
 
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_CORE
 
@@ -892,6 +893,9 @@ static void
 lrg_asset_manager_class_init (LrgAssetManagerClass *klass)
 {
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+    /* this class hands out DexFutures: libdex must be initialized */
+    lrg_dex_ensure_init ();
 
     object_class->finalize = lrg_asset_manager_finalize;
     object_class->get_property = lrg_asset_manager_get_property;

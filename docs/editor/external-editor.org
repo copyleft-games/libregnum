@@ -30,6 +30,8 @@ The launcher is =LrgExternalEditor= (=src/editor/lrg-external-editor.h=); its co
 
 =lrgeditor --editor ID-OR-TEMPLATE= overrides the choice for one session.
 
+=LRG_EXTERNAL_EDITOR=none= in the environment stops every launch: =lrg_external_editor_open()= still offers the file to a connected Emacs (=open-file=), but starts no program and returns success. The test suite sets it (=tests/Makefile= exports it and every editor test's =main()= sets it), so running the tests never opens your =$VISUAL=; CI and kiosk builds can use it the same way. Since 0.9.2.
+
 ** Presets
 :PROPERTIES:
 :CUSTOM_ID: presets

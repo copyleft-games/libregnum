@@ -920,6 +920,17 @@ lrg_external_editor_open (LrgExternalEditor  *self,
 			return TRUE;
 	}
 
+	/* LRG_EXTERNAL_EDITOR=none: a connected Emacs above may still take
+	 * the request, but no program is started (test suites, CI, kiosk
+	 * builds). The request counts as handled so callers behave as if the
+	 * file had opened. */
+	if (g_strcmp0 (g_getenv ("LRG_EXTERNAL_EDITOR"), "none") == 0)
+	{
+		g_debug ("external editor disabled (LRG_EXTERNAL_EDITOR=none): %s:%d:%d", absolute,
+		         MAX (line, 1), MAX (column, 1));
+		return TRUE;
+	}
+
 	argv = build_argv_full (self, absolute, line, column, &is_emacsclient, error);
 	if (argv == NULL)
 		return FALSE;

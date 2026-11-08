@@ -383,6 +383,7 @@ test_open_emacs_first_and_spawn (void)
 	g_clear_pointer (&seen, g_free);
 	g_object_set (s, "external-editor", "custom", "external-editor-command", "true {file}", NULL);
 	g_signal_connect (ext, "open-file", G_CALLBACK (handle_open), &seen);
+	g_unsetenv ("LRG_EXTERNAL_EDITOR");   /* this part spawns on purpose */
 	g_signal_connect (ext, "launched", G_CALLBACK (on_launched), &launched);
 	g_assert_true (lrg_external_editor_open (ext, "/tmp/z.lua", 1, 1, &error));
 	g_assert_no_error (error);
@@ -401,6 +402,15 @@ test_open_emacs_first_and_spawn (void)
 	g_object_set (s, "external-editor-command", "/nonexistent/editor-xyz {file}", NULL);
 	g_assert_false (lrg_external_editor_open (ext, "/tmp/z.lua", 1, 1, &error));
 	g_assert_nonnull (error);
+	g_clear_error (&error);
+
+	/* LRG_EXTERNAL_EDITOR=none: the same missing program is not started,
+	 * so the request succeeds and nothing is launched */
+	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);
+	g_clear_pointer (&launched, g_free);
+	g_assert_true (lrg_external_editor_open (ext, "/tmp/z.lua", 1, 1, &error));
+	g_assert_no_error (error);
+	g_assert_null (launched);
 }
 
 /* ==========================================================================
@@ -578,6 +588,7 @@ main (int   argc,
       char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
+	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 
 	g_test_add_func ("/editor-tools/settings/defaults", test_settings_defaults);
 	g_test_add_func ("/editor-tools/settings/roundtrip", test_settings_roundtrip);

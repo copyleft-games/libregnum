@@ -1169,6 +1169,7 @@ main (int   argc,
       char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
+	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 	g_test_log_set_fatal_handler (loader_warnings_ok, NULL);
 	gpu_ready = gpu_init ();
 

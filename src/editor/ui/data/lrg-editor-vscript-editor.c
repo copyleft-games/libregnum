@@ -24,7 +24,10 @@
 
 #include "../../../paint/lrg-paint-list.h"
 #include "../../../ui/lrg-custom-widget.h"
+#include "../../../ui/lrg-menu.h"
+#include "../lrg-editor-console-panel.h"
 #include <errno.h>
+#include <math.h>
 #include <string.h>
 #include <json-glib/json-glib.h>
 
@@ -40,6 +43,19 @@ struct _LrgEditorVscriptEditor
 	gboolean             rebuilding;
 	gboolean             framed;        /* the shown graph was fitted once */
 	gchar               *framed_graph;  /* which graph that was */
+
+	/* canvas -> program: mouse edits are collected and committed from an
+	 * idle, one undo step per gesture, never inside a canvas signal */
+	guint                sync_idle;
+	GHashTable          *dupes;         /* canvas copy id -> original node id */
+
+	/* the Add Node picker */
+	LrgMenu             *palette;
+	gfloat               add_x;         /* where a picked node lands (graph units) */
+	gfloat               add_y;
+	gchar               *drop_node;     /* a wire dropped on empty canvas came from */
+	gchar               *drop_pin;      /*   this pin, which the new node is wired to */
+	gboolean             drop_output;
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorVscriptEditor, lrg_editor_vscript_editor, LRG_TYPE_EDITOR_DATA_EDITOR)
@@ -866,10 +882,16 @@ rebuild_canvas (LrgEditorVscriptEditor *self,
 		{
 			LrgVscriptPin *pin = (LrgVscriptPin *) g_ptr_array_index (pins, p);
 
-			lrg_graph_node_add_port (card,
-			                         pin->direction == LRG_VSCRIPT_PIN_OUTPUT ? LRG_GRAPH_PORT_OUTPUT
-			                                                                  : LRG_GRAPH_PORT_INPUT,
-			                         pin->name, pin->type);
+			LrgGraphPort  *port;
+			gboolean       out = pin->direction == LRG_VSCRIPT_PIN_OUTPUT;
+
+			port = lrg_graph_node_add_port (card, out ? LRG_GRAPH_PORT_OUTPUT : LRG_GRAPH_PORT_INPUT,
+			                                pin->name, pin->type);
+
+			/* the program's link rule: a data input and an exec output
+			 * hold one link (a new wire replaces the old one); a data
+			 * output and an exec input take any number */
+			lrg_graph_port_set_multi_link (port, pin->exec ? !out : out);
 		}
 	}
 	{
@@ -977,6 +999,578 @@ vscript_refresh (LrgEditorDataEditor *editor,
 	self->rebuilding = FALSE;
 }
 
+/* ==========================================================================
+ * Canvas -> program
+ *
+ * The canvas changes itself as the user drags (a moved card, a new or
+ * deleted wire, deleted or duplicated cards). Each change only marks the
+ * canvas as ahead of the program; an idle then compares the two and
+ * commits every difference as one undo step. Diffing instead of replaying
+ * each signal keeps one gesture (Delete on a selection fires a removal per
+ * card and per wire) one step, does not depend on signal order, and never
+ * rebuilds the canvas from inside one of its own signals.
+ * ========================================================================== */
+
+static gboolean commit_edit (LrgEditorVscriptEditor *self,
+                             LrgVscriptProgram      *program,
+                             const gchar            *label,
+                             const gchar            *graph,
+                             GError                **error);
+
+/* link_key: "from.pin>to.pin", the identity of a wire on either side */
+static gchar *
+link_key (const gchar *from_node,
+          const gchar *from_pin,
+          const gchar *to_node,
+          const gchar *to_pin)
+{
+	return g_strdup_printf ("%s.%s>%s.%s", from_node, from_pin, to_node, to_pin);
+}
+
+/* copy_node_values: the duplicate gets the original's parameters and literals */
+static void
+copy_node_values (LrgVscriptNode *from,
+                  LrgVscriptNode *to)
+{
+	g_auto(GStrv) params = lrg_vscript_node_dup_param_keys (from);
+	g_auto(GStrv) inputs = lrg_vscript_node_dup_input_keys (from);
+	guint         i;
+
+	for (i = 0; params != NULL && params[i] != NULL; i++)
+		lrg_vscript_node_set_param (to, params[i], lrg_vscript_node_get_param (from, params[i]));
+	for (i = 0; inputs != NULL && inputs[i] != NULL; i++)
+		lrg_vscript_node_set_input (to, inputs[i], lrg_vscript_node_get_input (from, inputs[i]));
+}
+
+/* connect_key: connects one "from.pin>to.pin" wire through the program's checks */
+static gboolean
+connect_key (LrgVscriptProgram  *program,
+             LrgVscriptGraph    *graph,
+             const gchar        *key,
+             GError            **error)
+{
+	g_auto(GStrv)  ends = g_strsplit (key, ">", 2);
+	gchar         *from_dot;
+	gchar         *to_dot;
+
+	if (ends[0] == NULL || ends[1] == NULL)
+		return FALSE;
+	from_dot = strchr (ends[0], '.');
+	to_dot = strchr (ends[1], '.');
+	if (from_dot == NULL || to_dot == NULL)
+		return FALSE;
+	*from_dot = '\0';
+	*to_dot = '\0';
+	return lrg_vscript_program_connect (program, graph, ends[0], from_dot + 1, ends[1], to_dot + 1, error);
+}
+
+/*
+ * sync_from_canvas:
+ *
+ * Applies the canvas to a copy of the program, in four passes: cards
+ * that are gone remove their nodes; moved cards move their nodes; cards
+ * the canvas duplicated become new nodes (kind, parameters and literals
+ * of the original, a free id); then the wires: program links with no
+ * wire are removed and wires with no link are connected through the
+ * program's checks (a refused wire is reported and disappears on the
+ * rebuild). Commits when anything changed; otherwise the canvas is
+ * rebuilt from the program so a refused edit does not linger.
+ */
+static void
+sync_from_canvas (LrgEditorVscriptEditor *self)
+{
+	g_autoptr(LrgVscriptProgram) program = NULL;
+	g_autoptr(GHashTable)        ids = NULL;    /* canvas card id -> program node id */
+	g_autoptr(GHashTable)        wires = NULL;  /* canvas wire keys, program ids */
+	g_autoptr(GError)            error = NULL;
+	LrgVscriptGraph             *graph;
+	GPtrArray                   *links;
+	GHashTableIter               iter;
+	gpointer                     key;
+	const gchar                 *label = NULL;
+	gboolean                     changed = FALSE;
+	guint                        n;
+	gint                         i;
+
+	program = edit_begin (self, &error);
+	if (program == NULL)
+	{
+		lrg_editor_data_editor_report_error (LRG_EDITOR_DATA_EDITOR (self), error);
+		return;
+	}
+	graph = lrg_vscript_program_get_graph (program, self->shown);
+	if (graph == NULL)
+		graph = lrg_vscript_program_get_main (program);
+	ids = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+
+	/* --- 1, 2: removed and moved cards --- */
+	for (i = (gint) lrg_vscript_graph_get_n_nodes (graph) - 1; i >= 0; i--)
+	{
+		LrgVscriptNode   *node = lrg_vscript_graph_get_nth_node (graph, (guint) i);
+		g_autofree gchar *id = g_strdup (lrg_vscript_node_get_id (node));
+		LrgGraphNode     *card = lrg_node_graph_get_node (self->canvas, id);
+		gdouble           x = 0.0;
+		gdouble           y = 0.0;
+
+		if (card == NULL)
+		{
+			lrg_vscript_graph_remove_node (graph, id);
+			label = "Delete Nodes";
+			changed = TRUE;
+			continue;
+		}
+		g_hash_table_insert (ids, g_strdup (id), g_strdup (id));
+		lrg_vscript_node_get_position (node, &x, &y);
+		if (fabs (x - lrg_graph_node_get_x (card)) > 0.25 || fabs (y - lrg_graph_node_get_y (card)) > 0.25)
+		{
+			lrg_vscript_node_set_position (node, lrg_graph_node_get_x (card), lrg_graph_node_get_y (card));
+			if (label == NULL)
+				label = "Move Nodes";
+			changed = TRUE;
+		}
+	}
+
+	/* --- 3: duplicated cards --- */
+	n = lrg_node_graph_get_n_nodes (self->canvas);
+	for (i = 0; i < (gint) n; i++)
+	{
+		LrgGraphNode     *card = lrg_node_graph_get_nth_node (self->canvas, (guint) i);
+		const gchar      *cid = lrg_graph_node_get_id (card);
+		const gchar      *orig_id;
+		LrgVscriptNode   *orig;
+		LrgVscriptNode   *copy;
+		g_autofree gchar *nid = NULL;
+
+		if (g_hash_table_contains (ids, cid))
+			continue;
+		orig_id = g_hash_table_lookup (self->dupes, cid);
+		orig = orig_id != NULL ? lrg_vscript_graph_get_node (graph, orig_id) : NULL;
+		if (orig == NULL)
+			continue;
+		nid = lrg_vscript_graph_dup_free_id (graph, orig_id);
+		copy = lrg_vscript_graph_create_node (graph, lrg_vscript_node_get_kind (orig), nid,
+		                                      lrg_graph_node_get_x (card), lrg_graph_node_get_y (card), NULL);
+		if (copy == NULL)
+			continue;
+		copy_node_values (orig, copy);
+		g_hash_table_insert (ids, g_strdup (cid), g_strdup (nid));
+		label = "Duplicate Nodes";
+		changed = TRUE;
+	}
+	g_hash_table_remove_all (self->dupes);
+
+	/* --- 4: wires: the canvas's, in program ids --- */
+	wires = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+	n = lrg_node_graph_get_n_links (self->canvas);
+	for (i = 0; i < (gint) n; i++)
+	{
+		LrgGraphLink *wire = lrg_node_graph_get_nth_link (self->canvas, (guint) i);
+		LrgGraphPort *out = lrg_graph_link_get_output (wire);
+		LrgGraphPort *in = lrg_graph_link_get_input (wire);
+		const gchar  *a = g_hash_table_lookup (ids, lrg_graph_node_get_id (lrg_graph_port_get_node (out)));
+		const gchar  *b = g_hash_table_lookup (ids, lrg_graph_node_get_id (lrg_graph_port_get_node (in)));
+
+		if (a != NULL && b != NULL)
+			g_hash_table_add (wires, link_key (a, lrg_graph_port_get_name (out), b, lrg_graph_port_get_name (in)));
+	}
+
+	/* program links without a wire go; links on both sides stay */
+	links = lrg_vscript_graph_get_links (graph);
+	for (i = links != NULL ? (gint) links->len - 1 : -1; i >= 0; i--)
+	{
+		LrgVscriptLink   *link = (LrgVscriptLink *) g_ptr_array_index (links, (guint) i);
+		g_autofree gchar *lk = link_key (link->from_node, link->from_pin, link->to_node, link->to_pin);
+		g_autofree gchar *fn = NULL;
+		g_autofree gchar *fp = NULL;
+		g_autofree gchar *tn = NULL;
+		g_autofree gchar *tp = NULL;
+
+		if (g_hash_table_remove (wires, lk))
+			continue;
+		fn = g_strdup (link->from_node);
+		fp = g_strdup (link->from_pin);
+		tn = g_strdup (link->to_node);
+		tp = g_strdup (link->to_pin);
+		lrg_vscript_graph_remove_link (graph, fn, fp, tn, tp);
+		if (label == NULL)
+			label = "Disconnect";
+		changed = TRUE;
+	}
+
+	/* what is left exists only on the canvas: connect it */
+	g_hash_table_iter_init (&iter, wires);
+	while (g_hash_table_iter_next (&iter, &key, NULL))
+	{
+		g_autoptr(GError) err = NULL;
+
+		if (connect_key (program, graph, (const gchar *) key, &err))
+		{
+			if (label == NULL || g_strcmp0 (label, "Disconnect") == 0)
+				label = "Connect";
+			changed = TRUE;
+		}
+		else
+			lrg_editor_data_editor_report_error (LRG_EDITOR_DATA_EDITOR (self), err);
+	}
+
+	/* --- commit (its refresh rebuilds the canvas), or put the canvas back --- */
+	if (changed)
+	{
+		g_clear_error (&error);
+		if (!commit_edit (self, program, label, self->shown, &error))
+			lrg_editor_data_editor_report_error (LRG_EDITOR_DATA_EDITOR (self), error);
+	}
+	else
+		vscript_refresh (LRG_EDITOR_DATA_EDITOR (self), NULL);
+}
+
+static gboolean
+sync_idle_cb (gpointer user_data)
+{
+	LrgEditorVscriptEditor *self = LRG_EDITOR_VSCRIPT_EDITOR (user_data);
+
+	self->sync_idle = 0;
+	sync_from_canvas (self);
+	return G_SOURCE_REMOVE;
+}
+
+/* queue_sync: the canvas moved ahead of the program; catch up when idle */
+static void
+queue_sync (LrgEditorVscriptEditor *self)
+{
+	if (self->rebuilding || self->sync_idle != 0)
+		return;
+	self->sync_idle = g_idle_add_full (G_PRIORITY_DEFAULT_IDLE, sync_idle_cb, g_object_ref (self),
+	                                   g_object_unref);
+}
+
+/*
+ * lrg_editor_vscript_editor_flush: (documented in the header)
+ * @self: a #LrgEditorVscriptEditor
+ *
+ * Commits pending canvas edits now instead of from the idle.
+ */
+void
+lrg_editor_vscript_editor_flush (LrgEditorVscriptEditor *self)
+{
+	g_return_if_fail (LRG_IS_EDITOR_VSCRIPT_EDITOR (self));
+
+	if (self->sync_idle == 0)
+		return;
+	g_clear_handle_id (&self->sync_idle, g_source_remove);
+	sync_from_canvas (self);
+}
+
+static void
+on_canvas_node (LrgNodeGraph *graph,
+                LrgGraphNode *card,
+                gpointer      user_data)
+{
+	(void) graph;
+	(void) card;
+	queue_sync (LRG_EDITOR_VSCRIPT_EDITOR (user_data));
+}
+
+static void
+on_canvas_link (LrgNodeGraph *graph,
+                LrgGraphLink *link,
+                gpointer      user_data)
+{
+	(void) graph;
+	(void) link;
+	queue_sync (LRG_EDITOR_VSCRIPT_EDITOR (user_data));
+}
+
+/* a duplicate is remembered so the sync knows what it copies */
+static void
+on_canvas_duplicated (LrgNodeGraph *graph,
+                      LrgGraphNode *original,
+                      LrgGraphNode *copy,
+                      gpointer      user_data)
+{
+	LrgEditorVscriptEditor *self = LRG_EDITOR_VSCRIPT_EDITOR (user_data);
+
+	(void) graph;
+	if (self->rebuilding)
+		return;
+	g_hash_table_insert (self->dupes, g_strdup (lrg_graph_node_get_id (copy)),
+	                     g_strdup (lrg_graph_node_get_id (original)));
+	queue_sync (self);
+}
+
+/* the canvas selection is the editor's (not an undo step) */
+static void
+on_canvas_selection (LrgNodeGraph *graph,
+                     gpointer      user_data)
+{
+	LrgEditorVscriptEditor *self = LRG_EDITOR_VSCRIPT_EDITOR (user_data);
+	GList                  *sel;
+	GList                  *l;
+
+	if (self->rebuilding)
+		return;
+	sel = lrg_node_graph_get_selected_nodes (graph);
+	g_ptr_array_set_size (self->selected, 0);
+	for (l = sel; l != NULL; l = l->next)
+		g_ptr_array_add (self->selected, g_strdup (lrg_graph_node_get_id (LRG_GRAPH_NODE (l->data))));
+	g_list_free (sel);
+}
+
+/* ==========================================================================
+ * The Add Node picker
+ *
+ * One menu, a submenu per catalogue category, an entry per kind; each
+ * entry activates vscript.add-node with the kind. The toolbar's Add Node
+ * opens it and the node lands at the centre of the view; a wire dropped
+ * on empty canvas opens it at the drop point, and the new node is wired
+ * to the pin the wire came from (the first compatible pin, exec first).
+ * ========================================================================== */
+
+static GMenuModel *
+palette_model (void)
+{
+	g_auto(GStrv)          types = lrg_vscript_node_types_list ();
+	g_autoptr(GHashTable)  submenus = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_object_unref);
+	g_autoptr(GPtrArray)   order = g_ptr_array_new ();
+	GMenu                 *menu = g_menu_new ();
+	guint                  i;
+
+	/* --- one submenu per category, in catalogue order --- */
+	for (i = 0; types != NULL && types[i] != NULL; i++)
+	{
+		const gchar      *category = lrg_vscript_node_type_get_category (types[i]);
+		const gchar      *title = lrg_vscript_node_type_get_title (types[i]);
+		GMenu            *sub;
+		g_autofree gchar *detailed = NULL;
+
+		if (category == NULL)
+			category = "Other";
+		sub = g_hash_table_lookup (submenus, category);
+		if (sub == NULL)
+		{
+			sub = g_menu_new ();
+			g_hash_table_insert (submenus, (gpointer) category, sub);
+			g_ptr_array_add (order, (gpointer) category);
+		}
+		detailed = g_action_print_detailed_name ("vscript.add-node", g_variant_new_string (types[i]));
+		g_menu_append (sub, title != NULL ? title : types[i], detailed);
+	}
+	for (i = 0; i < order->len; i++)
+	{
+		const gchar *category = g_ptr_array_index (order, i);
+
+		g_menu_append_submenu (menu, category, G_MENU_MODEL (g_hash_table_lookup (submenus, category)));
+	}
+	return G_MENU_MODEL (menu);
+}
+
+static void
+clear_drop (LrgEditorVscriptEditor *self)
+{
+	g_clear_pointer (&self->drop_node, g_free);
+	g_clear_pointer (&self->drop_pin, g_free);
+	self->drop_output = FALSE;
+}
+
+/*
+ * wire_new_node:
+ *
+ * Connects the dropped-from pin to the first compatible pin of @node on
+ * the other side, preferring exec to exec (first pass) over anything the
+ * program accepts (second pass). Quietly does nothing when there is none.
+ */
+static void
+wire_new_node (LrgEditorVscriptEditor *self,
+               LrgVscriptProgram      *program,
+               LrgVscriptGraph        *graph,
+               LrgVscriptNode         *node)
+{
+	g_autoptr(GPtrArray) theirs = NULL;
+	g_autoptr(GPtrArray) mine = NULL;
+	LrgVscriptNode      *from;
+	LrgVscriptPin       *src = NULL;
+	guint                pass;
+	guint                i;
+
+	from = lrg_vscript_graph_get_node (graph, self->drop_node);
+	if (from == NULL)
+		return;
+
+	/* --- the pin the wire came from --- */
+	theirs = lrg_vscript_program_dup_node_pins (program, graph, from);
+	for (i = 0; theirs != NULL && i < theirs->len; i++)
+	{
+		LrgVscriptPin *pin = (LrgVscriptPin *) g_ptr_array_index (theirs, i);
+
+		if (g_strcmp0 (pin->name, self->drop_pin) == 0 &&
+		    (pin->direction == LRG_VSCRIPT_PIN_OUTPUT) == self->drop_output)
+			src = pin;
+	}
+	if (src == NULL)
+		return;
+
+	/* --- the first pin of the new node that takes it --- */
+	mine = lrg_vscript_program_dup_node_pins (program, graph, node);
+	for (pass = 0; pass < 2; pass++)
+	{
+		for (i = 0; mine != NULL && i < mine->len; i++)
+		{
+			LrgVscriptPin *pin = (LrgVscriptPin *) g_ptr_array_index (mine, i);
+			gboolean       ok;
+
+			if ((pin->direction == LRG_VSCRIPT_PIN_OUTPUT) == self->drop_output)
+				continue;
+			if (pass == 0 && pin->exec != src->exec)
+				continue;
+			if (self->drop_output)
+				ok = lrg_vscript_program_connect (program, graph, self->drop_node, src->name,
+				                                  lrg_vscript_node_get_id (node), pin->name, NULL);
+			else
+				ok = lrg_vscript_program_connect (program, graph, lrg_vscript_node_get_id (node), pin->name,
+				                                  self->drop_node, src->name, NULL);
+			if (ok)
+				return;
+		}
+	}
+}
+
+/*
+ * lrg_editor_vscript_editor_add_node_at: (documented in the header)
+ * @self: a #LrgEditorVscriptEditor
+ * @kind: a catalogued node kind
+ * @x: left edge in graph units
+ * @y: top edge in graph units
+ * @error: return location for a #GError
+ *
+ * Adds a node of @kind to the shown graph as one undo step, wired to a
+ * pending dropped wire when there is one, and selects it. This is what
+ * the Add Node picker does.
+ *
+ * Returns: (transfer full) (nullable): the new node's id
+ */
+gchar *
+lrg_editor_vscript_editor_add_node_at (LrgEditorVscriptEditor  *self,
+                                       const gchar             *kind,
+                                       gdouble                  x,
+                                       gdouble                  y,
+                                       GError                 **error)
+{
+	g_autoptr(LrgVscriptProgram) program = NULL;
+	g_autofree gchar            *stem = NULL;
+	g_autofree gchar            *id = NULL;
+	LrgVscriptGraph             *graph;
+	LrgVscriptNode              *node;
+	const gchar                 *dot;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_VSCRIPT_EDITOR (self), NULL);
+	g_return_val_if_fail (kind != NULL, NULL);
+
+	lrg_editor_vscript_editor_flush (self);
+	program = edit_begin (self, error);
+	if (program == NULL)
+		return NULL;
+	graph = lrg_vscript_program_get_graph (program, self->shown);
+	if (graph == NULL)
+		graph = lrg_vscript_program_get_main (program);
+
+	/* --- an id from the kind's last part: "flow.branch" -> "branch" --- */
+	dot = strrchr (kind, '.');
+	stem = g_strdup (dot != NULL ? dot + 1 : kind);
+	id = lrg_vscript_graph_dup_free_id (graph, stem);
+	node = lrg_vscript_graph_create_node (graph, kind, id, x, y, error);
+	if (node == NULL)
+		return NULL;
+
+	/* --- a dropped wire leads into (or out of) the new node --- */
+	if (self->drop_node != NULL)
+		wire_new_node (self, program, graph, node);
+	clear_drop (self);
+	if (!commit_edit (self, program, "Add Node", self->shown, error))
+		return NULL;
+	g_ptr_array_set_size (self->selected, 0);
+	g_ptr_array_add (self->selected, g_strdup (id));
+	vscript_refresh (LRG_EDITOR_DATA_EDITOR (self), NULL);
+	return g_steal_pointer (&id);
+}
+
+/*
+ * lrg_editor_vscript_editor_set_drop: (documented in the header)
+ * @self: a #LrgEditorVscriptEditor
+ * @node: (nullable): the node a wire was dragged from, or %NULL to clear
+ * @pin: (nullable): its pin
+ * @output: whether @pin is an output
+ *
+ * Records the pin a wire was dropped from, as dropping it on empty canvas
+ * does, so the next lrg_editor_vscript_editor_add_node_at() wires the new
+ * node to it.
+ */
+void
+lrg_editor_vscript_editor_set_drop (LrgEditorVscriptEditor *self,
+                                    const gchar            *node,
+                                    const gchar            *pin,
+                                    gboolean                output)
+{
+	g_return_if_fail (LRG_IS_EDITOR_VSCRIPT_EDITOR (self));
+
+	clear_drop (self);
+	if (node == NULL || pin == NULL)
+		return;
+	self->drop_node = g_strdup (node);
+	self->drop_pin = g_strdup (pin);
+	self->drop_output = output;
+}
+
+static void
+on_add_node_action (GSimpleAction *action,
+                    GVariant      *parameter,
+                    gpointer       user_data)
+{
+	LrgEditorVscriptEditor *self = LRG_EDITOR_VSCRIPT_EDITOR (user_data);
+	g_autofree gchar       *id = NULL;
+	g_autoptr(GError)       error = NULL;
+
+	(void) action;
+	id = lrg_editor_vscript_editor_add_node_at (self, g_variant_get_string (parameter, NULL), self->add_x,
+	                                            self->add_y, &error);
+	if (id == NULL)
+		lrg_editor_data_editor_report_error (LRG_EDITOR_DATA_EDITOR (self), error);
+}
+
+/* the toolbar's Add Node: the picker under the chip, nodes at the view centre */
+static void
+on_add_chip (LrgWidget *chip,
+             gpointer   user_data)
+{
+	LrgEditorVscriptEditor *self = LRG_EDITOR_VSCRIPT_EDITOR (user_data);
+
+	clear_drop (self);
+	lrg_node_graph_get_center (self->canvas, &self->add_x, &self->add_y);
+	lrg_menu_popup_at_widget (self->palette, chip, LRG_POPUP_PLACEMENT_BELOW);
+}
+
+/* a wire dropped on empty canvas: the picker at the drop point */
+static void
+on_link_dropped (LrgNodeGraph *graph,
+                 LrgGraphPort *port,
+                 gfloat        x,
+                 gfloat        y,
+                 gpointer      user_data)
+{
+	LrgEditorVscriptEditor *self = LRG_EDITOR_VSCRIPT_EDITOR (user_data);
+	gfloat                  sx = 0.0f;
+	gfloat                  sy = 0.0f;
+
+	if (self->rebuilding)
+		return;
+	lrg_editor_vscript_editor_set_drop (self, lrg_graph_node_get_id (lrg_graph_port_get_node (port)),
+	                                    lrg_graph_port_get_name (port),
+	                                    lrg_graph_port_get_direction (port) == LRG_GRAPH_PORT_OUTPUT);
+	self->add_x = x;
+	self->add_y = y;
+	lrg_node_graph_graph_to_screen (graph, x, y, &sx, &sy);
+	lrg_menu_popup_at_point (self->palette, LRG_WIDGET (graph), sx, sy);
+}
+
 static gchar *
 vscript_get_state (LrgEditorDataEditor *editor)
 {
@@ -1028,6 +1622,30 @@ lrg_editor_vscript_editor_constructed (GObject *object)
 	lrg_widget_set_fill_weight (LRG_WIDGET (self->blocks), 1.0f);
 	lrg_node_graph_set_snap_to_grid (self->canvas, TRUE);
 	g_signal_connect_object (self->canvas, "can-connect", G_CALLBACK (on_can_connect), self, 0);
+	g_signal_connect_object (self->canvas, "node-moved", G_CALLBACK (on_canvas_node), self, 0);
+	g_signal_connect_object (self->canvas, "node-removed", G_CALLBACK (on_canvas_node), self, 0);
+	g_signal_connect_object (self->canvas, "link-added", G_CALLBACK (on_canvas_link), self, 0);
+	g_signal_connect_object (self->canvas, "link-removed", G_CALLBACK (on_canvas_link), self, 0);
+	g_signal_connect_object (self->canvas, "node-duplicated", G_CALLBACK (on_canvas_duplicated), self, 0);
+	g_signal_connect_object (self->canvas, "selection-changed", G_CALLBACK (on_canvas_selection), self, 0);
+	g_signal_connect_object (self->canvas, "link-dropped", G_CALLBACK (on_link_dropped), self, 0);
+
+	/* --- the Add Node picker and its toolbar chip --- */
+	{
+		static const GActionEntry entries[] = {
+			{ "add-node", on_add_node_action, "s", NULL, NULL, { 0 } }
+		};
+		g_autoptr(GSimpleActionGroup) group = g_simple_action_group_new ();
+		g_autoptr(GMenuModel)         model = palette_model ();
+		LrgWidget                    *chip;
+
+		g_action_map_add_action_entries (G_ACTION_MAP (group), entries, G_N_ELEMENTS (entries), self);
+		lrg_widget_insert_action_group (LRG_WIDGET (self), "vscript", G_ACTION_GROUP (group));
+		self->palette = lrg_menu_new_from_model (model);
+		chip = editor_chip_new ("vscript-add-node", LRG_ICON_PLUS, "Add Node", on_add_chip, self);
+		lrg_editor_data_editor_add_tool (LRG_EDITOR_DATA_EDITOR (self), chip);
+		g_object_unref (chip);
+	}
 	ensure_kinds (self);
 	vscript_refresh (LRG_EDITOR_DATA_EDITOR (self), NULL);
 	if (lrg_editor_data_editor_get_content (LRG_EDITOR_DATA_EDITOR (self)) == NULL)
@@ -1039,6 +1657,10 @@ lrg_editor_vscript_editor_dispose (GObject *object)
 {
 	LrgEditorVscriptEditor *self = LRG_EDITOR_VSCRIPT_EDITOR (object);
 
+	g_clear_handle_id (&self->sync_idle, g_source_remove);
+	if (self->palette != NULL)
+		lrg_menu_close (self->palette);
+	g_clear_object (&self->palette);
 	lrg_editor_data_editor_set_content (LRG_EDITOR_DATA_EDITOR (self), NULL);
 	g_clear_object (&self->canvas);
 	g_clear_object (&self->blocks);
@@ -1054,6 +1676,9 @@ lrg_editor_vscript_editor_finalize (GObject *object)
 	g_clear_pointer (&self->selected, g_ptr_array_unref);
 	g_free (self->shown);
 	g_free (self->framed_graph);
+	g_clear_pointer (&self->dupes, g_hash_table_unref);
+	g_free (self->drop_node);
+	g_free (self->drop_pin);
 	G_OBJECT_CLASS (lrg_editor_vscript_editor_parent_class)->finalize (object);
 }
 
@@ -1075,6 +1700,7 @@ static void
 lrg_editor_vscript_editor_init (LrgEditorVscriptEditor *self)
 {
 	self->selected = g_ptr_array_new_with_free_func (g_free);
+	self->dupes = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
 }
 
 /* ==========================================================================

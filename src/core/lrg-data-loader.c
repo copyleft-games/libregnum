@@ -8,6 +8,7 @@
  */
 
 #include "config.h"
+#include "../lrg-dex-private.h"
 
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_CORE
 
@@ -271,6 +272,9 @@ static void
 lrg_data_loader_class_init (LrgDataLoaderClass *klass)
 {
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+    /* this class hands out DexFutures: libdex must be initialized */
+    lrg_dex_ensure_init ();
 
     object_class->finalize = lrg_data_loader_finalize;
     object_class->get_property = lrg_data_loader_get_property;

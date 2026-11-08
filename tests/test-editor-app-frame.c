@@ -289,6 +289,7 @@ int
 main (int argc, char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
+	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 	g_test_add ("/editor-app/frame/profiler-and-frame", EditorAppFixture, NULL,
 	            efx_setup, test_profiler_and_frame, efx_teardown);
 	return g_test_run ();

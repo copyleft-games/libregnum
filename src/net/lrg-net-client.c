@@ -6,6 +6,7 @@
  */
 
 #include "config.h"
+#include "../lrg-dex-private.h"
 
 #ifndef LIBREGNUM_COMPILATION
 #define LIBREGNUM_COMPILATION
@@ -158,6 +159,9 @@ static void
 lrg_net_client_class_init (LrgNetClientClass *klass)
 {
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+    /* this class hands out DexFutures: libdex must be initialized */
+    lrg_dex_ensure_init ();
 
     object_class->finalize = lrg_net_client_finalize;
     object_class->get_property = lrg_net_client_get_property;

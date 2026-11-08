@@ -16,6 +16,18 @@
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
 
+** 0.9.2
+:PROPERTIES:
+:CUSTOM_ID: changelog-0-9-2
+:END:
+The blueprint editor edits with the mouse, and the test suite stops touching the desktop.
+
+- Visual scripts: mouse edits on the canvas are committed to the program. Moving, deleting (cards and wires), duplicating and wiring each become one undo step; an idle diffs canvas against program so a gesture is one step and nothing is rebuilt inside a canvas signal. Canvas ports follow the program's link rule (a data input and an exec output hold one wire). New Add Node picker (toolbar, and a wire dropped on empty canvas opens it there and wires the new node). New =lrg_editor_vscript_editor_add_node_at()=, =lrg_editor_vscript_editor_set_drop()=, =lrg_editor_vscript_editor_flush()=.
+- =LRG_EXTERNAL_EDITOR=none= stops =lrg_external_editor_open()= from starting a program (a connected Emacs may still take the file). The test suite sets it: =test-editor-app= could open =levels/main.rlevel= in =$VISUAL= (an Emacs frame) depending on timing.
+- libdex is initialized by libregnum: the classes that hand out =DexFuture=s (=LrgAssetManager=, =LrgDataLoader=, =LrgSaveManager=, =LrgNetClient=, =LrgNetServer=) call =dex_init()= once from their =class_init=. Before, the first future aborted with "cannot create new instance of invalid type" unless the application had called =dex_init()= itself (=/net/async/private-context-cancellation=).
+- Tests: =test-ui-chrome='s notification tests used the user's session bus (gvfs had opened it first), so they sent real desktop notifications and failed their id checks; they now run on the private bus only. =test-ui-chrome= and =test-ui-file-browser= fork GTestDBus's watcher before the GL context, so it no longer deadlocks in Mesa's atexit handler and leaves a stuck process per run. =test-ui-file-browser= finds the compositor under =G_TEST_OPTION_ISOLATE_DIRS= and treats no display as a skip instead of a fatal warning.
+- =examples/data/**/*.meta= is ignored: opening an example folder in =lrgeditor= no longer leaves untracked asset sidecars.
+
 ** 0.9.1
 :PROPERTIES:
 :CUSTOM_ID: changelog-0-9-1

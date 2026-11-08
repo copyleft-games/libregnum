@@ -10,6 +10,7 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_SAVE
 
 #include "lrg-save-manager.h"
+#include "../lrg-dex-private.h"
 #include "lrg-save-context-private.h"
 #include "../lrg-log.h"
 #include <gio/gio.h>
@@ -349,6 +350,9 @@ static void
 lrg_save_manager_class_init (LrgSaveManagerClass *klass)
 {
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+    /* this class hands out DexFutures: libdex must be initialized */
+    lrg_dex_ensure_init ();
 
     object_class->finalize = lrg_save_manager_finalize;
     object_class->get_property = lrg_save_manager_get_property;

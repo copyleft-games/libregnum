@@ -1764,7 +1764,15 @@ init_graphics_context (void)
 
 	SetTraceLogLevel (LOG_WARNING);
 	SetConfigFlags (FLAG_WINDOW_HIDDEN);
-	test_window = grl_window_new (8, 8, "lrg-ui-file-browser-test");
+
+	/* No usable display is a skip, not a failure: graylib warns when GLFW
+	 * cannot start, and g_test_init () made warnings fatal */
+	{
+		GLogLevelFlags fatal = g_log_set_always_fatal (G_LOG_FATAL_MASK);
+
+		test_window = grl_window_new (8, 8, "lrg-ui-file-browser-test");
+		g_log_set_always_fatal (fatal);
+	}
 	if (test_window == NULL || !grl_window_is_ready (test_window))
 	{
 		g_clear_object (&test_window);
@@ -1870,7 +1878,9 @@ int
 main (int   argc,
       char *argv[])
 {
-	gint result;
+	gint              result;
+	g_autofree gchar *runtime_dir = g_strdup (g_getenv ("XDG_RUNTIME_DIR"));
+	const gchar      *wayland;
 
 	/* Local files only, no gvfs or remote volume monitors */
 	g_setenv ("GIO_USE_VFS", "local", TRUE);
@@ -1878,9 +1888,48 @@ main (int   argc,
 	/* MIME data from the system, everything else isolated per test */
 	g_content_type_set_mime_dirs (NULL);
 	g_test_init (&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, NULL);
+
+	/* ISOLATE_DIRS points XDG_RUNTIME_DIR at a temporary directory, where
+	 * a relative WAYLAND_DISPLAY ("wayland-0") no longer resolves: give
+	 * the compositor socket by its absolute path instead */
+	wayland = g_getenv ("WAYLAND_DISPLAY");
+	if (wayland != NULL && *wayland != '\0' && !g_path_is_absolute (wayland) && runtime_dir != NULL)
+	{
+		g_autofree gchar *socket = g_build_filename (runtime_dir, wayland, NULL);
+
+		g_setenv ("WAYLAND_DISPLAY", socket, TRUE);
+	}
+
+	/* GTestDBus forks a watcher process on the first up. A watcher forked
+	 * after Mesa started its threads deadlocks in Mesa's atexit handler
+	 * when it exits, leaving a stuck process behind; so fork it now with
+	 * a throwaway bus (down unsets the display variables: keep them). */
+	{
+		static const gchar *keep[] = { "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR" };
+		g_autoptr(GTestDBus) warm = g_test_dbus_new (G_TEST_DBUS_NONE);
+		gchar               *saved[G_N_ELEMENTS (keep)];
+		guint                i;
+
+		for (i = 0; i < G_N_ELEMENTS (keep); i++)
+			saved[i] = g_strdup (g_getenv (keep[i]));
+		g_test_dbus_up (warm);
+		g_test_dbus_down (warm);
+		for (i = 0; i < G_N_ELEMENTS (keep); i++)
+		{
+			if (saved[i] != NULL)
+				g_setenv (keep[i], saved[i], TRUE);
+			g_free (saved[i]);
+		}
+	}
+
+	/* The window's decorations (libdecor's GTK plugin) open the session
+	 * bus for accessibility and never let it go. Give them none: a bus
+	 * held that way would keep the private test bus from shutting down. */
+	g_setenv ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/lrg-test-no-session-bus", TRUE);
+	g_setenv ("NO_AT_BRIDGE", "1", TRUE);
 	graphics_available = init_graphics_context ();
 
-	/* A private session bus for the portal tests */
+	/* The private session bus for the portal tests */
 	test_bus = g_test_dbus_new (G_TEST_DBUS_NONE);
 	g_test_dbus_up (test_bus);
 
@@ -1912,6 +1961,18 @@ main (int   argc,
 
 	result = g_test_run ();
 
+	/* Pending D-Bus replies and the deferred cleanup of unsubscribed
+	 * signals hold the session connection until the main context runs
+	 * them; g_test_dbus_down () waits for that connection to be released */
+	{
+		gint64 deadline = g_get_monotonic_time () + G_USEC_PER_SEC;
+
+		while (g_get_monotonic_time () < deadline)
+		{
+			if (!g_main_context_iteration (NULL, FALSE))
+				g_usleep (1000);
+		}
+	}
 	g_test_dbus_down (test_bus);
 	g_clear_object (&test_bus);
 	g_clear_object (&test_window);

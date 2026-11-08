@@ -1256,6 +1256,7 @@ int
 main (int argc, char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
+	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 	g_test_add_func ("/workflows/po", test_po);
 	g_test_add_func ("/workflows/stream", test_stream);
 	g_test_add_func ("/workflows/stream-async", test_stream_async_and_mount);

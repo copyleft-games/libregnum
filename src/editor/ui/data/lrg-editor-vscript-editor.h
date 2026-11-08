@@ -128,6 +128,66 @@ LRG_AVAILABLE_IN_ALL
 LrgBlockEditor *
 lrg_editor_vscript_editor_get_blocks (LrgEditorVscriptEditor *self);
 
+/**
+ * lrg_editor_vscript_editor_add_node_at:
+ * @self: an #LrgEditorVscriptEditor
+ * @kind: a catalogued node kind ("flow.branch")
+ * @x: left edge in graph units
+ * @y: top edge in graph units
+ * @error: return location for a #GError
+ *
+ * Adds a node of @kind to the shown graph as one undo step and selects
+ * it; what the Add Node picker does. When a wire was dropped on empty
+ * canvas (or lrg_editor_vscript_editor_set_drop() recorded one), the new
+ * node is wired to that pin: the first compatible pin on the other side,
+ * exec to exec first.
+ *
+ * Returns: (transfer full) (nullable): the new node's id, or %NULL with
+ *   @error
+ *
+ * Since: 0.9.2
+ */
+LRG_AVAILABLE_IN_ALL
+gchar *
+lrg_editor_vscript_editor_add_node_at (LrgEditorVscriptEditor  *self,
+                                       const gchar             *kind,
+                                       gdouble                  x,
+                                       gdouble                  y,
+                                       GError                 **error);
+
+/**
+ * lrg_editor_vscript_editor_set_drop:
+ * @self: an #LrgEditorVscriptEditor
+ * @node: (nullable): the node a wire was dragged from; %NULL clears
+ * @pin: (nullable): the pin it was dragged from
+ * @output: whether @pin is an output pin
+ *
+ * Records a wire dropped on empty canvas, so the next
+ * lrg_editor_vscript_editor_add_node_at() connects the new node to it.
+ *
+ * Since: 0.9.2
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_editor_vscript_editor_set_drop (LrgEditorVscriptEditor *self,
+                                    const gchar            *node,
+                                    const gchar            *pin,
+                                    gboolean                output);
+
+/**
+ * lrg_editor_vscript_editor_flush:
+ * @self: an #LrgEditorVscriptEditor
+ *
+ * Mouse edits on the canvas (moving, deleting, duplicating, wiring)
+ * are committed to the program from an idle, one undo step per
+ * gesture. This commits pending ones now.
+ *
+ * Since: 0.9.2
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_editor_vscript_editor_flush (LrgEditorVscriptEditor *self);
+
 G_END_DECLS
 
 #endif /* LRG_EDITOR_VSCRIPT_EDITOR_H */

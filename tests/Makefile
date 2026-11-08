@@ -464,6 +464,10 @@ check-sanitize-exit:
 		CC="$(CC)" sh $(CURDIR)/test-sanitize-exit.sh; \
 	fi
 
+# No test may start an external editor ($VISUAL) or the desktop default:
+# lrg_external_editor_open() does nothing while this is "none".
+export LRG_EXTERNAL_EDITOR := none
+
 # MCP library path (conditional)
 ifeq ($(MCP),1)
 MCP_LD_PATH := $(MCP_GLIB_DIR)/build:

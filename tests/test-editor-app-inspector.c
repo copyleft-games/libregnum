@@ -1285,6 +1285,7 @@ main (int argc, char *argv[])
 	LrgEngine        *engine;
 
 	g_test_init (&argc, &argv, NULL);
+	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 
 	/* The registry the inspector, instantiation and play mode use */
 	engine = lrg_engine_get_default ();

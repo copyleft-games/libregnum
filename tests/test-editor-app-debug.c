@@ -230,6 +230,7 @@ int
 main (int argc, char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
+	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 	g_test_add_func ("/editor/text-editor/marks", test_text_editor_marks);
 	g_test_add ("/editor/debug/ipc", DebugFix, NULL, debug_setup, test_debug_ipc, debug_teardown);
 	return g_test_run ();

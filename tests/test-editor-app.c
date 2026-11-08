@@ -1637,6 +1637,7 @@ main (int   argc,
       char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
+	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 
 #ifdef LRG_BUILD_EDITOR_UI
 #define ADD(path, func) \
