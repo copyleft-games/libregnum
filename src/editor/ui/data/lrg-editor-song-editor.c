@@ -38,6 +38,7 @@
 #include "../../../ui/lrg-ui-event.h"
 #include "../../../music/lrg-song-player.h"
 #include "../../../music/lrg-midi-file.h"
+#include "../../../music/lrg-song-import.h"
 #include "../../../music/lrg-instrument.h"
 #include "../../../audio/lrg-audio-encoder.h"
 #include "../../../audio/lrg-audio-analysis.h"
@@ -2870,6 +2871,81 @@ m_import_midi (LrgEditorServer  *server,
 	return music_object_node (o);
 }
 
+/* a recording as a new .rsong ("file" in, "path" out): the audio aligned
+ * to its tempo and bars, sections as markers, optionally a transcription
+ * on muted tracks (lrg_song_import_audio()); the report comes back */
+static JsonNode *
+m_import_audio (LrgEditorServer  *server,
+                JsonObject       *params,
+                gpointer          user_data,
+                GError          **error)
+{
+	LrgEditorApp                   *app = LRG_EDITOR_APP (user_data);
+	const gchar                    *file = music_param_string (params, "file");
+	const gchar                    *path = music_param_string (params, "path");
+	g_autofree gchar               *in = NULL;
+	g_autofree gchar               *out = NULL;
+	g_autofree gchar               *dir = NULL;
+	g_autoptr(GError)               err = NULL;
+	g_autoptr(LrgSong)              song = NULL;
+	g_autoptr(LrgSongImportOptions) opts = lrg_song_import_options_new ();
+	g_autoptr(LrgSongImportReport)  r = NULL;
+	JsonObject                     *o;
+	gdouble                         v;
+	gboolean                        b;
+
+	if (file == NULL || path == NULL)
+		return music_bad (error, "Missing string parameters 'file' (a recording) and 'path' (the new .rsong)");
+	in = music_abs_path (app, file);
+	out = music_abs_path (app, path);
+	if (g_file_test (out, G_FILE_TEST_EXISTS))
+		return music_bad (error, "The .rsong already exists");
+	if (music_param_double (params, "bpm", &v))
+		opts->bpm = MAX (v, 0.0);
+	if (music_param_double (params, "min_bpm", &v))
+		opts->min_bpm = v;
+	if (music_param_double (params, "max_bpm", &v))
+		opts->max_bpm = v;
+	if (music_param_double (params, "beats_per_bar", &v))
+		opts->beats_per_bar = (guint) CLAMP (v, 1.0, 16.0);
+	if (music_param_double (params, "sample_rate", &v))
+		opts->sample_rate = (guint) CLAMP (v, 8000.0, 192000.0);
+	if (music_param_double (params, "section_bars", &v))
+		opts->section_bars = (guint) CLAMP (v, 1.0, 64.0);
+	if (music_param_bool (params, "sections", &b))
+		opts->sections = b;
+	if (music_param_bool (params, "transcribe", &b))
+		opts->transcribe = b;
+	opts->title = g_strdup (music_param_string (params, "title"));
+	opts->artist = g_strdup (music_param_string (params, "artist"));
+	dir = g_path_get_dirname (out);
+	if (!music_ensure_parent (out, &err))
+		return music_fail (error, err);
+	song = lrg_song_import_audio (in, dir, opts, &r, &err);
+	if (song == NULL || !lrg_song_save_to_file (song, out, &err))
+		return music_fail (error, err);
+	if (lrg_editor_song_editor_open (app, out, &err) == NULL)
+		return music_fail (error, err);
+	o = json_object_new ();
+	json_object_set_string_member (o, "path", out);
+	json_object_set_string_member (o, "audio_file", r->audio_file);
+	json_object_set_double_member (o, "bpm", r->bpm);
+	json_object_set_boolean_member (o, "bpm_detected", r->bpm_detected);
+	json_object_set_double_member (o, "confidence", r->confidence);
+	json_object_set_double_member (o, "alternative_bpm", r->alternative_bpm);
+	json_object_set_double_member (o, "first_beat", r->first_beat);
+	json_object_set_double_member (o, "lead_in", r->lead_in);
+	json_object_set_double_member (o, "duration", r->duration);
+	json_object_set_int_member (o, "source_rate", r->source_rate);
+	json_object_set_string_member (o, "key", r->key);
+	json_object_set_int_member (o, "sections", r->sections);
+	json_object_set_int_member (o, "drum_hits", r->drum_hits);
+	json_object_set_int_member (o, "bass_notes", r->bass_notes);
+	json_object_set_int_member (o, "melody_notes", r->melody_notes);
+	json_object_set_int_member (o, "chords", r->chords);
+	return music_object_node (o);
+}
+
 static JsonNode *
 m_play (LrgEditorServer  *server,
         JsonObject       *params,
@@ -3027,6 +3103,7 @@ lrg_editor_song_editor_install (LrgEditorApp *app)
 		{ "song.export", m_export },
 		{ "song.export_midi", m_export_midi },
 		{ "song.import_midi", m_import_midi },
+		{ "song.import_audio", m_import_audio },
 		{ "song.play", m_play },
 		{ "song.stop", m_stop },
 		{ "song.seek", m_seek },
