@@ -16,6 +16,17 @@
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
 
+** 0.10.2
+:PROPERTIES:
+:CUSTOM_ID: changelog-0-10-2
+:END:
+Recordings become songs: import a wav, flac, mp3, ogg, opus or m4a, edit it like any song, render it again. See [[file:modules/music/import.org][Importing recordings]].
+
+- Music: =lrg_song_import_audio()= resamples a recording to the song rate (Blackman-windowed sinc), finds its tempo, beats and downbeats, writes it as a bar-aligned WAV on the audio track =original= (rendering the song gives the recording back), marks its sections and estimates its key; =LrgSongImportOptions=, =LrgSongImportReport= (with a confidence and the half- or double-time alternative). With =transcribe=, drum steps, a bass line, a melody and chords are estimated onto four muted instrument tracks, identical bars sharing patterns. Also =lrg_music_detect_tempo()= and =lrg_music_detect_key()=.
+- Editor and agents: =song.import_audio= (=lrgeditorctl song import-audio FILE PATH=, MCP =song_import_audio=) imports, saves and opens the song.
+- Examples: =examples/song-import= (=--bpm=, =--transcribe=, =--no-sections=, ...); render the result with =examples/song-render=.
+- Tests: =test-music-import= imports songs with known answers (a click track; a 110 BPM groove rendered at 44.1 kHz with silence in front, imported at 48 kHz: tempo, bar alignment, the WAV, the re-render, the key, kick and bass; sections; silence and missing files).
+
 ** 0.10.1
 :PROPERTIES:
 :CUSTOM_ID: changelog-0-10-1

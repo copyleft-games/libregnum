@@ -30,6 +30,7 @@ Nine complete songs made only with libregnum's own synthesizers, drum machine an
 :END:
 - Render: =./examples/build/release/examples/song-render examples/data/music/iron-choir.rsong= writes =songs/iron-choir.wav= and =.mp3= at streaming loudness (-14 LUFS integrated, -1 dBTP ceiling). =-f all= writes every format (WAV, AIFF, FLAC, MP3, Ogg, Opus, AAC, ALAC, WavPack; the compressed ones need =ffmpeg-free=), =--stems= adds one WAV per track, =--info= only checks and describes.
 - Edit: open the folder in =lrgeditor= (=lrgeditor -p examples/data/music=) and double-click a song. The arrangement shows every section marker; click a clip to edit its pattern in the step grid (drums) or piano roll (notes); Play / pause plays it while you edit.
+- Import your own: =examples/song-import track.mp3 -o imported --transcribe= makes a =.rsong= of any recording (the audio on its bar grid, sections, the key, and estimated drums, bass, melody and chords on muted tracks) to edit and render the same way ([[file:../../../docs/modules/music/import.org][Importing recordings]]).
 - Neon Drive is also built in C, step by step, by =examples/synthwave-song.c= (see =docs/examples/synthwave-song.org=); the others are written directly as =.rsong= files.
 - Every song is checked by =tests/test-music-demo.c=: it loads without a warning, writes back byte for byte, has the length stated here, and eight bars of one section render with sound and without clipping.
 

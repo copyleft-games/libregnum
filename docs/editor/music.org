@@ -3,7 +3,7 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum editor audio music song foley ipc mcp
 #+created: 2026-11-08T17:00:00-05:00
-#+updated: 2026-11-08T17:00:00-05:00
+#+updated: 2026-11-08T18:00:00-05:00
 #+version: 0.10.0
 
 * Music in the Editor
@@ -24,7 +24,7 @@ Everything a person does with the mouse an agent can do over IPC (=song.*=, =fol
 
 | Tool | Where | Edits | Source |
 |------+-------+-------+--------|
-| Song editor | A data editor tab for every opened =.rsong= (double-click in Assets, New Song, =song.new=, =song.import_midi=) | the whole song, undoable in the document | =src/editor/ui/data/lrg-editor-song-editor.{h,c}= |
+| Song editor | A data editor tab for every opened =.rsong= (double-click in Assets, New Song, =song.new=, =song.import_midi=, =song.import_audio=) | the whole song, undoable in the document | =src/editor/ui/data/lrg-editor-song-editor.{h,c}= |
 | Song operations | Shared by the editor's UI, every =song.<op>= method and =song.apply= | one JSON op table on an =LrgSong= | =src/editor/ui/data/lrg-editor-song-ops.c= |
 | Foley designer | A data editor tab for every opened =.rfoley= (double-click in Assets, New Sound Effect, =foley.new=) | the whole patch, undoable in the document | =src/editor/ui/data/lrg-editor-foley-editor.{h,c}= |
 | =song.*=, =foley.*=, =audio.formats= IPC | lrgeditorctl, MCP, scripts | everything above | the two editor files |
@@ -192,6 +192,34 @@ An agent cannot listen, so the IPC gives it numbers: =song.instruments= says wha
    #+end_src
 
 =song.play=, =song.seek= and =song.state= let the agent play the song for a person in the room and report the playhead and master meters; =song.select= shows a track or clip in the editor while explaining it. =foley.*= works the same way for sound effects: =foley.layer_types= to discover, =foley.new= with a =kind= to start from, =foley.add_layer= / =foley.set_layer= to shape, =foley.render= to measure, =foley.export= to deliver.
+
+*** Importing a recording
+:PROPERTIES:
+:CUSTOM_ID: editor-music-import
+:END:
+=song.import_audio= (0.10.2) turns a recording (WAV, FLAC, MP3, Ogg, Opus, M4A, anything =lrg_audio_decode_file()= reads) into a new =.rsong= with =lrg_song_import_audio()=. The recording is resampled to the song's rate, its tempo, beat phase and downbeats are found (or =bpm= is used), silence is put in front so a bar starts at beat 0, and the result is written as =audio/<name>.wav= beside the =.rsong= and played by one clip on the audio track =original= (bus =original=). Sections become markers, and the key is estimated. With =transcribe=true= the recording is also estimated as music on four *muted* instrument tracks on the bus =remake=: =drums= (808 steps for kick, snare and hats), =bass= (=synthwave-bass=), =melody= (=synthwave-lead=) and =chords= (=synthwave-pad=). They are estimates: dense mixes transcribe less well than sparse ones. The method refuses a =.rsong= that already exists; it saves the song and opens it in the song editor. The engine side: [[file:../modules/music/import.org][Importing recordings]].
+
+An agent's session:
+
+1. *Import.* The reply is the report: =bpm=, =bpm_detected=, =confidence= (0 .. 1), =alternative_bpm= (half or double time when it fits nearly as well, else 0), =first_beat=, =lead_in=, =duration=, =source_rate=, =key=, =audio_file= and the counts =sections=, =drum_hits=, =bass_notes=, =melody_notes=, =chords=. When =confidence= is below about 0.3 the grid is a guess, and a non-zero =alternative_bpm= means the tempo octave is ambiguous: import again with =bpm= given (or a narrower =min_bpm= / =max_bpm=), to a new =path= or after removing the first =.rsong=.
+   #+begin_src sh
+   lrgeditorctl song import-audio ~/music/track.flac music/track.rsong transcribe=true -o json
+   #+end_src
+2. *Read it.* =song.get= shows the markers (the sections), the tracks and the transcribed patterns.
+   #+begin_src sh
+   lrgeditorctl song get path=music/track.rsong section=tracks -o json
+   #+end_src
+3. *Unmute or edit.* Unmute an estimate to hear it with the recording, fix its notes and lanes with the ordinary edit methods, mute =original= to keep only the remake, or cut and layer the =original= clip; everything lines up with the bars.
+   #+begin_src sh
+   lrgeditorctl song set-track drums mute=false
+   lrgeditorctl song set-track original volume=-6
+   #+end_src
+4. *Export.* =song.render= to measure, =song.export= to deliver, as for any song.
+   #+begin_src sh
+   lrgeditorctl song export out/track.wav 'formats=["wav","mp3"]'
+   #+end_src
+
+The examples =song-import= (=examples/song-import.c=: the same import from the command line, =--bpm=, =--transcribe=, =--no-sections=, ...) and =song-render= render the result without the editor.
 
 ** IPC methods
 :PROPERTIES:

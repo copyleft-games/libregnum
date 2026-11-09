@@ -16,7 +16,7 @@ description: >
 
 # Skill: libregnum
 
-libregnum is a GObject-based game engine in C (gnu89) built on graylib (a GObject wrapper for raylib) and yaml-glib, with ECS, rendering, audio, UI, scripting, networking/MMO, modding and a full editor. This skill covers two jobs: **using the editor** to build and change game content (levels of nodes saved as `.rlevel` YAML), mostly through `lrgeditorctl`, a kubectl-style CLI that controls a running `lrgeditor` over its socket, or through the editor's MCP tools; and **working on libregnum itself** without tripping over its conventions. This page is the workflow; the details live next to it. Current as of libregnum 0.10.1.
+libregnum is a GObject-based game engine in C (gnu89) built on graylib (a GObject wrapper for raylib) and yaml-glib, with ECS, rendering, audio, UI, scripting, networking/MMO, modding and a full editor. This skill covers two jobs: **using the editor** to build and change game content (levels of nodes saved as `.rlevel` YAML), mostly through `lrgeditorctl`, a kubectl-style CLI that controls a running `lrgeditor` over its socket, or through the editor's MCP tools; and **working on libregnum itself** without tripping over its conventions. This page is the workflow; the details live next to it. Current as of libregnum 0.10.2.
 
 - `references/lrgeditorctl.md`: every command, flag, output format and scripting pattern
 - `references/mcp.md`: the MCP server, client setup, and the tool list

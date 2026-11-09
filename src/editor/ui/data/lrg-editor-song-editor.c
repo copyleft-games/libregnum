@@ -2918,6 +2918,7 @@ m_import_audio (LrgEditorServer  *server,
 		opts->transcribe = b;
 	opts->title = g_strdup (music_param_string (params, "title"));
 	opts->artist = g_strdup (music_param_string (params, "artist"));
+	opts->audio_dir = g_strdup (music_param_string (params, "audio_dir"));
 	dir = g_path_get_dirname (out);
 	if (!music_ensure_parent (out, &err))
 		return music_fail (error, err);
