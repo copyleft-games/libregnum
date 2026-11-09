@@ -227,6 +227,7 @@ TEST_SOURCES := \
 	test-music-song.c \
 	test-music-player.c \
 	test-music-demo.c \
+	test-music-import.c \
 	test-audio-encoder.c \
 	test-audio-bus.c \
 	test-audio-robustness.c \

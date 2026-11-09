@@ -3,7 +3,7 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum editor ipc
 #+created: 2026-10-24T22:30:00-04:00
-#+updated: 2026-11-07T12:00:00-05:00
+#+updated: 2026-11-08T18:00:00-05:00
 #+version: 1.1
 
 * Editor IPC Protocol
@@ -658,6 +658,7 @@ Every method an =lrgeditor= window serves in 0.8.3, in registration order. /Regi
 | =song.export= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
 | =song.export_midi= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
 | =song.import_midi= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.import_audio= | 0.10.2 | song editor | [[#ipc-song][Song methods]] |
 | =song.play= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
 | =song.stop= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
 | =song.seek= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
@@ -1615,6 +1616,7 @@ Registered by =lrg_editor_song_editor_install()= (=src/editor/ui/data/lrg-editor
 | =song.export= | =path?=, =file=, =formats?=, =stems?=, the render params, =bitrate?=, =bit_depth?= | ={files: [{file, bytes?, stem?, error?}], duration}=; default -14 LUFS, -1 dBTP |
 | =song.export_midi= | =path?=, =file= | ={file}= |
 | =song.import_midi= | =file= (=.mid=), =path= (the new =.rsong=) | ={path}=; opened |
+| =song.import_audio= | =file= (a recording: =.wav=, =.flac=, =.mp3=, =.ogg=, =.opus=, =.m4a=, ...), =path= (the new =.rsong=; refused when it exists), =bpm?= (0 or absent: detect), =min_bpm?= (70), =max_bpm?= (180), =beats_per_bar?= (4), =sample_rate?= (48000), =sections?= (=true=), =section_bars?= (4), =transcribe?= (=false=), =title?= (default the file name), =artist?=, =audio_dir?= (="audio"=, relative to the =.rsong='s folder) | ={path, audio_file, bpm, bpm_detected, confidence, alternative_bpm, first_beat, lead_in, duration, source_rate, key, sections, drum_hits, bass_notes, melody_notes, chords}=; the aligned WAV is written to =<audio_dir>/<name>.wav= beside the =.rsong= (=audio_file= is relative to its folder), the song is saved and opened (0.10.2; [[file:../modules/music/import.org][Importing recordings]]) |
 | =song.play= | =path?=, =beat?=, =marker?= | the state; opens the audio device |
 | =song.stop= | =path?= | the state |
 | =song.seek= | =path?=, =beat= or =marker= | the state |

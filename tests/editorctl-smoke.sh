@@ -706,6 +706,8 @@ then
 	check 'song render' "$(ctl song render end=16 -o json)" '"integrated_lufs"'
 	check 'song export' "$(ctl song export out/smoke.wav end=16 -o json)" '"bytes"'
 	check 'song export file' "$(test -s "${work}/game/out/smoke.wav" && echo written)" 'written'
+	check 'song import-audio' "$(ctl song import-audio out/smoke.wav music/smoke-imported.rsong bpm=96 -o json)" '"audio_file"'
+	ctl data close music/smoke-imported.rsong --force >/dev/null 2>&1 || true
 	check 'song instruments' "$(ctl song instruments -o json)" '"synthwave-bass"'
 	check 'audio formats' "$(ctl audio formats -o json)" '"flac"'
 	check 'asset new song' "$(ctl asset new song path=music/blank.rsong -o json)" 'blank.rsong'
@@ -818,6 +820,7 @@ else
 	check 'mcp water tools' "${out}" '"name":"water_add_point"'
 	check 'mcp mixer tools' "${out}" '"name":"mixer_set_send"'
 	check 'mcp song tools' "${out}" '"name":"song_apply"'
+	check 'mcp song_import_audio' "${out}" '"name":"song_import_audio"'
 	check 'mcp foley tools' "${out}" '"name":"foley_add_layer"'
 	check 'mcp audio_formats' "${out}" '"name":"audio_formats"'
 	check 'mcp audio tools' "${out}" '"name":"audio_curve"'

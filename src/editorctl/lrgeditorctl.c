@@ -222,8 +222,8 @@ static const gchar *description =
 	"          set-variable|add-subgraph|remove-subgraph|add-comment|remove-comment|set-program|select|\n"
 	"          frame|validate|run|live|breakpoint|continue|save ... [key=value...]\n"
 	"                                   visual script (visual script editor)\n"
-	"  song new|get|apply|validate|render|export|export-midi|import-midi|play|stop|seek|select|state|\n"
-	"       instruments|set|set-tempo|set-marker|remove-marker|set-instrument|remove-instrument|\n"
+	"  song new|get|apply|validate|render|export|export-midi|import-midi|import-audio|play|stop|seek|select|\n"
+	"       state|instruments|set|set-tempo|set-marker|remove-marker|set-instrument|remove-instrument|\n"
 	"       add-pattern|set-notes|set-lanes|remove-pattern|add-track|set-track|remove-track|move-track|\n"
 	"       add-clip|set-clip|remove-clip|set-automation|set-bus|remove-bus|set-effect|remove-effect|\n"
 	"       set-send|set-duck ... [key=value...]\n"
@@ -3831,7 +3831,7 @@ static const M67Verb m67_script_verbs[] = {
 	{ "editor-running", "script.editor_running", { NULL }, NULL, { NULL }, FALSE },
 };
 
-/* song new|get|apply|validate|render|export|export-midi|import-midi|play|stop|seek|select|state|instruments|set|set-tempo|set-marker|remove-marker|set-instrument|remove-instrument|add-pattern|set-notes|set-lanes|remove-pattern|add-track|set-track|remove-track|move-track|add-clip|set-clip|remove-clip|set-automation|set-bus|remove-bus|set-effect|remove-effect|set-send|set-duck */
+/* song new|get|apply|validate|render|export|export-midi|import-midi|import-audio|play|stop|seek|select|state|instruments|set|set-tempo|set-marker|remove-marker|set-instrument|remove-instrument|add-pattern|set-notes|set-lanes|remove-pattern|add-track|set-track|remove-track|move-track|add-clip|set-clip|remove-clip|set-automation|set-bus|remove-bus|set-effect|remove-effect|set-send|set-duck */
 static const M67Verb m67_song_verbs[] = {
 	{ "new", "song.new", { "@path", NULL }, NULL, { NULL }, FALSE },
 	{ "get", "song.get", { NULL }, NULL, { NULL }, FALSE },
@@ -3841,6 +3841,7 @@ static const M67Verb m67_song_verbs[] = {
 	{ "export", "song.export", { "@file", NULL }, NULL, { NULL }, FALSE },
 	{ "export-midi", "song.export_midi", { "@file", NULL }, NULL, { NULL }, FALSE },
 	{ "import-midi", "song.import_midi", { "@file", "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "import-audio", "song.import_audio", { "@file", "@path", NULL }, NULL, { NULL }, FALSE },
 	{ "play", "song.play", { NULL }, NULL, { NULL }, FALSE },
 	{ "stop", "song.stop", { NULL }, NULL, { NULL }, FALSE },
 	{ "seek", "song.seek", { "~beat", NULL }, NULL, { NULL }, FALSE },
@@ -4337,7 +4338,7 @@ static const gchar *completion_script =
 	"\t\tprofiler) mapfile -t COMPREPLY < <(compgen -W 'sample set capture save load frames frame compare view' -- \"${cur}\") ;;\n"
 	"\t\tframe) mapfile -t COMPREPLY < <(compgen -W 'capture status calls call scrub texture save load show' -- \"${cur}\") ;;\n"
 	"\t\tscript) mapfile -t COMPREPLY < <(compgen -W 'run languages tools run-tool reload run-in-editor editor-running' -- \"${cur}\") ;;\n"
-	"\t\tsong) mapfile -t COMPREPLY < <(compgen -W 'new get apply validate render export export-midi import-midi play stop seek select state instruments set set-tempo set-marker remove-marker set-instrument remove-instrument add-pattern set-notes set-lanes remove-pattern add-track set-track remove-track move-track add-clip set-clip remove-clip set-automation set-bus remove-bus set-effect remove-effect set-send set-duck' -- \"${cur}\") ;;\n"
+	"\t\tsong) mapfile -t COMPREPLY < <(compgen -W 'new get apply validate render export export-midi import-midi import-audio play stop seek select state instruments set set-tempo set-marker remove-marker set-instrument remove-instrument add-pattern set-notes set-lanes remove-pattern add-track set-track remove-track move-track add-clip set-clip remove-clip set-automation set-bus remove-bus set-effect remove-effect set-send set-duck' -- \"${cur}\") ;;\n"
 	"\t\tfoley) mapfile -t COMPREPLY < <(compgen -W 'new get set add-layer set-layer remove-layer move-layer from-kind render export play layer-types' -- \"${cur}\") ;;\n"
 	"\t\tvscript) mapfile -t COMPREPLY < <(compgen -W 'create open get node-types gi-search add-node remove-node set-node connect disconnect set-variable add-subgraph remove-subgraph add-comment remove-comment set-program select validate run live breakpoint continue save' -- \"${cur}\") ;;\n"
 	"\t\tmemory) mapfile -t COMPREPLY < <(compgen -W 'status types resources snapshot snapshots diff clear-snapshots history show' -- \"${cur}\") ;;\n"

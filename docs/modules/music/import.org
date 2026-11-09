@@ -1,0 +1,158 @@
+#+title: Importing Recordings
+#+description: Turning a recording (wav, flac, mp3, ogg, opus, m4a) into an editable .rsong: resampling, tempo, beat and downbeat detection, bar-aligned audio, sections, key, and an optional transcription of drums, bass, melody and chords
+#+authors: Zach Podbielniak
+#+categories: libregnum music audio
+#+created: 2026-11-08T19:00:00-05:00
+#+updated: 2026-11-08T19:00:00-05:00
+#+version: 0.1
+
+* Importing Recordings
+:PROPERTIES:
+:CUSTOM_ID: music-import
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:../index.org][Modules]] > [[file:index.org][Music]] > Importing recordings
+#+end_quote
+
+=lrg_song_import_audio()= (0.10.2, =src/music/lrg-song-import.h=) makes an =LrgSong= of a recording, so a finished track can be edited like any song and rendered again: cut it, repeat a chorus, extend an intro, add drums or a synth line over it, put effects and automation on it, and export it to any format. Two layers come out of one import:
+
+1. *The recording, exactly.* It is resampled to the song's rate, its tempo, beats and bar lines are found, and it is written as a WAV with a short silence in front so that a bar starts at beat 0. One clip on the audio track =original= plays it, so rendering the song gives the recording back; everything you add lines up with its bars. Sections become markers, and the key is estimated.
+2. *An estimate of the music* (optional, =transcribe=). Drum steps, a bass line, a melody and chords, played by the built-in drum machine and synthesizers, each on its own muted track. Unmute them to hear the recording "re-performed", use them as a starting point for a remake, or mute the original and keep only the parts you like.
+
+Like any audio-to-MIDI tool, the transcription is approximate: sparse arrangements with clear drums and a clean bass transcribe well, dense or heavily distorted mixes less so. The first layer is always exact.
+
+** Quick start
+:PROPERTIES:
+:CUSTOM_ID: music-import-quick-start
+:END:
+#+begin_src sh
+# imported/track.rsong and imported/audio/track.wav
+./examples/build/release/examples/song-import track.mp3 -o imported
+# with the transcription
+./examples/build/release/examples/song-import track.mp3 -o imported --transcribe
+# edit it in lrgeditor (or over IPC / MCP), then render it
+lrgeditor -p imported
+./examples/build/release/examples/song-render imported/track.rsong -f wav,mp3,flac
+#+end_src
+
+=song-import= prints what it found: the length and source rate, the tempo with its confidence (and the half- or double-time alternative when one fits nearly as well), where the first bar starts, the key, the sections, and with =--transcribe= how many drum hits, notes and chords it wrote. The tempo octave (66 or 132 BPM, 150 or 75) is the classic ambiguity of tempo detection; when the bars feel twice too fast or slow, import again with =--bpm=.
+
+From C:
+
+#+begin_src c
+g_autoptr(GError)               error = NULL;
+g_autoptr(LrgSongImportOptions) options = lrg_song_import_options_new ();
+g_autoptr(LrgSongImportReport)  report = NULL;
+g_autoptr(LrgSong)              song = NULL;
+
+options->transcribe = TRUE;
+song = lrg_song_import_audio ("track.mp3", "imported", options, &report, &error);
+if (song == NULL)
+	g_printerr ("%s\n", error->message);
+else
+{
+	g_print ("%.2f BPM (confidence %.2f), %s\n", report->bpm, report->confidence, report->key);
+	lrg_song_save_to_file (song, "imported/track.rsong", &error);
+}
+#+end_src
+
+The song is not saved for you; its =base-path= is =out_dir=, and the WAV is written below it (=audio_dir=, ="audio"= by default), so save the song in =out_dir= to keep the clip's relative path.
+
+From the editor and agents: the IPC method =song.import_audio= (=lrgeditorctl song import-audio FILE PATH=, MCP =song_import_audio=) does the same, saves the =.rsong= and opens it in the song editor; see [[file:../../editor/music.org][Music in the editor]].
+
+** Options
+:PROPERTIES:
+:CUSTOM_ID: music-import-options
+:END:
+| Member | Default | Meaning |
+|--------+---------+---------|
+| =sample_rate= | 48000 | the song's rate; the recording is resampled to it |
+| =bpm= | 0 (detect) | the tempo; give it to skip detection |
+| =min_bpm=, =max_bpm= | 70, 180 | the tempos detection considers |
+| =beats_per_bar= | 4 | beats in a bar |
+| =sections= | =TRUE= | find sections and add markers |
+| =section_bars= | 4 | the shortest section, in bars |
+| =transcribe= | =FALSE= | add the estimated drums, bass, melody and chords |
+| =title=, =artist= | the file name, none | the song's tags |
+| =audio_dir= | ="audio"= | where the aligned WAV goes, relative to =out_dir= |
+
+** The report
+:PROPERTIES:
+:CUSTOM_ID: music-import-report
+:END:
+| Member | Meaning |
+|--------+---------|
+| =bpm=, =bpm_detected= | the tempo used, and whether it was detected |
+| =confidence= | 0 .. 1: how clearly the tempo stood out. Below about 0.3 (noise, free time, an ambiguous doom tempo) the grid is a guess: give =bpm= |
+| =alternative_bpm= | half or double =bpm= when it fits nearly as well, else 0 |
+| =first_beat= | seconds into the recording of its first downbeat |
+| =lead_in= | seconds of silence put in front so a bar starts at beat 0 |
+| =duration=, =source_rate= | the recording's length and own rate |
+| =key= | the estimated key ("A minor") |
+| =audio_file= | the aligned WAV, relative to =out_dir= |
+| =sections= | markers added |
+| =drum_hits=, =bass_notes=, =melody_notes=, =chords= | what the transcription wrote |
+
+** How it works
+:PROPERTIES:
+:CUSTOM_ID: music-import-how
+:END:
+*** Decoding and resampling
+:PROPERTIES:
+:CUSTOM_ID: music-import-resample
+:END:
+=lrg_audio_decode_file()= reads the file (WAV, Ogg, MP3 natively; FLAC, Opus, M4A and the rest through libav or the =ffmpeg= program). The samples are resampled to the song's rate with a Blackman-windowed sinc of 16 zero crossings, its cut-off lowered to the new Nyquist when downsampling, so a 44.1 kHz recording in a 48 kHz song has no aliasing and no level change. More than two channels are refused.
+
+*** Analysis
+:PROPERTIES:
+:CUSTOM_ID: music-import-analysis
+:END:
+A mono copy at 24 kHz is analysed. Every 256 samples (10.7 ms) a 1024-point FFT gives the onset strength (the log spectral flux, the sum of increases in log magnitude) overall and for the snare (1 to 5 kHz) and hat (above 7 kHz) bands, the kick band below 100 Hz in linear magnitude (in the log domain a kick on top of a bass note would barely count more than the bass note alone), the frame energy and the brightness. Every four frames an 8192-point FFT (2.9 Hz bins) gives the pitch classes: only spectral peaks, at their interpolated frequency (the bins around a loud low note are a semitone apart), with energy that is the 2nd to 4th harmonic of a stronger lower note given to that note (otherwise every note also counts as the fifth above it), from 110 Hz up for the harmony and from 80 Hz for the bass (below that a tuned kick drum would pass for a bass note).
+
+*** Tempo, beats and bars
+:PROPERTIES:
+:CUSTOM_ID: music-import-tempo
+:END:
+The onset curve, with its 0.4 s moving average removed, is autocorrelated over the periods of =min_bpm= to =max_bpm=, weighed by a prior around 120 BPM and by the autocorrelation at twice the period; the peak is refined by a parabola. Of that tempo, half and double, the one where the snare band repeats every two beats (the backbeat), else every four, is kept; without a clear backbeat the first choice stays. Then tempo (within 2 %) and phase are searched together for the comb of beats that best matches the onsets over the whole recording, which keeps the grid in line to the end of long songs. The downbeat is the beat of the bar where the harmony changes most (chords change on bar lines), with the kick band as a second vote. =lrg_music_detect_tempo()= exposes the tempo and phase alone. Silence (below -60 dBFS) has no tempo; with =bpm= given it still imports.
+
+*** Sections
+:PROPERTIES:
+:CUSTOM_ID: music-import-sections
+:END:
+Each bar is described by its pitch classes, loudness, brightness and how busy the kick, snare and hat bands are. A novelty curve compares the =section_bars= bars before each bar line with those after it (their mean distance across, minus within); its peaks above the average, at least =section_bars= apart, start sections. Sections that sound alike share a letter (=A=, =B=, =A 2=); a quiet first or last one is the =Intro= or =Outro=.
+
+*** Key
+:PROPERTIES:
+:CUSTOM_ID: music-import-key
+:END:
+The pitch classes of the whole recording, weighed by loudness, are correlated with the 24 Krumhansl-Kessler key profiles, with a bonus for the key whose tonic the bass rests on most. Relative keys (A minor and C major) and modal music (Phrygian, Lydian, the blues) are the usual confusions. =lrg_music_detect_key()= exposes it.
+
+*** Transcription
+:PROPERTIES:
+:CUSTOM_ID: music-import-transcription
+:END:
+On the song's grid (beat 0 is the first bar line):
+
+- *Drums* (track =drums=, the 808 kit): per sixteenth, the strongest onset of each band around it, normalised by the band's loud hits. A hit must clear the band's average and come near the loudest of its band in the bar (kick and bass together hit harder than the bass alone); a snare must beat the hat band and a hat the snare band (a snare's noise reaches the hat band). Velocities follow the strength (=g=, =o=, =x=, =X=).
+- *Bass* (track =bass=, =synthwave-bass=): per eighth, read from 20 ms after it starts, the note from A0 to G3 with the greatest harmonic salience over its 2nd to 6th harmonics (and a little of the fundamental). A bass note is rich in harmonics; a drum's ringing tail is nearly a pure sine at one pitch and would otherwise win every off-beat.
+- *Melody* (track =melody=, =synthwave-lead=): per sixteenth, the note from G3 to C6 of greatest harmonic salience (five partials) when it stands well above the others and the frame is loud enough; a median over three steps removes one-step jumps; notes shorter than an eighth are dropped.
+- *Chords* (track =chords=, =synthwave-pad=): per half bar, the major or minor triad that best matches the pitch classes (root and fifth weigh most, the third tells major from minor); a repeated chord is held.
+
+Consecutive equal notes merge into one; identical bars share a pattern, and runs of a pattern become one clip, so the arrangement in the song editor shows where the music repeats. The four tracks play into a =remake= bus, the original into an =original= bus, both on master with no effects, so the original renders unchanged.
+
+** Ideas
+:PROPERTIES:
+:CUSTOM_ID: music-import-ideas
+:END:
+- *Extend or shorten a track* for a game level: duplicate or delete clips at section markers; the bar grid keeps cuts on the beat.
+- *Remix*: keep the original, add a drum machine and a bass synth from the song editor, put a filter sweep (automation) on the =original= bus.
+- *Remake*: unmute the estimates, mute =original=, then fix notes in the piano roll and steps in the step grid, change the instruments, render.
+- *Adaptive music*: with section markers, =LrgSongPlayer= can queue sections of an imported track on the bar ([[file:player.org][Playback]]).
+- *Agents*: =song.import_audio=, then =song.render= with =tracks: true= to compare the estimates to the original by loudness, then =song.apply= to fix them.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: music-import-see-also
+:END:
+- [[file:song.org][Songs]], [[file:instruments.org][Instruments]], [[file:../audio/encoder.org][Audio files]], [[file:../audio/analysis.org][Loudness]]
+- [[file:../../editor/music.org][Music in the editor]], [[file:../../../examples/data/music/00_index.org][Example songs]]

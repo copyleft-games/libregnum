@@ -3,7 +3,7 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum editor cli mcp
 #+created: 2026-10-25T03:10:00-04:00
-#+updated: 2026-10-25T03:10:00-04:00
+#+updated: 2026-11-08T18:00:00-05:00
 #+version: 1.0
 
 * lrgeditorctl and the Editor MCP Server
@@ -977,6 +977,7 @@ lrgeditorctl vscript run; lrgeditorctl vscript save
 | =song export FILE [key=value...]= | =song.export= |
 | =song export-midi FILE [key=value...]= | =song.export_midi= |
 | =song import-midi FILE PATH [key=value...]= | =song.import_midi= |
+| =song import-audio FILE PATH [key=value...]= | =song.import_audio= |
 | =song play [key=value...]= | =song.play= |
 | =song stop [key=value...]= | =song.stop= |
 | =song seek BEAT [key=value...]= | =song.seek= |
@@ -1018,6 +1019,13 @@ lrgeditorctl song add-clip pad chords 0 16
 lrgeditorctl song apply 'ops=[{"op":"set_bus","name":"kick"},{"op":"set_bus","name":"synths"},{"op":"set_track","id":"pad","bus":"synths"},{"op":"set_duck","trigger":"kick","target":"synths","depth":-4}]'
 lrgeditorctl song render end=16 tracks=true -o json
 lrgeditorctl song export out/loop.wav 'formats=["wav","flac","mp3","ogg"]' stems=true
+#+end_src
+
+=song import-audio= (0.10.2) makes a new =.rsong= of a recording: the audio aligned to its detected tempo and bars on the track =original=, sections as markers, and with =transcribe=true= muted estimate tracks (=drums=, =bass=, =melody=, =chords=). It refuses an existing =.rsong=, writes the WAV to =audio/<name>.wav= beside it, saves the song and opens it. When the reply's =confidence= is below about 0.3, or =alternative_bpm= is not 0 and sounds right, import again with =bpm==. Details: [[file:music.org::#editor-music-import][Importing a recording]] and [[file:../modules/music/import.org][Importing recordings]].
+
+#+begin_src sh
+lrgeditorctl song import-audio ~/music/track.flac music/track.rsong transcribe=true -o json
+lrgeditorctl song import-audio ~/music/live.ogg music/live.rsong bpm=92 sections=false title='Live'
 #+end_src
 
 **** foley

@@ -96,6 +96,18 @@ Read `integrated_lufs`, `true_peak_db`, `clipped_samples`, `envelope` for the mi
 ```
 Default normalisation: -14 LUFS integrated, -1 dBTP ceiling (`normalize`, `target`, `ceiling` change it). `formats` replaces the file's extension; each entry reports `bytes` or `error` (a format with no backend says what to install). Stems are `<name>.<track>.wav`, normalised with the mix's gain so they sum to it. `song.export_midi` writes the notes as MIDI; `song.import_midi` starts a song from a `.mid`.
 
+## Importing a recording (0.10.2)
+
+`song.import_audio` turns a recording (wav, flac, mp3, ogg, opus, m4a) into a NEW `.rsong` (refused when the file exists), saves it and opens it. The audio is resampled, aligned to its detected tempo and bars (silence in front so a bar starts at beat 0) and written to `audio/<name>.wav` beside the `.rsong`, played by one clip on the audio track `original`; sections become markers; the key is estimated. `transcribe: true` adds four MUTED estimate tracks on the bus `remake`: `drums` (808), `bass` (synthwave-bass), `melody` (synthwave-lead), `chords` (synthwave-pad). They are estimates; dense mixes transcribe worse than sparse ones.
+
+```json
+{"method": "song.import_audio", "params": {"file": "/home/me/track.flac", "path": "music/track.rsong", "transcribe": true}}
+{"method": "song.get", "params": {"path": "music/track.rsong", "section": "tracks"}}
+{"method": "song.set_track", "params": {"id": "drums", "mute": false}}
+{"method": "song.export", "params": {"file": "out/track.wav", "formats": ["wav", "mp3"]}}
+```
+The reply: `path, audio_file, bpm, bpm_detected, confidence, alternative_bpm, first_beat, lead_in, duration, source_rate, key, sections, drum_hits, bass_notes, melody_notes, chords`. Other params: `bpm` (skip detection), `min_bpm` (70), `max_bpm` (180), `beats_per_bar` (4), `sample_rate` (48000), `sections` (true), `section_bars` (4), `title`, `artist`. If `confidence` < ~0.3 (the grid is a guess) or `alternative_bpm` is non-zero (half/double time is ambiguous), import again with `bpm` given, to a new `path`. Then edit as any song: unmute or fix the estimates, mute or cut `original`, render, export. Without the editor: `examples/song-import` (`--bpm`, `--transcribe`, `--no-sections`, `-o DIR`) and `examples/song-render`; C API in `engine.md`.
+
 ## Sound effects (Foley)
 
 ```json
@@ -116,6 +128,7 @@ lrgeditorctl song new music/night.rsong empty=true
 lrgeditorctl song apply "ops=$(cat verse.json)"
 lrgeditorctl song render end=32 tracks=true -o json
 lrgeditorctl song export out/night.wav 'formats=["wav","mp3"]' stems=true
+lrgeditorctl song import-audio ~/music/track.flac music/track.rsong transcribe=true -o json
 lrgeditorctl foley new sfx/door.rfoley footstep-wood
 lrgeditorctl audio formats            # which export formats this build can write
 lrgeditorctl asset new song name=night  # starter loop (808 + synthwave-bass), like Assets > New Song
