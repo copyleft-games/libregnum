@@ -527,6 +527,42 @@ test_platform_instance (void)
     g_assert_cmpfloat_with_epsilon (feet[1], 0.0f, 0.02f);
 }
 
+/*
+ * test_platform_instance_high_bit:
+ * An instance id with its top bit set (Daggerfall's 64-bit load ids are
+ * such) is the mesh instance stood on, never taken for a physics body:
+ * 0.9.0 tagged bodies with that bit and dropped these ids, and a game's
+ * walk-on teleporters stopped firing.
+ */
+static void
+test_platform_instance_high_bit (void)
+{
+    g_autoptr(GArray) v = g_array_new (FALSE, FALSE, sizeof (gfloat));
+    g_autoptr(GArray) pv = g_array_new (FALSE, FALSE, sizeof (gfloat));
+    g_autoptr(LrgCollisionMesh) world = NULL;
+    g_autoptr(LrgCollisionMesh) platform = NULL;
+    g_autoptr(LrgCharacterController) cc = NULL;
+    const guint64 id = G_GUINT64_CONSTANT (12786607198561332873);
+    gfloat m[16];
+    gfloat feet[3] = { 5, 1.5f, 0 };
+    LrgCharacterMove mv;
+
+    push_floor (v, -10, -10, 10, 10, 0);
+    world = mesh_from (v);
+    push_box (pv, -1, 0, -1, 1, 1, 1);
+    platform = mesh_from (pv);
+    memset (m, 0, sizeof (m));
+    m[0] = m[5] = m[10] = m[15] = 1.0f;
+    m[12] = 5.0f;
+    lrg_collision_mesh_add_instance (world, platform, m, id);
+    cc = controller_for (world);
+
+    walk (cc, feet, 0, 0, 30, &mv, NULL);
+    g_assert_true (mv.grounded);
+    g_assert_cmpuint (mv.ground_instance_id, ==, id);
+    g_assert_cmpuint (mv.ground_body, ==, LRG_PHYSICS_NO_BODY);
+}
+
 static gboolean
 slope_height (gfloat    x,
               gfloat    z,
@@ -671,6 +707,7 @@ main (int   argc,
     g_test_add_func ("/character-controller/fall-no-tunnelling", test_fall_no_tunnelling);
     g_test_add_func ("/character-controller/ceiling", test_ceiling);
     g_test_add_func ("/character-controller/platform-instance", test_platform_instance);
+    g_test_add_func ("/character-controller/platform-instance-high-bit", test_platform_instance_high_bit);
     g_test_add_func ("/character-controller/terrain", test_terrain);
     g_test_add_func ("/character-controller/depenetration", test_depenetration);
     g_test_add_func ("/character-controller/random-walk", test_random_walk);

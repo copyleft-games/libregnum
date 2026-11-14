@@ -107,7 +107,7 @@ lrg_entity3d_set_world_position (entity, move.position);   /* the kinematic body
 :PROPERTIES:
 :CUSTOM_ID: moving-platforms
 :END:
-Put platforms in the world mesh as instances with an =instance_id=; =ground_instance_id= then says which one the capsule stands on. Carrying the character is the caller's job (as in Daggerfall Unity's =PlayerGroundMotor=): remember the feet in the platform's local frame, and next frame move by the difference between that point under the new transform and the old feet before the regular move. A platform that rises into the capsule is handled by depenetration.
+Put platforms in the world mesh as instances with an =instance_id=; =ground_instance_id= then says which one the capsule stands on. Every bit of the id is the caller's: one with its top bit set (a 64-bit load id) is reported unchanged, and a body is never folded into it (=ground_body= carries bodies). Carrying the character is the caller's job (as in Daggerfall Unity's =PlayerGroundMotor=): remember the feet in the platform's local frame, and next frame move by the difference between that point under the new transform and the old feet before the regular move. A platform that rises into the capsule is handled by depenetration.
 
 ** Example
 :PROPERTIES:

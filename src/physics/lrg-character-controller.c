@@ -46,7 +46,6 @@
 #define STEP_MIN_GAIN           (1e-4)
 /* Physics bodies travel through the mesh code's instance ids with this
  * bit set; lrg_character_controller_move() splits them back out. */
-#define BODY_INSTANCE_TAG       (G_GUINT64_CONSTANT (1) << 63)
 /* Terrain normal sampling offset (world units). */
 #define TERRAIN_NORMAL_DELTA    (0.25)
 
@@ -322,7 +321,8 @@ typedef struct
     gdouble  normal[3];    /* contact normal, towards the capsule */
     gdouble  face[3];      /* face normal on the capsule's side */
     gdouble  point[3];     /* contact point on the surface */
-    guint64  instance_id;
+    guint64  instance_id;  /* a collision mesh instance (0 for a body) */
+    guint    body;         /* a physics body, else LRG_PHYSICS_NO_BODY */
 } Contact;
 
 /* Capsule axis for feet pos and height h. */
@@ -536,8 +536,10 @@ sweep_physics (LrgCharacterController *self,
      * the nosing must stay a wall so the step logic runs */
     if (motion[1] < 0.0 && motion[0] == 0.0 && motion[2] == 0.0)
         prefer_upward_face (self, a, &hit, contact->face);
-    /* bodies travel as tagged instance ids (see BODY_INSTANCE_TAG) */
-    contact->instance_id = BODY_INSTANCE_TAG | (guint64) hit.body;
+    /* a body travels in its own field: a mesh's instance ids use all 64
+     * bits (Daggerfall's load ids do), so no bit of them can tag one */
+    contact->instance_id = 0;
+    contact->body = hit.body;
     return TRUE;
 }
 
@@ -576,6 +578,7 @@ sweep (LrgCharacterController *self,
         contact->point[k] = hit.position[k];
     }
     contact->instance_id = hit.instance_id;
+    contact->body = LRG_PHYSICS_NO_BODY;
     if (have_phys && phys.fraction < contact->fraction)
         *contact = phys;
     return TRUE;
@@ -763,6 +766,7 @@ typedef struct
     gboolean ground;           /* a walkable face was touched */
     gdouble  ground_normal[3];
     guint64  ground_id;
+    guint    ground_body;
 } SlideResult;
 
 static gdouble
@@ -825,6 +829,7 @@ slide (LrgCharacterController *self,
             res->ground = TRUE;
             memcpy (res->ground_normal, c.face, sizeof (c.face));
             res->ground_id = c.instance_id;
+            res->ground_body = c.body;
         }
 
         if (horizontal && !walkable)
@@ -974,6 +979,7 @@ lrg_character_controller_move (LrgCharacterController *self,
     gboolean grounded;
     gdouble ground_normal[3];
     guint64 ground_id;
+    guint   ground_body;
     gboolean hit_wall;
     gboolean hit_ceiling;
     gboolean stepped;
@@ -1001,6 +1007,7 @@ lrg_character_controller_move (LrgCharacterController *self,
     ground_normal[1] = 1.0;
     ground_normal[2] = 0.0;
     ground_id = 0;
+    ground_body = LRG_PHYSICS_NO_BODY;
     hit_wall = FALSE;
     hit_ceiling = FALSE;
     stepped = FALSE;
@@ -1088,6 +1095,7 @@ lrg_character_controller_move (LrgCharacterController *self,
                     grounded = TRUE;
                     memcpy (ground_normal, c.face, sizeof (c.face));
                     ground_id = c.instance_id;
+                    ground_body = c.body;
                 }
             }
         }
@@ -1109,6 +1117,7 @@ lrg_character_controller_move (LrgCharacterController *self,
             grounded = TRUE;
             memcpy (ground_normal, rd.ground_normal, sizeof (ground_normal));
             ground_id = rd.ground_id;
+            ground_body = rd.ground_body;
         }
         else
         {
@@ -1132,6 +1141,7 @@ lrg_character_controller_move (LrgCharacterController *self,
             grounded = TRUE;
             memcpy (ground_normal, c.face, sizeof (c.face));
             ground_id = c.instance_id;
+            ground_body = c.body;
         }
     }
 
@@ -1158,6 +1168,7 @@ lrg_character_controller_move (LrgCharacterController *self,
             grounded = TRUE;
             terrain_normal (self, pos[0], pos[2], th, ground_normal);
             ground_id = 0;
+            ground_body = LRG_PHYSICS_NO_BODY;
         }
     }
 
@@ -1175,6 +1186,7 @@ lrg_character_controller_move (LrgCharacterController *self,
             grounded = TRUE;
             memcpy (ground_normal, c.face, sizeof (c.face));
             ground_id = c.instance_id;
+            ground_body = c.body;
         }
     }
 
@@ -1185,11 +1197,7 @@ lrg_character_controller_move (LrgCharacterController *self,
     }
     out_move->grounded = grounded;
     out_move->ground_instance_id = grounded ? ground_id : 0;
-    if (grounded && (ground_id & BODY_INSTANCE_TAG) != 0)
-    {
-        out_move->ground_body = (guint) (ground_id & ~BODY_INSTANCE_TAG);
-        out_move->ground_instance_id = 0;
-    }
+    out_move->ground_body = grounded ? ground_body : LRG_PHYSICS_NO_BODY;
     out_move->hit_wall = hit_wall;
     out_move->hit_ceiling = hit_ceiling;
     out_move->stepped = stepped;
