@@ -67,6 +67,25 @@
 #ifndef __GI_SCANNER__
 #define VSCRIPT_HAVE_GI 1
 #include <girepository/girepository.h>
+
+/* sort_array: g_sort_array() needs GLib 2.82, and Ubuntu 24.04 (the
+ * AppImage base) ships 2.80, where the same sort is
+ * g_qsort_with_data() -- which 2.82 deprecates, so each GLib compiles
+ * only its own spelling */
+static void
+sort_array (gpointer         array,
+            gsize            n_elements,
+            gsize            element_size,
+            GCompareDataFunc compare_func,
+            gpointer         user_data)
+{
+#if GLIB_CHECK_VERSION (2, 82, 0)
+	g_sort_array (array, n_elements, element_size, compare_func, user_data);
+#else
+	g_qsort_with_data (array, (gint) n_elements, (gsize) element_size,
+	                   compare_func, user_data);
+#endif
+}
 #endif
 #endif
 
@@ -2182,7 +2201,7 @@ lrg_vscript_gi_search (const gchar *query,
 	if (limit == 0)
 		limit = 100;
 	if (hits->len > 1)
-		g_sort_array (hits->pdata, hits->len, sizeof (gpointer), name_cmp, NULL);
+		sort_array (hits->pdata, hits->len, sizeof (gpointer), name_cmp, NULL);
 	if (hits->len > limit)
 		g_ptr_array_remove_range (hits, limit, hits->len - limit);
 	g_ptr_array_add (hits, NULL);

@@ -11,6 +11,25 @@
 #include <math.h>
 #include <string.h>
 
+/* sort_array: g_sort_array() needs GLib 2.82, and Ubuntu 24.04 (the
+ * AppImage base) ships 2.80, where the same sort is
+ * g_qsort_with_data() -- which 2.82 deprecates, so each GLib compiles
+ * only its own spelling */
+static void
+sort_array (gpointer         array,
+            gsize            n_elements,
+            gsize            element_size,
+            GCompareDataFunc compare_func,
+            gpointer         user_data)
+{
+#if GLIB_CHECK_VERSION (2, 82, 0)
+	g_sort_array (array, n_elements, element_size, compare_func, user_data);
+#else
+	g_qsort_with_data (array, (gint) n_elements, (gsize) element_size,
+	                   compare_func, user_data);
+#endif
+}
+
 static gfloat *
 axis_array (gint    axis,
             gfloat *xs,
@@ -188,7 +207,7 @@ lrg_transform_distribute (gint     axis,
 	for (i = 0; i < n; i++)
 		order[i] = i;
 	ctx.values = values;
-	g_sort_array (order, n, sizeof (guint), dist_cmp, &ctx);
+	sort_array (order, n, sizeof (guint), dist_cmp, &ctx);
 	first = values[order[0]];
 	last = values[order[n - 1]];
 	step = (last - first) / (gfloat) (n - 1);

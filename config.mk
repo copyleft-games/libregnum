@@ -24,7 +24,7 @@ PROJECT_ROOT := $(realpath $(CONFIG_MK_PATH))
 # "Versioning". API_VERSION and SO_VERSION below are separate.
 VERSION_MAJOR := 0
 VERSION_MINOR := 10
-VERSION_MICRO := 2
+VERSION_MICRO := 3
 VERSION := $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_MICRO)
 
 # API version for parallel installability (bump on ABI breaks)
@@ -522,8 +522,14 @@ GIROUTDIR := $(BUILDDIR)/gir
 # =============================================================================
 
 # Core GLib dependencies (required)
-GLIB_CFLAGS := $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 gmodule-2.0)
-GLIB_LIBS := $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 gmodule-2.0)
+# gio-unix-2.0: the DAP, editor and control servers/clients include
+# <gio/gunixinputstream.h> and friends, which live in
+# /usr/include/gio-unix-2.0 and are reachable only through this module.
+# Where it built without it, the path arrived by accident through an
+# optional dependency's cflags (gio-unix-2.0 in AI_PKG_DEPS); Ubuntu
+# 24.04, without those, failed in lrg-dap-server.c.
+GLIB_CFLAGS := $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 gio-unix-2.0 gmodule-2.0)
+GLIB_LIBS := $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 gio-unix-2.0 gmodule-2.0)
 
 # json-glib (for yaml-glib interop, required)
 JSON_CFLAGS := $(shell $(PKG_CONFIG) --cflags json-glib-1.0)
