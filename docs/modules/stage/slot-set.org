@@ -1,0 +1,84 @@
+#+title: Slot sets (seat allocation)
+#+description: LrgSlotSet: deterministic seating of N actors over M named seats around a zone, with overflow standing rings and sticky placements
+#+created: 2026-11-21
+
+* Slot sets
+:PROPERTIES:
+:CUSTOM_ID: slot-set
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Stage]] > Slot sets
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: slot-set-overview
+:END:
+=LrgSlotSet= (=src/stage/lrg-slot-set.h=, since 0.11.0) decides where each member of a group goes in a zone: N actors over M named seats round a meeting table or along a bar, and everyone who does not fit standing in rings round the zone. It is pure logic with three promises:
+
+- *Determinism*: the same sequence of calls gives the same placements, and the order actors are listed in never matters (duplicates count once).
+- *Stickiness*: people keep their places while others come and go, so nobody gets up and walks round the table because somebody else arrived.
+- *Seats first*: when a seat frees up, the person who has been standing longest takes it.
+
+** Places
+:PROPERTIES:
+:CUSTOM_ID: slot-set-places
+:END:
+| Function                              | Does                                                                  |
+|---------------------------------------+-----------------------------------------------------------------------|
+| =lrg_slot_set_new()=                  | an empty set                                                          |
+| =lrg_slot_set_add_seat()=             | a named seat with a position and the facing of whoever sits there     |
+| =lrg_slot_set_add_seats_around()=     | =count= seats evenly round a centre, each facing it (a round table)   |
+| =lrg_slot_set_add_standing()=         | a hand-placed standing place, used before generated ones              |
+| =lrg_slot_set_set_overflow()=         | the centre, first-ring radius and spacing of generated standing rings |
+| =lrg_slot_set_set_plane()=            | whether rings lie in x/y (2D) or x/z (3D, y up)                       |
+| =lrg_slot_set_get_n_seats()=          | the number of seats                                                   |
+| =lrg_slot_set_get_seat_name()=        | a seat's name                                                         |
+| =lrg_slot_set_get_standing_place()=   | standing place /i/: hand-placed ones first, then the rings            |
+
+Generated standing places lie on rings round the overflow centre: ring /k/ has radius =radius + k * spacing= and =max (1, floor (2 pi r / spacing))= places =spacing= apart, starting at angle 0 and counting with the angle, everyone facing the centre. Every index has a place, so a crowd of any size stands somewhere. Facings use the same convention as =LrgActorMover= (atan2 in the ground plane), so a mover can be turned with =lrg_actor_mover_set_facing()= on arrival.
+
+** Assigning
+:PROPERTIES:
+:CUSTOM_ID: slot-set-assign
+:END:
+=lrg_slot_set_assign()= takes the actors in the zone /now/ (a =NULL=-terminated array of ids) and updates placements in four steps:
+
+1. Actors no longer listed free their places.
+2. Seated actors keep their seats; standing actors keep their places unless a seat is free.
+3. Free seats are filled in seat order, first by standing actors in the order they first stood (ties by id), then by new actors sorted by id.
+4. Remaining new actors take the lowest free standing places, by id.
+
+=lrg_slot_set_clear()= forgets every placement; after it the next assignment depends on the ids alone.
+
+| Function                             | Returns                                                          |
+|--------------------------------------+------------------------------------------------------------------|
+| =lrg_slot_set_get_placement()=       | =LrgSlotKind= (=LRG_SLOT_SEAT=, =LRG_SLOT_STANDING=, =LRG_SLOT_NONE=), the index, position and facing |
+| =lrg_slot_set_get_seat_occupant()=   | who sits in a seat                                               |
+| =lrg_slot_set_get_n_seated()=        | how many are seated                                              |
+| =lrg_slot_set_get_n_standing()=      | how many are standing                                            |
+
+=lrg_slot_kind_get_type()= registers =LrgSlotKind=.
+
+#+begin_src c
+g_autoptr(LrgSlotSet) table = lrg_slot_set_new ();
+const gchar *attendees[] = { "kudu", "oryx", "ibex", NULL };
+
+lrg_slot_set_add_seats_around (table, "chair-", cx, cy, 0.0f, 24.0f, 6, 0.0f);
+lrg_slot_set_set_overflow (table, cx, cy, 0.0f, 48.0f, 20.0f);
+lrg_slot_set_assign (table, attendees);
+
+for (guint i = 0; attendees[i] != NULL; i++)
+{
+	gfloat x, y, facing;
+	LrgSlotKind kind = lrg_slot_set_get_placement (table, attendees[i], NULL, &x, &y, NULL, &facing);
+
+	lrg_actor_mover_move_to (mover_for (attendees[i]), x, y, 0.0f, kind == LRG_SLOT_SEAT);
+}
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: slot-set-tests
+:END:
+=tests/test-slot-set.c=: seat order, facings and overflow rings, hand-placed standing places and the x/z plane, independence from input order and duplicates, stickiness and promotion as actors leave and arrive, and identical results from identical call sequences.

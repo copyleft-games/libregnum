@@ -1,0 +1,15 @@
+#+title: Stage module
+#+description: Putting actors into a world: seat allocation (LrgSlotSet) and the world adapter interface (LrgWorldAdapter) with its Tiled implementation
+#+created: 2026-11-21
+
+* Stage module
+:PROPERTIES:
+:CUSTOM_ID: stage
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:../index.org][Modules]] > Stage
+#+end_quote
+
+The stage module (=src/stage/=, since 0.11.0) holds the generic pieces an application needs to put its own actors into a game world without knowing which world it is: who sits where, and a small interface any world can implement.
+
+- [[file:slot-set.org][Slot sets]] - =LrgSlotSet=: deterministic seats and standing rings for a group in a zone

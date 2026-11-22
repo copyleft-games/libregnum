@@ -156,6 +156,12 @@ Window management, cameras, and rendering abstractions:
 :END:
 =LrgWorldWidget= and its three kinds, =LrgSpeechBubble= (wrapped text with a tail), =LrgNameplate= (short name, full on hover, status dot) and =LrgEmote= (a glyph or icon that pops and bobs): screen-space drawings pinned to world points, placed through an =LrgCamera2D= or an =LrgCamera3D= (=lrg_camera3d_project_point()=), with fades and hold times.  Layout and hit testing run headless.
 
+*** [[file:stage/index.org][Stage Module]] - Putting actors into worlds (0.11.0)
+:PROPERTIES:
+:CUSTOM_ID: stage-module
+:END:
+=LrgSlotSet= seats N actors over M named seats with overflow standing rings, deterministically and stickily; the world adapter interface lets an application drive any world it does not own.
+
 *** [[file:particles/index.org][Particles Module]] - Particle Systems
 :PROPERTIES:
 :CUSTOM_ID: particles-module---particle-systems

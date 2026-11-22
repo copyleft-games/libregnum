@@ -1185,6 +1185,9 @@
 #include "worldui/lrg-nameplate.h"
 #include "worldui/lrg-emote.h"
 
+/* Staging actors in a world */
+#include "stage/lrg-slot-set.h"
+
 /* MCP module (optional, build with MCP=1) */
 #ifdef LRG_ENABLE_CAD
 #include "cad/lrg-cad-baker.h"
