@@ -1,0 +1,79 @@
+#+title: World adapters
+#+description: LrgWorldAdapter, the interface an application drives any world through (load, places, actors, moves, camera), and LrgTiledWorld, its implementation over Tiled maps
+#+created: 2026-11-21
+
+* World adapters
+:PROPERTIES:
+:CUSTOM_ID: world-adapter
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Stage]] > World adapters
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: world-adapter-overview
+:END:
+An application that shows its own things as characters in a world -- agents walking to desks in an office, players in a town -- needs a handful of operations from that world and nothing else: load it, find a named place, put an actor in, walk it somewhere, take it out, point the camera. =LrgWorldAdapter= (=src/stage/lrg-world-adapter.h=, since 0.11.0) is that contract as a GObject interface, so the application is written once and each world (a 2D Tiled office, a game's 3D level) implements it. =LrgTiledWorld= is the implementation shipped with libregnum.
+
+** The interface
+:PROPERTIES:
+:CUSTOM_ID: world-adapter-interface
+:END:
+| Function                                   | Does                                                         |
+|--------------------------------------------+--------------------------------------------------------------|
+| =lrg_world_adapter_load()=                 | loads a world (its meaning is the adapter's: a map file, a level) |
+| =lrg_world_adapter_resolve_place()=        | finds a named place                                          |
+| =lrg_world_adapter_spawn_actor()=          | adds an actor with an id and an appearance; returns a handle |
+| =lrg_world_adapter_move_actor()=           | starts it walking to a point                                 |
+| =lrg_world_adapter_move_actor_to_place()=  | the same to a named place                                    |
+| =lrg_world_adapter_remove_actor()=         | takes it out                                                 |
+| =lrg_world_adapter_set_camera()=           | =LrgWorldCameraMode=: overview, follow, free                 |
+| =lrg_world_adapter_set_camera_focus()=     | who the follow camera follows                                |
+| =lrg_world_adapter_get_actor_position()=   | where an actor is                                            |
+| =lrg_world_adapter_update()=               | advances the world                                           |
+| =lrg_world_adapter_draw()=                 | draws it (in =BeginDrawing()= or =lrg_frame_export_begin()=) |
+
+=LrgWorldAdapterInterface= has a slot for each. =load=, =resolve_place=, =spawn_actor=, =move_actor=, =remove_actor= and =set_camera= are required; an adapter that leaves one out makes the wrapper fail with =LRG_WORLD_ADAPTER_ERROR_NOT_SUPPORTED= (or return =FALSE=) instead of pretending it worked. =set_camera_focus=, =get_actor_position=, =update= and =draw= are optional. Adapters emit =actor-arrived= (with the handle) when a move finishes. Positions are in the adapter's own world units. =lrg_world_camera_mode_get_type()= registers the camera enum.
+
+Errors (=LRG_WORLD_ADAPTER_ERROR=, =lrg_world_adapter_error_quark()=, =LrgWorldAdapterError=, =lrg_world_adapter_error_get_type()=): =NOT_SUPPORTED=, =NOT_LOADED=, =LOAD=, =UNKNOWN_PLACE=, =UNKNOWN_ACTOR=, =DUPLICATE_ACTOR=, =UNREACHABLE=.
+
+** LrgTiledWorld
+:PROPERTIES:
+:CUSTOM_ID: tiled-world
+:END:
+=lrg_tiled_world_new()= makes a world that =lrg_world_adapter_load()= fills from a [[file:../tilemap/tiled.org][Tiled map]] (=lrg_tiled_world_get_map()= returns it). A failed load leaves the previous world as it was; a successful one replaces its actors.
+
+- *Places* are the map's objects by name, at =lrg_tiled_object_get_center()=.
+- *Walls* (=lrg_tiled_world_get_nav_grid()=, one cell per tile): tiles in a layer with a true =collision= or =solid= property or named =collision= or =walls=; tiles whose own properties have a true =solid= or =collision=; and cells whose centres lie in an area object of type =obstacle= or =solid=, or with a true =solid= property. Change the grid at run time and walking actors re-path.
+- *Actors* start at the object named =spawn=, else the first object of type =spawn=, else the map's centre. Each is an [[file:../pathfinding/actor-mover.org][LrgActorMover]] on the map's grid (=lrg_tiled_world_get_actor_mover()= for its state, facing and animation name), walking =lrg_tiled_world_set_actor_speed()= map pixels a second (96 by default). =lrg_tiled_world_find_actor()= maps an id to its handle; =lrg_tiled_world_get_n_actors()= counts them.
+- *Seats*: a move whose target is the centre of a point object of type =seat= sits on arrival, facing the object's =facing= property (degrees) when it has one.
+- *Camera*: an =LrgCamera2D= (=lrg_tiled_world_get_camera()=) framing the whole map (overview), following the focused actor at twice that zoom (follow), or left alone (free). =lrg_tiled_world_set_viewport()= gives it the view size (default 1280x720).
+- *Drawing*: the tile layers (textures loaded on the first draw), then each actor as a disc in its appearance colour: ="#RRGGBB"= as written, any other string a stable colour from its hash. Without tile images the walls are drawn as blocks.
+
+It is deliberately plain: the reference implementation of the interface and a usable 2D office or town. Richer worlds implement the interface themselves.
+
+#+begin_src c
+g_autoptr(LrgTiledWorld) office = lrg_tiled_world_new ();
+LrgWorldAdapter *world = LRG_WORLD_ADAPTER (office);
+guint kudu;
+
+lrg_world_adapter_load (world, "maps/office.tmj", &error);
+kudu = lrg_world_adapter_spawn_actor (world, "kudu", "#ff8800", &error);
+lrg_world_adapter_move_actor_to_place (world, kudu, "desk-kudu", &error);
+
+/* every frame */
+lrg_world_adapter_update (world, delta);
+if (lrg_frame_export_begin (export))
+{
+	ClearBackground (BLACK);
+	lrg_world_adapter_draw (world);
+	lrg_frame_export_end (export, NULL);
+}
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: world-adapter-tests
+:END:
+=tests/test-world-adapter.c=: an adapter implementing nothing refuses every call; =LrgTiledWorld= on the office fixture (places, walls and the doorway, spawning, duplicate ids, walking to a desk with =actor-arrived=, unknown places and actors, unreachable points, both cameras, removal, a failed load); a generated room with a spawn point, a seat with a facing, an obstacle and a solid object boxing in an unreachable seat; and, with a display, a drawn frame checked for the tiles and an actor.

@@ -1188,6 +1188,8 @@
 
 /* Staging actors in a world */
 #include "stage/lrg-slot-set.h"
+#include "stage/lrg-world-adapter.h"
+#include "stage/lrg-tiled-world.h"
 
 /* Frame export and input injection */
 #include "remote/lrg-frame-protocol.h"

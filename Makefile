@@ -1765,9 +1765,13 @@ SOURCES += \
 
 # Staging actors in a world (seat allocation, world adapters) -- always built
 PUBLIC_HEADERS += \
-	src/stage/lrg-slot-set.h
+	src/stage/lrg-slot-set.h \
+	src/stage/lrg-world-adapter.h \
+	src/stage/lrg-tiled-world.h
 SOURCES += \
-	src/stage/lrg-slot-set.c
+	src/stage/lrg-slot-set.c \
+	src/stage/lrg-world-adapter.c \
+	src/stage/lrg-tiled-world.c
 
 # Frame export / input injection over a Unix socket -- always built
 # (the socket code is compiled for G_OS_UNIX only and reports an error

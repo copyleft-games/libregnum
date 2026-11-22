@@ -13,3 +13,4 @@
 The stage module (=src/stage/=, since 0.11.0) holds the generic pieces an application needs to put its own actors into a game world without knowing which world it is: who sits where, and a small interface any world can implement.
 
 - [[file:slot-set.org][Slot sets]] - =LrgSlotSet=: deterministic seats and standing rings for a group in a zone
+- [[file:world-adapter.org][World adapters]] - =LrgWorldAdapter=: the interface an application drives any world through, and =LrgTiledWorld=, its implementation over Tiled maps
