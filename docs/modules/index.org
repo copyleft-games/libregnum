@@ -162,6 +162,12 @@ Window management, cameras, and rendering abstractions:
 :END:
 =LrgSlotSet= seats N actors over M named seats with overflow standing rings, deterministically and stickily; the world adapter interface lets an application drive any world it does not own.
 
+*** [[file:remote/index.org][Remote View Module]] - Frames out, input in, over a Unix socket (0.11.0)
+:PROPERTIES:
+:CUSTOM_ID: remote-module
+:END:
+=LrgFrameExport= renders offscreen and ships RGBA frames (sealed memfds or inline, dropped rather than queued when the host is behind) over a [[file:remote/frame-protocol.org][versioned binary protocol]]; =LrgInputInject= feeds the host's pointer, scroll, key and resize events into an =LrgInputSoftware= and signals; =LrgFrameReceiver= is the host end.  No toolkit is linked.
+
 *** [[file:particles/index.org][Particles Module]] - Particle Systems
 :PROPERTIES:
 :CUSTOM_ID: particles-module---particle-systems

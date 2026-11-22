@@ -1,0 +1,91 @@
+#+title: Remote view module
+#+description: LrgFrameExport, LrgFrameReceiver and LrgInputInject: render a libregnum view offscreen, ship RGBA frames over a Unix socket to a host that shows them, and feed the host's input back
+#+created: 2026-11-21
+
+* Remote view module
+:PROPERTIES:
+:CUSTOM_ID: remote
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:../index.org][Modules]] > Remote view
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: remote-overview
+:END:
+The remote view module (=src/remote/=, since 0.11.0) lets a libregnum application be drawn inside another program: a GTK window, a web page, an editor. The application renders offscreen and sends frames; the host shows them and sends pointer, scroll, key and resize events back. libregnum links no toolkit for this: the two sides share only a Unix socket and the [[file:frame-protocol.org][frame protocol]].
+
+| Type               | Side        | Job                                                               |
+|--------------------+-------------+-------------------------------------------------------------------|
+| =LrgFrameExport=   | application | renders into a render texture and sends frames, dropping when behind |
+| =LrgInputInject=   | application | reads the host's input into an =LrgInputSoftware= and signals     |
+| =LrgFrameReceiver= | host        | reads frames and sends input (for hosts that link libregnum, and tests) |
+
+** Exporting frames
+:PROPERTIES:
+:CUSTOM_ID: remote-export
+:END:
+=lrg_frame_export_new()= takes the connected socket, the initial size and whether it owns the descriptor, and sends the hello. Each frame is drawn between =lrg_frame_export_begin()= and =lrg_frame_export_end()=, which render into the exporter's own render texture (=lrg_frame_export_get_texture()=, created and resized as needed), read it back, flip it to top-down rows and send it. That needs a GL context; a hidden window is enough. Pixels from elsewhere (a software renderer, a =GrlImage=) go out with =lrg_frame_export_send_pixels()= or =lrg_frame_export_send_image()=, which need no GL.
+
+| Function                                     | Does                                                    |
+|----------------------------------------------+---------------------------------------------------------|
+| =lrg_frame_export_set_use_memfd()=, =lrg_frame_export_get_use_memfd()= | memfd or inline frames      |
+| =lrg_frame_export_set_size()=, =lrg_frame_export_get_size()= | the render size (follow =LrgInputInject::resize=) |
+| =lrg_frame_export_flush()=                   | write the rest of a partly sent frame                   |
+| =lrg_frame_export_get_frame_number()=        | the next frame's number                                 |
+| =lrg_frame_export_get_sent_frames()=         | frames sent                                             |
+| =lrg_frame_export_get_dropped_frames()=      | frames dropped because the host was behind              |
+
+A dropped frame is not an error: the functions return =FALSE= only when the connection failed or the arguments are invalid.
+
+** Injecting input
+:PROPERTIES:
+:CUSTOM_ID: remote-inject
+:END:
+=lrg_input_inject_new()= reads from the same socket (it never closes it). =lrg_input_inject_dispatch()=, called once a frame before input is polled, applies everything the host sent, in order:
+
+- to the =LrgInputSoftware= given with =lrg_input_inject_set_target()= (=lrg_input_inject_get_target()=): pointer moves, button and key presses and releases, so code reading =LrgInputManager= sees the host's input as its own;
+- as signals: =pointer-motion=, =button=, =scroll=, =key= (with the typed character) and =resize=, for code with its own input path (a GUI context, a canvas);
+- into state: =lrg_input_inject_get_pointer()=, =lrg_input_inject_is_button_down()=, =lrg_input_inject_take_scroll()= (accumulated wheel steps, reset on reading; =LrgInput= has no wheel), =lrg_input_inject_get_size()=, =lrg_input_inject_get_modifiers()=.
+
+** The host side
+:PROPERTIES:
+:CUSTOM_ID: remote-receiver
+:END:
+=lrg_frame_receiver_new()= wraps the host's end. =lrg_frame_receiver_dispatch()= reads what has arrived, records the hello (=lrg_frame_receiver_get_hello()=) and keeps the newest frame, tightly packed whatever the sender's stride (=lrg_frame_receiver_has_frame()=, =lrg_frame_receiver_get_frame()=, =lrg_frame_receiver_get_frames_received()=, and the =frame= signal). It sends input with =lrg_frame_receiver_send_pointer_move()=, =lrg_frame_receiver_send_button()=, =lrg_frame_receiver_send_scroll()=, =lrg_frame_receiver_send_key()= and =lrg_frame_receiver_send_resize()=.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: remote-example
+:END:
+#+begin_src c
+/* application: fd is its end of the socket the host gave it */
+g_autoptr(LrgFrameExport) export = lrg_frame_export_new (fd, 1280, 720, TRUE);
+g_autoptr(LrgInputInject) inject = lrg_input_inject_new (fd);
+g_autoptr(LrgInputSoftware) input = lrg_input_software_new ();
+
+lrg_input_inject_set_target (inject, input);
+lrg_input_manager_add_source (lrg_input_manager_get_default (), LRG_INPUT (input));
+g_signal_connect (inject, "resize", G_CALLBACK (on_resize), export);   /* calls lrg_frame_export_set_size () */
+
+while (running)
+{
+	if (!lrg_input_inject_dispatch (inject, &error))
+		break;                                      /* the host went away */
+	lrg_input_software_update (input);
+	update_world (delta);
+
+	if (lrg_frame_export_begin (export))
+	{
+		draw_world ();
+		lrg_frame_export_end (export, NULL);
+	}
+}
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: remote-tests
+:END:
+=tests/test-frame-export.c= runs both ends in one process over a =socketpair()=: memfd and inline frames with a padded stride, the memfd's seals read back by hand, every input message into an =LrgInputSoftware= and the signals, an unknown message type skipped, back-pressure (frames dropped, a partial frame reassembled, nothing torn), each protocol error, and both peers closing.
