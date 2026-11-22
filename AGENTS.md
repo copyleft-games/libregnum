@@ -39,7 +39,10 @@ libregnum/
 │   ├── gui/                  # Immediate-mode GUI (GuiContext, DrawList, Dock, raylib backend); the editor is drawn with it
 │   ├── editor/               # Level/Node authoring, LrgEditor (undo, selection), math, gizmo, settings, external editor, IPC server, actions, validation
 │   │   └── ui/               # LrgEditorApp: the lrgeditor application (panels, viewport render, dialogs, play mode)
-│   ├── tilemap/              # Tileset, TilemapLayer, Tilemap
+│   ├── tilemap/              # Tileset, TilemapLayer, Tilemap, TiledMap (.tmj/.tmx import)
+│   ├── worldui/              # WorldWidget, SpeechBubble, Nameplate, Emote (world-space UI)
+│   ├── stage/                # SlotSet, WorldAdapter interface, TiledWorld
+│   ├── remote/               # FrameExport, FrameReceiver, InputInject (frames over a Unix socket)
 │   ├── dialog/               # DialogNode, DialogTree, DialogRunner
 │   ├── quest/                # QuestDef, QuestObjective, QuestInstance, QuestLog, QuestChain
 │   ├── progression/          # ExperienceCurve, AbilityDef, Spellbook, CooldownSet, Aura(Set), Vital, Talent*
@@ -690,6 +693,17 @@ bounds", "Cost of a page").
 - `LrgRollbackSession` is GGPO-style netcode over `LrgRollbackTransport` (`LrgLoopbackNetwork`
   for tests with latency/jitter/loss, `LrgUdpTransport` for real sockets). Instance structs over
   64 KiB fail GType registration: keep large rings on the heap.
+
+### Worlds Shown Elsewhere: Tiled, World UI, Actors, Remote View (0.11.0)
+
+Generic pieces an application uses to put its own actors into a world and show it inside another program (clawtilla's office view is the first user):
+
+- **`LrgTiledMap`** (`tilemap/lrg-tiled-map.h`): `.tmj`/`.tmx` (and `.tsj`/`.tsx`), format sniffed from the first byte. Raw gids keep Tiled's flip bits (= `LRG_TILE_FLIP_*`); groups are flattened into `group/name` layers; object centres and `contains_point()` honour rotation; `build_tilemap (map, tileset_index)` keeps one tileset's tiles. Infinite maps, zstd and templates fail with `LRG_TILED_ERROR_UNSUPPORTED`.
+- **World UI** (`worldui/`): `LrgWorldWidget` subclasses lay out and hit-test headless (text measured at 0.6 x size without GL); draw them after the camera pass. `lrg_camera3d_project_point()` is the GL-free projection.
+- **`LrgActorMover`** (`pathfinding/`): pure logic, x/y or x/z plane; re-paths when any cell ahead blocks. **`LrgSlotSet`** (`stage/`): sticky, input-order independent seating. **`LrgWorldAdapter`** (`stage/`): required vfuncs left NULL report `NOT_SUPPORTED`, never success; `LrgTiledWorld` is the reference implementation.
+- **Remote view** (`remote/`): one AF_UNIX stream socket, MSG_DONTWAIT both ways; frames are dropped (counted), never queued; input is never dropped. Any wire change bumps `LRG_FRAME_PROTOCOL_VERSION` and `docs/modules/remote/frame-protocol.org` in the same change.
+- **`lrg_screenshot_after_frames()`** opens (and closes) a hidden window when none exists, so its GPU test runs under `build-aux/xrun.sh`; without a display it refuses with `LRG_PHOTO_MODE_ERROR_CAPTURE`.
+- GIR warnings are fatal in this build: a callback's user data is annotated `(closure user_data)` on the callback parameter, not `(closure)` on the data.
 
 ### Editor Application (`editor/ui/`, `gui/`, `launcher/lrgeditor.c`)
 

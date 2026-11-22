@@ -3,7 +3,7 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum changelog
 #+created: 2026-11-07T12:00:00-05:00
-#+updated: 2026-11-08T17:00:00-05:00
+#+updated: 2026-11-21T23:30:00-05:00
 #+version: 0.1
 
 * Changelog
@@ -15,6 +15,22 @@
 #+end_quote
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
+
+** 0.11.0
+:PROPERTIES:
+:CUSTOM_ID: changelog-0-11-0
+:END:
+Generic pieces for putting an application's own actors into a world and showing that world inside another program: Tiled maps, world-space UI, walking, seating, connection beams, offscreen frames with input back, scripted screenshots, a world adapter interface and a sprite sheet builder.
+
+- Tilemap: =LrgTiledMap= imports Tiled maps in both formats, =.tmj=/=.tsj= (json-glib) and =.tmx=/=.tsx= (GMarkup, no libxml2): CSV, base64, zlib and gzip layer data, flip flags, group layers, external tilesets, tile properties, animations and collision shapes, object layers with every shape and zone queries (=lrg_tiled_object_contains_point()=, =lrg_tiled_map_find_zone_at()=), custom properties, and =lrg_tiled_map_build_tilemap()=. Infinite maps, zstd and templates are refused. See [[file:modules/tilemap/tiled.org][Tiled maps]].
+- World-space UI (new =src/worldui/=): =LrgWorldWidget=, =LrgSpeechBubble=, =LrgNameplate= and =LrgEmote=, drawn over 2D and 3D views with fades and hold times. See [[file:modules/worldui/index.org][World-space UI]].
+- Graphics: =lrg_camera3d_project_point()= projects without GL (checked against raylib); =LrgCamera3D='s =world_to_screen=, a placeholder that answered (0, 0), now projects. =LrgBeam= draws animated arcs between moving points in 2D and 3D. See [[file:modules/graphics/beam.org][Beams]].
+- Pathfinding: =LrgActorMover= walks a position along A* grid routes (round blocked start and target cells, re-pathing when the way closes), =LrgPath=s, waypoints or =LrgNavAgent= paths, with facing, walk/idle/sit names and =arrived=. See [[file:modules/pathfinding/actor-mover.org][Actor mover]].
+- Stage (new =src/stage/=): =LrgSlotSet= seats N actors over M seats deterministically and stickily, with standing rings; =LrgWorldAdapter= is the interface an application drives any world through, and =LrgTiledWorld= implements it over Tiled maps. See [[file:modules/stage/index.org][Stage]].
+- Remote view (new =src/remote/=): =LrgFrameExport= renders offscreen and ships RGBA frames over a Unix socket in sealed memfds or inline, dropping rather than queueing; =LrgInputInject= feeds the host's pointer, scroll, key and resize events into an =LrgInputSoftware=; =LrgFrameReceiver= is the host end. The protocol is versioned and documented in [[file:modules/remote/frame-protocol.org][Frame protocol]].
+- Photo mode: =lrg_screenshot_after_frames()= renders N frames offscreen at a fixed step and saves the last, opening a hidden window when there is none; =lrg_screenshot_write_png()= needs no GL. See [[file:modules/photomode/screenshot-frames.org][Screenshots after N frames]].
+- Atlas: =LrgSpriteSheetBuilder= makes a sprite sheet from loose frames with animations, key-colour and alpha background removal and a shared palette. See [[file:modules/atlas/sprite-sheet-builder.org][Sprite sheet builder]].
+- graylib 0.11.0 (version only, lockstep).
 
 ** 0.10.2
 :PROPERTIES:
