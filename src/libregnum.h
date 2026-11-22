@@ -397,6 +397,7 @@
 #include "pathfinding/lrg-nav-poly-mesh.h"
 #include "pathfinding/lrg-nav-poly-mesh-cache.h"
 #include "pathfinding/lrg-nav-level.h"
+#include "pathfinding/lrg-actor-mover.h"
 
 /* Procedural generation module */
 #include "procgen/lrg-procgen-grid.h"

@@ -119,3 +119,9 @@ See [[file:nav-bake.org][Navigation bake settings]]: =LrgNavBake= is the =.rnav=
 :CUSTOM_ID: nav-agent
 :END:
 See [[file:nav-agent.org][Navigation agents and crowds]]: =LrgNavAgent= follows string-pulled paths with arrive steering and crosses off-mesh links; =LrgNavCrowd= steps many agents deterministically with ORCA (a port of RVO2) against each other and the mesh's walls; =LrgNavAgentComponent= drives =LrgEntity3D= entities through the world's crowd. The guide [[file:../../guides/navigation.org][Navigation]] walks through the whole pipeline.
+
+** Actor mover (0.11.0)
+:PROPERTIES:
+:CUSTOM_ID: actor-mover
+:END:
+See [[file:actor-mover.org][Actor mover]]: =LrgActorMover= walks a position along an A* grid route it computes itself (round blocked start and target cells), an =LrgPath=, world waypoints or an =LrgNavAgent='s path, with a speed, a facing (and sprite-direction sectors), walk/idle/sit animation names, re-pathing when the way ahead closes or on a timer, and =arrived= and =path-failed= signals.  Pure logic, no window.

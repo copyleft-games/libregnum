@@ -1,0 +1,110 @@
+#+title: Actor mover
+#+description: LrgActorMover: walking a position along an A* grid path, waypoints or a navmesh agent's path, with facing, walk/idle/sit animation names, re-pathing and an arrived signal
+#+created: 2026-11-21
+
+* Actor mover
+:PROPERTIES:
+:CUSTOM_ID: actor-mover
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Pathfinding]] > Actor mover
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: actor-mover-overview
+:END:
+=LrgActorMover= (=src/pathfinding/lrg-actor-mover.h=, since 0.11.0) is the part between "this character should go to that desk" and "draw it there": it owns a position, walks it along a route at a speed, turns it to face where it goes, names the animation that fits (walk, idle or sit) and says when it has arrived. Routes come from
+
+- an A* path over an =LrgNavGrid= (=LrgPathfinder=), computed by the mover itself from a target point (=lrg_actor_mover_move_to()=), or given as an =LrgPath= (=lrg_actor_mover_follow_path()=);
+- a list of world points (=lrg_actor_mover_follow_waypoints()=), for 3D routes or patrols;
+- an =LrgNavAgent='s navmesh path (=lrg_actor_mover_follow_nav_agent()=).
+
+It is pure logic: no window, no clock but the delta passed to =lrg_actor_mover_update()=, so it is deterministic and runs in tests, servers and replays.
+
+** Position, plane and speed
+:PROPERTIES:
+:CUSTOM_ID: actor-mover-basics
+:END:
+| Function                                  | Does                                                    |
+|-------------------------------------------+---------------------------------------------------------|
+| =lrg_actor_mover_new()=                   | a mover at the origin, 64 units/s, instant turns        |
+| =lrg_actor_mover_set_position()=, =lrg_actor_mover_get_position()= | where it is                    |
+| =lrg_actor_mover_set_speed()=, =lrg_actor_mover_get_speed()= | units per second                     |
+| =lrg_actor_mover_set_plane()=, =lrg_actor_mover_get_plane()= | which coordinates are the ground     |
+
+=LrgActorMoverPlane= says which two coordinates the grid, the facing and distances use: =LRG_ACTOR_MOVER_PLANE_XY= for 2D maps (a grid cell is (x, y)), =LRG_ACTOR_MOVER_PLANE_XZ= for 3D worlds with y up (a grid cell is (x, z)). The third coordinate is carried along: grid waypoints keep the mover's current height, explicit waypoints are followed in 3D.
+
+** Moving
+:PROPERTIES:
+:CUSTOM_ID: actor-mover-moving
+:END:
+=lrg_actor_mover_set_grid()= gives the mover an =LrgPathfinder= and the grid's placement in the world (cell size and origin); =lrg_actor_mover_world_to_cell()= maps a world point to its cell. With a grid, =lrg_actor_mover_move_to()= computes an A* route through cell centres that ends exactly at the target point. A start or target on a blocked cell is common in an office (standing up from a desk, walking to a chair), so the route leaves or enters it through its walkable neighbour nearest the other end. Without a grid the route is a straight line. When no route exists the mover stays put, its state becomes =LRG_ACTOR_MOVER_BLOCKED= and =path-failed= is emitted.
+
+=lrg_actor_mover_update()= spends speed x delta along the route, through as many waypoints as that covers, so a large step never overshoots or stalls. At the end the state becomes =LRG_ACTOR_MOVER_SITTING= when the move asked to sit on arrival (the last argument of every route function) and =LRG_ACTOR_MOVER_IDLE= otherwise, and =arrived= is emitted.
+
+| Function                                     | Does                                                      |
+|----------------------------------------------+-----------------------------------------------------------|
+| =lrg_actor_mover_move_to()=                  | route to a point (A* on a grid, else straight)            |
+| =lrg_actor_mover_follow_path()=              | walk an =LrgPath='s cell centres                          |
+| =lrg_actor_mover_follow_waypoints()=         | walk world points (three floats each)                     |
+| =lrg_actor_mover_follow_nav_agent()=         | walk an =LrgNavAgent='s path corners                      |
+| =lrg_actor_mover_stop()=                     | stop and forget the route                                 |
+| =lrg_actor_mover_sit()=                      | sit down where it is                                      |
+| =lrg_actor_mover_update()=                   | advance                                                   |
+| =lrg_actor_mover_get_state()=                | =LrgActorMoverState=: idle, moving, sitting, blocked      |
+| =lrg_actor_mover_get_n_waypoints()=, =lrg_actor_mover_get_waypoint()= | the route still ahead, next first |
+| =lrg_actor_mover_get_remaining_distance()=   | its length in the ground plane                            |
+
+** Re-pathing
+:PROPERTIES:
+:CUSTOM_ID: actor-mover-repath
+:END:
+A grid route is recomputed from where the mover stands
+
+- whenever any cell on the route ahead stops being walkable (a door closed, a chair pushed in): checked every update, before moving;
+- every =lrg_actor_mover_set_repath_interval()= seconds when that is non-zero, to pick up routes that opened;
+- on demand with =lrg_actor_mover_repath()=.
+
+A re-path that finds nothing fails the move like =move_to()= does. Routes given explicitly (an =LrgPath=, waypoints, an agent's path) are the caller's and are not re-pathed.
+
+** Facing and animation
+:PROPERTIES:
+:CUSTOM_ID: actor-mover-facing
+:END:
+The facing (=lrg_actor_mover_get_facing()=) is atan2 (db, da) of the direction of travel in the plane's coordinates, in (-pi, pi]: 0 faces +x, and on a 2D map with y down the screen pi/2 faces down. =lrg_actor_mover_set_facing()= turns at once (a seat facing a table); =lrg_actor_mover_set_turn_speed()= makes turns gradual (0 = instant). =lrg_actor_mover_get_facing_sector()= quantises the facing for sprite sheets with one animation per direction: with 4 sectors on the x/y plane they are right, down, left, up.
+
+=lrg_actor_mover_get_animation()= names the animation for the state: walk while moving, sit while sitting, idle otherwise; =lrg_actor_mover_set_animation_names()= renames them to match a sprite sheet's or model's clips. =animation-changed= is emitted with the new name whenever it changes.
+
+| Signal              | When                                                        |
+|---------------------+-------------------------------------------------------------|
+| =arrived=           | the end of the route was reached                            |
+| =path-failed=       | =move_to()= or a re-path found no route                     |
+| =animation-changed= | the animation name changed (argument: the new name)         |
+
+=lrg_actor_mover_state_get_type()= and =lrg_actor_mover_plane_get_type()= register the two enums.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: actor-mover-example
+:END:
+#+begin_src c
+g_autoptr(LrgPathfinder) pathfinder = lrg_pathfinder_new (nav_grid);
+g_autoptr(LrgActorMover) mover = lrg_actor_mover_new ();
+
+lrg_actor_mover_set_grid (mover, pathfinder, 16.0f, 16.0f, 0.0f, 0.0f);
+lrg_actor_mover_set_position (mover, door_x, door_y, 0.0f);
+lrg_actor_mover_move_to (mover, chair_x, chair_y, 0.0f, TRUE);   /* sit there */
+
+/* every frame */
+lrg_actor_mover_update (mover, delta);
+lrg_actor_mover_get_position (mover, &x, &y, NULL);
+draw_sprite (sheet, lrg_actor_mover_get_animation (mover),
+             lrg_actor_mover_get_facing_sector (mover, 4), x, y);
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: actor-mover-tests
+:END:
+=tests/test-actor-mover.c=: straight moves and the signals, a chain of 3D waypoints crossed in one step, a route round a wall that checks every planned cell is walkable, blocked start and target cells, re-pathing when a door closes and failing when walled in, the re-path interval, =LrgPath= routes, facing sectors and turn rate, the x/z plane, and two movers producing identical positions.

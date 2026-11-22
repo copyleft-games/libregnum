@@ -119,6 +119,7 @@ TEST_SOURCES := \
 	test-rule-tile.c \
 	test-tiled.c \
 	test-world-ui.c \
+	test-actor-mover.c \
 	test-sprite-animation.c \
 	test-lightmap-bake.c \
 	test-probe-grid.c \
