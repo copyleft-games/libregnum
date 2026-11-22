@@ -118,6 +118,7 @@ TEST_SOURCES := \
 	test-mixer-asset.c \
 	test-rule-tile.c \
 	test-tiled.c \
+	test-world-ui.c \
 	test-sprite-animation.c \
 	test-lightmap-bake.c \
 	test-probe-grid.c \

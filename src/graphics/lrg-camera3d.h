@@ -326,6 +326,35 @@ void lrg_camera3d_get_render_pose (LrgCamera3D *self,
                                    GrlVector3  *target);
 
 /**
+ * lrg_camera3d_project_point:
+ * @self: an #LrgCamera3D
+ * @world: a point in world space
+ * @viewport_width: width in pixels of the target the camera draws into
+ * @viewport_height: height in pixels of that target
+ * @out_screen: (out caller-allocates): the point in viewport pixels,
+ *   origin at the top-left, y down
+ * @out_depth: (out) (optional): distance of the point in front of the
+ *   camera along its view direction (negative behind it)
+ *
+ * Projects a world point the way the camera draws it (render pose, field
+ * of view or orthographic height, aspect override, raylib's cull
+ * distances), without a window or GL context: it is plain matrix math,
+ * so world-space overlays and tests can place things over a 3D view.
+ *
+ * Returns: %TRUE when the point is in front of the camera (its screen
+ *   position is meaningful), %FALSE when it is behind it
+ *
+ * Since: 0.11.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_camera3d_project_point (LrgCamera3D      *self,
+                                     const GrlVector3 *world,
+                                     gint              viewport_width,
+                                     gint              viewport_height,
+                                     GrlVector2       *out_screen,
+                                     gfloat           *out_depth);
+
+/**
  * lrg_camera3d_reset_interpolation:
  * @self: an #LrgCamera3D
  *

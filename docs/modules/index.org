@@ -150,6 +150,12 @@ Window management, cameras, and rendering abstractions:
 - *[[file:graphics/static-batch.org][LrgStaticBatch]]* - Static mesh batching into u16 chunks per (material, layer) with bounds and layer masks
 - *[[file:graphics/model-animator.org][LrgModelAnimator]]* - Shared skinned model animation with per-actor state, crossfades, pose dedupe and masked drawing
 
+*** [[file:worldui/index.org][World-space UI Module]] - Speech bubbles, nameplates and emotes (0.11.0)
+:PROPERTIES:
+:CUSTOM_ID: worldui-module
+:END:
+=LrgWorldWidget= and its three kinds, =LrgSpeechBubble= (wrapped text with a tail), =LrgNameplate= (short name, full on hover, status dot) and =LrgEmote= (a glyph or icon that pops and bobs): screen-space drawings pinned to world points, placed through an =LrgCamera2D= or an =LrgCamera3D= (=lrg_camera3d_project_point()=), with fades and hold times.  Layout and hit testing run headless.
+
 *** [[file:particles/index.org][Particles Module]] - Particle Systems
 :PROPERTIES:
 :CUSTOM_ID: particles-module---particle-systems

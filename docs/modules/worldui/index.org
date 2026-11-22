@@ -1,0 +1,107 @@
+#+title: World-space UI
+#+description: LrgWorldWidget, LrgSpeechBubble, LrgNameplate and LrgEmote: small screen-space drawings pinned to points in a 2D or 3D world, and lrg_camera3d_project_point()
+#+created: 2026-11-21
+
+* World-space UI
+:PROPERTIES:
+:CUSTOM_ID: worldui
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:../index.org][Modules]] > World-space UI
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: worldui-overview
+:END:
+World-space UI (=src/worldui/=, since 0.11.0) is the layer of small things drawn over a game view at the position of something in the world: what a character says, whose name is over whose head, a "!" over somebody who just noticed something.
+
+| Type              | What it is                                                                  |
+|-------------------+-----------------------------------------------------------------------------|
+| =LrgWorldWidget=  | the abstract base: anchor, offset, scale, fade, hold time, placement, hits  |
+| =LrgSpeechBubble= | word-wrapped text in a rounded box with a tail pointing at the anchor       |
+| =LrgNameplate=    | a one-line pill with an optional status dot; long names shortened, full on hover |
+| =LrgEmote=        | a glyph in a circle or an icon from a texture, popping in and bobbing       |
+
+They are deliberately cheap: each is a few raylib draw calls in screen space, sized in pixels, so text stays sharp at any camera zoom. Everything but the drawing (layout, wrapping, fading, placement and hit testing) runs without a window, which is how =tests/test-world-ui.c= checks it. Without a GL context text is measured with an estimate of 0.6 x the font size per character (=lrg_world_widget_measure_text()=); with one, with raylib's =MeasureText()= in the default font.
+
+** The widget base
+:PROPERTIES:
+:CUSTOM_ID: worldui-widget
+:END:
+An =LrgWorldWidget= is pinned to an /anchor/ in world coordinates (=lrg_world_widget_set_anchor()=, =lrg_world_widget_get_anchor()=); call the setter every frame for something that moves. The widget's box is drawn centred above the anchor's screen position, its bottom edge =dy= pixels above it and shifted =dx= pixels sideways (=lrg_world_widget_set_offset()=, =lrg_world_widget_get_offset()=; a negative =dy= puts the box below). =lrg_world_widget_set_scale()= / =lrg_world_widget_get_scale()= scale everything, for example by distance from a 3D camera.
+
+| Function                                | Does                                                         |
+|-----------------------------------------+--------------------------------------------------------------|
+| =lrg_world_widget_show()=               | shows the widget, fading in over the given seconds           |
+| =lrg_world_widget_hide()=               | fades out; =hidden= is emitted when the alpha reaches 0      |
+| =lrg_world_widget_is_shown()=           | shown or fading in                                           |
+| =lrg_world_widget_get_alpha()=          | the current fade, 0 to 1                                     |
+| =lrg_world_widget_set_hold_time()=      | hide on its own after so many seconds fully shown            |
+| =lrg_world_widget_update()=             | advance fades, the hold timer and animations                 |
+| =lrg_world_widget_measure()=            | the box size in pixels                                       |
+| =lrg_world_widget_get_box_at()=         | where the box goes for an anchor at a screen point           |
+| =lrg_world_widget_project_2d()=         | the anchor through an =LrgCamera2D=                          |
+| =lrg_world_widget_project_3d()=         | the anchor through an =LrgCamera3D= (=FALSE= behind it)      |
+| =lrg_world_widget_draw_at()=            | draw with the anchor at a screen point                       |
+| =lrg_world_widget_draw_2d()=            | draw over a 2D view                                          |
+| =lrg_world_widget_draw_3d()=            | draw over a 3D view; nothing when the anchor is behind       |
+| =lrg_world_widget_get_last_box()=       | the box last drawn                                           |
+| =lrg_world_widget_contains_point()=     | hit-test the box last drawn (a mouse position)               |
+| =lrg_world_widget_measure_text()=       | one line's width in the default font                         |
+
+Draw widgets *after* the world, outside =lrg_camera_begin()= / =lrg_camera_end()=: they are screen-space drawings placed by projecting the anchor.
+
+#+begin_src c
+lrg_camera_begin (LRG_CAMERA (camera));
+draw_world ();
+lrg_camera_end (LRG_CAMERA (camera));
+
+lrg_world_widget_set_anchor (LRG_WORLD_WIDGET (bubble), actor_x, actor_y - 24.0f, 0.0f);
+lrg_world_widget_update (LRG_WORLD_WIDGET (bubble), delta);
+lrg_world_widget_draw_2d (LRG_WORLD_WIDGET (bubble), camera);
+#+end_src
+
+A subclass implements =measure= (its size at the current scale) and =draw_box= (draw at a top-left corner, knowing the anchor's screen point and the alpha) and may chain =update= for its own animation; see =LrgWorldWidgetClass=.
+
+** Speech bubbles
+:PROPERTIES:
+:CUSTOM_ID: worldui-speech-bubble
+:END:
+=lrg_speech_bubble_new()= makes a bubble 220 px wide at most, with 16 px text, 8 px padding and a 10 px tail. Text (=lrg_speech_bubble_set_text()=, =lrg_speech_bubble_get_text()=) is wrapped greedily at word boundaries; a word wider than a line is broken between characters, and ="\n"= starts a new paragraph. =lrg_speech_bubble_get_n_lines()= and =lrg_speech_bubble_get_line()= expose the wrap. The tail leaves the bottom edge at the anchor's x (kept inside the box) and points at the anchor.
+
+=lrg_speech_bubble_say()= is the usual call: new text, a 0.15 s fade-in, and a 0.4 s fade-out after the hold time.
+
+| Function                              | Sets                                                    |
+|---------------------------------------+---------------------------------------------------------|
+| =lrg_speech_bubble_set_max_width()=, =lrg_speech_bubble_get_max_width()= | the wrap width              |
+| =lrg_speech_bubble_set_font_size()=   | the text size                                           |
+| =lrg_speech_bubble_set_style()=       | box, text and outline colours, padding and tail height  |
+
+** Nameplates
+:PROPERTIES:
+:CUSTOM_ID: worldui-nameplate
+:END:
+=lrg_nameplate_new()= makes a 12 px label on a translucent pill, 4 px above its anchor. A name longer than =lrg_nameplate_set_max_chars()= (default 14, 0 = never) is shortened with "..." (ASCII: the default font has no ellipsis). =lrg_nameplate_get_display_text()= is what is drawn: the full name (=lrg_nameplate_get_text()=, set with =lrg_nameplate_set_text()=) while hovered, the short one otherwise.
+
+Hover is either set (=lrg_nameplate_set_hovered()=, =lrg_nameplate_get_hovered()=) or derived from the pointer each frame with =lrg_nameplate_update_hover()=, which tests the box last drawn at its /short/ width, so the plate does not flicker as it grows under the pointer. =lrg_nameplate_set_badge_color()= adds a status dot left of the name (=NULL= removes it); =lrg_nameplate_set_style()= sets colours and size.
+
+** Emotes
+:PROPERTIES:
+:CUSTOM_ID: worldui-emote
+:END:
+=lrg_emote_new_glyph()= draws a short text ("!", "?", "zZ") in a white circle; =lrg_emote_new_icon()= draws a region of a texture instead (an atlas icon). =lrg_emote_set_glyph()= / =lrg_emote_get_glyph()= switch to or read the glyph, =lrg_emote_set_size()= sets the diameter (24 px).
+
+=lrg_emote_pop()= shows the emote with a pop: it grows from half size with a slight overshoot (ease-out-back) over 0.2 s (=lrg_emote_get_pop_scale()=), then fades out after the hold time. It bobs while shown, 3 px at 1.5 Hz by default (=lrg_emote_set_bob()=, =lrg_emote_get_bob_offset()=). Both are advanced by =lrg_world_widget_update()=, never by the wall clock.
+
+** Projecting a 3D point
+:PROPERTIES:
+:CUSTOM_ID: worldui-project
+:END:
+=lrg_camera3d_project_point()= projects a world point through an =LrgCamera3D= exactly as the camera draws (render pose, field of view or orthographic height, aspect override, raylib's cull distances) for a viewport of a given size, with plain matrix math: no window or GL context. It returns =FALSE= for a point behind the camera and optionally its depth along the view direction. It agrees with raylib's =GetWorldToScreenEx()= (the test compares them). =lrg_camera_world_to_screen()= on a 3D camera, which used to answer =(0, 0)= for every point, now uses it with the current screen size.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: worldui-tests
+:END:
+=tests/test-world-ui.c=: projection (perspective, orthographic, behind the camera, against raylib), bubble wrapping (words, long words, paragraphs, width and scale), fades, the hold time and the =hidden= signal, box placement and hit testing, 2D and 3D placement, nameplate shortening, hover and the status dot, emote pop, overshoot and bob.

@@ -1178,6 +1178,12 @@
 #include "term/lrg-mode-registry.h"
 #include "term/lrg-3d-surface.h"
 
+/* World-space UI */
+#include "worldui/lrg-world-widget.h"
+#include "worldui/lrg-speech-bubble.h"
+#include "worldui/lrg-nameplate.h"
+#include "worldui/lrg-emote.h"
+
 /* MCP module (optional, build with MCP=1) */
 #ifdef LRG_ENABLE_CAD
 #include "cad/lrg-cad-baker.h"

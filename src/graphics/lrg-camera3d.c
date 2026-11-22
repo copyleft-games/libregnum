@@ -9,6 +9,7 @@
 
 #include "config.h"
 #include "lrg-camera3d.h"
+#include "../core/lrg-math3d.h"
 
 #include <math.h>
 #include <string.h>
@@ -235,22 +236,18 @@ lrg_camera3d_world_to_screen (LrgCamera        *camera,
                               const GrlVector3 *world,
                               GrlVector2       *out_screen)
 {
-	LrgCamera3D        *self = LRG_CAMERA3D (camera);
-	LrgCamera3DPrivate *priv = lrg_camera3d_get_instance_private (self);
-
 	/*
-	 * Note: GrlCamera3D doesn't have a direct world_to_screen API.
-	 * We would need to use the raylib GetWorldToScreen function.
-	 * For now, we provide a placeholder that uses the camera position
-	 * to do a simple projection. A proper implementation would use
-	 * matrix math or the underlying raylib function.
+	 * This was a placeholder that answered (0, 0) for every point, so
+	 * nothing could be placed over a 3D view.  It now projects onto
+	 * the current screen, as raylib's GetWorldToScreen() does; without
+	 * a window the screen is 0x0 and the answer stays (0, 0).
 	 */
-	(void)priv;
-	(void)world;
-
-	/* Simple placeholder - return screen center */
 	out_screen->x = 0.0f;
 	out_screen->y = 0.0f;
+	if (!IsWindowReady ())
+		return;
+	lrg_camera3d_project_point (LRG_CAMERA3D (camera), world, GetScreenWidth (),
+	                            GetScreenHeight (), out_screen, NULL);
 }
 
 static void
@@ -1066,4 +1063,80 @@ lrg_camera3d_get_render_pose (LrgCamera3D *self,
 		target->y = grl_interpolation_lerp (priv->prev_target_y, priv->target_y, alpha);
 		target->z = grl_interpolation_lerp (priv->prev_target_z, priv->target_z, alpha);
 	}
+}
+
+/* ==========================================================================
+ * Projection without GL
+ * ========================================================================== */
+
+gboolean
+lrg_camera3d_project_point (LrgCamera3D      *self,
+                            const GrlVector3 *world,
+                            gint              viewport_width,
+                            gint              viewport_height,
+                            GrlVector2       *out_screen,
+                            gfloat           *out_depth)
+{
+	LrgCamera3DPrivate *priv;
+	GrlVector3 position;
+	GrlVector3 target;
+	gfloat eye[3];
+	gfloat at[3];
+	gfloat up[3];
+	gfloat view[16];
+	gfloat proj[16];
+	gfloat vp[16];
+	gfloat aspect;
+	gfloat near_plane;
+	gfloat far_plane;
+	gfloat cx;
+	gfloat cy;
+	gfloat cw;
+	gfloat vz;
+
+	g_return_val_if_fail (LRG_IS_CAMERA3D (self), FALSE);
+	g_return_val_if_fail (world != NULL, FALSE);
+	g_return_val_if_fail (out_screen != NULL, FALSE);
+
+	priv = lrg_camera3d_get_instance_private (self);
+	lrg_camera3d_get_render_pose (self, &position, &target);
+	eye[0] = position.x; eye[1] = position.y; eye[2] = position.z;
+	at[0] = target.x; at[1] = target.y; at[2] = target.z;
+	up[0] = priv->up_x; up[1] = priv->up_y; up[2] = priv->up_z;
+	lrg_math3d_look_at (eye, at, up, view);
+
+	aspect = (priv->aspect > 0.0f) ? priv->aspect
+	         : (viewport_height > 0 ? (gfloat) viewport_width / (gfloat) viewport_height : 1.0f);
+	near_plane = (gfloat) RL_CULL_DISTANCE_NEAR;
+	far_plane = (gfloat) RL_CULL_DISTANCE_FAR;
+	if (priv->projection == LRG_PROJECTION_ORTHOGRAPHIC)
+	{
+		gfloat top = priv->fovy * 0.5f;
+
+		lrg_math3d_ortho (-top * aspect, top * aspect, -top, top, near_plane, far_plane, proj);
+	}
+	else
+		lrg_math3d_perspective (priv->fovy * (gfloat) G_PI / 180.0f, aspect, near_plane,
+		                        far_plane, proj);
+	lrg_math3d_multiply (proj, view, vp);
+
+	/* view-space z (the camera looks down -Z) gives the depth */
+	vz = view[2] * world->x + view[6] * world->y + view[10] * world->z + view[14];
+	if (out_depth != NULL)
+		*out_depth = -vz;
+
+	cx = vp[0] * world->x + vp[4] * world->y + vp[8] * world->z + vp[12];
+	cy = vp[1] * world->x + vp[5] * world->y + vp[9] * world->z + vp[13];
+	cw = vp[3] * world->x + vp[7] * world->y + vp[11] * world->z + vp[15];
+	if (priv->projection != LRG_PROJECTION_ORTHOGRAPHIC && cw <= 1e-6f)
+	{
+		out_screen->x = 0.0f;
+		out_screen->y = 0.0f;
+		return FALSE;
+	}
+	if (cw == 0.0f)
+		cw = 1.0f;
+	out_screen->x = (cx / cw + 1.0f) * 0.5f * (gfloat) viewport_width;
+	out_screen->y = (1.0f - cy / cw) * 0.5f * (gfloat) viewport_height;
+	return -vz > 0.0f;
 }
