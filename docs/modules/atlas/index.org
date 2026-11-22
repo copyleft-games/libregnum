@@ -204,6 +204,7 @@ regions:
 :CUSTOM_ID: sprite-animations-090
 :END:
 - [[file:sprite-sheet.org][LrgSpriteSheet]] - complete API: frames with pivots, grid and alpha-island slicing, clips
+- [[file:sprite-sheet-builder.org][LrgSpriteSheetBuilder]] - a sprite sheet and its image from loose frames: animations, key-colour and alpha background removal, a shared palette (0.11.0)
 - [[file:sprite-animation.org][Sprite animations]] - =LrgSpriteAnimation= clips (durations, loop modes, events), the =.rsprite= format and the =LrgSpriteAnimationPlayer= component
 
 ** Shelf, MaxRects, and Guillotine packing

@@ -1,0 +1,77 @@
+#+title: Sprite sheet builder
+#+description: LrgSpriteSheetBuilder: an LrgSpriteSheet and its image from a list of frames, with named animations, key-colour and alpha background removal and a shared N-colour palette
+#+created: 2026-11-21
+
+* Sprite sheet builder
+:PROPERTIES:
+:CUSTOM_ID: sprite-sheet-builder
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Atlas]] > Sprite sheet builder
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: sprite-sheet-builder-overview
+:END:
+=LrgSpriteSheetBuilder= (=src/atlas/lrg-sprite-sheet-builder.h=, since 0.11.0) turns loose frames -- renders of a character, frames cut from a recording, generated art -- into one sprite sheet image and the [[file:sprite-sheet.org][LrgSpriteSheet]] that describes it, with named animations. On the way it can remove a background (a key colour, an alpha threshold) and reduce all frames to one palette. Everything is CPU work on RGBA8 buffers: no window, no GL.
+
+** Frames and animations
+:PROPERTIES:
+:CUSTOM_ID: sprite-sheet-builder-frames
+:END:
+| Function                                         | Adds                                                     |
+|--------------------------------------------------+----------------------------------------------------------|
+| =lrg_sprite_sheet_builder_new()=                 | an empty builder                                         |
+| =lrg_sprite_sheet_builder_add_frame_file()=      | a frame from an image file (-1 and an error when unreadable) |
+| =lrg_sprite_sheet_builder_add_frame_image()=     | a frame from a =GrlImage= (copied)                       |
+| =lrg_sprite_sheet_builder_add_frame_pixels()=    | a frame from top-down RGBA8 rows with any stride (copied) |
+| =lrg_sprite_sheet_builder_get_n_frames()=        | how many frames there are                                |
+| =lrg_sprite_sheet_builder_add_animation()=       | a named animation over frame indices (repeats allowed)   |
+| =lrg_sprite_sheet_builder_add_animation_range()= | a named animation over consecutive frames                |
+
+Each =add_frame= returns the frame's index. An animation naming a frame that does not exist, or a name already used, is refused.
+
+*Frames from video* are the caller's: libregnum does not depend on GStreamer, so the builder takes frames and does not decode video. With =FFMPEG=1= an =LrgVideoPlayer= can supply them; anything else that produces RGBA buffers works through =lrg_sprite_sheet_builder_add_frame_pixels()=.
+
+** Processing
+:PROPERTIES:
+:CUSTOM_ID: sprite-sheet-builder-processing
+:END:
+Applied to copies at every build, in this order, so the frames added stay untouched and a second build with other options starts over:
+
+1. *Key colour* (=lrg_sprite_sheet_builder_set_key_color()=): pixels whose every channel is within the tolerance of the key become fully transparent (colour cleared too, so filtering cannot bleed the key back in). =NULL= turns it off.
+2. *Alpha threshold* (=lrg_sprite_sheet_builder_set_alpha_threshold()=): pixels below the threshold become fully transparent; with =binary= the rest become fully opaque, for crisp pixel art. 0 turns it off.
+3. *Palette* (=lrg_sprite_sheet_builder_set_palette_size()=, 2 to 256, 0 for none): median cut over the visible pixels of /all/ frames together, so an animation keeps one palette and does not flicker, then each visible pixel takes its nearest palette colour. The cut sorts with a total order, so the same frames give the same pixels everywhere.
+
+** Layout, building and saving
+:PROPERTIES:
+:CUSTOM_ID: sprite-sheet-builder-build
+:END:
+=lrg_sprite_sheet_builder_set_layout()= sets the frames per row (0 picks the smallest square-ish grid) and the transparent padding around and between cells (1 by default). Every cell is as large as the largest frame (=lrg_sprite_sheet_builder_get_cell_size()=); a smaller frame sits centred horizontally on the bottom of its cell, where a character's feet are, so frames of a walk cycle do not jump.
+
+=lrg_sprite_sheet_builder_build()= returns the =LrgSpriteSheet=: one frame per cell named =frame-N= and the animations; the image is kept (=lrg_sprite_sheet_builder_get_image()=). =lrg_sprite_sheet_builder_save()= builds and writes the PNG and the sprite sheet YAML; its =texture_path= is the PNG's file name when both files are in one directory. Errors are in =LRG_SPRITE_SHEET_BUILDER_ERROR= (=lrg_sprite_sheet_builder_error_quark()=, =LrgSpriteSheetBuilderError=, =lrg_sprite_sheet_builder_error_get_type()=): =LRG_SPRITE_SHEET_BUILDER_ERROR_IO= and =LRG_SPRITE_SHEET_BUILDER_ERROR_EMPTY=.
+
+#+begin_src c
+g_autoptr(LrgSpriteSheetBuilder) builder = lrg_sprite_sheet_builder_new ();
+GrlColor green_screen = { 0, 255, 0, 255 };
+guint i;
+
+for (i = 0; i < 8; i++)
+{
+	g_autofree gchar *path = g_strdup_printf ("renders/walk-%02u.png", i);
+
+	lrg_sprite_sheet_builder_add_frame_file (builder, path, &error);
+}
+lrg_sprite_sheet_builder_add_animation_range (builder, "walk", 0, 8, 0.1f, TRUE);
+lrg_sprite_sheet_builder_set_key_color (builder, &green_screen, 40);
+lrg_sprite_sheet_builder_set_alpha_threshold (builder, 128, TRUE);
+lrg_sprite_sheet_builder_set_palette_size (builder, 32);
+lrg_sprite_sheet_builder_save (builder, "kudu", "sprites/kudu.png", "sprites/kudu.yaml", &error);
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: sprite-sheet-builder-tests
+:END:
+=tests/test-sprite-sheet-builder.c=: grid and one-row layouts with frames of different sizes and their bottom-centred placement, frame rectangles and animations, refused animations, key colour within and outside its tolerance, binary and soft alpha thresholds, the palette's colour count, transparency and determinism, and saving, reloading and frames from files.

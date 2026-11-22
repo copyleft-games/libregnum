@@ -902,6 +902,7 @@
 #include "atlas/lrg-sprite-animation.h"
 #include "atlas/lrg-nine-slice.h"
 #include "atlas/lrg-atlas-packer.h"
+#include "atlas/lrg-sprite-sheet-builder.h"
 
 /* Tutorial module (Phase 4) */
 #include "tutorial/lrg-tutorial-step.h"
