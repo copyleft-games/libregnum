@@ -122,4 +122,5 @@ See the individual class documentation:
 - [[file:tileset-asset.org][Tileset assets (.rtileset)]] - per-tile flip/rotation bits, collision polygons, custom data, animated tiles, the =.rtileset= format
 - [[file:rule-tile.org][Rule tiles]] - autotiling with 3x3 neighbour rules, 16/47-tile presets, weighted variants, rotated and mirrored rules
 - [[file:iso-hex.org][Isometric and hexagonal maps]] - orientations, exact picking, cell outlines, draw order and depth sorting
+- [[file:tiled.org][Tiled maps (.tmj, .tmx)]] - importing maps from the Tiled editor: tile layers, flip flags, tilesets, properties, object layers as zones and places
 - [[file:../../guides/2d.org][2D guide]] - tiles, sprites and lights end to end

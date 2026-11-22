@@ -1,0 +1,203 @@
+#+title: Tiled maps (.tmj and .tmx)
+#+description: LrgTiledMap: importing maps from the Tiled editor, with tile layers, flip flags, tilesets, custom properties and object layers read as zones and points
+#+created: 2026-11-21
+
+* Tiled maps
+:PROPERTIES:
+:CUSTOM_ID: tiled
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Tilemap]] > Tiled maps
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: tiled-overview
+:END:
+=LrgTiledMap= (=src/tilemap/lrg-tiled-map.h=, since 0.11.0) reads maps made in [[https://www.mapeditor.org][Tiled]], in either of its two formats:
+
+| Format | Map    | Tileset | Reader                                       |
+|--------+--------+---------+----------------------------------------------|
+| JSON   | =.tmj= | =.tsj=  | json-glib                                    |
+| XML    | =.tmx= | =.tsx=  | GLib's GMarkup (no libxml2 dependency added) |
+
+The format is chosen by the first character of the document (='{'= or ='<'=), never by the extension, and a JSON map may name an XML tileset or the other way round. Layer data in CSV, base64, zlib-compressed base64 and gzip-compressed base64 is read (inflated with GIO's =GZlibDecompressor=), as is the oldest XML form of one =<tile gid=""/>= element per cell.
+
+What an application reads out of a map:
+
+- *Tile layers*: raw gids with Tiled's flip flags, and an =LrgTilemap= built from them that the existing tilemap renderer draws.
+- *Tilesets*: tile size, columns, margin, spacing, tile offset, image, and per tile its class, custom properties, animation frames and collision shapes, also as an =LrgTileset=.
+- *Object layers*: every object with its name, class/type, shape (rectangle, point, ellipse, polygon, polyline, tile, text), position, size, rotation and custom properties. Objects are how a map marks /zones/ (a meeting room rectangle) and /places/ (a desk point); =lrg_tiled_object_contains_point()= and =lrg_tiled_map_find_zone_at()= answer "which zone is this in".
+- *Custom properties* on the map, layers, tilesets, tiles and objects.
+
+** Loading
+:PROPERTIES:
+:CUSTOM_ID: tiled-loading
+:END:
+#+begin_src c
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgTiledMap) map = lrg_tiled_map_new_from_file ("maps/office.tmj", &error);
+
+if (map == NULL)
+	g_printerr ("%s\n", error->message);
+#+end_src
+
+=lrg_tiled_map_new_from_file()= resolves external tilesets, images and =file= properties against the directory of the file that names them; =lrg_tiled_map_new_from_data()= takes the document in memory and a =base_dir= for the same purpose. Errors are in =LRG_TILED_ERROR= (=LrgTiledError=):
+
+| Code                          | Meaning                                                          |
+|-------------------------------+------------------------------------------------------------------|
+| =LRG_TILED_ERROR_IO=          | a map, tileset or image could not be read                        |
+| =LRG_TILED_ERROR_PARSE=       | not well-formed JSON or XML, or neither                          |
+| =LRG_TILED_ERROR_INVALID=     | not a Tiled map, no size, layer data that does not fill the layer |
+| =LRG_TILED_ERROR_UNSUPPORTED= | infinite maps, zstd compression, object templates                |
+
+The three unsupported features are refused rather than half-read: turn /Infinite/ off in Map Properties, pick zlib, gzip or no compression, and detach templated objects (Tiled's /Detach Template/).
+
+** The map
+:PROPERTIES:
+:CUSTOM_ID: tiled-map
+:END:
+| Function                                | Returns                                                        |
+|-----------------------------------------+----------------------------------------------------------------|
+| =lrg_tiled_map_get_width()=, =lrg_tiled_map_get_height()= | size in cells                                                  |
+| =lrg_tiled_map_get_tile_size()=          | cell size in pixels                                            |
+| =lrg_tiled_map_get_orientation()=        | =LrgTilemapOrientation= (orthogonal, isometric, staggered, hex) |
+| =lrg_tiled_map_get_background_color()=   | ="#RRGGBB"= or ="#AARRGGBB"=, or =NULL=                         |
+| =lrg_tiled_map_get_properties()=         | the map's custom properties                                    |
+| =lrg_tiled_map_get_n_layers()=, =lrg_tiled_map_get_layer()=, =lrg_tiled_map_get_layer_by_name()= | layers, bottom first |
+| =lrg_tiled_map_get_n_tilesets()=, =lrg_tiled_map_get_tileset()= | tilesets in first-gid order                       |
+| =lrg_tiled_map_get_tileset_for_gid()=    | the tileset a gid belongs to, and its local id                 |
+| =lrg_tiled_map_find_object()=            | first object with a name                                       |
+| =lrg_tiled_map_find_object_by_id()=      | an object by id (resolves =object= properties)                 |
+| =lrg_tiled_map_get_objects()=            | every object, optionally of one class/type                     |
+| =lrg_tiled_map_find_zone_at()=           | the topmost area object containing a point                     |
+
+** Layers
+:PROPERTIES:
+:CUSTOM_ID: tiled-layers
+:END:
+=LrgTiledLayer= has a kind (=LrgTiledLayerKind=: =LRG_TILED_LAYER_TILES=, =LRG_TILED_LAYER_OBJECTS=, =LRG_TILED_LAYER_IMAGE=). Group layers are flattened: their children take their place in drawing order, named with the group path (="furniture/walls"=), with the group's visibility, opacity, offset and parallax folded in. Object positions already include every offset.
+
+| Function                          | Applies to | Returns                                                  |
+|-----------------------------------+------------+----------------------------------------------------------|
+| =lrg_tiled_layer_get_kind()=       | all        | the layer kind                                           |
+| =lrg_tiled_layer_get_id()=         | all        | Tiled's layer id                                         |
+| =lrg_tiled_layer_get_name()=       | all        | the name with group prefixes                             |
+| =lrg_tiled_layer_get_visible()=    | all        | visible, and every enclosing group visible               |
+| =lrg_tiled_layer_get_opacity()=    | all        | opacity times every group's                              |
+| =lrg_tiled_layer_get_offset()=     | all        | total drawing offset                                     |
+| =lrg_tiled_layer_get_parallax()=   | all        | parallax factors                                         |
+| =lrg_tiled_layer_get_properties()= | all        | custom properties                                        |
+| =lrg_tiled_layer_get_width()=, =lrg_tiled_layer_get_height()= | tiles | size in cells                        |
+| =lrg_tiled_layer_get_gid()=, =lrg_tiled_layer_get_gids()= | tiles | raw gids, flags included              |
+| =lrg_tiled_layer_get_n_objects()=, =lrg_tiled_layer_get_object()= | objects | objects in file order    |
+| =lrg_tiled_layer_get_image_path()= | image      | the resolved image path                                  |
+
+A raw gid holds the global tile id in its low 28 bits (=LRG_TILED_GID_MASK=) and four flags above. The horizontal, vertical and diagonal flip flags are the same bits as =LRG_TILE_FLIP_HORIZONTAL=, =LRG_TILE_FLIP_VERTICAL= and =LRG_TILE_FLIP_DIAGONAL= (see [[file:tileset-asset.org][Tileset assets]]), so they carry over to =LrgTilemapLayer= unchanged. =LRG_TILED_GID_FLIP_HEXAGONAL= (a 120-degree hex rotation) has no tilemap equivalent and is dropped when building a tilemap.
+
+** Objects: zones and places
+:PROPERTIES:
+:CUSTOM_ID: tiled-objects
+:END:
+=LrgTiledObject= is one object. Its type is Tiled's /class/ (1.9 and later) or /type/ (earlier), read into the same field.
+
+| Function                               | Returns                                                       |
+|----------------------------------------+---------------------------------------------------------------|
+| =lrg_tiled_object_get_id()=             | the map-unique id                                             |
+| =lrg_tiled_object_get_name()=           | the name                                                      |
+| =lrg_tiled_object_get_object_type()=    | class or type                                                 |
+| =lrg_tiled_object_get_shape()=          | =LrgTiledObjectShape=                                         |
+| =lrg_tiled_object_get_bounds()=         | x, y, width, height as stored (offsets applied, unrotated)    |
+| =lrg_tiled_object_get_rotation()=       | clockwise degrees around (x, y)                               |
+| =lrg_tiled_object_get_visible()=        | visibility                                                    |
+| =lrg_tiled_object_get_gid()=            | a tile object's gid                                           |
+| =lrg_tiled_object_get_points()=         | polygon/polyline vertices relative to (x, y)                  |
+| =lrg_tiled_object_get_text()=           | a text object's text                                          |
+| =lrg_tiled_object_get_properties()=     | custom properties                                             |
+| =lrg_tiled_object_get_center()=         | where to put something: see below                             |
+| =lrg_tiled_object_contains_point()=     | whether a point is inside (rotation included, edges inside)   |
+
+=lrg_tiled_object_get_center()= is the point an application places things at: a point's position; the rotated centre of a rectangle or ellipse; the vertex average of a polygon or polyline; the centre of a tile object (whose stored position is its bottom-left corner, as in Tiled). Points and polylines contain nothing.
+
+A typical office map has an object layer =zones= with rectangles of class =zone= (rooms) and points of class =desk= or =seat=:
+
+#+begin_src c
+g_autoptr(GPtrArray) desks = lrg_tiled_map_get_objects (map, "desk");
+guint i;
+
+for (i = 0; i < desks->len; i++)
+{
+	LrgTiledObject *desk = g_ptr_array_index (desks, i);
+	gdouble x, y;
+
+	lrg_tiled_object_get_center (desk, &x, &y);
+	place_desk (lrg_tiled_object_get_name (desk), x, y);
+}
+
+LrgTiledObject *room = lrg_tiled_map_find_zone_at (map, px, py, "zone");
+#+end_src
+
+** Tilesets
+:PROPERTIES:
+:CUSTOM_ID: tiled-tilesets
+:END:
+=LrgTiledTileset= describes one tileset of the map:
+
+| Function                                  | Returns                                         |
+|-------------------------------------------+-------------------------------------------------|
+| =lrg_tiled_tileset_get_name()=             | name                                            |
+| =lrg_tiled_tileset_get_first_gid()=        | first global id in this map                     |
+| =lrg_tiled_tileset_get_tile_count()=       | number of tiles                                 |
+| =lrg_tiled_tileset_get_columns()=          | tiles per image row                             |
+| =lrg_tiled_tileset_get_tile_size()=        | tile size                                       |
+| =lrg_tiled_tileset_get_image_path()=       | resolved image path (=NULL= for a collection)   |
+| =lrg_tiled_tileset_get_properties()=       | the tileset's custom properties                 |
+| =lrg_tiled_tileset_get_tile_properties()=  | one tile's custom properties                    |
+| =lrg_tiled_tileset_get_tile_type()=        | one tile's class or type                        |
+| =lrg_tiled_tileset_get_tileset()=          | the =LrgTileset= (below)                        |
+
+=lrg_tiled_tileset_get_tileset()= builds the =LrgTileset= once and keeps it: tile size, columns, margin, spacing, the tile offset as the draw offset, the image path, every tile property as tile data in its string form (=lrg_tileset_get_tile_data()=; the tile's class under the key =type=), tile animations (=lrg_tileset_set_tile_animation()=) and rectangle and polygon collision shapes (=lrg_tileset_add_tile_collision_polygon()=, rotation applied). The texture is not loaded: =lrg_tiled_map_load_textures()= does that once a GL context exists. Image-collection tilesets (one image per tile) cannot be an =LrgTileset= and return =NULL=; their tiles are still described.
+
+** Building an LrgTilemap
+:PROPERTIES:
+:CUSTOM_ID: tiled-build
+:END:
+An =LrgTilemap= draws with one tileset, so =lrg_tiled_map_build_tilemap()= takes a tileset index and keeps only that tileset's tiles, renumbered to its 1-based ids with their flip flags; cells of other tilesets are empty. A map with two tilesets builds two tilemaps and draws them one after the other. Each tile layer becomes an =LrgTilemapLayer= with its name, visibility, opacity and parallax; a layer with a true =collision= (or =solid=) property gets collision enabled. Orientation, stagger axis and index, hex side length and cell size are copied.
+
+#+begin_src c
+g_autoptr(LrgTilemap) tilemap = lrg_tiled_map_build_tilemap (map, 0, &error);
+
+lrg_tiled_map_load_textures (map, &error);   /* after the window opens */
+lrg_tilemap_draw_with_camera (tilemap, camera);
+#+end_src
+
+** Custom properties
+:PROPERTIES:
+:CUSTOM_ID: tiled-properties
+:END:
+=LrgTiledProperties= holds the custom properties of one owner. Every value has a string form (what Tiled wrote) and a type (=LrgTiledPropertyType=: =LRG_TILED_PROPERTY_STRING=, =_INT=, =_FLOAT=, =_BOOL=, =_COLOR=, =_FILE=, =_OBJECT=). =file= values are resolved to absolute paths. A =class= property is flattened into dotted keys: =spawn= with members =x= and =y= becomes =spawn.x= and =spawn.y=.
+
+| Function                                  | Returns                                                   |
+|-------------------------------------------+-----------------------------------------------------------|
+| =lrg_tiled_properties_get_n_properties()=  | how many                                                  |
+| =lrg_tiled_properties_get_keys()=          | names, sorted                                             |
+| =lrg_tiled_properties_has()=               | whether a name exists                                     |
+| =lrg_tiled_properties_get_value_type()=    | its type                                                  |
+| =lrg_tiled_properties_get_string()=        | its string form                                           |
+| =lrg_tiled_properties_get_int()=           | numbers (floats truncated), bools as 0/1, numeric strings |
+| =lrg_tiled_properties_get_double()=        | the same as a double                                      |
+| =lrg_tiled_properties_get_boolean()=       | bools, numbers, "true"/"false"/"yes"/"no"                 |
+
+Each typed getter takes a fallback for absent or unconvertible values.
+
+** Enum and error types
+:PROPERTIES:
+:CUSTOM_ID: tiled-types
+:END:
+=lrg_tiled_error_quark()=, =lrg_tiled_error_get_type()=, =lrg_tiled_layer_kind_get_type()=, =lrg_tiled_object_shape_get_type()= and =lrg_tiled_property_type_get_type()= register the enums above with GObject (for bindings).
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tiled-tests
+:END:
+=tests/test-tiled.c= loads =tests/fixtures/tiled/office.tmj= (with =office-props.tsj=) and =office.tmx= (with =office-props.tsx=), the same map in both formats over =office-tiles.png=: CSV, zlib, gzip and plain base64 data, a group layer, flip flags, every object shape, a rotated zone, a class property, tile animations and collision shapes. Every content test runs on both files and one test compares them cell for cell; error tests cover each =LrgTiledError= code.

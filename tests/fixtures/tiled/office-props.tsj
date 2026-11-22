@@ -1,0 +1,30 @@
+{
+ "type": "tileset",
+ "name": "office-props",
+ "tilewidth": 16,
+ "tileheight": 16,
+ "tilecount": 8,
+ "columns": 4,
+ "margin": 0,
+ "spacing": 0,
+ "image": "office-tiles.png",
+ "imagewidth": 64,
+ "imageheight": 32,
+ "tileoffset": {
+  "x": 0,
+  "y": -4
+ },
+ "tiles": [
+  {
+   "id": 0,
+   "type": "chair",
+   "properties": [
+    {
+     "name": "seat",
+     "type": "bool",
+     "value": true
+    }
+   ]
+  }
+ ]
+}

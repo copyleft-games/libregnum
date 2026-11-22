@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.10.2" orientation="orthogonal" renderorder="right-down" width="10" height="8" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#202830" nextlayerid="8" nextobjectid="8">
+ <properties>
+  <property name="title" value="Office"/>
+  <property name="floor" type="int" value="1"/>
+  <property name="music" type="file" value="sounds/hum.ogg"/>
+  <property name="spawn" type="class" propertytype="Spawn">
+   <properties>
+    <property name="facing" value="north"/>
+    <property name="x" type="int" value="3"/>
+    <property name="y" type="int" value="4"/>
+   </properties>
+  </property>
+ </properties>
+ <tileset firstgid="1" name="office" tilewidth="16" tileheight="16" tilecount="8" columns="4">
+  <properties>
+   <property name="theme" value="day"/>
+  </properties>
+  <image source="office-tiles.png" width="64" height="32"/>
+ <tile id="0" type="floor">
+  <properties>
+   <property name="walk" type="bool" value="true"/>
+  </properties>
+ </tile>
+ <tile id="1" type="wall">
+  <properties>
+   <property name="solid" type="bool" value="true"/>
+  </properties>
+  <objectgroup draworder="index">
+   <object id="1" x="0" y="8" width="16" height="8"/>
+  </objectgroup>
+ </tile>
+ <tile id="2">
+  <animation>
+   <frame tileid="2" duration="100"/>
+   <frame tileid="3" duration="150"/>
+  </animation>
+ </tile>
+ </tileset>
+ <tileset firstgid="9" source="office-props.tsx"/>
+ <layer id="1" name="floor" width="10" height="8">
+  <data encoding="csv">
+2147483649,1610612737,1,1,1,1,1,1,1,1,
+1,1,1,1,1,1,1,1,1,1,
+1,1,1,1,1,1,1,1,1,1,
+1,1,1,1,1,1,1,1,1,1,
+1,1,1,1,1,1,1,1,1,1,
+1,1,1,1,1,1,1,1,1,1,
+1,1,1,1,1,1,1,1,1,1,
+1,1,1,1,1,1,1,1,1,1
+</data>
+ </layer>
+ <group id="2" name="furniture" opacity="0.5" offsetx="2" offsety="4">
+  <layer id="3" name="walls" width="10" height="8">
+   <properties>
+    <property name="collision" type="bool" value="true"/>
+   </properties>
+   <data encoding="base64" compression="zlib">
+    eJxjYmBgYCISEwLDTR2637GJAwApkAA/
+   </data>
+  </layer>
+  <layer id="4" name="props" width="10" height="8" visible="0" parallaxx="0.5">
+   <data encoding="base64">
+    AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACQAAAAoAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+   </data>
+  </layer>
+ </group>
+ <objectgroup id="5" name="zones">
+  <object id="1" name="meeting" type="zone" x="32" y="32" width="64" height="48">
+   <properties>
+    <property name="seats" type="int" value="4"/>
+    <property name="label" value="Big room"/>
+    <property name="tint" type="color" value="#ff336699"/>
+   </properties>
+  </object>
+  <object id="2" name="desk-1" type="desk" x="120" y="40">
+   <properties>
+    <property name="owner" value="kudu"/>
+    <property name="standing" type="bool" value="true"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="3" name="lounge" type="zone" x="16" y="96" width="32" height="16">
+   <ellipse/>
+  </object>
+  <object id="4" name="kitchen" type="zone" x="112" y="80">
+   <polygon points="0,0 32,0 32,32"/>
+  </object>
+  <object id="5" name="path" x="0" y="0">
+   <polyline points="0,0 10,10"/>
+  </object>
+  <object id="6" name="plant" type="decor" gid="3" x="144" y="112" width="16" height="16"/>
+  <object id="7" name="tilted" type="zone" x="100" y="10" width="20" height="10" rotation="90">
+   <properties>
+    <property name="weight" type="float" value="2.5"/>
+   </properties>
+  </object>
+ </objectgroup>
+ <imagelayer id="6" name="backdrop">
+  <image source="office-tiles.png" width="64" height="32"/>
+ </imagelayer>
+</map>

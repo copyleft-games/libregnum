@@ -117,6 +117,7 @@ TEST_SOURCES := \
 	test-terrain-asset.c \
 	test-mixer-asset.c \
 	test-rule-tile.c \
+	test-tiled.c \
 	test-sprite-animation.c \
 	test-lightmap-bake.c \
 	test-probe-grid.c \

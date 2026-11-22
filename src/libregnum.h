@@ -270,6 +270,7 @@
 #include "tilemap/lrg-tilemap-layer.h"
 #include "tilemap/lrg-tilemap.h"
 #include "tilemap/lrg-rule-tile.h"
+#include "tilemap/lrg-tiled-map.h"
 
 /* Save module */
 #include "save/lrg-saveable.h"
