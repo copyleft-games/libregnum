@@ -1,0 +1,67 @@
+#+title: Beams
+#+description: LrgBeam: an animated line or arc between two moving points in 2D or 3D, with colour, width, flowing dashes and a drawn-out progress
+#+created: 2026-11-21
+
+* Beams
+:PROPERTIES:
+:CUSTOM_ID: beam
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Graphics]] > Beams
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: beam-overview
+:END:
+=LrgBeam= (=src/graphics/lrg-beam.h=, since 0.11.0) draws a connection between two points that may move every frame: two characters on a call, a link between two machines, a tether. It is a quadratic curve, straight or bent into an arc, drawn with a colour and width, optionally as dashes that flow from one end to the other, and optionally only part of the way (to grow the connection from caller to callee).
+
+The geometry is computed without a window (=lrg_beam_sample()=, =lrg_beam_get_length()=, =lrg_beam_get_n_dashes()=, =lrg_beam_get_dash()=); drawing needs a GL context:
+
+- =lrg_beam_draw_2d()= uses x and y, inside a 2D camera mode (world units) or outside one (pixels). Pieces are thick lines with round joints.
+- =lrg_beam_draw_3d()= draws inside a 3D camera mode: six-sided cylinders of the beam's width, or lines when the width is 0.
+
+** Shape
+:PROPERTIES:
+:CUSTOM_ID: beam-shape
+:END:
+| Function                   | Sets                                                                   |
+|----------------------------+------------------------------------------------------------------------|
+| =lrg_beam_new()=           | a straight, solid, white beam 2 units wide with 24 segments            |
+| =lrg_beam_set_endpoints()= | both ends (call it each frame for moving ends)                         |
+| =lrg_beam_set_arc()=       | how far the middle is pulled from the straight line, and which way     |
+| =lrg_beam_set_arc_axis()=  | the direction an =LRG_BEAM_BEND_AXIS= arc bends (normalised; +y)       |
+| =lrg_beam_set_segments()=  | how many straight pieces the curve is drawn with                       |
+| =lrg_beam_set_color()=     | the colour, alpha included                                             |
+| =lrg_beam_set_width()=     | the thickness (0 = hairline)                                           |
+
+=LrgBeamBend= (=lrg_beam_bend_get_type()=) picks the bend: =LRG_BEAM_BEND_PERPENDICULAR= bulges sideways in the x/y plane, to the left of travel on a y-down screen (a beam going right arcs up; a negative height arcs down); =LRG_BEAM_BEND_AXIS= bulges along a fixed axis, up in a 3D world by default. The arc's middle is exactly the given height from the straight line (the quadratic control point is twice as far).
+
+** Dashes and progress
+:PROPERTIES:
+:CUSTOM_ID: beam-dashes
+:END:
+=lrg_beam_set_dash()= sets the dash and gap lengths and a speed in units per second; =lrg_beam_update()= moves the pattern along, from the start towards the end (a negative speed flows back). A gap of 0 makes the beam solid again. =lrg_beam_set_progress()= / =lrg_beam_get_progress()= draw only the first fraction of the beam; animate it from 0 to 1 when a call connects.
+
+The visible pieces are distances along the beam: =lrg_beam_get_n_dashes()= and =lrg_beam_get_dash()= return them for the current phase and progress (one piece for a solid beam, none at progress 0), which is what both draw functions draw and what the test checks.
+
+#+begin_src c
+g_autoptr(LrgBeam) call = lrg_beam_new ();
+GrlColor green = { 90, 220, 120, 230 };
+
+lrg_beam_set_color (call, &green);
+lrg_beam_set_width (call, 3.0f);
+lrg_beam_set_arc (call, 24.0f, LRG_BEAM_BEND_PERPENDICULAR);
+lrg_beam_set_dash (call, 8.0f, 6.0f, 40.0f);
+
+/* every frame, inside the 2D camera */
+lrg_beam_set_endpoints (call, ax, ay, 0.0f, bx, by, 0.0f);
+lrg_beam_update (call, delta);
+lrg_beam_draw_2d (call);
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: beam-tests
+:END:
+=tests/test-beam.c=: straight and arced samples in both bends and axes, lengths and segment counts, moving ends, the dash pattern at several phases and in both directions, a solid beam, and progress.

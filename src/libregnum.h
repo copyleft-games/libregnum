@@ -105,6 +105,7 @@
 #include "graphics/lrg-horizon-ring.h"
 #include "graphics/lrg-skinned-mesh.h"
 #include "graphics/lrg-billboard-batch.h"
+#include "graphics/lrg-beam.h"
 #include "graphics/lrg-terrain.h"
 #include "graphics/lrg-terrain-asset.h"
 #include "graphics/lrg-terrain-brush.h"

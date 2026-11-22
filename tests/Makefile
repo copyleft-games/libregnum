@@ -121,6 +121,7 @@ TEST_SOURCES := \
 	test-world-ui.c \
 	test-actor-mover.c \
 	test-slot-set.c \
+	test-beam.c \
 	test-sprite-animation.c \
 	test-lightmap-bake.c \
 	test-probe-grid.c \
