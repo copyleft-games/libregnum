@@ -298,6 +298,8 @@ g_autoptr(LrgScreenshot) screenshot = lrg_screenshot_new_from_image (image);
 g_autoptr(GrlTexture) texture = lrg_screenshot_to_texture (screenshot);
 #+end_src
 
+To render a scene for N frames offscreen and save the last one (tests, doc images, bakers), see [[file:screenshot-frames.org][Screenshots after N frames]]: =lrg_screenshot_after_frames()= and =lrg_screenshot_write_png()= (0.11.0).
+
 ** Screenshot Formats
 :PROPERTIES:
 :CUSTOM_ID: screenshot-formats

@@ -14,6 +14,8 @@
 #include "lrg-screenshot.h"
 #include "../lrg-log.h"
 
+#include <raylib.h>
+
 struct _LrgScreenshot
 {
     GObject parent_instance;
@@ -607,4 +609,158 @@ lrg_screenshot_to_texture (LrgScreenshot *self)
         return NULL;
 
     return grl_texture_new_from_image (self->image);
+}
+
+/* ==========================================================================
+ * Rendering a number of frames, then a PNG (0.11.0)
+ * ========================================================================== */
+
+gboolean
+lrg_screenshot_write_png (const gchar   *path,
+                          const guint8  *rgba,
+                          gint           width,
+                          gint           height,
+                          gint           stride,
+                          GError       **error)
+{
+    g_autoptr(GrlImage) image = NULL;
+    g_autoptr(GError) local = NULL;
+    g_autofree guint8 *packed = NULL;
+    g_autofree guint8 *png = NULL;
+    gsize row;
+    gsize size = 0;
+    gint y;
+
+    g_return_val_if_fail (path != NULL, FALSE);
+    g_return_val_if_fail (rgba != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    if (width <= 0 || height <= 0 || stride < width * 4)
+    {
+        g_set_error (error, LRG_PHOTO_MODE_ERROR, LRG_PHOTO_MODE_ERROR_INVALID_FORMAT,
+                     "cannot write a %dx%d image with stride %d", width, height, stride);
+        return FALSE;
+    }
+
+    /* GrlImage wants tightly packed rows */
+    row = (gsize) width * 4;
+    packed = g_malloc (row * (gsize) height);
+    for (y = 0; y < height; y++)
+        memcpy (packed + row * (gsize) y, rgba + (gsize) stride * (gsize) y, row);
+    image = grl_image_new_from_pixels (width, height, GRL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8,
+                                       packed);
+
+    /* encode to memory, so the file is a PNG whatever its extension, and a
+     * write failure is reported with its cause */
+    png = grl_image_export_to_memory (image, ".png", &size);
+    if (png == NULL || size == 0)
+    {
+        g_set_error (error, LRG_PHOTO_MODE_ERROR, LRG_PHOTO_MODE_ERROR_SAVE,
+                     "could not encode a PNG for %s", path);
+        return FALSE;
+    }
+    if (!g_file_set_contents (path, (const gchar *) png, (gssize) size, &local))
+    {
+        g_set_error (error, LRG_PHOTO_MODE_ERROR, LRG_PHOTO_MODE_ERROR_SAVE,
+                     "could not write %s: %s", path, local->message);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+gboolean
+lrg_screenshot_after_frames (const gchar            *path,
+                             guint                   n_frames,
+                             gint                    width,
+                             gint                    height,
+                             LrgScreenshotDrawFunc   draw,
+                             gpointer                user_data,
+                             GError                **error)
+{
+    RenderTexture2D target;
+    Image image;
+    gboolean opened = FALSE;
+    gboolean ok;
+    guint frame;
+
+    g_return_val_if_fail (path != NULL, FALSE);
+    g_return_val_if_fail (n_frames >= 1, FALSE);
+    g_return_val_if_fail (width > 0 && height > 0, FALSE);
+    g_return_val_if_fail (draw != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    if (!IsWindowReady ())
+    {
+        const gchar *display = g_getenv ("DISPLAY");
+        const gchar *wayland = g_getenv ("WAYLAND_DISPLAY");
+
+        /* raylib aborts the process when GLFW finds no display at all */
+        if ((display == NULL || *display == '\0') && (wayland == NULL || *wayland == '\0'))
+        {
+            g_set_error (error, LRG_PHOTO_MODE_ERROR, LRG_PHOTO_MODE_ERROR_CAPTURE,
+                         "no window and no display to open one on (run under Xvfb, "
+                         "for example build-aux/xrun.sh)");
+            return FALSE;
+        }
+        SetConfigFlags (FLAG_WINDOW_HIDDEN);
+        InitWindow (width, height, "libregnum screenshot");
+        if (!IsWindowReady ())
+        {
+            g_set_error (error, LRG_PHOTO_MODE_ERROR, LRG_PHOTO_MODE_ERROR_CAPTURE,
+                         "could not open a hidden window for the screenshot");
+            return FALSE;
+        }
+        opened = TRUE;
+    }
+
+    target = LoadRenderTexture (width, height);
+    if (target.id == 0)
+    {
+        g_set_error (error, LRG_PHOTO_MODE_ERROR, LRG_PHOTO_MODE_ERROR_CAPTURE,
+                     "could not create a %dx%d render texture", width, height);
+        ok = FALSE;
+        goto out;
+    }
+
+    /* every frame is presented too, so GL state and frame timing are what
+     * an application's own loop has */
+    for (frame = 0; frame < n_frames; frame++)
+    {
+        BeginDrawing ();
+        BeginTextureMode (target);
+        ClearBackground (BLACK);
+        draw (frame, 1.0f / 60.0f, user_data);
+        EndTextureMode ();
+        EndDrawing ();
+    }
+
+    image = LoadImageFromTexture (target.texture);
+    UnloadRenderTexture (target);
+    if (image.data == NULL)
+    {
+        g_set_error (error, LRG_PHOTO_MODE_ERROR, LRG_PHOTO_MODE_ERROR_CAPTURE,
+                     "could not read the frame back");
+        ok = FALSE;
+        goto out;
+    }
+    /* GL stores the bottom row first */
+    ImageFlipVertical (&image);
+    ImageFormat (&image, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    ok = lrg_screenshot_write_png (path, image.data, image.width, image.height,
+                                   image.width * 4, error);
+    UnloadImage (image);
+
+out:
+    if (opened)
+    {
+        /*
+         * raylib keeps config flags after CloseWindow(), so the hidden
+         * flag set above would make the application's own next window
+         * invisible.  Clearing it maps the window, but it is destroyed
+         * before anything is drawn into it.
+         */
+        ClearWindowState (FLAG_WINDOW_HIDDEN);
+        CloseWindow ();
+    }
+    return ok;
 }

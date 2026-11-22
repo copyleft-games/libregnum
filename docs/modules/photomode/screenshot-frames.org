@@ -1,0 +1,56 @@
+#+title: Screenshots after N frames
+#+description: lrg_screenshot_after_frames() and lrg_screenshot_write_png(): render a number of frames offscreen at a fixed step and save the last as a PNG, with a hidden window when there is none
+#+created: 2026-11-21
+
+* Screenshots after N frames
+:PROPERTIES:
+:CUSTOM_ID: screenshot-frames
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Photo mode]] > Screenshots after N frames
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: screenshot-frames-overview
+:END:
+Tests, doc images, thumbnail bakers and "render this map to a picture" tools all want the same thing: draw a scene for a few frames so animations, fades and lazily built resources settle, then save the last frame. Every example used to carry its own =--screenshot FILE --frames N= loop. Since 0.11.0 =src/photomode/lrg-screenshot.h= has it once:
+
+#+begin_src c
+static void
+draw (guint frame, gfloat delta, gpointer user_data)
+{
+	Scene *scene = user_data;
+
+	scene_update (scene, delta);
+	lrg_camera_begin (LRG_CAMERA (scene->camera));
+	scene_draw (scene);
+	lrg_camera_end (LRG_CAMERA (scene->camera));
+}
+
+lrg_screenshot_after_frames ("office.png", 30, 1920, 1080, draw, scene, &error);
+#+end_src
+
+** lrg_screenshot_after_frames()
+:PROPERTIES:
+:CUSTOM_ID: screenshot-after-frames
+:END:
+=lrg_screenshot_after_frames()= renders =n_frames= frames into a render texture of exactly =width= x =height=, calling the =LrgScreenshotDrawFunc= for each with the frame index and a fixed step of 1/60 s, inside a texture mode cleared to black. Every frame is presented too (=BeginDrawing()= / =EndDrawing()=), so GL state and frame timing match an application's own loop. The last frame is read back, flipped to top-down rows (GL stores the bottom row first; the test checks a square drawn top-left lands top-left) and written as a PNG.
+
+Nothing depends on the wall clock, so the same scene gives the same picture every run.
+
+With no window open, a /hidden/ window is opened for the duration and closed afterwards (raylib remembers the hidden flag after =CloseWindow()=, so it is cleared again before closing; the application's own next window is visible). That still needs a display server: without =DISPLAY= or =WAYLAND_DISPLAY= the call fails with =LRG_PHOTO_MODE_ERROR_CAPTURE= instead of letting GLFW abort the process. On a server or in CI run under Xvfb, for example through =build-aux/xrun.sh=. With a window already open, it is used and left open.
+
+Errors are in =LRG_PHOTO_MODE_ERROR=: =LRG_PHOTO_MODE_ERROR_CAPTURE= (no GL context, no render texture, no read-back) and =LRG_PHOTO_MODE_ERROR_SAVE= (the file).
+
+** lrg_screenshot_write_png()
+:PROPERTIES:
+:CUSTOM_ID: screenshot-write-png
+:END:
+=lrg_screenshot_write_png()= writes top-down RGBA8 rows with any stride to a PNG with no GL at all: a software renderer's output, a frame received over the [[file:../remote/frame-protocol.org][frame protocol]], a generated test image. The file is a PNG whatever its extension, and a write failure says why. A stride smaller than a row is =LRG_PHOTO_MODE_ERROR_INVALID_FORMAT=.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: screenshot-frames-tests
+:END:
+=tests/test-screenshot-frames.c=: a padded image written and read back, both error codes; with a display, three frames rendered with the hidden window opened and closed, the delta and frame count, the orientation and that the last frame is the one saved; =LrgFrameExport= rendering through its render texture to a receiver, right way up, and resizing; the helper leaving an existing window open. Without a display the GPU parts check the clean refusals and skip.

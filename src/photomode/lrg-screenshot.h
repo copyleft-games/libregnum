@@ -279,4 +279,86 @@ GHashTable *
 lrg_screenshot_read_png_metadata (const gchar  *path,
                                   GError      **error);
 
+/* ==========================================================================
+ * Rendering a number of frames, then a PNG (0.11.0)
+ * ========================================================================== */
+
+/**
+ * LrgScreenshotDrawFunc:
+ * @frame: the frame being drawn, from 0
+ * @delta: the fixed time step, 1/60 s
+ * @user_data: data passed to lrg_screenshot_after_frames()
+ *
+ * Draws one frame (update the world by @delta first if it animates).
+ * It is called inside a texture mode the size of the screenshot, after
+ * the target has been cleared to black: draw as on screen, cameras
+ * included.
+ *
+ * Since: 0.11.0
+ */
+typedef void (*LrgScreenshotDrawFunc) (guint    frame,
+                                       gfloat   delta,
+                                       gpointer user_data);
+
+/**
+ * lrg_screenshot_after_frames:
+ * @path: the PNG to write
+ * @n_frames: how many frames to draw (>= 1); the last one is saved
+ * @width: screenshot width in pixels (> 0)
+ * @height: screenshot height in pixels (> 0)
+ * @draw: (scope call) (closure user_data): draws each frame
+ * @user_data: data for @draw
+ * @error: (nullable): return location for an error
+ *
+ * Renders @n_frames frames offscreen at a fixed 1/60 s step and writes
+ * the last one to @path: the scripted screenshot of a test, a doc image
+ * or a thumbnail baker, reproducible because no frame depends on the
+ * wall clock.  The frames go to a render texture of exactly @width x
+ * @height, whatever the window size.  With no window open, a hidden one
+ * is opened for the duration and closed again (that still needs a
+ * display: run under Xvfb on a server, see build-aux/xrun.sh).
+ *
+ * Returns: %TRUE when the PNG was written; %FALSE with
+ *   %LRG_PHOTO_MODE_ERROR_CAPTURE when no GL context could be had or the
+ *   frame could not be read, %LRG_PHOTO_MODE_ERROR_SAVE when the file
+ *   could not be written
+ *
+ * Since: 0.11.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_screenshot_after_frames (const gchar            *path,
+                             guint                   n_frames,
+                             gint                    width,
+                             gint                    height,
+                             LrgScreenshotDrawFunc   draw,
+                             gpointer                user_data,
+                             GError                **error);
+
+/**
+ * lrg_screenshot_write_png:
+ * @path: the PNG to write
+ * @rgba: (array) (element-type guint8): top-down RGBA8 rows
+ * @width: width in pixels (> 0)
+ * @height: height in pixels (> 0)
+ * @stride: bytes from one row to the next (>= @width x 4)
+ * @error: (nullable): return location for an error
+ *
+ * Writes pixels to a PNG without any GL: frames from a software
+ * renderer, a received remote frame, a test image.
+ *
+ * Returns: %TRUE on success; %FALSE with %LRG_PHOTO_MODE_ERROR_SAVE or
+ *   %LRG_PHOTO_MODE_ERROR_INVALID_FORMAT
+ *
+ * Since: 0.11.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_screenshot_write_png (const gchar   *path,
+                          const guint8  *rgba,
+                          gint           width,
+                          gint           height,
+                          gint           stride,
+                          GError       **error);
+
 G_END_DECLS

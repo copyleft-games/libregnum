@@ -123,6 +123,7 @@ TEST_SOURCES := \
 	test-slot-set.c \
 	test-beam.c \
 	test-frame-export.c \
+	test-screenshot-frames.c \
 	test-sprite-animation.c \
 	test-lightmap-bake.c \
 	test-probe-grid.c \

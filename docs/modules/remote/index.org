@@ -88,4 +88,4 @@ while (running)
 :PROPERTIES:
 :CUSTOM_ID: remote-tests
 :END:
-=tests/test-frame-export.c= runs both ends in one process over a =socketpair()=: memfd and inline frames with a padded stride, the memfd's seals read back by hand, every input message into an =LrgInputSoftware= and the signals, an unknown message type skipped, back-pressure (frames dropped, a partial frame reassembled, nothing torn), each protocol error, and both peers closing.
+=tests/test-frame-export.c= runs both ends in one process over a =socketpair()=: memfd and inline frames with a padded stride, the memfd's seals read back by hand, every input message into an =LrgInputSoftware= and the signals, an unknown message type skipped, back-pressure (frames dropped, a partial frame reassembled, nothing torn), each protocol error, and both peers closing. =tests/test-screenshot-frames.c= renders through =lrg_frame_export_begin()= / =lrg_frame_export_end()= to a receiver and checks the frame arrives right way up and resizes, when a display is available.
