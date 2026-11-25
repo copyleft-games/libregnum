@@ -11,6 +11,7 @@
 #include <raylib.h>
 #include <rlgl.h>
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 #define BLOOM_MAX_LEVELS (8)
 
@@ -33,7 +34,7 @@
  * image size. Targets are RGBA16F when the driver can render to them.
  */
 static const gchar bloom_prefilter_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "uniform sampler2D texture0;\n"
     "uniform vec2 texel;\n"
@@ -56,7 +57,7 @@ static const gchar bloom_prefilter_fs[] =
     "}\n";
 
 static const gchar bloom_down_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "uniform sampler2D texture0;\n"
     "uniform vec2 texel;\n"
@@ -73,7 +74,7 @@ static const gchar bloom_down_fs[] =
     "}\n";
 
 static const gchar bloom_up_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "uniform sampler2D texture0;\n"
     "uniform vec2 texel;\n"
@@ -92,7 +93,7 @@ static const gchar bloom_up_fs[] =
     "}\n";
 
 static const gchar bloom_composite_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "uniform sampler2D texture0;\n"
     "uniform sampler2D bloomMap;\n"

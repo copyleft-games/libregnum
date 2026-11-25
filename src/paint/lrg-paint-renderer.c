@@ -39,6 +39,7 @@
 #include "lrg-paint-renderer.h"
 #include "lrg-paint-private.h"
 #include "../lrg-log.h"
+#include "graphics/lrg-glsl-private.h"
 
 /* Initial and minimum instance capacity of the GPU buffer */
 #define MIN_CAPACITY (1024)
@@ -73,7 +74,7 @@
 #define SLOT_BLUR     (2)
 
 static const gchar *vertex_source =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"layout(location = 0) in vec2 a_corner;\n"
 	"layout(location = 1) in vec4 i_rect;\n"
 	"layout(location = 2) in vec4 i_radii;\n"
@@ -138,7 +139,7 @@ static const gchar *vertex_source =
  * the helpers effects are written with (the "effect library").
  */
 static const gchar *fragment_head =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec2 v_pos;\n"
 	"flat in vec4 v_rect;\n"
 	"flat in vec4 v_radii;\n"
@@ -638,7 +639,7 @@ static const gchar *fragment_main =
  * radius comes from the number of levels and the tap spread.
  */
 static const gchar *blur_vertex_source =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"layout(location = 0) in vec2 a_corner;\n"
 	"out vec2 v_uv;\n"
 	"void main ()\n"
@@ -650,7 +651,7 @@ static const gchar *blur_vertex_source =
 	"}\n";
 
 static const gchar *blur_fragment_source =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec2 v_uv;\n"
 	"uniform sampler2D u_src;\n"
 	"uniform vec2 u_step;\n"

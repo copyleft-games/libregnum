@@ -26,6 +26,7 @@
 #include "lrg-camera.h"
 #include "../core/lrg-math3d.h"
 #include "lrg-lod-group.h"
+#include "graphics/lrg-glsl-private.h"
 
 /* raylib's PIXELFORMAT_DEPTH_COMPONENT_24BIT (not in rlgl's enum names
  * we use elsewhere); only stored in the Texture struct for bookkeeping */
@@ -79,7 +80,7 @@ static GParamSpec *properties[N_PROPS];
 /* GLSL 330 with raylib's default attribute and matrix names, so DrawMesh()
  * feeds mvp, matModel, matView and matNormal. */
 static const gchar prepass_vs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec3 vertexPosition;\n"
 	"in vec2 vertexTexCoord;\n"
 	"in vec3 vertexNormal;\n"
@@ -98,7 +99,7 @@ static const gchar prepass_vs[] =
 /* Writes the view normal (towards the viewer on back faces) and applies
  * the alpha cutoff to the albedo map times the material colour. */
 static const gchar prepass_fs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec2 fragTexCoord;\n"
 	"in vec3 fragViewNormal;\n"
 	"uniform sampler2D texture0;\n"

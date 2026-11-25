@@ -29,6 +29,7 @@
 #include "weather/lrg-cloud-layer-private.h"
 #include "../lrg-log.h"
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 /* real radius of the drawn deck around the eye, metres */
 #define CLOUD_DRAW_RADIUS (12000.0f)
@@ -78,7 +79,7 @@ G_DEFINE_FINAL_TYPE_WITH_CODE (LrgCloudLayer, lrg_cloud_layer, G_TYPE_OBJECT,
                                                       lrg_cloud_layer_prewarmable_init))
 
 static const gchar cloud_vs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 vertexPosition;\n"
     "in vec2 vertexTexCoord;\n"
     "in vec4 vertexColor;\n"
@@ -94,7 +95,7 @@ static const gchar cloud_vs[] =
 /* vertexColor.r carries the slice's height through the deck (0 base,
  * 1 top) and .a the slice alpha */
 static const gchar cloud_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragReal;\n"
     "in vec4 fragColor;\n"
     "uniform vec2 noiseEye;\n"
@@ -132,7 +133,7 @@ static const gchar cloud_fs[] =
 #define VOLUME_SIGMA (3.0f)
 
 static const gchar volume_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragReal;\n"
     "in vec4 fragColor;\n"
     "uniform vec2 noiseEye;\n"

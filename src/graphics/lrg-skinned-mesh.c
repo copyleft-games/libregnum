@@ -33,6 +33,7 @@
 #include "animation/lrg-bone.h"
 #include "animation/lrg-bone-pose.h"
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 /* raylib binds up to MAX_MATERIAL_MAPS (12) maps; keep headroom. */
 #define SKIN_MATERIAL_MAPS (16)
@@ -102,7 +103,7 @@ G_DEFINE_FINAL_TYPE_WITH_CODE (LrgSkinnedMesh, lrg_skinned_mesh, G_TYPE_OBJECT,
 /* ------------------------------------------------------------------------ */
 
 static const gchar skin_vertex_source[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 vertexPosition;\n"
     "in vec2 vertexTexCoord;\n"
     "in vec3 vertexNormal;\n"
@@ -145,7 +146,7 @@ static const gchar skin_vertex_source[] =
     "}\n";
 
 static const gchar skin_fragment_source[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "in vec3 fragNormal;\n"

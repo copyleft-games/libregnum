@@ -21,6 +21,7 @@
 #include "lrg-shadow-renderer.h"
 #include "lrg-shadow-renderer-private.h"
 #include "../core/lrg-math3d.h"
+#include "graphics/lrg-glsl-private.h"
 
 #define FOG_PI (3.14159265358979323846)
 
@@ -359,7 +360,7 @@ lrg_volumetric_fog_sample (LrgVolumetricFog *self,
  * ========================================================================== */
 
 static const gchar *fullscreen_vs =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec3 vertexPosition;\n"
 	"out vec2 fragUv;\n"
 	"void main() {\n"
@@ -377,7 +378,7 @@ static const gchar *fullscreen_vs =
 	"}\n"
 
 static const gchar *march_fs_head =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec2 fragUv;\n"
 	"out vec4 finalColor;\n"
 	FOG_COMMON_GLSL
@@ -427,7 +428,7 @@ static const gchar *march_fs_body =
  * bilinear position and by how close their surface distance is to this
  * pixel's */
 static const gchar *composite_fs =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec2 fragUv;\n"
 	"out vec4 finalColor;\n"
 	FOG_COMMON_GLSL

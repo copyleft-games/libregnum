@@ -49,6 +49,7 @@
 #include "lighting/lrg-shadow-renderer-private.h"
 #include "weather/lrg-ground-overlay-private.h"
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 /* Below this horizontal distance the camera is "above" the billboard and
  * the axis-locked facing is undefined; a fixed basis is used instead. */
@@ -230,7 +231,7 @@ G_DEFINE_TYPE_WITH_CODE (LrgBillboardBatch, lrg_billboard_batch, G_TYPE_OBJECT,
  * light that comes from the sun (gaps G8): the receiving fragment stage
  * reads both back. */
 static const gchar cutout_vs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 vertexPosition;\n"
     "in vec2 vertexTexCoord;\n"
     "in vec3 vertexNormal;\n"
@@ -252,7 +253,7 @@ static const gchar cutout_vs[] =
     "}\n";
 
 static const gchar cutout_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 fragPosition;\n"
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
@@ -285,7 +286,7 @@ static const gchar cutout_fs[] =
  * the quad's centre (lit_tint() in GLSL); matModel is the rlgl
  * transform the immediate path applies on the CPU. */
 static const gchar gpu_vs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 vertexPosition;\n"
     "in vec2 vertexTexCoord;\n"
     "in vec4 vertexColor;\n"
@@ -365,7 +366,7 @@ static const gchar gpu_vs[] =
  * blend of its corners'.  Swaying quads (plants) take snow on their upper
  * corners, lit as the quad is. */
 static const gchar gpu_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 fragPosition;\n"
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
@@ -386,7 +387,7 @@ static const gchar gpu_fs[] =
  * caster shader does: the window depth (mode 0) or the distance to the
  * light over its radius (mode 1). */
 static const gchar cast_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 fragPosition;\n"
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"

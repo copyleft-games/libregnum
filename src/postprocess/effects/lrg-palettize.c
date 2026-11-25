@@ -13,6 +13,7 @@
 #include <raylib.h>
 #include <rlgl.h>
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 /**
  * SECTION:lrg-palettize
@@ -54,7 +55,7 @@ static const guint8 bayer8[BAYER_CELLS] = {
  * one above (gl_FragCoord counts rows from the bottom, so the pattern is
  * mirrored vertically against the CPU's rows: the same thresholds) */
 static const gchar palettize_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "uniform sampler2D texture0;\n"

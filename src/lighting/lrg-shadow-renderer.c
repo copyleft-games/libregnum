@@ -42,6 +42,7 @@
 #include "graphics/lrg-light-set-private.h"
 #include "core/lrg-prewarm.h"
 #include "graphics/lrg-lod-group.h"
+#include "graphics/lrg-glsl-private.h"
 
 /* how far behind the fitted sphere the light camera starts, so tall
  * casters outside the view still throw their shadow into it */
@@ -147,7 +148,7 @@ G_DEFINE_ENUM_TYPE (LrgShadowPassKind, lrg_shadow_pass_kind,
  * diffuse map; mode 0 writes the window depth (cascades), mode 1 the
  * distance to the light over its radius (cube faces). */
 static const gchar caster_vs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 vertexPosition;\n"
     "in vec2 vertexTexCoord;\n"
     "uniform mat4 mvp;\n"
@@ -161,7 +162,7 @@ static const gchar caster_vs[] =
     "}\n";
 
 static const gchar caster_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "in vec3 fragPosition;\n"
     "uniform sampler2D texture0;\n"

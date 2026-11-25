@@ -34,6 +34,7 @@
 #include "weather/lrg-cloud-layer-private.h"
 #include "../lrg-log.h"
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 struct _LrgGroundOverlay
 {
@@ -61,7 +62,7 @@ G_DEFINE_FINAL_TYPE_WITH_CODE (LrgGroundOverlay, lrg_ground_overlay, G_TYPE_OBJE
  * already in matModel (raylib multiplies it in), the fragments through
  * the shared evaluation */
 static const gchar overlay_vs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 vertexPosition;\n"
     "in vec3 vertexNormal;\n"
     "in vec2 vertexTexCoord;\n"
@@ -80,7 +81,7 @@ static const gchar overlay_vs[] =
     "}\n";
 
 static const gchar overlay_fs_head[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 fragLocal;\n"
     "in vec3 fragNormal;\n"
     "in vec2 fragUV;\n"

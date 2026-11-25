@@ -52,6 +52,7 @@
 #include "lrg-hash-noise-private.h"
 #include "../core/lrg-data-loader.h"
 #include "../world3d/lrg-world3d-renderer.h"
+#include "graphics/lrg-glsl-private.h"
 
 /* ==========================================================================
  * Enums and boxed types
@@ -189,7 +190,7 @@ typedef struct
 } LayerMesh;
 
 static const gchar foliage_vs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec3 vertexPosition;\n"
 	"in vec2 vertexTexCoord;\n"
 	"in vec3 vertexNormal;\n"
@@ -228,7 +229,7 @@ static const gchar foliage_vs[] =
 	"}\n";
 
 static const gchar foliage_fs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec2 fragTexCoord;\n"
 	"in vec4 fragColor;\n"
 	"in vec3 fragLight;\n"

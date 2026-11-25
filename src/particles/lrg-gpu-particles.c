@@ -41,6 +41,7 @@
 #include "../graphics/lrg-camera.h"
 #include "../core/lrg-prewarm.h"
 #include "../core/lrg-prewarmable.h"
+#include "graphics/lrg-glsl-private.h"
 
 #define FPP            (LRG_GPU_PARTICLES_FLOATS_PER_PARTICLE)
 #define TABLE          (LRG_GPU_PARTICLES_TABLE_SIZE)
@@ -334,7 +335,7 @@ gpu_gl_load (void)
  * ========================================================================== */
 
 static const gchar update_vs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"layout(location = 0) in vec4 a_pos_age;\n"
 	"layout(location = 1) in vec4 a_vel_life;\n"
 	"layout(location = 2) in vec4 a_misc;\n"
@@ -488,12 +489,12 @@ static const gchar update_vs[] =
 /* rasterisation is off during the update; a fragment stage keeps strict
  * drivers happy */
 static const gchar update_fs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"out vec4 frag;\n"
 	"void main () { frag = vec4 (0.0); }\n";
 
 static const gchar render_vs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"layout(location = 0) in vec2 a_corner;\n"
 	"layout(location = 1) in vec4 a_pos_age;\n"
 	"layout(location = 2) in vec4 a_vel_life;\n"
@@ -560,7 +561,7 @@ static const gchar render_vs[] =
 	"}\n";
 
 static const gchar render_fs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec4 v_color;\n"
 	"in vec2 v_uv;\n"
 	"in vec2 v_corner;\n"

@@ -26,6 +26,7 @@
 #include "../core/lrg-asset-manager.h"
 #include "../core/lrg-math3d.h"
 #include "../graphics/lrg-light-set-private.h"
+#include "graphics/lrg-glsl-private.h"
 
 #define ENV_PI           (3.14159265358979323846)
 #define ENV_CHAIN_MAX    (8)
@@ -1826,7 +1827,7 @@ lrg_environment_compute_brdf_lut (guint  size,
  * ========================================================================== */
 
 #define GLSL_FULLSCREEN_VS \
-	"#version 330\n" \
+	LRG_GLSL_HEADER \
 	"in vec3 vertexPosition;\n" \
 	"out vec2 fragUv;\n" \
 	"void main() {\n" \
@@ -1849,7 +1850,7 @@ lrg_environment_compute_brdf_lut (guint  size,
 
 /* copy / downsample / decode / readback of one cube face */
 static const gchar *copy_fs =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec2 fragUv;\n"
 	"out vec4 finalColor;\n"
 	"uniform samplerCube srcMap;\n"
@@ -1866,7 +1867,7 @@ static const gchar *copy_fs =
 /* GGX prefilter with per-sample source level (Karis' filtered
  * importance sampling) over a chain of box-reduced cubemaps */
 static const gchar *prefilter_fs =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec2 fragUv;\n"
 	"out vec4 finalColor;\n"
 	"uniform samplerCube chain0;\n"
@@ -2620,7 +2621,7 @@ lrg_environment_read_specular_face (LrgEnvironment *self,
  * ========================================================================== */
 
 static const gchar *sky_vs =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec3 vertexPosition;\n"
 	"uniform mat4 mvp;\n"
 	"uniform vec3 skyEye;\n"
@@ -2631,7 +2632,7 @@ static const gchar *sky_vs =
 	"}\n";
 
 static const gchar *sky_fs =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec3 fragDir;\n"
 	"out vec4 finalColor;\n"
 	"uniform samplerCube skyMap;\n"
