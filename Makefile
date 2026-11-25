@@ -2484,6 +2484,13 @@ else
 	$(call print_warning,"Tests disabled (BUILD_TESTS=0)")
 endif
 
+# Native no-regression gate: `make -Bn` for all, tests and examples must print
+# the same commands as BASE (default: the merge-base with master).  Needs a
+# native `make all` first.  See docs/cross-compile.org, "Testing cross builds".
+.PHONY: test-native-unchanged
+test-native-unchanged:
+	@bash tests/test-native-unchanged.sh $(if $(BASE),--base $(BASE))
+
 # Explicit binding check: requires python3-gobject and the generated typelib.
 GI_PYTHON ?= /usr/bin/python3
 .PHONY: test-followups-gi
