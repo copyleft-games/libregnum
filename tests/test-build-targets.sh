@@ -110,6 +110,37 @@ do
 	bs_eq "${pair%%:*} libraries under its dir" "build/release-${pair#*:}/lib" "$(bs_var LIBOUTDIR "${AMD}" "${pair%%:*}")"
 done
 
+echo '== bundled dependencies'
+# Native: the submodules' own build directories, exactly as before cross
+# targets existed (cmacs links against these paths)
+R="${BS_ROOT}"
+bs_eq 'native graylib archive' "${R}/deps/graylib/build/lib/libgraylib.a" "$(bs_var GRAYLIB_STATIC "${AMD}")"
+bs_eq 'native raylib archive (in the submodule)' "${R}/deps/graylib/deps/raylib/src/libraylib.a" "$(bs_var RAYLIB_STATIC "${AMD}")"
+bs_eq 'native yaml-glib archive' "${R}/deps/yaml-glib/build/release/libyaml-glib-1.0.a" "$(bs_var YAMLGLIB_STATIC "${AMD}")"
+bs_eq 'native debug yaml-glib archive' "${R}/deps/yaml-glib/build/debug/libyaml-glib-1.0.a" "$(bs_var YAMLGLIB_STATIC "${AMD}" DEBUG=1)"
+bs_eq 'native crispy archive' "${R}/deps/crispy/build/release/libcrispy.a" "$(bs_var CRISPY_STATIC "${AMD}")"
+bs_eq 'native graylib flags are the shared ones' "$(bs_var DEP_BUILD_FLAGS "${AMD}")" "$(bs_var GRAYLIB_MAKE_FLAGS "${AMD}")"
+bs_not_contains 'native graylib gets no BUILDDIR' 'BUILDDIR=' "$(bs_var GRAYLIB_MAKE_FLAGS "${AMD}")"
+# Cross: everything under the target's own build directory
+for pair in WINDOWS=1:release-windows-amd64 ARM64=1:release-arm64 'ANDROID=1 DEBUG=1':debug-android-arm64
+do
+	read -r -a args <<< "${pair%%:*}"
+	d="${R}/build/${pair#*:}/deps"
+	bs_eq "${pair%%:*} graylib archive" "${d}/graylib/lib/libgraylib.a" "$(bs_var GRAYLIB_STATIC "${AMD}" "${args[@]}")"
+	bs_eq "${pair%%:*} raylib archive" "${d}/raylib/libraylib.a" "$(bs_var RAYLIB_STATIC "${AMD}" "${args[@]}")"
+	bs_contains "${pair%%:*} yaml-glib archive" "${d}/yaml-glib/" "$(bs_var YAMLGLIB_STATIC "${AMD}" "${args[@]}")"
+	bs_contains "${pair%%:*} crispy archive" "${d}/crispy/" "$(bs_var CRISPY_STATIC "${AMD}" "${args[@]}")"
+	flags="$(bs_var GRAYLIB_MAKE_FLAGS "${AMD}" "${args[@]}")"
+	bs_contains "${pair%%:*} graylib BUILDDIR" "BUILDDIR=${d}/graylib" "${flags}"
+	bs_contains "${pair%%:*} graylib RAYLIB_BUILD_DIR" "RAYLIB_BUILD_DIR=${d}/raylib" "${flags}"
+	bs_contains "${pair%%:*} yaml-glib BUILDDIR" "BUILDDIR=${d}/yaml-glib" "$(bs_var YAMLGLIB_MAKE_FLAGS "${AMD}" "${args[@]}")"
+	bs_contains "${pair%%:*} crispy BUILDDIR" "BUILDDIR=${d}/crispy" "$(bs_var CRISPY_MAKE_FLAGS "${AMD}" "${args[@]}")"
+done
+bs_contains 'windows DEBUG reaches the deps' 'DEBUG=1' "$(bs_var GRAYLIB_MAKE_FLAGS "${AMD}" WINDOWS=1 DEBUG=1)"
+bs_eq 'windows links graylib from its own dir' \
+	"-L${R}/build/release-windows-amd64/deps/graylib/lib" \
+	"$(bs_var ALL_LIBS "${AMD}" WINDOWS=1 | tr ' ' '\n' | grep -m1 -- '-L.*graylib')"
+
 echo '== host equal to target'
 expect_target 'ARM64=1 on an aarch64 host is native' \
 	linux-arm64 0 '' build/release linux -- "${ARM}" ARM64=1
@@ -144,7 +175,7 @@ do
 	for dir in tests examples bench
 	do
 		got="$(printf '%s' "${BS_AUDIT_MK}" | bs_make -s -C "${BS_ROOT}/${dir}" -f Makefile -f - \
-			lrg-audit-vars LRG_AUDIT_VARS=BUILDDIR PKG_CONFIG=: "${AMD}" ${a1:+"${a1}"} ${a2:+"${a2}"} 2>/dev/null \
+			lrg-audit-vars LRG_AUDIT_VARS=BUILDDIR PKG_CONFIG=: NO_BUILD_CONTAINER=1 LRG_TOOLCHAIN_CHECK=true "${AMD}" ${a1:+"${a1}"} ${a2:+"${a2}"} 2>/dev/null \
 			| sed -n 's/^BUILDDIR=//p')"
 		bs_eq "${dir}/ BUILDDIR with '${a1} ${a2}'" "${want}" "${got}"
 	done

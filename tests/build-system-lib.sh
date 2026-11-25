@@ -66,7 +66,7 @@ bs_vars () {
 	fi
 
 	printf '%s' "${BS_AUDIT_MK}" | bs_make -s -C "${BS_ROOT}" -f Makefile -f - \
-		lrg-audit-vars LRG_AUDIT_VARS="${vars}" PKG_CONFIG=: "$@" 2>/dev/null
+		lrg-audit-vars LRG_AUDIT_VARS="${vars}" PKG_CONFIG=: NO_BUILD_CONTAINER=1 LRG_TOOLCHAIN_CHECK=true "$@" 2>/dev/null
 }
 
 bs_var () {
@@ -157,7 +157,7 @@ bs_fails () {
 	shift 2
 
 	out="$(printf '%s' "${BS_AUDIT_MK}" | bs_make -s -C "${BS_ROOT}" -f Makefile -f - \
-		lrg-audit-vars LRG_AUDIT_VARS=BUILDDIR "$@" 2>&1)" || rc=$?
+		lrg-audit-vars LRG_AUDIT_VARS=BUILDDIR NO_BUILD_CONTAINER=1 "$@" 2>&1)" || rc=$?
 	if [[ "${rc}" -eq 0 ]]
 	then
 		bs_failed "${name}" "expected make to fail, it succeeded: ${out}"

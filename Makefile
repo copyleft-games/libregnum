@@ -2249,12 +2249,13 @@ endif
 
 # Pass cross-compilation settings to dependencies
 ifeq ($(TARGET_PLATFORM),windows)
-    GRAYLIB_LIB := $(GRAYLIB_DIR)/build/lib/graylib.dll
-    YAMLGLIB_LIB := $(YAMLGLIB_DIR)/build/$(DEP_BUILD_TYPE)/yaml-glib-1.0.dll
-    DEP_BUILD_FLAGS := WINDOWS=1
+    GRAYLIB_LIB := $(GRAYLIB_BUILDDIR)/lib/graylib.dll
+    YAMLGLIB_LIB := $(YAMLGLIB_BUILDDIR)/$(DEP_BUILD_TYPE)/yaml-glib-1.0.dll
+    # DEBUG reaches yaml-glib, whose archive directory is keyed on it
+    DEP_BUILD_FLAGS := WINDOWS=1 $(if $(filter 1,$(DEBUG)),DEBUG=1)
 else
-    GRAYLIB_LIB := $(GRAYLIB_DIR)/build/lib/libgraylib.a
-    YAMLGLIB_LIB := $(YAMLGLIB_DIR)/build/$(DEP_BUILD_TYPE)/libyaml-glib-1.0.a
+    GRAYLIB_LIB := $(GRAYLIB_BUILDDIR)/lib/libgraylib.a
+    YAMLGLIB_LIB := $(YAMLGLIB_BUILDDIR)/$(DEP_BUILD_TYPE)/libyaml-glib-1.0.a
     # Forward DEBUG to the bundled deps (graylib/yaml-glib/mcp-glib) so a
     # `make DEBUG=1` libregnum also gets debug-instrumented graylib etc.
     # (they build to build/ regardless, so only the flags change).
@@ -2269,21 +2270,37 @@ endif
 # host-side backends.)
 DEP_DEBUG_FLAG := $(if $(filter debug,$(DEP_BUILD_TYPE)),DEBUG=1)
 
+# Each bundled dependency's make flags.  A cross target sends every one of
+# them to its own directory under $(BUILDDIR)/deps (GRAYLIB_BUILDDIR and
+# friends, config.mk) and adds whatever its profile needs the dependencies
+# to know (LRG_DEP_FLAGS: a toolchain, LRG_GRAYLIB_FLAGS: raylib's platform);
+# the native build passes exactly what it always did.
+ifeq ($(LRG_IS_CROSS),1)
+    GRAYLIB_MAKE_FLAGS := $(DEP_BUILD_FLAGS) $(LRG_DEP_FLAGS) BUILDDIR=$(GRAYLIB_BUILDDIR) \
+                          RAYLIB_BUILD_DIR=$(RAYLIB_BUILD_DIR) $(LRG_GRAYLIB_FLAGS)
+    YAMLGLIB_MAKE_FLAGS := $(DEP_BUILD_FLAGS) $(LRG_DEP_FLAGS) BUILDDIR=$(YAMLGLIB_BUILDDIR)
+    CRISPY_MAKE_FLAGS := $(DEP_DEBUG_FLAG) $(LRG_DEP_FLAGS) BUILDDIR=$(CRISPY_BUILDDIR)
+else
+    GRAYLIB_MAKE_FLAGS := $(DEP_BUILD_FLAGS)
+    YAMLGLIB_MAKE_FLAGS := $(DEP_BUILD_FLAGS)
+    CRISPY_MAKE_FLAGS := $(DEP_DEBUG_FLAG)
+endif
+
 # graylib/yaml-glib/crispy get merged into liblibregnum.a (ADDLIB below),
 # so their sub-makes always run and decide incrementality themselves.  An
 # existence check alone left stale archives behind when their sources
 # changed, which surfaced as undefined references at the final link.
 deps-graylib:
-	@$(MAKE) -C $(GRAYLIB_DIR) $(DEP_BUILD_FLAGS)
+	@$(MAKE) -C $(GRAYLIB_DIR) $(GRAYLIB_MAKE_FLAGS)
 
 deps-yamlglib:
-	@$(MAKE) -C $(YAMLGLIB_DIR) $(DEP_BUILD_FLAGS)
+	@$(MAKE) -C $(YAMLGLIB_DIR) $(YAMLGLIB_MAKE_FLAGS)
 
 # Crispy: the vendored compiled-C scripting backend (deps/crispy submodule).
 # Built standalone here so libregnum is self-contained; its `lib' target
 # produces build/$(DEP_BUILD_TYPE)/libcrispy.a (debug when DEBUG=1).
 deps-crispy:
-	@$(MAKE) -C $(CRISPY_DIR) $(DEP_DEBUG_FLAG) lib
+	@$(MAKE) -C $(CRISPY_DIR) $(CRISPY_MAKE_FLAGS) lib
 
 # cad-glib: the bundled parametric CAD kernel (deps/cad-glib submodule),
 # built standalone so a CAD=1 libregnum is self-contained.  Builds its own
@@ -2314,8 +2331,13 @@ deps-mcp:
 endif
 
 deps-clean:
+ifeq ($(LRG_IS_CROSS),1)
+	$(MAKE) -C $(GRAYLIB_DIR) $(GRAYLIB_MAKE_FLAGS) clean raylib-clean
+	$(MAKE) -C $(YAMLGLIB_DIR) $(YAMLGLIB_MAKE_FLAGS) clean
+else
 	$(MAKE) -C $(GRAYLIB_DIR) clean
 	$(MAKE) -C $(YAMLGLIB_DIR) clean
+endif
 ifeq ($(MCP),1)
 	$(MAKE) -C $(MCP_GLIB_DIR) clean
 endif

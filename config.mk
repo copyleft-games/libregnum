@@ -714,13 +714,32 @@ DEP_LIBS := $(shell $(PKG_CONFIG) --libs zlib libpq) $(OPENSSL_LIBS) $(SQLITE_LI
 GRAYLIB_CFLAGS := -I$(GRAYLIB_DIR)/src -I$(GRAYLIB_DIR)/deps/raylib/src
 YAMLGLIB_CFLAGS := -I$(YAMLGLIB_DIR)/src
 
+# Where the bundled dependencies build.  Natively: inside each submodule, as
+# always (cmacs links against these paths).  A cross target builds its own
+# copies under its build directory, $(BUILDDIR)/deps/<name>, so targets
+# never overwrite each other's archives; the Makefile hands these
+# directories to the sub-makes (BUILDDIR=..., graylib's RAYLIB_BUILD_DIR=...).
+ifeq ($(LRG_IS_CROSS),1)
+    DEP_OUT           := $(PROJECT_ROOT)/$(BUILDDIR)/deps
+    GRAYLIB_BUILDDIR  := $(DEP_OUT)/graylib
+    RAYLIB_BUILD_DIR  := $(DEP_OUT)/raylib
+    YAMLGLIB_BUILDDIR := $(DEP_OUT)/yaml-glib
+    CRISPY_BUILDDIR   := $(DEP_OUT)/crispy
+else
+    DEP_OUT           :=
+    GRAYLIB_BUILDDIR  := $(GRAYLIB_DIR)/build
+    RAYLIB_BUILD_DIR  := $(GRAYLIB_DIR)/deps/raylib/src
+    YAMLGLIB_BUILDDIR := $(YAMLGLIB_DIR)/build
+    CRISPY_BUILDDIR   := $(CRISPY_DIR)/build
+endif
+
 # Static archives for embedding graylib, raylib, and yaml-glib into libregnum
-GRAYLIB_STATIC  := $(GRAYLIB_DIR)/build/lib/libgraylib.a
-RAYLIB_STATIC   := $(GRAYLIB_DIR)/deps/raylib/src/libraylib.a
+GRAYLIB_STATIC  := $(GRAYLIB_BUILDDIR)/lib/libgraylib.a
+RAYLIB_STATIC   := $(RAYLIB_BUILD_DIR)/libraylib.a
 # yaml-glib (its three-file Makefile) builds into build/<debug|release>/,
 # keyed on DEBUG like crispy: DEP_BUILD_FLAGS forwards DEBUG to it
-YAMLGLIB_STATIC := $(YAMLGLIB_DIR)/build/$(DEP_BUILD_TYPE)/libyaml-glib-1.0.a
-CRISPY_STATIC   := $(CRISPY_DIR)/build/$(DEP_BUILD_TYPE)/libcrispy.a
+YAMLGLIB_STATIC := $(YAMLGLIB_BUILDDIR)/$(DEP_BUILD_TYPE)/libyaml-glib-1.0.a
+CRISPY_STATIC   := $(CRISPY_BUILDDIR)/$(DEP_BUILD_TYPE)/libcrispy.a
 
 # =============================================================================
 # Composite Flags
@@ -842,8 +861,8 @@ ALL_LIBS := $(SANITIZER_LIBS)
 ifeq ($(TARGET_PLATFORM),windows)
     # Windows: link against import libraries for DLLs
     # Note: libregnum.dll requires graylib.dll and yaml-glib.dll at runtime
-    ALL_LIBS += -L$(GRAYLIB_DIR)/build/lib -lgraylib
-    ALL_LIBS += -L$(YAMLGLIB_DIR)/build/$(DEP_BUILD_TYPE) -lyaml-glib-1.0
+    ALL_LIBS += -L$(GRAYLIB_BUILDDIR)/lib -lgraylib
+    ALL_LIBS += -L$(YAMLGLIB_BUILDDIR)/$(DEP_BUILD_TYPE) -lyaml-glib-1.0
 else
     # Unix: embed graylib, raylib, and yaml-glib directly into libregnum (self-contained).
     # --whole-archive ensures all graylib/yaml-glib symbols are included.
