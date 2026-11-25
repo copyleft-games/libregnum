@@ -12,7 +12,9 @@
 #include "lrg-analytics-backend-http.h"
 #include "../lrg-log.h"
 
+#ifndef LRG_WITHOUT_SOUP
 #include <libsoup/soup.h>
+#endif
 #include <json-glib/json-glib.h>
 
 struct _LrgAnalyticsBackendHttp
@@ -221,6 +223,7 @@ take_request (LrgAnalyticsBackendHttp *self)
     return request;
 }
 
+#ifndef LRG_WITHOUT_SOUP
 /* Sleeps @ms on the sender thread, waking early on quit. Called with the
  * lock held. Returns FALSE when quitting. */
 static gboolean
@@ -239,10 +242,11 @@ sender_sleep (LrgAnalyticsBackendHttp *self,
 /* POSTs one request with its retries, on the sender thread. */
 static gboolean
 send_request (LrgAnalyticsBackendHttp  *self,
-              SoupSession              *session,
+              gpointer                  session_ptr,
               HttpRequest              *request,
               GError                  **error)
 {
+    SoupSession *session = session_ptr;
     guint status;
     guint retry;
     guint i;
@@ -323,14 +327,36 @@ send_request (LrgAnalyticsBackendHttp  *self,
 
     return FALSE;
 }
+#else /* LRG_WITHOUT_SOUP */
+/* Built without libsoup (SOUP=0, e.g. Android): events are still queued,
+ * batched and retried, but every send fails, so a batch stays queued like
+ * one an unreachable server refused (and flushing reports the error). */
+static gboolean
+send_request (LrgAnalyticsBackendHttp  *self,
+              gpointer                  session_ptr,
+              HttpRequest              *request,
+              GError                  **error)
+{
+    g_set_error (error,
+                 LRG_ANALYTICS_ERROR,
+                 LRG_ANALYTICS_ERROR_BACKEND,
+                 "HTTP analytics is not built in (libregnum was built with SOUP=0); "
+                 "%u events stay queued", request->n_events);
+    return FALSE;
+}
+#endif /* LRG_WITHOUT_SOUP */
 
 static gpointer
 sender_thread (gpointer data)
 {
     LrgAnalyticsBackendHttp *self = data;
+#ifndef LRG_WITHOUT_SOUP
     g_autoptr(SoupSession)   session = NULL;
 
     session = soup_session_new ();
+#else
+    gpointer                 session = NULL;
+#endif
 
     g_mutex_lock (&self->lock);
     for (;;)

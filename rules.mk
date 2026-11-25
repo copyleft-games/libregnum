@@ -214,7 +214,9 @@ targets:
 
 .PHONY: check-deps
 check-deps:
+ifeq ($(LIBPQ),1)
 	@$(PKG_CONFIG) --exists libpq || (echo "Missing: libpq-devel" && exit 1)
+endif
 	@$(PKG_CONFIG) --exists openssl || (echo "Missing: OpenSSL development package (Fedora: openssl-devel)" && exit 1)
 	@$(PKG_CONFIG) --exists zlib || (echo "Missing: zlib development package (Fedora: zlib-devel)" && exit 1)
 	@$(PKG_CONFIG) --exists sqlite3 || (echo "Missing: SQLite development package (Fedora: sqlite-devel)" && exit 1)

@@ -569,9 +569,25 @@ GLIB_LIBS := $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 gio-unix-
 JSON_CFLAGS := $(shell $(PKG_CONFIG) --cflags json-glib-1.0)
 JSON_LIBS := $(shell $(PKG_CONFIG) --libs json-glib-1.0)
 
-# libsoup3 (for HTTP analytics backend, required)
-SOUP_CFLAGS := $(shell $(PKG_CONFIG) --cflags libsoup-3.0)
-SOUP_LIBS := $(shell $(PKG_CONFIG) --libs libsoup-3.0)
+# libsoup3 (for the HTTP analytics backend).  Required unless SOUP=0, which
+# builds LrgAnalyticsBackendHttp without it: every send then fails with
+# LRG_ANALYTICS_ERROR_BACKEND and batches stay queued (LRG_WITHOUT_SOUP).
+# The Android profile sets SOUP=0 (no libsoup in its GLib stack).
+SOUP ?= 1
+ifeq ($(SOUP),1)
+    SOUP_CFLAGS := $(shell $(PKG_CONFIG) --cflags libsoup-3.0)
+    SOUP_LIBS := $(shell $(PKG_CONFIG) --libs libsoup-3.0)
+else
+    SOUP_CFLAGS :=
+    SOUP_LIBS :=
+endif
+
+# libpq (the MMO store's PostgreSQL backend).  Required unless LIBPQ=0,
+# which makes lrg_mmo_store_new_postgres() fail with
+# G_IO_ERROR_NOT_SUPPORTED (LRG_WITHOUT_LIBPQ); the SQLite and in-memory
+# stores are unaffected.  The Android profile sets LIBPQ=0.
+LIBPQ ?= 1
+LIBPQ_PKG := $(if $(filter 1,$(LIBPQ)),libpq)
 
 # libyaml (for yaml-glib, required)
 YAML_CFLAGS := $(shell $(PKG_CONFIG) --cflags yaml-0.1)
@@ -733,8 +749,8 @@ OPENSSL_LIBS := $(shell $(PKG_CONFIG) --libs openssl)
 SQLITE_CFLAGS := $(shell $(PKG_CONFIG) --cflags sqlite3)
 SQLITE_LIBS := $(shell $(PKG_CONFIG) --libs sqlite3)
 
-DEP_CFLAGS := $(shell $(PKG_CONFIG) --cflags zlib libpq) $(OPENSSL_CFLAGS) $(SQLITE_CFLAGS) $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(SOUP_CFLAGS) $(FRIBIDI_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS) $(GI_RUNTIME_CFLAGS) $(GJS_CFLAGS) $(CRISPY_CFLAGS)
-DEP_LIBS := $(shell $(PKG_CONFIG) --libs zlib libpq) $(OPENSSL_LIBS) $(SQLITE_LIBS) $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(SOUP_LIBS) $(FRIBIDI_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS) $(GI_RUNTIME_LIBS) $(GJS_LIBS) $(CRISPY_LIBS)
+DEP_CFLAGS := $(shell $(PKG_CONFIG) --cflags zlib $(LIBPQ_PKG)) $(OPENSSL_CFLAGS) $(SQLITE_CFLAGS) $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(SOUP_CFLAGS) $(FRIBIDI_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS) $(GI_RUNTIME_CFLAGS) $(GJS_CFLAGS) $(CRISPY_CFLAGS)
+DEP_LIBS := $(shell $(PKG_CONFIG) --libs zlib $(LIBPQ_PKG)) $(OPENSSL_LIBS) $(SQLITE_LIBS) $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(SOUP_LIBS) $(FRIBIDI_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS) $(GI_RUNTIME_LIBS) $(GJS_LIBS) $(CRISPY_LIBS)
 
 # Graylib and yaml-glib (built from submodules)
 # Also include raylib headers for rlgl.h etc.
@@ -830,6 +846,14 @@ ifeq ($(BUILD_EDITOR),1)
 endif
 ifeq ($(HAS_CRISPY),1)
     OPT_CFLAGS += -DLRG_HAS_CRISPY=1
+endif
+# Optional dependencies that are on by default are marked when OFF, so the
+# default build's command lines stay as they were
+ifneq ($(SOUP),1)
+    OPT_CFLAGS += -DLRG_WITHOUT_SOUP=1
+endif
+ifneq ($(LIBPQ),1)
+    OPT_CFLAGS += -DLRG_WITHOUT_LIBPQ=1
 endif
 ifeq ($(BUILD_EDITOR_UI),1)
     OPT_CFLAGS += -DLRG_BUILD_EDITOR_UI=1

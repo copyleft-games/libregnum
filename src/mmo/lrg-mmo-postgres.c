@@ -2,6 +2,8 @@
 #include "lrg-mmo-postgres-private.h"
 #include "lrg-mmo-service-private.h"
 
+#ifndef LRG_WITHOUT_LIBPQ
+
 G_DEFINE_AUTOPTR_CLEANUP_FUNC (PGresult, PQclear)
 
 static PGresult *
@@ -347,3 +349,81 @@ _lrg_mmo_pg_lookup (PGconn *db, const gchar *zone, GError **error)
                g_ascii_strtoll (PQgetvalue (result, 0, 3), NULL, 10),
                g_variant_new_from_bytes (G_VARIANT_TYPE ("ay"), bytes, TRUE)));
 }
+
+void
+_lrg_mmo_pg_close (PGconn *db)
+{
+    PQfinish (db);
+}
+
+#else /* LRG_WITHOUT_LIBPQ */
+
+/*
+ * Built without libpq (LIBPQ=0; the Android target, or a host without
+ * libpq-devel that asked for it off).  lrg_mmo_store_new_postgres() then
+ * fails with G_IO_ERROR_NOT_SUPPORTED; the SQLite and in-memory stores are
+ * unaffected.  Only _lrg_mmo_pg_open() is reachable (the store keeps no
+ * connection otherwise); the rest fail the same way should that change.
+ */
+
+#define LRG_MMO_PG_MISSING "PostgreSQL support is not built in (libregnum was built with LIBPQ=0)"
+
+PGconn *
+_lrg_mmo_pg_open (const gchar *connection, GError **error)
+{
+    _lrg_mmo_fail (error, G_IO_ERROR_NOT_SUPPORTED, LRG_MMO_PG_MISSING);
+    return NULL;
+}
+
+void
+_lrg_mmo_pg_close (PGconn *db)
+{
+}
+
+GBytes *
+_lrg_mmo_pg_read (PGconn *db, const gchar *key, guint64 *revision, GError **error)
+{
+    _lrg_mmo_fail (error, G_IO_ERROR_NOT_SUPPORTED, LRG_MMO_PG_MISSING);
+    return NULL;
+}
+
+gboolean
+_lrg_mmo_pg_commit (PGconn *db, GVariant *changes, const gchar *operation, const gchar *digest,
+                    gboolean *duplicate, const gchar *zone, const gchar *owner, guint64 fence,
+                    GError **error)
+{
+    _lrg_mmo_fail (error, G_IO_ERROR_NOT_SUPPORTED, LRG_MMO_PG_MISSING);
+    return FALSE;
+}
+
+gboolean
+_lrg_mmo_pg_remove (PGconn *db, const gchar *key, guint64 revision, const gchar *digest, GError **error)
+{
+    _lrg_mmo_fail (error, G_IO_ERROR_NOT_SUPPORTED, LRG_MMO_PG_MISSING);
+    return FALSE;
+}
+
+GVariant *
+_lrg_mmo_pg_audit (PGconn *db, guint64 after, guint limit, GError **error)
+{
+    _lrg_mmo_fail (error, G_IO_ERROR_NOT_SUPPORTED, LRG_MMO_PG_MISSING);
+    return NULL;
+}
+
+guint64
+_lrg_mmo_pg_lease (PGconn *db, const gchar *zone, const gchar *owner, guint64 fence,
+                   const gchar *destination, const gchar *endpoint, GBytes *state, guint ttl,
+                   guint operation, GError **error)
+{
+    _lrg_mmo_fail (error, G_IO_ERROR_NOT_SUPPORTED, LRG_MMO_PG_MISSING);
+    return 0;
+}
+
+GVariant *
+_lrg_mmo_pg_lookup (PGconn *db, const gchar *zone, GError **error)
+{
+    _lrg_mmo_fail (error, G_IO_ERROR_NOT_SUPPORTED, LRG_MMO_PG_MISSING);
+    return NULL;
+}
+
+#endif /* LRG_WITHOUT_LIBPQ */
