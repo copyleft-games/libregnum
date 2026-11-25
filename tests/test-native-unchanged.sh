@@ -17,7 +17,7 @@
 
 # How it works
 # ------------
-# The native build (`make all`, `make -C tests`, `make -C examples`) must
+# The native build (`make all`, `make -C tests all`, `make -C examples`) must
 # print exactly the same commands before and after a build-system change.
 # A stored golden file cannot express that portably (the commands embed
 # pkg-config output, which differs between Fedora, Ubuntu and aarch64), so
@@ -149,8 +149,8 @@ dry_run () {
 	{
 		echo '### make -Bn all'
 		env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL make -Bn --no-print-directory -C "${tree}" all 2>&1 || true
-		echo '### make -Bn -C tests'
-		env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL make -Bn --no-print-directory -C "${tree}/tests" 2>&1 || true
+		echo '### make -Bn -C tests all'
+		env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL make -Bn --no-print-directory -C "${tree}/tests" all 2>&1 || true
 		echo '### make -Bn -C examples'
 		env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL make -Bn --no-print-directory -C "${tree}/examples" 2>&1 || true
 	} > "${log}"
