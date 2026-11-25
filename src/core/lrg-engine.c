@@ -16,6 +16,7 @@
 #include "lrg-data-loader.h"
 #include "lrg-asset-manager.h"
 #include "lrg-cpu-affinity.h"
+#include "lrg-platform.h"
 #include "lrg-prewarm.h"
 #include "../lrg-log.h"
 #include "../graphics/lrg-window.h"
@@ -471,6 +472,11 @@ lrg_engine_startup (LrgEngine  *self,
                      "Engine is already started");
         return FALSE;
     }
+
+    /* Android data directories, bundled assets and logging for a game with
+     * its own main() (a no-op on other platforms and once done) */
+    if (!lrg_platform_prepare (error))
+        return FALSE;
 
     priv->state = LRG_ENGINE_STATE_INITIALIZING;
 

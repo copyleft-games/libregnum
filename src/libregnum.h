@@ -72,6 +72,7 @@
 #include "core/lrg-event-bus.h"
 #include "core/lrg-random-stream.h"
 #include "core/lrg-cpu-affinity.h"
+#include "core/lrg-platform.h"
 #include "core/lrg-prewarmable.h"
 #include "core/lrg-prewarm.h"
 #include "core/lrg-timer-manager.h"

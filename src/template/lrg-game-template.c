@@ -15,6 +15,7 @@
 #include "../core/lrg-timer-manager.h"
 #include "../lrg-log.h"
 #include "../core/lrg-engine.h"
+#include "../core/lrg-platform.h"
 #include "../gamestate/lrg-game-state.h"
 #include "../gamestate/lrg-game-state-manager.h"
 #include "../input/lrg-input-map.h"
@@ -2494,6 +2495,14 @@ lrg_game_run_standalone (LrgGameTemplate *self,
     (void) argc;
 
     g_return_val_if_fail (LRG_IS_GAME_TEMPLATE (self), 1);
+
+    /* Android data directories, bundled assets and logging (a no-op on
+     * other platforms, and when the generated main() already did it) */
+    if (!lrg_platform_prepare (&error))
+    {
+        lrg_warning (LRG_LOG_DOMAIN_TEMPLATE, "Platform preparation failed: %s", error->message);
+        return 1;
+    }
 
     /* Replay options belong to the engine: take them out first */
     if (argv != NULL)

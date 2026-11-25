@@ -66,6 +66,7 @@ TEST_SOURCES := \
 	test-engine.c \
 	test-random-stream.c \
 	test-cpu-affinity.c \
+	test-platform.c \
 	test-timer-manager.c \
 	test-replay.c \
 	test-rollback.c \
