@@ -108,7 +108,16 @@ build/
 └── release-android-arm64/
 #+end_example
 
-Native builds keep their dependency archives where they always were (=deps/graylib/build/lib=, raylib inside =deps/graylib/deps/raylib/src=, =deps/yaml-glib/build/<type>=), because cmacs links against those paths. Cross builds put their dependency builds under =$(BUILDDIR)/deps/=.
+Native builds keep their dependency archives where they always were (=deps/graylib/build/lib=, raylib inside =deps/graylib/deps/raylib/src=, =deps/yaml-glib/build/<type>=, =deps/crispy/build/<type>=), because cmacs links against those paths. Cross builds put their dependency builds under =$(BUILDDIR)/deps/=:
+
+| Dependency | Cross output                                   | Passed to its make as                 |
+|------------+------------------------------------------------+---------------------------------------|
+| graylib    | =$(BUILDDIR)/deps/graylib/{obj,lib}=           | =BUILDDIR=                            |
+| raylib     | =$(BUILDDIR)/deps/raylib/= (an rsync'd copy of its sources) | =RAYLIB_BUILD_DIR= (to graylib) |
+| yaml-glib  | =$(BUILDDIR)/deps/yaml-glib/<type>/=           | =BUILDDIR=                            |
+| crispy     | =$(BUILDDIR)/deps/crispy/<type>/=              | =BUILDDIR=                            |
+
+raylib's Makefile writes objects and generated headers next to its sources, so a cross target gets a copy of =deps/graylib/deps/raylib/src= that graylib refreshes with =rsync= on every build; raylib rebuilds only when the copy changed (graylib's =docs/guides/building.org=, "Out-of-tree builds"). All of these paths are decided in one block of =config.mk= (=GRAYLIB_BUILDDIR=, =RAYLIB_BUILD_DIR=, =YAMLGLIB_BUILDDIR=, =CRISPY_BUILDDIR=), and the =Makefile= hands them to the sub-makes through =GRAYLIB_MAKE_FLAGS=, =YAMLGLIB_MAKE_FLAGS= and =CRISPY_MAKE_FLAGS=. A profile adds what its dependencies must know with =LRG_DEP_FLAGS= (all of them) and =LRG_GRAYLIB_FLAGS= (graylib only). =rsync= is required for cross builds.
 
 The generated headers =src/lrg-version.h= and =src/config.h= hold only version numbers, identical for every target, so they stay in =src/= and are shared.
 
@@ -122,6 +131,127 @@ The generated headers =src/lrg-version.h= and =src/config.h= hold only version n
 | =make WINDOWS=1 clean= | =build/release-windows-amd64= and =build/debug-windows-amd64= only                    |
 | =make clean-targets=  | every cross target's directories                                                      |
 | =make distclean=      | all of =build/=, plus =make clean= in the bundled graylib and yaml-glib               |
+
+** How dispatch works
+:PROPERTIES:
+:CUSTOM_ID: how-dispatch-works
+:END:
+Cross builds run inside a podman container that has the target's toolchain; the host needs nothing but podman. The native build never uses a container.
+
+*** Entry point: GNUmakefile
+:PROPERTIES:
+:CUSTOM_ID: gnumakefile
+:END:
+GNU make reads =GNUmakefile= before =Makefile=, so every =make= in the checkout starts there. It includes =build-aux/mk/target.mk= (cheap: no pkg-config, no compiler) and then decides:
+
+| Situation                                                    | What happens                                                  |
+|--------------------------------------------------------------+---------------------------------------------------------------|
+| native target                                                | =Makefile=, exactly as before                                 |
+| cross target, =NO_BUILD_CONTAINER=1=                         | =Makefile= on the host, with the target's toolchain          |
+| cross target, already inside the container (=LRG_IN_CONTAINER=1=) | =Makefile= (this is the inner make)                      |
+| cross target, every goal is host-only (see below)            | =Makefile= on the host; nothing compiles                      |
+| cross target, anything else                                  | =build-aux/mk/container.mk=: the goals run in the container   |
+
+Host-only goals: =clean=, =clean-targets=, =distclean=, =print-target=, =targets=, =help=, =container-image=, =container-shell=, =container-prune=, =print-container= (and the adb goals of the Android APK flow). A cross build cannot skip the root makefile: =make -C tests WINDOWS=1= or =make -f Makefile WINDOWS=1 lib= stops and names =make WINDOWS=1 ...= from the top level, or =NO_BUILD_CONTAINER=1=.
+
+*** The container run
+:PROPERTIES:
+:CUSTOM_ID: container-run
+:END:
+All goals on the command line become one =make <goals>= in one container, in the order given (=make WINDOWS=1 clean all test=):
+
+#+begin_src sh
+podman run --rm \
+    --userns=keep-id \                       # output files belong to you
+    --security-opt label=disable \           # no SELinux relabelling of the checkout
+    -v $ROOT:$ROOT \                         # the checkout, at the same path
+    -v $GIT_COMMON_DIR:$GIT_COMMON_DIR:ro \  # only in a worktree (see below)
+    -w $PWD -e HOME=/tmp -e TERM \
+    -e LRG_IN_CONTAINER=1 \                  # the inner make builds, it does not dispatch
+    -e LRG_BUILD_SUFFIX=-windows-amd64 \     # decided by the outer make
+    -e MAKEFLAGS="s -j16 -- WINDOWS=1 DEBUG=1" \
+    $BUILD_CONTAINER_ARGS \
+    localhost/libregnum-build-windows-amd64:<hash> make all test
+#+end_src
+
+- *Same path:* dependency files, rpaths and =compile_commands.json= entries written in the container are valid on the host.
+- *MAKEFLAGS:* the outer make's own =MAKEFLAGS= with the jobserver removed (a host fifo the container cannot reach). =-j16= stays, so the inner make starts its own jobserver with the same number of slots, and every =VAR=value= from the command line arrives with make's own escaping (values with spaces survive).
+- *Worktrees:* in a =git worktree= (=trees/<name>=), the submodules' =.git= files point into the main checkout's =.git=, outside the mounted tree. graylib asks git about the raylib submodule, so that directory is mounted read-only at the same path.
+
+*** Escape hatches
+:PROPERTIES:
+:CUSTOM_ID: escape-hatches
+:END:
+- =NO_BUILD_CONTAINER=1=: build on the host with the target's toolchain installed there (see [[#building-without-containers][Building without containers]]).
+- =make WINDOWS=1 container-shell=: an interactive shell in the build container, set up like a build (same mounts, same directory), for debugging the toolchain.
+- =make -f Makefile ...=: skips =GNUmakefile= entirely; fine for native goals, refused for a cross target without =NO_BUILD_CONTAINER=1=.
+
+** Container images
+:PROPERTIES:
+:CUSTOM_ID: container-images
+:END:
+Each target has a recipe in =build-aux/containers/<target>/=: a =Containerfile= that copies the recipe in and runs its =setup.sh=. Shared steps are in =build-aux/containers/common/common.sh=; =build-aux/cross/= holds the toolchain wrappers some images install. The build context is =build-aux/=.
+
+*** Tags follow the recipe
+:PROPERTIES:
+:CUSTOM_ID: image-tags
+:END:
+An image is tagged =localhost/libregnum-build-<target>:<hash>=, where the hash covers every file (names and contents) in =containers/common/=, =containers/<target>/= and =cross/=, plus the base image and the platform. A build builds the image only when no image has that tag, so:
+
+- an unchanged recipe reuses the image; the first cross build of a target pays for the image once,
+- editing a recipe gives a new tag, so the next build makes a new image (nothing goes stale),
+- editing another target's recipe does not touch this one's.
+
+=make WINDOWS=1 print-container= shows the tag and what it is made of; =make WINDOWS=1 container-image= builds it ahead of time; =make WINDOWS=1 container-prune= removes that target's images other than the current one (they carry the label =org.libregnum.build-target=<target>=).
+
+*** Smoke tests
+:PROPERTIES:
+:CUSTOM_ID: image-smoke-tests
+:END:
+Every =setup.sh= ends by compiling =containers/common/smoke.c= (GObject, GIO and json-glib) with the target's compiler and pkg-config, at =-std=gnu89 -Wall -Wextra -Werror=, and running it where the target can run in the container (Wine for Windows, qemu for aarch64). If that fails, the image build fails and no image is tagged.
+
+*** Variables
+:PROPERTIES:
+:CUSTOM_ID: container-variables
+:END:
+| Variable                | Default                                  | Meaning                                                 |
+|-------------------------+------------------------------------------+---------------------------------------------------------|
+| =CONTAINER_ENGINE=      | =podman=                                 | the container CLI                                       |
+| =BUILD_CONTAINER_BASE=  | =registry.fedoraproject.org/fedora:45=   | the image every recipe starts =FROM=                    |
+| =BUILD_CONTAINER_IMAGE= | (empty)                                  | run this image as-is; nothing is built or checked       |
+| =BUILD_CONTAINER_ARGS=  | (empty)                                  | extra =podman run= arguments                            |
+| =NO_BUILD_CONTAINER=    | 0                                        | =1= builds on the host                                  |
+
+#+begin_src sh
+# another base image (its own tag; the recipe is unchanged)
+make WINDOWS=1 BUILD_CONTAINER_BASE=registry.fedoraproject.org/fedora:44
+
+# a prebuilt image, e.g. pushed to a GitLab registry for CI or other machines
+make WINDOWS=1 container-image
+podman tag "$(make -s WINDOWS=1 print-container | sed -n 's/^Image: *//p')" \
+    registry.gitlab.com/you/libregnum/build-windows-amd64:latest
+podman push registry.gitlab.com/you/libregnum/build-windows-amd64:latest
+make WINDOWS=1 BUILD_CONTAINER_IMAGE=registry.gitlab.com/you/libregnum/build-windows-amd64:latest
+
+# keep a ccache across container runs
+make WINDOWS=1 BUILD_CONTAINER_ARGS='-v ccache-win:/ccache -e CCACHE_DIR=/ccache'
+#+end_src
+
+A prebuilt image must have been built from the same recipe; the build does not check. Offline, an existing local image keeps working, since only a missing tag triggers a build.
+
+** Building without containers
+:PROPERTIES:
+:CUSTOM_ID: building-without-containers
+:END:
+=NO_BUILD_CONTAINER=1= runs the cross build on the host. The host then needs exactly what the image's =setup.sh= installs; the scripts are the authoritative package lists:
+
+| Target          | Packages (Fedora)                                                                                     | Variables                    |
+|-----------------+-------------------------------------------------------------------------------------------------------+------------------------------|
+| =windows-amd64= | =mingw64-gcc mingw64-binutils mingw64-filesystem mingw64-glib2 mingw64-json-glib mingw64-zlib mingw64-libyaml mingw64-libsoup3 mingw64-openssl mingw64-sqlite mingw64-postgresql wine-core= | none                         |
+| =linux-arm64=   | =gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu wayland-devel qemu-user-static-aarch64= and an aarch64 sysroot | =ARM64_SYSROOT= (default =/opt/sysroot/aarch64=) |
+| =android-arm64= | see [[file:platforms/android.org][Android]]                                                         | =ANDROID_NDK=, =ANDROID_SDK= |
+
+Common to all: =make gcc pkgconf-pkg-config glib2-devel python3 git-core rsync=. On an image-based host (Silverblue and friends) these belong in the image, which is why the container is the default.
 
 ** Per-target notes
 :PROPERTIES:
@@ -139,7 +269,7 @@ MinGW-w64 gcc builds =libregnum.dll= with its import library =liblibregnum.dll.a
 :END:
 A game needs, next to its =.exe=:
 
-1. =libregnum.dll=, =graylib.dll= and =yaml-glib-1.0.dll= from the target's build directory.
+1. From =build/release-windows-amd64/=: =lib/libregnum.dll=, =deps/graylib/lib/graylib.dll= and =deps/yaml-glib/release/yaml-glib-1.0.dll= (=debug/= for =DEBUG=1=).
 2. The GLib runtime from the MinGW sysroot (=/usr/x86_64-w64-mingw32/sys-root/mingw/bin/= on Fedora): =libglib-2.0-0.dll=, =libgobject-2.0-0.dll=, =libgio-2.0-0.dll=, =libgmodule-2.0-0.dll=, =libintl-8.dll=, =libffi-8.dll=, =libiconv-2.dll=, =libpcre2-8-0.dll=, =zlib1.dll= and the rest of what =x86_64-w64-mingw32-objdump -p game.exe | grep 'DLL Name'= lists.
 3. =steam_api64.dll= when built with =STEAM=1=.
 4. The game's data directory.

@@ -174,6 +174,7 @@ WARN_CFLAGS += -Wmissing-prototypes
 WARN_CFLAGS += -Wold-style-definition
 WARN_CFLAGS += -Wdeclaration-after-statement
 WARN_CFLAGS += -Wno-unused-parameter
+LRG_PROJECT_WARN_CFLAGS := $(WARN_CFLAGS)
 
 # Feature test macros
 FEATURE_CFLAGS := -D_GNU_SOURCE
@@ -237,16 +238,36 @@ endif
 # Cross builds land in build/<type>-<target>/; see docs/cross-compile.org.
 
 ifeq ($(LRG_IS_CROSS),1)
+    # A cross build is dispatched by GNUmakefile (to the build container, or
+    # on the host with NO_BUILD_CONTAINER=1).  Entered any other way -- from
+    # tests/, examples/, bench/ or with -f Makefile -- it would build with
+    # the host's tools into the target's directory; refuse instead.
+    ifneq ($(LRG_VIA_GNUMAKEFILE)$(LRG_IN_CONTAINER)$(filter 1,$(NO_BUILD_CONTAINER)),)
+    else ifneq ($(filter-out $(LRG_HOST_SAFE_GOALS),$(or $(MAKECMDGOALS),all)),)
+        $(error A $(LRG_TARGET) build must start from the top-level directory: run 'make LRG_TARGET=$(LRG_TARGET) ...' (or its WINDOWS=1/ARM64=1/ANDROID=1 switch) in $(PROJECT_ROOT), or add NO_BUILD_CONTAINER=1 to build on the host)
+    endif
     include $(LRG_TARGET_PROFILE)
     # Outside the build container (NO_BUILD_CONTAINER=1) the target's
     # toolchain must be installed.  Say so once instead of letting every
-    # pkg-config probe below fail on its own.  Goals that never compile
-    # (clean, print-target, ...) still work: they get a no-op pkg-config.
-    ifeq ($(shell command -v $(firstword $(PKG_CONFIG)) 2>/dev/null),)
+    # pkg-config probe below fail on its own.  A profile's
+    # LRG_TOOLCHAIN_CHECK is a shell test of its real tools (and sysroot);
+    # the default asks for CC and PKG_CONFIG on PATH.  Goals that never
+    # compile (clean, print-target, ...) still work: they get a no-op
+    # pkg-config.
+    LRG_TOOLCHAIN_CHECK ?= command -v $(firstword $(CC)) && command -v $(firstword $(PKG_CONFIG))
+    ifeq ($(shell { $(LRG_TOOLCHAIN_CHECK); } > /dev/null 2>&1 && echo ok),)
         ifneq ($(filter-out $(LRG_HOST_SAFE_GOALS),$(or $(MAKECMDGOALS),all)),)
-            $(error The $(LRG_TARGET) toolchain is not installed ('$(firstword $(PKG_CONFIG))' not found). Build in the container (drop NO_BUILD_CONTAINER=1) or install the packages listed in docs/cross-compile.org, "Building without containers")
+            $(error The $(LRG_TARGET) toolchain is not installed ('$(LRG_TOOLCHAIN_CHECK)' failed). Build in the container (drop NO_BUILD_CONTAINER=1) or install the packages listed in docs/cross-compile.org, "Building without containers")
         endif
         PKG_CONFIG := :
+    else ifeq ($(LRG_CC_IS_GCC),0)
+        # A compiler other than gcc (Android's NDK clang) may not know
+        # every flag in WARN_CFLAGS.  Keep each one it accepts as an
+        # error-level check and drop only the unknown ones, so the build
+        # stays warning-free with every check that compiler has.  One probe
+        # per flag, cross only; `make print-target' lists what was dropped.
+        WARN_CFLAGS := $(foreach flag,$(WARN_CFLAGS),$(if $(shell $(CC) -Werror $(flag) -E -x c /dev/null -o /dev/null > /dev/null 2>&1 && echo ok),$(flag)))
+        LRG_DROPPED_WARN_CFLAGS := $(filter-out $(WARN_CFLAGS),$(LRG_PROJECT_WARN_CFLAGS))
     endif
 else
     TARGET_PLATFORM := $(PLATFORM)
@@ -475,7 +496,9 @@ else
     LIB_SHARED_SONAME := $(LIB_SHARED).$(SO_VERSION)
     EXE_EXT :=
     # Platform-specific system libraries
-    PLATFORM_LIBS := -lGL -lm -lpthread -ldl -lrt -lX11
+    # A target profile may replace the desktop set (Android: EGL, GLES 3,
+    # libandroid, liblog)
+    PLATFORM_LIBS := $(or $(LRG_PLATFORM_LIBS),-lGL -lm -lpthread -ldl -lrt -lX11)
     # graylib's embedded raylib also gets GLFW's Wayland backend when the
     # Wayland development files exist (WAYLAND=auto|1|0, forwarded to
     # graylib); its libraries then belong on our link line too
@@ -492,6 +515,10 @@ else
     endif
     # Unix shared library linker flags
     LIB_LDFLAGS_PLATFORM = -shared -Wl,-soname,$(LIB_SHARED_SONAME)
+    # and may add link flags (Android: 16 KB page alignment)
+    ifneq ($(strip $(LRG_PLATFORM_LDFLAGS)),)
+        LIB_LDFLAGS_PLATFORM += $(LRG_PLATFORM_LDFLAGS)
+    endif
 endif
 
 # GIR output names
@@ -808,9 +835,12 @@ ifeq ($(BUILD_EDITOR_UI),1)
     OPT_CFLAGS += -DLRG_BUILD_EDITOR_UI=1
 endif
 
-# Windows cross-compile marker
+# Platform marker for the source (Android is not LRG_PLATFORM_LINUX: bionic
+# differs from glibc where the code checks, e.g. no execinfo before API 33)
 ifeq ($(TARGET_PLATFORM),windows)
     OPT_CFLAGS += -DLRG_PLATFORM_WINDOWS=1
+else ifeq ($(TARGET_PLATFORM),android)
+    OPT_CFLAGS += -DLRG_PLATFORM_ANDROID=1
 else
     OPT_CFLAGS += -DLRG_PLATFORM_LINUX=1
 endif

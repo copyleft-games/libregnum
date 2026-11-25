@@ -9,15 +9,74 @@
 # Platform notes: docs/platforms/android.org.  Layout and rationale:
 # docs/cross-compile.org.
 #
+# The build container (build-aux/containers/android-arm64/) provides:
+#
+#   /opt/android/ndk          the NDK (clang, sysroot, llvm-ar, ...)
+#   /opt/android/sdk          build-tools (aapt2, zipalign, apksigner) and
+#                             platforms/android-<api>/android.jar
+#   /opt/android/arm64-v8a    the GLib stack as static libraries + .pc files
+#
+# On a host (NO_BUILD_CONTAINER=1) point ANDROID_NDK, ANDROID_SDK and
+# ANDROID_SYSROOT at the same things.
+#
+# The NDK only has clang.  WARN_CFLAGS stays the project's list; config.mk
+# drops the flags this clang does not know (LRG_CC_IS_GCC=0) and keeps
+# every warning it does know an error.
+#
 # Output: build/{release,debug}-android-arm64/
 
 LRG_TARGET_TRIPLE := aarch64-linux-android
 
+ANDROID_NDK ?= /opt/android/ndk
+ANDROID_SDK ?= /opt/android/sdk
+ANDROID_SYSROOT ?= /opt/android/arm64-v8a
+ANDROID_MIN_API ?= 29
+
+LRG_NDK_BIN := $(ANDROID_NDK)/toolchains/llvm/prebuilt/linux-x86_64/bin
+
+# Toolchain (a command-line CC=... etc. still wins over these)
+CC := $(LRG_NDK_BIN)/aarch64-linux-android$(ANDROID_MIN_API)-clang
+AR := $(LRG_NDK_BIN)/llvm-ar
+RANLIB := $(LRG_NDK_BIN)/llvm-ranlib
+PKG_CONFIG := $(PROJECT_ROOT)/build-aux/cross/lrg-sysroot-pkg-config
+LRG_CC_IS_GCC := 0
+
+# The GLib stack is installed with --prefix=$(ANDROID_SYSROOT) (absolute
+# paths in its .pc files) and is all static archives: query with --static
+export LRG_SYSROOT := $(ANDROID_SYSROOT)
+export LRG_SYSROOT_LIBDIRS := lib/pkgconfig:share/pkgconfig
+export LRG_SYSROOT_PREFIXED := 0
+export LRG_PKG_CONFIG_STATIC := 1
+
 TARGET_PLATFORM := android
 
 # GObject Introspection runs the library it scans, which a cross build
-# cannot do
+# cannot do; the editor app and its CLI are desktop tools; crispy compiles
+# C at run time
 BUILD_GIR := 0
+$(call lrg_default,BUILD_EDITOR_UI,0)
+$(call lrg_default,CRISPY,0)
+
+# Android links with bionic's libc, liblog (logcat), libandroid (assets,
+# NativeActivity) and GLES 3 through EGL; -z max-page-size keeps every
+# LOAD segment loadable on 16 KB-page devices (Android 15+)
+LRG_PLATFORM_LIBS := -lEGL -lGLESv3 -landroid -llog -lm -ldl
+LRG_PLATFORM_LDFLAGS := -Wl,-z,max-page-size=16384
+
+# The dependencies build with the same toolchain.  raylib builds its own
+# Android platform layer (rcore_android.c, android_native_app_glue) against
+# GLES 3.
+LRG_DEP_FLAGS := CC=$(CC) AR=$(AR) RANLIB=$(RANLIB) PKG_CONFIG=$(PKG_CONFIG)
+LRG_GRAYLIB_FLAGS := RAYLIB_PLATFORM=PLATFORM_ANDROID \
+    RAYLIB_EXTRA_FLAGS="ANDROID_NDK=$(ANDROID_NDK) ANDROID_ARCH=arm64 ANDROID_API_VERSION=$(ANDROID_MIN_API) GRAPHICS=GRAPHICS_API_OPENGL_ES3"
+
+# Android binaries do not run in the build container; tests run on a
+# device (make ANDROID=1 test-device)
+LRG_EXEC_WRAPPER ?=
+
+# What must exist for a host build (NO_BUILD_CONTAINER=1; config.mk): the
+# NDK's clang, pkg-config and the GLib stack
+LRG_TOOLCHAIN_CHECK := test -x $(CC) && command -v pkg-config && test -d $(ANDROID_SYSROOT)/lib/pkgconfig
 
 # Build container (build-aux/containers/android-arm64/Containerfile).  The
 # NDK ships x86_64 Linux host tools only, so the container is always amd64

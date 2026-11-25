@@ -469,6 +469,12 @@ VALGRIND_BINARIES ?= $(filter-out $(TEST_BUILDDIR)/test-scripting%,$(TEST_BINARI
 # to run a custom set (e.g. SANITIZE_TESTS="$(TEST_BINARIES)" for everything).
 SANITIZE_BINARIES ?= $(filter-out $(TEST_BUILDDIR)/test-scripting%,$(TEST_BINARIES))
 
+# What `make run' runs.  A cross target runs its binaries through its
+# profile's LRG_EXEC_WRAPPER (wine, qemu-aarch64) and may list suites that
+# cannot run there in LRG_TEST_SKIP (test names, % patterns allowed); every
+# entry in a profile carries the reason next to it.  Natively: all of them.
+RUN_BINARIES ?= $(filter-out $(addprefix $(TEST_BUILDDIR)/,$(LRG_TEST_SKIP)),$(TEST_BINARIES))
+
 # =============================================================================
 # Targets
 # =============================================================================
@@ -489,7 +495,10 @@ BUILD_SYSTEM_SCRIPTS := \
 	$(CURDIR)/build-system-lib.sh \
 	$(CURDIR)/test-build-targets.sh \
 	$(CURDIR)/test-build-clean.sh \
-	$(CURDIR)/test-native-unchanged.sh
+	$(CURDIR)/test-build-dispatch.sh \
+	$(CURDIR)/test-native-unchanged.sh \
+	$(wildcard $(PROJECT_ROOT)/build-aux/cross/lrg-*) \
+	$(wildcard $(PROJECT_ROOT)/build-aux/containers/*/*.sh)
 
 check-build-system:
 	@command -v shellcheck > /dev/null 2>&1 || \
@@ -497,6 +506,7 @@ check-build-system:
 	@cd $(PROJECT_ROOT) && shellcheck -x $(BUILD_SYSTEM_SCRIPTS)
 	@bash $(CURDIR)/test-build-targets.sh
 	@bash $(CURDIR)/test-build-clean.sh
+	@bash $(CURDIR)/test-build-dispatch.sh
 
 # libregnum and the bundled graylib share MAJOR.MINOR (AGENTS.md, Versioning)
 check-version-lockstep:
@@ -525,10 +535,10 @@ endif
 run: check-build-config check-version-lockstep $(if $(filter 1,$(LRG_IS_CROSS)),,check-build-system) all
 	$(call print_status,"Running tests...")
 	@failed=0; \
-	for test in $(TEST_BINARIES); do \
+	for test in $(RUN_BINARIES); do \
 		LD_LIBRARY_PATH="$(MCP_LD_PATH)../$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
 		G_TEST_SRCDIR="$(shell pwd)" \
-		$$test --tap || failed=1; \
+		$(LRG_EXEC_WRAPPER) $$test --tap || failed=1; \
 	done; \
 	if [ $$failed -eq 0 ]; then \
 		printf "\033[32m\033[1m==>\033[0m All tests passed!\n"; \

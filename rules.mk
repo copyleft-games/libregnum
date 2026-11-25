@@ -134,6 +134,10 @@ help:
 	@echo "  targets      List build targets and their directories"
 	@echo "  print-target Show the target, build dir and toolchain in use"
 	@echo "  test-build-system  Build-system tests + native no-regression gate"
+	@echo "  container-image    Build a cross target's build container (e.g. make WINDOWS=1 container-image)"
+	@echo "  container-shell    Shell in a cross target's build container"
+	@echo "  container-prune    Remove a cross target's outdated container images"
+	@echo "  print-container    Show a cross target's container image and recipe hash"
 	@echo ""
 	@echo "Options:"
 	@echo "  DEBUG=1         Enable debug build (-g3 -O0)"
@@ -146,6 +150,9 @@ help:
 	@echo "  WINDOWS=1       Same as LRG_TARGET=windows-amd64 (MinGW-w64)"
 	@echo "  ARM64=1         Same as LRG_TARGET=linux-arm64 (gcc + aarch64 sysroot)"
 	@echo "  ANDROID=1       Same as LRG_TARGET=android-arm64 (NDK clang)"
+	@echo "  NO_BUILD_CONTAINER=1   Build a cross target on the host (toolchain installed)"
+	@echo "  BUILD_CONTAINER_BASE=I Base image of the build containers (fedora:45)"
+	@echo "  BUILD_CONTAINER_IMAGE=I Use a prebuilt build container"
 	@echo "  STEAM=1         Enable Steam SDK integration (opt-in)"
 	@echo "  MCP=1           Enable MCP server for AI debugging (opt-in)"
 	@echo ""
@@ -189,6 +196,8 @@ print-target:
 	@echo "AR:               $(AR)"
 	@echo "PKG_CONFIG:       $(PKG_CONFIG)"
 	@echo "GIR:              $(BUILD_GIR)"
+	@echo "Toolchain check:  $(or $(LRG_TOOLCHAIN_CHECK),n/a (native))"
+	@echo "Dropped warnings: $(or $(LRG_DROPPED_WARN_CFLAGS),none)"
 
 # Every target with a profile, its build directories and description
 .PHONY: targets

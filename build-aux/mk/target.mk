@@ -158,7 +158,8 @@ LRG_CROSS_BUILD_DIRS := $(strip $(foreach t,$(filter-out $(LRG_HOST_TARGET),$(LR
 # Goals that never compile anything: they run on the host even for a cross
 # target, without its toolchain or build container
 LRG_HOST_SAFE_GOALS := clean clean-targets distclean print-target targets help \
-    container-image container-shell container-prune apk-install apk-run test-device
+    container-image container-shell container-prune print-container \
+    apk-install apk-run test-device
 
 # lrg_default VAR,VALUE -- a profile's default for VAR: applied unless the
 # user set VAR on the command line or in the environment.  Profiles are

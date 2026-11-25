@@ -1,0 +1,78 @@
+#!/bin/bash
+# lrg-sysroot-pkg-config - pkg-config that answers for a cross sysroot
+# Copyright (C) 2026  Zach Podbielniak
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# Runs the host's pkg-config against the .pc files of a sysroot only, and
+# prefixes every -I/-L it prints with the sysroot (PKG_CONFIG_SYSROOT_DIR).
+# The host's own .pc files are never consulted, so a library missing from
+# the sysroot reads as missing instead of silently using the host's.
+#
+# One word for PKG_CONFIG, like build-aux/cross/lrg-aarch64-linux-gnu-gcc:
+# the build hands it to the dependencies' makes.
+#
+# Environment:
+#   LRG_SYSROOT          the sysroot (required)
+#   LRG_SYSROOT_LIBDIRS  its pkgconfig directories, colon-separated,
+#                        relative to the sysroot (default:
+#                        usr/lib64/pkgconfig:usr/share/pkgconfig:usr/lib/pkgconfig)
+#   LRG_SYSROOT_PREFIXED 0 when the .pc files already hold absolute sysroot
+#                        paths (a --prefix=<sysroot> build, like the Android
+#                        GLib stack); no prefix is added then.  Default 1.
+#   LRG_PKG_CONFIG_STATIC 1 to answer every query with --static, for a
+#                        sysroot of static libraries (their private
+#                        dependencies must be linked too)
+
+set -euo pipefail
+
+case "${1:-}" in
+	--lrg-help)
+		sed -n '18,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+		echo 'Example: LRG_SYSROOT=/opt/sysroot/aarch64 lrg-sysroot-pkg-config --cflags glib-2.0'
+		exit 0
+		;;
+	--lrg-license)
+		sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+		exit 0
+		;;
+esac
+
+if [[ -z "${LRG_SYSROOT:-}" ]]
+then
+	echo 'lrg-sysroot-pkg-config: LRG_SYSROOT is not set' >&2
+	exit 1
+fi
+
+libdirs=''
+IFS=: read -r -a relative <<< "${LRG_SYSROOT_LIBDIRS:-usr/lib64/pkgconfig:usr/share/pkgconfig:usr/lib/pkgconfig}"
+for dir in "${relative[@]}"
+do
+	libdirs="${libdirs:+${libdirs}:}${LRG_SYSROOT}/${dir}"
+done
+
+if [[ "${LRG_SYSROOT_PREFIXED:-1}" == '1' ]]
+then
+	export PKG_CONFIG_SYSROOT_DIR="${LRG_SYSROOT}"
+else
+	unset PKG_CONFIG_SYSROOT_DIR
+fi
+export PKG_CONFIG_LIBDIR="${libdirs}"
+unset PKG_CONFIG_PATH
+
+if [[ "${LRG_PKG_CONFIG_STATIC:-0}" == '1' ]]
+then
+	exec pkg-config --static "$@"
+fi
+exec pkg-config "$@"
