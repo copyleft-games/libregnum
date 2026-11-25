@@ -69,7 +69,7 @@ generate_session_id (void)
     g_autofree gchar *uuid = g_uuid_string_random ();
 
     /* Use first 8 chars of UUID plus timestamp */
-    return g_strdup_printf ("%.*s-%ld",
+    return g_strdup_printf ("%.*s-%" G_GINT64_FORMAT "",
                             8, uuid,
                             g_date_time_to_unix (now));
 }

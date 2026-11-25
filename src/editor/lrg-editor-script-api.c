@@ -50,6 +50,7 @@
 #endif
 #include "scripting/lrg-scripting-manager.h"
 #include "scripting/lrg-scripting.h"
+#include "../lrg-portable-private.h"
 
 /* Unresolved when the reloader is still the stub. `new` is strong. */
 #pragma weak lrg_script_reloader_get_default

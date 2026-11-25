@@ -21,6 +21,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <glib/gstdio.h>
+#include "../lrg-portable-private.h"
 
 /**
  * SECTION:lrg-vfs-dir-source
@@ -80,13 +81,13 @@ is_inside_root (LrgVfsDirSource *self,
     root = self->real_root;
     if (root == NULL)
     {
-        late_root = realpath (self->root, NULL);
+        late_root = lrg_realpath (self->root);
         if (late_root == NULL)
             return FALSE;
         root = late_root;
     }
 
-    real = realpath (full, NULL);
+    real = lrg_realpath (full);
     if (real == NULL)
         return FALSE;
 
@@ -406,7 +407,7 @@ lrg_vfs_dir_source_constructed (GObject *object)
 
     if (self->root == NULL)
         self->root = g_strdup (".");
-    self->real_root = realpath (self->root, NULL);
+    self->real_root = lrg_realpath (self->root);
 }
 
 static void

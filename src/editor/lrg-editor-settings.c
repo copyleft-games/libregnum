@@ -22,6 +22,7 @@
 #include <string.h>
 #include <errno.h>
 #include <stdlib.h>
+#include "../lrg-portable-private.h"
 
 #define KEYBINDINGS_KEY "keybindings"
 #define VERSION_KEY     "settings-version"
@@ -1231,7 +1232,7 @@ lrg_editor_settings_save (LrgEditorSettings  *self,
 	 * path, which would otherwise replace the link with a plain file. */
 	if (g_file_test (resolved, G_FILE_TEST_IS_SYMLINK))
 	{
-		gchar *real = realpath (resolved, NULL);
+		gchar *real = lrg_realpath (resolved);
 
 		if (real != NULL)
 		{

@@ -589,7 +589,13 @@ editor_run_stop (LrgEditorApp *self)
 
 	/* Stop reading and waiting first; nothing may call back into us. */
 	g_cancellable_cancel (self->run_cancel);
+	/* SIGTERM lets the game shut down cleanly; Windows has no signals,
+	 * so the game process is terminated there */
+#ifdef G_OS_UNIX
 	g_subprocess_send_signal (self->run_proc, SIGTERM);
+#else
+	g_subprocess_force_exit (self->run_proc);
+#endif
 	g_object_set_data (G_OBJECT (self->run_proc), "lrg-editor-app", NULL);
 	g_clear_object (&self->run_proc);
 	g_clear_object (&self->run_cancel);

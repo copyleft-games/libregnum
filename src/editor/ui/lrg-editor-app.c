@@ -50,7 +50,9 @@
 #include "../../graphics/lrg-grl-window.h"
 #include "drawing/grl-fast2d-private.h"
 #include <glib/gstdio.h>
+#ifdef G_OS_UNIX
 #include <glib-unix.h>
+#endif
 #include <raylib.h>
 #include <math.h>
 #include <stdio.h>
@@ -2372,12 +2374,15 @@ lrg_editor_app_run (LrgEditorApp *self)
 	return 0;
 }
 
+#ifdef G_OS_UNIX
+/* SIGINT/SIGTERM end a headless run (Windows: Ctrl+C ends the process) */
 static gboolean
 on_quit_signal (gpointer user_data)
 {
 	g_main_loop_quit (user_data);
 	return G_SOURCE_CONTINUE;
 }
+#endif
 
 typedef struct
 {
@@ -2427,7 +2432,10 @@ lrg_editor_app_run_headless (LrgEditorApp *self)
 {
 	g_autoptr(GMainLoop) loop = NULL;
 	HeadlessData         data;
-	guint                sigint, sigterm, tick;
+	guint                tick;
+#ifdef G_OS_UNIX
+	guint                sigint, sigterm;
+#endif
 
 	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), 1);
 
@@ -2436,15 +2444,19 @@ lrg_editor_app_run_headless (LrgEditorApp *self)
 	data.loop = loop;
 	data.last = 0;
 
+#ifdef G_OS_UNIX
 	sigint = g_unix_signal_add (SIGINT, on_quit_signal, loop);
 	sigterm = g_unix_signal_add (SIGTERM, on_quit_signal, loop);
+#endif
 	tick = g_timeout_add (100, headless_tick, &data);
 
 	g_main_loop_run (loop);
 
 	g_source_remove (tick);
+#ifdef G_OS_UNIX
 	g_source_remove (sigint);
 	g_source_remove (sigterm);
+#endif
 	return 0;
 }
 

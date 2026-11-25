@@ -39,7 +39,13 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#ifdef G_OS_WIN32
+/* Windows 10+ AF_UNIX sockets: struct sockaddr_un lives here */
+#include <winsock2.h>
+#include <afunix.h>
+#else
 #include <sys/un.h>
+#endif
 
 #define MAX_LINE_BYTES   (16 * 1024 * 1024)
 #define MAX_QUEUED_BYTES (32 * 1024 * 1024)

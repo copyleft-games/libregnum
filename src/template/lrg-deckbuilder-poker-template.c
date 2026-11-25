@@ -698,7 +698,7 @@ lrg_deckbuilder_poker_template_start_round (LrgDeckbuilderPokerTemplate *self)
 
     g_signal_emit (self, signals[SIGNAL_ROUND_STARTED], 0);
 
-    lrg_info (LRG_LOG_DOMAIN_TEMPLATE, "Poker round started (blind: %ld)",
+    lrg_info (LRG_LOG_DOMAIN_TEMPLATE, "Poker round started (blind: %" G_GINT64_FORMAT ")",
                   self->blind_score);
 }
 
@@ -721,7 +721,7 @@ lrg_deckbuilder_poker_template_end_round (LrgDeckbuilderPokerTemplate *self)
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_IN_ROUND]);
     g_signal_emit (self, signals[SIGNAL_ROUND_ENDED], 0, won);
 
-    lrg_info (LRG_LOG_DOMAIN_TEMPLATE, "Poker round ended (score: %ld, won: %s)",
+    lrg_info (LRG_LOG_DOMAIN_TEMPLATE, "Poker round ended (score: %" G_GINT64_FORMAT ", won: %s)",
                   self->score, won ? "yes" : "no");
 
     return won;
