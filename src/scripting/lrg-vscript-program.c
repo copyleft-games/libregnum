@@ -2341,6 +2341,9 @@ lrg_vscript_priv_gi_invoke (const gchar   *function,
  * LrgVscriptProgram
  * ========================================================================== */
 
+static gboolean vs_fail (GError **error, gint code, const gchar *path,
+                         const gchar *fmt, ...) G_GNUC_PRINTF (4, 5);
+
 static gboolean
 vs_fail (GError      **error,
          gint          code,
@@ -4212,6 +4215,9 @@ lrg_vscript_program_connect (LrgVscriptProgram  *self,
 
 /* --- validation ---------------------------------------------------------- */
 
+static void add_issue (GPtrArray *found, LrgVscriptSeverity severity, const gchar *graph,
+                       const gchar *node, const gchar *path, const gchar *fmt, ...) G_GNUC_PRINTF (6, 7);
+
 static void
 add_issue (GPtrArray          *found,
            LrgVscriptSeverity  severity,
@@ -4339,15 +4345,19 @@ validate_node (LrgVscriptProgram *self,
 	}
 	if (kind_is (kind, "gi.call"))
 	{
-		const gchar *fn = lrg_vscript_node_get_param_string (node, "function");
 		const gchar *args = lrg_vscript_node_get_param_string (node, "args");
 		const gchar *returns = lrg_vscript_node_get_param_string (node, "returns");
-		gboolean     have_fn = fn != NULL && fn[0] != '\0';
 		gboolean     have_sig = (args != NULL && args[0] != '\0') || (returns != NULL && returns[0] != '\0');
 
 		if (lrg_vscript_gi_available ())
 		{
 #ifdef VSCRIPT_HAVE_GI
+			/* the callable is only looked up where the GI runtime is built
+			 * in; without it (BUILD_GIR=0, every cross target) these
+			 * would be unused */
+			const gchar *fn = lrg_vscript_node_get_param_string (node, "function");
+			gboolean     have_fn = fn != NULL && fn[0] != '\0';
+
 			if (have_fn)
 			{
 				GIBaseInfo *gi = gi_find_callable (fn, NULL);

@@ -28,6 +28,18 @@
 #ifdef __linux__
 #include <sys/mman.h>
 #define LRG_HAVE_MEMFD 1
+#if defined(__ANDROID__) && __ANDROID_API__ < 30
+/* bionic declares memfd_create() from API 30 (libregnum's minimum is 29);
+ * the system call itself is in every kernel Android 10 ships (3.17+) */
+#include <sys/syscall.h>
+static int
+lrg_memfd_create (const char   *name,
+                  unsigned int  flags)
+{
+	return (int) syscall (__NR_memfd_create, name, flags);
+}
+#define memfd_create lrg_memfd_create
+#endif
 #endif
 
 struct _LrgFrameExport

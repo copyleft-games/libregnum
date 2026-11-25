@@ -70,14 +70,6 @@ d3_sub (gdouble *o, const gdouble *a, const gdouble *b)
 }
 
 static inline void
-d3_add (gdouble *o, const gdouble *a, const gdouble *b)
-{
-	o[0] = a[0] + b[0];
-	o[1] = a[1] + b[1];
-	o[2] = a[2] + b[2];
-}
-
-static inline void
 d3_madd (gdouble *o, const gdouble *a, const gdouble *b, gdouble s)
 {
 	o[0] = a[0] + b[0] * s;

@@ -55,7 +55,7 @@ struct _LrgParticlePool
     /* Free list management using indices */
     guint             *free_indices;    /* Stack of free slot indices */
     guint              free_count;      /* Number of free slots */
-	guint8            *leased;          /* Ownership survives particle expiry */
+    guint8            *leased;          /* Ownership survives particle expiry */
 
     /* Growth settings */
     LrgPoolGrowPolicy  grow_policy;
@@ -84,7 +84,7 @@ lrg_particle_pool_finalize (GObject *object)
 
     g_clear_pointer (&self->particles, g_free);
     g_clear_pointer (&self->free_indices, g_free);
-	g_clear_pointer (&self->leased, g_free);
+    g_clear_pointer (&self->leased, g_free);
 
     G_OBJECT_CLASS (lrg_particle_pool_parent_class)->finalize (object);
 }
@@ -228,7 +228,7 @@ lrg_particle_pool_init (LrgParticlePool *self)
     self->alive_count = 0;
     self->free_indices = NULL;
     self->free_count = 0;
-	self->leased = NULL;
+    self->leased = NULL;
     self->grow_policy = LRG_POOL_GROW_DOUBLE;
     self->max_capacity = 0;
 }
@@ -257,10 +257,10 @@ lrg_particle_pool_grow (LrgParticlePool *self,
         return FALSE;
 
     /* Initialize new particles */
-	self->leased = g_renew (guint8, self->leased, new_capacity);
+    self->leased = g_renew (guint8, self->leased, new_capacity);
     for (i = old_capacity; i < new_capacity; i++)
     {
-		self->leased[i] = FALSE;
+        self->leased[i] = FALSE;
         new_particles[i].alive = FALSE;
         new_particles[i].position_x = 0.0f;
         new_particles[i].position_y = 0.0f;
@@ -374,7 +374,7 @@ lrg_particle_pool_acquire (LrgParticlePool *self)
         index = self->free_indices[self->free_count];
         particle = &self->particles[index];
         particle->alive = TRUE;
-		self->leased[index] = TRUE;
+        self->leased[index] = TRUE;
         self->alive_count++;
 
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ALIVE_COUNT]);
@@ -456,11 +456,11 @@ lrg_particle_pool_release (LrgParticlePool *self,
     /* Calculate index from pointer */
     index = (guint) (particle - self->particles);
     g_return_if_fail (index < self->capacity);
-	/* Particle update/kill clears alive before the system returns its lease.
-	 * Track ownership separately so expiration releases exactly once. */
-	if (!self->leased[index])
-		return;
-	self->leased[index] = FALSE;
+    /* Particle update/kill clears alive before the system returns its lease.
+     * Track ownership separately so expiration releases exactly once. */
+    if (!self->leased[index])
+        return;
+    self->leased[index] = FALSE;
 
     /* Reset and mark as dead */
     lrg_particle_reset (particle);
@@ -498,10 +498,10 @@ lrg_particle_pool_release_dead (LrgParticlePool *self)
         /* Check if the particle just died (was alive, now dead due to lifetime) */
         if (!p->alive && self->leased[i])
         {
-			self->leased[i] = FALSE;
-			self->free_indices[self->free_count++] = i;
-			self->alive_count--;
-			released++;
+            self->leased[i] = FALSE;
+            self->free_indices[self->free_count++] = i;
+            self->alive_count--;
+            released++;
         }
     }
 
@@ -622,7 +622,7 @@ lrg_particle_pool_clear (LrgParticlePool *self)
     for (i = 0; i < self->capacity; i++)
     {
         lrg_particle_reset (&self->particles[i]);
-		self->leased[i] = FALSE;
+        self->leased[i] = FALSE;
         self->free_indices[self->free_count++] = i;
     }
 
@@ -716,7 +716,7 @@ lrg_particle_pool_update_all (LrgParticlePool *self,
             else
             {
                 /* Particle died, add to free list */
-				self->leased[i] = FALSE;
+                self->leased[i] = FALSE;
                 self->free_indices[self->free_count++] = i;
             }
         }

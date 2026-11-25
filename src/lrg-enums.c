@@ -99,7 +99,7 @@ lrg_asset_manager_error_quark (void)
 GType
 lrg_engine_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -120,7 +120,7 @@ lrg_engine_error_get_type (void)
 GType
 lrg_data_loader_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -143,7 +143,7 @@ lrg_data_loader_error_get_type (void)
 GType
 lrg_mod_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -168,7 +168,7 @@ lrg_mod_error_get_type (void)
 GType
 lrg_save_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -194,7 +194,7 @@ lrg_save_error_get_type (void)
 GType
 lrg_save_migration_scope_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -214,7 +214,7 @@ lrg_save_migration_scope_get_type (void)
 GType
 lrg_dialog_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -236,7 +236,7 @@ lrg_dialog_error_get_type (void)
 GType
 lrg_asset_manager_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -261,7 +261,7 @@ lrg_asset_manager_error_get_type (void)
 GType
 lrg_tile_property_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -287,7 +287,7 @@ lrg_tile_property_get_type (void)
 GType
 lrg_engine_state_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -315,7 +315,7 @@ lrg_engine_state_get_type (void)
 GType
 lrg_input_binding_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -337,7 +337,7 @@ lrg_input_binding_type_get_type (void)
 GType
 lrg_input_modifiers_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -360,7 +360,7 @@ lrg_input_modifiers_get_type (void)
 GType
 lrg_gamepad_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -384,7 +384,7 @@ lrg_gamepad_type_get_type (void)
 GType
 lrg_controller_family_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -414,7 +414,7 @@ lrg_controller_family_get_type (void)
 GType
 lrg_controller_control_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -462,7 +462,7 @@ lrg_controller_control_get_type (void)
 GType
 lrg_bt_status_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -484,7 +484,7 @@ lrg_bt_status_get_type (void)
 GType
 lrg_judgment_band_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -506,7 +506,7 @@ lrg_judgment_band_get_type (void)
 GType
 lrg_decider_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -532,7 +532,7 @@ lrg_decider_error_get_type (void)
 GType
 lrg_quest_state_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -554,7 +554,7 @@ lrg_quest_state_get_type (void)
 GType
 lrg_quest_objective_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -582,7 +582,7 @@ lrg_quest_objective_type_get_type (void)
 GType
 lrg_item_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -610,7 +610,7 @@ lrg_item_type_get_type (void)
 GType
 lrg_colorblind_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -633,7 +633,7 @@ lrg_colorblind_type_get_type (void)
 GType
 lrg_colorblind_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -657,7 +657,7 @@ lrg_colorblind_mode_get_type (void)
 GType
 lrg_text_alignment_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -678,7 +678,7 @@ lrg_text_alignment_get_type (void)
 GType
 lrg_ui_event_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -713,7 +713,7 @@ lrg_ui_event_type_get_type (void)
 GType
 lrg_orientation_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -733,7 +733,7 @@ lrg_orientation_get_type (void)
 GType
 lrg_image_scale_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -772,7 +772,7 @@ lrg_i18n_error_quark (void)
 GType
 lrg_i18n_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -794,7 +794,7 @@ lrg_i18n_error_get_type (void)
 GType
 lrg_plural_form_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -835,7 +835,7 @@ lrg_pathfinding_error_quark (void)
 GType
 lrg_pathfinding_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -861,7 +861,7 @@ lrg_pathfinding_error_get_type (void)
 GType
 lrg_nav_cell_flags_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -881,7 +881,7 @@ lrg_nav_cell_flags_get_type (void)
 GType
 lrg_path_smoothing_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -906,7 +906,7 @@ lrg_path_smoothing_mode_get_type (void)
 GType
 lrg_bt_parallel_policy_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -926,7 +926,7 @@ lrg_bt_parallel_policy_get_type (void)
 GType
 lrg_blackboard_value_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -954,7 +954,7 @@ lrg_blackboard_value_type_get_type (void)
 GType
 lrg_rigid_body_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -975,7 +975,7 @@ lrg_rigid_body_type_get_type (void)
 GType
 lrg_force_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -997,7 +997,7 @@ lrg_force_mode_get_type (void)
 GType
 lrg_collision_shape_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1036,7 +1036,7 @@ lrg_debug_error_quark (void)
 GType
 lrg_debug_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1057,7 +1057,7 @@ lrg_debug_error_get_type (void)
 GType
 lrg_debug_overlay_flags_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1084,7 +1084,7 @@ lrg_debug_overlay_flags_get_type (void)
 GType
 lrg_profiler_section_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1112,7 +1112,7 @@ lrg_profiler_section_type_get_type (void)
 GType
 lrg_mod_state_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1136,7 +1136,7 @@ lrg_mod_state_get_type (void)
 GType
 lrg_mod_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1158,7 +1158,7 @@ lrg_mod_type_get_type (void)
 GType
 lrg_mod_priority_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1191,7 +1191,7 @@ lrg_dlc_error_quark (void)
 GType
 lrg_dlc_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1215,7 +1215,7 @@ lrg_dlc_error_get_type (void)
 GType
 lrg_dlc_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1239,7 +1239,7 @@ lrg_dlc_type_get_type (void)
 GType
 lrg_dlc_ownership_state_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1266,7 +1266,7 @@ lrg_dlc_ownership_state_get_type (void)
 GType
 lrg_equipment_slot_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1309,7 +1309,7 @@ lrg_net_error_quark (void)
 GType
 lrg_net_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1335,7 +1335,7 @@ lrg_net_error_get_type (void)
 GType
 lrg_net_peer_state_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1357,7 +1357,7 @@ lrg_net_peer_state_get_type (void)
 GType
 lrg_net_message_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1384,7 +1384,7 @@ lrg_net_message_type_get_type (void)
 GType
 lrg_render_layer_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1407,7 +1407,7 @@ lrg_render_layer_get_type (void)
 GType
 lrg_projection_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1431,7 +1431,7 @@ lrg_projection_type_get_type (void)
 GType
 lrg_spawn_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1454,7 +1454,7 @@ lrg_spawn_type_get_type (void)
 GType
 lrg_trigger_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1476,7 +1476,7 @@ lrg_trigger_type_get_type (void)
 GType
 lrg_octree_node_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1514,7 +1514,7 @@ lrg_scene_error_quark (void)
 GType
 lrg_scene_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1538,7 +1538,7 @@ lrg_scene_error_get_type (void)
 GType
 lrg_primitive_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1565,7 +1565,7 @@ lrg_primitive_type_get_type (void)
 GType
 lrg_circle_fill_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1603,7 +1603,7 @@ lrg_scripting_error_quark (void)
 GType
 lrg_scripting_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1631,7 +1631,7 @@ lrg_scripting_error_get_type (void)
 GType
 lrg_script_task_state_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1655,7 +1655,7 @@ lrg_script_task_state_get_type (void)
 GType
 lrg_script_wait_kind_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1677,7 +1677,7 @@ lrg_script_wait_kind_get_type (void)
 GType
 lrg_binding_conflict_policy_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1699,7 +1699,7 @@ lrg_binding_conflict_policy_get_type (void)
 GType
 lrg_script_access_flags_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1738,7 +1738,7 @@ lrg_economy_error_quark (void)
 GType
 lrg_economy_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1761,7 +1761,7 @@ lrg_economy_error_get_type (void)
 GType
 lrg_resource_category_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1803,7 +1803,7 @@ lrg_building_error_quark (void)
 GType
 lrg_building_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1827,7 +1827,7 @@ lrg_building_error_get_type (void)
 GType
 lrg_building_category_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1851,7 +1851,7 @@ lrg_building_category_get_type (void)
 GType
 lrg_rotation_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1873,7 +1873,7 @@ lrg_rotation_get_type (void)
 GType
 lrg_terrain_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1917,7 +1917,7 @@ lrg_vehicle_error_quark (void)
 GType
 lrg_vehicle_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1938,7 +1938,7 @@ lrg_vehicle_error_get_type (void)
 GType
 lrg_vehicle_camera_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1960,7 +1960,7 @@ lrg_vehicle_camera_mode_get_type (void)
 GType
 lrg_traffic_behavior_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -1981,7 +1981,7 @@ lrg_traffic_behavior_get_type (void)
 GType
 lrg_road_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2008,7 +2008,7 @@ lrg_road_type_get_type (void)
 GType
 lrg_big_number_format_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2029,7 +2029,7 @@ lrg_big_number_format_get_type (void)
 GType
 lrg_automation_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2051,7 +2051,7 @@ lrg_automation_mode_get_type (void)
 GType
 lrg_milestone_condition_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2090,7 +2090,7 @@ lrg_particle_error_quark (void)
 GType
 lrg_particle_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2112,7 +2112,7 @@ lrg_particle_error_get_type (void)
 GType
 lrg_emission_shape_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2135,7 +2135,7 @@ lrg_emission_shape_get_type (void)
 GType
 lrg_particle_render_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2157,7 +2157,7 @@ lrg_particle_render_mode_get_type (void)
 GType
 lrg_billboard_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2177,7 +2177,7 @@ lrg_billboard_mode_get_type (void)
 GType
 lrg_terrain_uv_variant_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2199,7 +2199,7 @@ lrg_terrain_uv_variant_get_type (void)
 GType
 lrg_particle_backend_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2219,7 +2219,7 @@ lrg_particle_backend_type_get_type (void)
 GType
 lrg_particle_blend_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2240,7 +2240,7 @@ lrg_particle_blend_mode_get_type (void)
 GType
 lrg_pool_grow_policy_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2279,7 +2279,7 @@ lrg_postprocess_error_quark (void)
 GType
 lrg_postprocess_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2301,7 +2301,7 @@ lrg_postprocess_error_get_type (void)
 GType
 lrg_fxaa_quality_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2323,7 +2323,7 @@ lrg_fxaa_quality_get_type (void)
 GType
 lrg_bokeh_shape_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2361,7 +2361,7 @@ lrg_animation_error_quark (void)
 GType
 lrg_animation_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2385,7 +2385,7 @@ lrg_animation_error_get_type (void)
 GType
 lrg_animation_loop_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2407,7 +2407,7 @@ lrg_animation_loop_mode_get_type (void)
 GType
 lrg_animator_state_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2428,7 +2428,7 @@ lrg_animator_state_get_type (void)
 GType
 lrg_blend_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2450,7 +2450,7 @@ lrg_blend_type_get_type (void)
 GType
 lrg_animation_parameter_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2472,7 +2472,7 @@ lrg_animation_parameter_type_get_type (void)
 GType
 lrg_layer_blend_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2492,7 +2492,7 @@ lrg_layer_blend_mode_get_type (void)
 GType
 lrg_transition_interruption_source_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2514,7 +2514,7 @@ lrg_transition_interruption_source_get_type (void)
 GType
 lrg_condition_comparison_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2538,7 +2538,7 @@ lrg_condition_comparison_get_type (void)
 GType
 lrg_ik_solver_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2577,7 +2577,7 @@ lrg_text_error_quark (void)
 GType
 lrg_text_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2599,7 +2599,7 @@ lrg_text_error_get_type (void)
 GType
 lrg_text_style_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2622,7 +2622,7 @@ lrg_text_style_get_type (void)
 GType
 lrg_text_effect_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2648,7 +2648,7 @@ lrg_text_effect_type_get_type (void)
 GType
 lrg_text_direction_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2686,7 +2686,7 @@ lrg_video_error_quark (void)
 GType
 lrg_video_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2711,7 +2711,7 @@ lrg_video_error_get_type (void)
 GType
 lrg_video_state_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2735,7 +2735,7 @@ lrg_video_state_get_type (void)
 GType
 lrg_subtitle_position_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2759,7 +2759,7 @@ lrg_subtitle_position_get_type (void)
 GType
 lrg_tutorial_step_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2782,7 +2782,7 @@ lrg_tutorial_step_type_get_type (void)
 GType
 lrg_tutorial_state_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2805,7 +2805,7 @@ lrg_tutorial_state_get_type (void)
 GType
 lrg_highlight_style_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2827,7 +2827,7 @@ lrg_highlight_style_get_type (void)
 GType
 lrg_arrow_direction_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2850,7 +2850,7 @@ lrg_arrow_direction_get_type (void)
 GType
 lrg_input_device_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2872,7 +2872,7 @@ lrg_input_device_type_get_type (void)
 GType
 lrg_gamepad_style_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2898,7 +2898,7 @@ lrg_gamepad_style_get_type (void)
 GType
 lrg_easing_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2947,7 +2947,7 @@ lrg_easing_type_get_type (void)
 GType
 lrg_tween_loop_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2967,7 +2967,7 @@ lrg_tween_loop_mode_get_type (void)
 GType
 lrg_tween_state_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -2993,7 +2993,7 @@ lrg_tween_state_get_type (void)
 GType
 lrg_transition_state_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3016,7 +3016,7 @@ lrg_transition_state_get_type (void)
 GType
 lrg_transition_direction_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3038,7 +3038,7 @@ lrg_transition_direction_get_type (void)
 GType
 lrg_slide_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3059,7 +3059,7 @@ lrg_slide_mode_get_type (void)
 GType
 lrg_zoom_direction_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3083,7 +3083,7 @@ lrg_zoom_direction_get_type (void)
 GType
 lrg_trigger2d_shape_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3104,7 +3104,7 @@ lrg_trigger2d_shape_get_type (void)
 GType
 lrg_trigger2d_event_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3129,7 +3129,7 @@ lrg_trigger2d_event_type_get_type (void)
 GType
 lrg_sprite_sheet_format_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3151,7 +3151,7 @@ lrg_sprite_sheet_format_get_type (void)
 GType
 lrg_atlas_pack_method_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3172,7 +3172,7 @@ lrg_atlas_pack_method_get_type (void)
 GType
 lrg_nine_slice_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3197,7 +3197,7 @@ lrg_nine_slice_mode_get_type (void)
 GType
 lrg_fog_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3219,7 +3219,7 @@ lrg_fog_type_get_type (void)
 GType
 lrg_weather_space_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3243,7 +3243,7 @@ lrg_weather_space_get_type (void)
 GType
 lrg_light_falloff_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3264,7 +3264,7 @@ lrg_light_falloff_get_type (void)
 GType
 lrg_light_blend_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3285,7 +3285,7 @@ lrg_light_blend_mode_get_type (void)
 GType
 lrg_shadow_method_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3322,7 +3322,7 @@ lrg_analytics_error_quark (void)
 GType
 lrg_analytics_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3346,7 +3346,7 @@ lrg_analytics_error_get_type (void)
 GType
 lrg_analytics_format_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3383,7 +3383,7 @@ lrg_achievement_error_quark (void)
 GType
 lrg_achievement_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3406,7 +3406,7 @@ lrg_achievement_error_get_type (void)
 GType
 lrg_notification_position_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3447,7 +3447,7 @@ lrg_photo_mode_error_quark (void)
 GType
 lrg_photo_mode_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3473,7 +3473,7 @@ lrg_photo_mode_error_get_type (void)
 GType
 lrg_screenshot_format_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3493,7 +3493,7 @@ lrg_screenshot_format_get_type (void)
 GType
 lrg_photo_camera_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3513,7 +3513,7 @@ lrg_photo_camera_mode_get_type (void)
 GType
 lrg_photo_preset_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3539,7 +3539,7 @@ lrg_photo_preset_get_type (void)
 GType
 lrg_photo_frame_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3562,7 +3562,7 @@ lrg_photo_frame_get_type (void)
 GType
 lrg_photo_grid_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3595,7 +3595,7 @@ lrg_workshop_error_quark (void)
 GType
 lrg_workshop_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3626,7 +3626,7 @@ lrg_workshop_error_get_type (void)
 GType
 lrg_demo_end_reason_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3654,7 +3654,7 @@ lrg_demo_error_quark (void)
 GType
 lrg_demo_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3680,7 +3680,7 @@ lrg_demo_error_get_type (void)
 GType
 lrg_vr_eye_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3700,7 +3700,7 @@ lrg_vr_eye_get_type (void)
 GType
 lrg_vr_hand_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3720,7 +3720,7 @@ lrg_vr_hand_get_type (void)
 GType
 lrg_vr_controller_button_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3754,7 +3754,7 @@ lrg_vr_controller_button_get_type (void)
 GType
 lrg_vr_turn_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3774,7 +3774,7 @@ lrg_vr_turn_mode_get_type (void)
 GType
 lrg_vr_locomotion_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3800,7 +3800,7 @@ lrg_vr_error_quark (void)
 GType
 lrg_vr_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3828,7 +3828,7 @@ lrg_vr_error_get_type (void)
 GType
 lrg_card_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3851,7 +3851,7 @@ lrg_card_type_get_type (void)
 GType
 lrg_card_rarity_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3874,7 +3874,7 @@ lrg_card_rarity_get_type (void)
 GType
 lrg_card_target_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3897,7 +3897,7 @@ lrg_card_target_type_get_type (void)
 GType
 lrg_pile_position_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3918,7 +3918,7 @@ lrg_pile_position_get_type (void)
 GType
 lrg_card_zone_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3942,7 +3942,7 @@ lrg_card_zone_get_type (void)
 GType
 lrg_card_upgrade_tier_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3964,7 +3964,7 @@ lrg_card_upgrade_tier_get_type (void)
 GType
 lrg_card_keyword_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -3991,7 +3991,7 @@ lrg_card_keyword_get_type (void)
 GType
 lrg_card_suit_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4014,7 +4014,7 @@ lrg_card_suit_get_type (void)
 GType
 lrg_card_rank_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4052,7 +4052,7 @@ lrg_deckbuilder_error_quark (void)
 GType
 lrg_deckbuilder_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4083,7 +4083,7 @@ lrg_deckbuilder_error_get_type (void)
 GType
 lrg_effect_flags_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4109,7 +4109,7 @@ lrg_effect_flags_get_type (void)
 GType
 lrg_combat_phase_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4133,7 +4133,7 @@ lrg_combat_phase_get_type (void)
 GType
 lrg_intent_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4162,7 +4162,7 @@ lrg_intent_type_get_type (void)
 GType
 lrg_status_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4183,7 +4183,7 @@ lrg_status_type_get_type (void)
 GType
 lrg_status_duration_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4205,7 +4205,7 @@ lrg_status_duration_get_type (void)
 GType
 lrg_relic_rarity_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4231,7 +4231,7 @@ lrg_relic_rarity_get_type (void)
 GType
 lrg_map_node_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4257,7 +4257,7 @@ lrg_map_node_type_get_type (void)
 GType
 lrg_card_event_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4293,7 +4293,7 @@ lrg_card_event_type_get_type (void)
 GType
 lrg_hand_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4325,7 +4325,7 @@ lrg_hand_type_get_type (void)
 GType
 lrg_enemy_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4347,7 +4347,7 @@ lrg_enemy_type_get_type (void)
 GType
 lrg_combat_result_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4369,7 +4369,7 @@ lrg_combat_result_get_type (void)
 GType
 lrg_run_state_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4402,7 +4402,7 @@ lrg_run_state_get_type (void)
 GType
 lrg_card_enhancement_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4429,7 +4429,7 @@ lrg_card_enhancement_get_type (void)
 GType
 lrg_card_seal_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4452,7 +4452,7 @@ lrg_card_seal_get_type (void)
 GType
 lrg_joker_rarity_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4474,7 +4474,7 @@ lrg_joker_rarity_get_type (void)
 GType
 lrg_joker_edition_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4497,7 +4497,7 @@ lrg_joker_edition_get_type (void)
 GType
 lrg_scoring_phase_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4524,7 +4524,7 @@ lrg_scoring_phase_get_type (void)
 GType
 lrg_ascension_modifier_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4553,7 +4553,7 @@ lrg_ascension_modifier_get_type (void)
 GType
 lrg_unlock_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4579,7 +4579,7 @@ lrg_unlock_type_get_type (void)
 GType
 lrg_unlock_status_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4604,7 +4604,7 @@ lrg_unlock_status_get_type (void)
 GType
 lrg_tab_position_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4628,7 +4628,7 @@ lrg_tab_position_get_type (void)
 GType
 lrg_template_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4651,7 +4651,7 @@ lrg_template_error_get_type (void)
 GType
 lrg_fullscreen_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4672,7 +4672,7 @@ lrg_fullscreen_mode_get_type (void)
 GType
 lrg_scaling_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4695,7 +4695,7 @@ lrg_scaling_mode_get_type (void)
 GType
 lrg_pool_growth_policy_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4717,7 +4717,7 @@ lrg_pool_growth_policy_get_type (void)
 GType
 lrg_input_context_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4739,7 +4739,7 @@ lrg_input_context_get_type (void)
 GType
 lrg_auto_save_trigger_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4778,7 +4778,7 @@ lrg_level_error_quark (void)
 GType
 lrg_level_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4800,7 +4800,7 @@ lrg_level_error_get_type (void)
 GType
 lrg_node_visual_kind_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4833,7 +4833,7 @@ lrg_node_visual_kind_get_type (void)
 GType
 lrg_script_language_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4858,7 +4858,7 @@ lrg_script_language_get_type (void)
 GType
 lrg_editor_space_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4878,7 +4878,7 @@ lrg_editor_space_get_type (void)
 GType
 lrg_editor_gizmo_handle_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4904,7 +4904,7 @@ lrg_editor_gizmo_handle_get_type (void)
 GType
 lrg_editor_tool_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4926,7 +4926,7 @@ lrg_editor_tool_get_type (void)
 GType
 lrg_asset_type_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4959,7 +4959,7 @@ lrg_asset_type_get_type (void)
 GType
 lrg_reel_extrapolate_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -4981,7 +4981,7 @@ lrg_reel_extrapolate_get_type (void)
 GType
 lrg_reel_sequence_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5003,7 +5003,7 @@ lrg_reel_sequence_mode_get_type (void)
 GType
 lrg_reel_image_format_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5023,7 +5023,7 @@ lrg_reel_image_format_get_type (void)
 GType
 lrg_reel_video_codec_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5047,7 +5047,7 @@ lrg_reel_video_codec_get_type (void)
 GType
 lrg_reel_audio_format_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5071,7 +5071,7 @@ lrg_reel_audio_format_get_type (void)
 GType
 lrg_reel_transition_direction_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5093,7 +5093,7 @@ lrg_reel_transition_direction_get_type (void)
 GType
 lrg_reel_blend_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5119,7 +5119,7 @@ lrg_reel_blend_mode_get_type (void)
 GType
 lrg_reel_fit_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5142,7 +5142,7 @@ lrg_reel_fit_get_type (void)
 GType
 lrg_reel_shape_kind_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5169,7 +5169,7 @@ lrg_reel_shape_kind_get_type (void)
 GType
 lrg_reel_text_align_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5207,7 +5207,7 @@ lrg_progression_error_quark (void)
 GType
 lrg_reset_period_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5227,7 +5227,7 @@ lrg_reset_period_get_type (void)
 GType
 lrg_quest_repeat_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5248,7 +5248,7 @@ lrg_quest_repeat_get_type (void)
 GType
 lrg_progression_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5273,7 +5273,7 @@ lrg_progression_error_get_type (void)
 GType
 lrg_ability_learn_source_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5296,7 +5296,7 @@ lrg_ability_learn_source_get_type (void)
 GType
 lrg_aura_kind_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5316,7 +5316,7 @@ lrg_aura_kind_get_type (void)
 GType
 lrg_aura_apply_result_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5338,7 +5338,7 @@ lrg_aura_apply_result_get_type (void)
 GType
 lrg_profession_kind_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5358,7 +5358,7 @@ lrg_profession_kind_get_type (void)
 GType
 lrg_profession_category_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5379,7 +5379,7 @@ lrg_profession_category_get_type (void)
 GType
 lrg_recipe_source_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5403,7 +5403,7 @@ lrg_recipe_source_get_type (void)
 GType
 lrg_skill_difficulty_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5426,7 +5426,7 @@ lrg_skill_difficulty_get_type (void)
 GType
 lrg_collectible_kind_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5449,7 +5449,7 @@ lrg_collectible_kind_get_type (void)
 GType
 lrg_collectible_rarity_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5472,7 +5472,7 @@ lrg_collectible_rarity_get_type (void)
 GType
 lrg_companion_kind_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5492,7 +5492,7 @@ lrg_companion_kind_get_type (void)
 GType
 lrg_companion_stance_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5514,7 +5514,7 @@ lrg_companion_stance_get_type (void)
 GType
 lrg_companion_action_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5554,7 +5554,7 @@ lrg_gltf_error_quark (void)
 GType
 lrg_gltf_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5578,7 +5578,7 @@ lrg_gltf_error_get_type (void)
 GType
 lrg_gltf_alpha_mode_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5599,7 +5599,7 @@ lrg_gltf_alpha_mode_get_type (void)
 GType
 lrg_texture_sampling_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5621,7 +5621,7 @@ lrg_texture_sampling_get_type (void)
 GType
 lrg_hud_anchor_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5648,7 +5648,7 @@ lrg_hud_anchor_get_type (void)
 GType
 lrg_achievement_scope_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5685,7 +5685,7 @@ lrg_dds_error_quark (void)
 GType
 lrg_dds_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5706,7 +5706,7 @@ lrg_dds_error_get_type (void)
 GType
 lrg_dds_format_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5733,7 +5733,7 @@ lrg_dds_format_get_type (void)
 GType
 lrg_nav_door_state_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5772,7 +5772,7 @@ lrg_procgen_error_quark (void)
 GType
 lrg_procgen_error_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5794,7 +5794,7 @@ lrg_procgen_error_get_type (void)
 GType
 lrg_procgen_cell_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5819,7 +5819,7 @@ lrg_procgen_cell_get_type (void)
 GType
 lrg_procgen_autotile_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -5840,7 +5840,7 @@ lrg_procgen_autotile_get_type (void)
 GType
 lrg_procgen_direction_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {
@@ -6343,7 +6343,7 @@ lrg_icon_get_type (void)
 GType
 lrg_widget_direction_get_type (void)
 {
-    static volatile gsize g_define_type_id__volatile = 0;
+    static gsize g_define_type_id__volatile = 0;
 
     if (g_once_init_enter (&g_define_type_id__volatile))
     {

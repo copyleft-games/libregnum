@@ -297,6 +297,9 @@ untrack_graph (LrgScriptingGraph *self)
 	g_ptr_array_remove (live_graphs, self);
 }
 
+static Act fail (LrgScriptingGraph *self, GError **error, gint code,
+                 const gchar *fmt, ...) G_GNUC_PRINTF (4, 5);
+
 static Act
 fail (LrgScriptingGraph *self,
       GError           **error,

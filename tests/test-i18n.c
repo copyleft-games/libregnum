@@ -341,6 +341,167 @@ test_localization_plural (void)
     g_assert_cmpstr (str, ==, "%d files");
 }
 
+/* ==========================================================================
+ * Checked formats: a translation must read the fallback's argument types
+ * ========================================================================== */
+
+/* fmt_setup: fallback "<prefix>_src" with @source for "k", current
+ * "<prefix>_tr" with @translation for "k" */
+static LrgLocalization *
+fmt_setup (const gchar *prefix,
+           const gchar *source,
+           const gchar *translation)
+{
+	LrgLocalization *loc = lrg_localization_get_default ();
+	g_autofree gchar *src_code = g_strdup_printf ("%s_src", prefix);
+	g_autofree gchar *tr_code = g_strdup_printf ("%s_tr", prefix);
+	LrgLocale *src = lrg_locale_new (src_code, "Source");
+	LrgLocale *tr = lrg_locale_new (tr_code, "Translation");
+
+	lrg_locale_set_string (src, "k", source);
+	lrg_locale_set_string (tr, "k", translation);
+	lrg_localization_add_locale (loc, src);
+	lrg_localization_add_locale (loc, tr);
+	g_assert_true (lrg_localization_set_fallback (loc, src_code));
+	g_assert_true (lrg_localization_set_current (loc, tr_code));
+	return loc;
+}
+
+/* a translation with the source's argument types is used */
+static void
+test_format_checked_ok (void)
+{
+	LrgLocalization *loc = fmt_setup ("fmtok", "%s has %d coins", "%s a %d pièces");
+	g_autofree gchar *out = lrg_localization_format (loc, "k", "Ana", 3);
+
+	g_assert_cmpstr (out, ==, "Ana a 3 pièces");
+}
+
+/* reordered positional arguments of the same types are fine */
+static void
+test_format_checked_positional (void)
+{
+	LrgLocalization *loc = fmt_setup ("fmtpos", "%s has %d coins", "%2$d Münzen hat %1$s");
+	g_autofree gchar *out = lrg_localization_format (loc, "k", "Ana", 3);
+
+	g_assert_cmpstr (out, ==, "3 Münzen hat Ana");
+}
+
+/* fewer arguments than the source is fine (a prefix of them) */
+static void
+test_format_checked_fewer (void)
+{
+	LrgLocalization *loc = fmt_setup ("fmtfew", "%s has %d coins", "%s is rich");
+	g_autofree gchar *out = lrg_localization_format (loc, "k", "Ana", 3);
+
+	g_assert_cmpstr (out, ==, "Ana is rich");
+}
+
+/* a type mismatch (%s where the source has %d) falls back, warning once */
+static void
+test_format_checked_mismatch (void)
+{
+	LrgLocalization *loc = fmt_setup ("fmtbad", "%d coins", "%s pièces");
+	g_autofree gchar *first = NULL;
+	g_autofree gchar *second = NULL;
+
+	g_test_expect_message ("Libregnum-I18N", G_LOG_LEVEL_WARNING, "*fmtbad_tr*does not match*");
+	first = lrg_localization_format (loc, "k", 7);
+	g_test_assert_expected_messages ();
+	g_assert_cmpstr (first, ==, "7 coins");
+
+	/* reported once: no second warning */
+	second = lrg_localization_format (loc, "k", 8);
+	g_assert_cmpstr (second, ==, "8 coins");
+}
+
+/* more arguments than the source, and %n, are rejected */
+static void
+test_format_checked_extra_and_n (void)
+{
+	LrgLocalization *loc = fmt_setup ("fmtmore", "%d coins", "%d coins from %s");
+	g_autofree gchar *more = NULL;
+	g_autofree gchar *n = NULL;
+	LrgLocalization *loc2;
+
+	g_test_expect_message ("Libregnum-I18N", G_LOG_LEVEL_WARNING, "*fmtmore_tr*");
+	more = lrg_localization_format (loc, "k", 7);
+	g_test_assert_expected_messages ();
+	g_assert_cmpstr (more, ==, "7 coins");
+
+	loc2 = fmt_setup ("fmtn", "%d coins", "%d coins%n");
+	g_test_expect_message ("Libregnum-I18N", G_LOG_LEVEL_WARNING, "*fmtn_tr*");
+	n = lrg_localization_format (loc2, "k", 7);
+	g_test_assert_expected_messages ();
+	g_assert_cmpstr (n, ==, "7 coins");
+}
+
+/* width/precision stars and length modifiers are arguments with types */
+static void
+test_format_checked_widths (void)
+{
+	LrgLocalization *loc = fmt_setup ("fmtwid", "%*d|%.2f|%" G_GINT64_FORMAT,
+	                                  "%*d;%.3f;%" G_GINT64_FORMAT);
+	g_autofree gchar *out = lrg_localization_format (loc, "k", 4, 42, 1.5, (gint64) 9);
+	LrgLocalization *loc2;
+	g_autofree gchar *bad = NULL;
+
+	g_assert_cmpstr (out, ==, "  42;1.500;9");
+
+	/* dropping the star shifts every type: rejected */
+	loc2 = fmt_setup ("fmtwid2", "%*d|%.2f", "%d|%.2f");
+	g_test_expect_message ("Libregnum-I18N", G_LOG_LEVEL_WARNING, "*fmtwid2_tr*");
+	bad = lrg_localization_format (loc2, "k", 4, 42, 1.5);
+	g_test_assert_expected_messages ();
+	g_assert_cmpstr (bad, ==, "  42|1.50");
+}
+
+/* plurals: a singular translation may leave the number out */
+static void
+test_format_checked_plural (void)
+{
+	LrgLocalization *loc = lrg_localization_get_default ();
+	LrgLocale *src = lrg_locale_new ("fmtpl_src", "Source");
+	LrgLocale *tr = lrg_locale_new ("fmtpl_tr", "Translation");
+	g_autofree gchar *one = NULL;
+	g_autofree gchar *many = NULL;
+
+	lrg_locale_set_plural (src, "k", LRG_PLURAL_ONE, "%d file");
+	lrg_locale_set_plural (src, "k", LRG_PLURAL_OTHER, "%d files");
+	lrg_locale_set_plural (tr, "k", LRG_PLURAL_ONE, "un fichier");
+	lrg_locale_set_plural (tr, "k", LRG_PLURAL_OTHER, "%d fichiers");
+	lrg_localization_add_locale (loc, src);
+	lrg_localization_add_locale (loc, tr);
+	g_assert_true (lrg_localization_set_fallback (loc, "fmtpl_src"));
+	g_assert_true (lrg_localization_set_current (loc, "fmtpl_tr"));
+
+	one = lrg_localization_format_plural (loc, "k", 1, 1);
+	many = lrg_localization_format_plural (loc, "k", 5, 5);
+	g_assert_cmpstr (one, ==, "un fichier");
+	g_assert_cmpstr (many, ==, "5 fichiers");
+}
+
+/* a format with nothing to compare against must still not use %n */
+static void
+test_format_checked_no_fallback (void)
+{
+	LrgLocalization *loc = lrg_localization_get_default ();
+	LrgLocale *only = lrg_locale_new ("fmtonly", "Only");
+	g_autofree gchar *ok = NULL;
+	g_autofree gchar *bad = NULL;
+
+	lrg_locale_set_string (only, "plain", "%s!");
+	lrg_locale_set_string (only, "evil", "%s%n");
+	lrg_localization_add_locale (loc, only);
+	g_assert_true (lrg_localization_set_fallback (loc, "fmtonly"));
+	g_assert_true (lrg_localization_set_current (loc, "fmtonly"));
+
+	ok = lrg_localization_format (loc, "plain", "hi");
+	g_assert_cmpstr (ok, ==, "hi!");
+	bad = lrg_localization_format (loc, "evil", "hi");
+	g_assert_null (bad);
+}
+
 static void
 test_localization_fallback (void)
 {
@@ -425,6 +586,14 @@ main (int   argc,
     g_test_add_func ("/i18n/localization/format", test_localization_format);
     g_test_add_func ("/i18n/localization/plural", test_localization_plural);
     g_test_add_func ("/i18n/localization/fallback", test_localization_fallback);
+    g_test_add_func ("/i18n/localization/format-checked/ok", test_format_checked_ok);
+    g_test_add_func ("/i18n/localization/format-checked/positional", test_format_checked_positional);
+    g_test_add_func ("/i18n/localization/format-checked/fewer", test_format_checked_fewer);
+    g_test_add_func ("/i18n/localization/format-checked/mismatch", test_format_checked_mismatch);
+    g_test_add_func ("/i18n/localization/format-checked/extra-and-n", test_format_checked_extra_and_n);
+    g_test_add_func ("/i18n/localization/format-checked/widths", test_format_checked_widths);
+    g_test_add_func ("/i18n/localization/format-checked/plural", test_format_checked_plural);
+    g_test_add_func ("/i18n/localization/format-checked/no-fallback", test_format_checked_no_fallback);
     g_test_add_func ("/i18n/localization/remove-locale", test_localization_remove_locale);
 
     return g_test_run ();
