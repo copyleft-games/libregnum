@@ -121,9 +121,16 @@ Enables debug symbols (=-g3=) and disables optimization (=-O0=).
 | =make examples=  | Build examples                  |
 | =make docs=      | Build documentation             |
 | =make install=   | Install to PREFIX               |
-| =make clean=     | Clean build artifacts           |
+| =make clean=     | Clean build artifacts (cross targets' directories are kept) |
+| =make clean-targets= | Clean every cross target's build directories |
 | =make distclean= | Clean everything including deps |
+| =make test-build-system= | Build-system tests plus the native no-regression gate |
+| =make test-native-unchanged= | Prove =make -Bn= output matches =BASE= (default: merge-base with master) |
+| =make print-target= | Show the target, build directory and toolchain these switches select |
+| =make targets=   | List every build target and its directories |
 | =make help=      | Show all targets                |
+
+Every goal takes a target switch (=WINDOWS=1=, =ARM64=1=, =ANDROID=1= or =LRG_TARGET=<target>=) to build for another platform into its own directory; see [[#cross-compilation][Cross-Compilation]].
 
 ** Configuration
 :PROPERTIES:
@@ -168,6 +175,19 @@ SANITIZE := 0          # Set to 1 for ASan+UBSan build (implies DEBUG=1;
 ASAN := 0              # AddressSanitizer (requires DEBUG=1)
 UBSAN := 0             # UndefinedBehaviorSanitizer (requires DEBUG=1)
 #+end_src
+
+*** Target Options
+:PROPERTIES:
+:CUSTOM_ID: target-options
+:END:
+#+begin_src makefile
+LRG_TARGET := <host>   # windows-amd64, linux-arm64, android-arm64
+WINDOWS := 0           # 1 = LRG_TARGET=windows-amd64
+ARM64 := 0             # 1 = LRG_TARGET=linux-arm64
+ANDROID := 0           # 1 = LRG_TARGET=android-arm64
+#+end_src
+
+These belong on the command line, not in =config.mk=. A cross target builds into =build/<release|debug>-<target>=; the native build keeps =build/release= and =build/debug=. Details: [[file:cross-compile.org][Cross-Compilation Guide]].
 
 *** Testing & Memory Checking
 :PROPERTIES:
@@ -394,7 +414,16 @@ export GI_TYPELIB_PATH="/path/to/libregnum/build/release/gir:$GI_TYPELIB_PATH"
 :PROPERTIES:
 :CUSTOM_ID: cross-compilation
 :END:
-Not currently supported. Libregnum targets Linux x86_64 and aarch64.
+Libregnum builds for Windows on x86_64 (=make WINDOWS=1=), Linux on aarch64 (=make ARM64=1=) and Android on arm64-v8a (=make ANDROID=1=) from the same checkout. Each target has its own build directory, so cross builds never disturb the native one:
+
+| Target          | Release directory              | Debug directory              |
+|-----------------+--------------------------------+------------------------------|
+| native          | =build/release=                | =build/debug=                |
+| =windows-amd64= | =build/release-windows-amd64= | =build/debug-windows-amd64= |
+| =linux-arm64=   | =build/release-arm64=         | =build/debug-arm64=         |
+| =android-arm64= | =build/release-android-arm64= | =build/debug-android-arm64= |
+
+The [[file:cross-compile.org][Cross-Compilation Guide]] covers the target model, the toolchains, testing and adding a target.
 
 ** Build System Details
 :PROPERTIES:
@@ -407,3 +436,16 @@ Libregnum uses GNU Make with a three-file structure:
 - *rules.mk* - Build rules and helper functions
 
 The build system is modeled after graylib's proven pattern.
+
+Two more pieces decide the target:
+
+- *build-aux/mk/target.mk* - resolves the target (=LRG_TARGET=, the =WINDOWS=/=ARM64=/=ANDROID= switches) and the build directory suffix. Cheap (only =uname=); =config.mk= includes it first, so =tests/=, =examples/= and =bench/= agree with the root.
+- *build-aux/mk/targets/<target>.mk* - one profile per cross target: toolchain, =TARGET_PLATFORM=, forced feature defaults, test runner. =config.mk= reads it after its tool defaults.
+
+Include order: =Makefile= → =config.mk= → =target.mk= → (cross only) =targets/<target>.mk= → the rest of =config.mk= → =rules.mk=.
+
+*** Build-system tests
+:PROPERTIES:
+:CUSTOM_ID: build-system-tests
+:END:
+=make test-build-system= checks the build system itself, without compiling: target resolution and build directories for every target and spelling (=tests/test-build-targets.sh=), what each clean goal removes (=tests/test-build-clean.sh=), ShellCheck on the build scripts, and the native no-regression gate. The gate (=tests/test-native-unchanged.sh=, also =make test-native-unchanged [BASE=ref]=) hard-links the tree, puts every file that differs from the base ref back to its base content (submodules included) and diffs =make -Bn= for =all=, =tests= and =examples=; it needs a native =make all= first. =make test= runs the first three as part of the suite.

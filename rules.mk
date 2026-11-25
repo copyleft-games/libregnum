@@ -130,6 +130,10 @@ help:
 	@echo "  clean        Remove build artifacts"
 	@echo "  distclean    Remove all generated files"
 	@echo "  deps         Build dependencies (graylib, yaml-glib)"
+	@echo "  clean-targets  Remove every cross target's build directories"
+	@echo "  targets      List build targets and their directories"
+	@echo "  print-target Show the target, build dir and toolchain in use"
+	@echo "  test-build-system  Build-system tests + native no-regression gate"
 	@echo ""
 	@echo "Options:"
 	@echo "  DEBUG=1         Enable debug build (-g3 -O0)"
@@ -138,7 +142,10 @@ help:
 	@echo "  UBSAN=1         Enable UndefinedBehaviorSanitizer (requires DEBUG=1)"
 	@echo "  ENABLE_TRACE=1  Enable trace logging at compile time"
 	@echo "  PREFIX=/path    Set installation prefix"
-	@echo "  WINDOWS=1       Cross-compile for Windows x64 (mingw64)"
+	@echo "  LRG_TARGET=T    Build for target T (see make targets); output in build/<type>-T"
+	@echo "  WINDOWS=1       Same as LRG_TARGET=windows-amd64 (MinGW-w64)"
+	@echo "  ARM64=1         Same as LRG_TARGET=linux-arm64 (gcc + aarch64 sysroot)"
+	@echo "  ANDROID=1       Same as LRG_TARGET=android-arm64 (NDK clang)"
 	@echo "  STEAM=1         Enable Steam SDK integration (opt-in)"
 	@echo "  MCP=1           Enable MCP server for AI debugging (opt-in)"
 	@echo ""
@@ -150,7 +157,9 @@ help:
 	@echo "  make test-sanitize      # Tests under ASan+UBSan (isolated build dir)"
 	@echo "  make test-valgrind      # Tests under valgrind (excludes scripting tests)"
 	@echo "  make install PREFIX=/opt/libregnum"
-	@echo "  make WINDOWS=1          # Cross-compile for Windows"
+	@echo "  make WINDOWS=1          # Windows build in build/release-windows-amd64"
+	@echo "  make ARM64=1 DEBUG=1    # aarch64 build in build/debug-arm64"
+	@echo "  make ANDROID=1          # Android build in build/release-android-arm64"
 	@echo "  make STEAM=1            # Build with Steam SDK support"
 	@echo "  make MCP=1              # Build with MCP server for AI debugging"
 	@echo ""
@@ -163,6 +172,32 @@ help:
 ifneq ($(CROSS),)
 	@echo "  Cross Compiler:   $(CROSS)"
 endif
+
+# =============================================================================
+# Build Targets (native and cross)
+# =============================================================================
+
+# Where this build goes and with what toolchain (docs/cross-compile.org)
+.PHONY: print-target
+print-target:
+	@echo "Host target:      $(LRG_HOST_TARGET)"
+	@echo "Target:           $(LRG_TARGET) ($(if $(filter 1,$(LRG_IS_CROSS)),cross,native))"
+	@echo "Target platform:  $(TARGET_PLATFORM)"
+	@echo "Profile:          $(or $(LRG_TARGET_PROFILE),none (native))"
+	@echo "Build dir:        $(BUILDDIR)"
+	@echo "CC:               $(CC)"
+	@echo "AR:               $(AR)"
+	@echo "PKG_CONFIG:       $(PKG_CONFIG)"
+	@echo "GIR:              $(BUILD_GIR)"
+
+# Every target with a profile, its build directories and description
+.PHONY: targets
+targets:
+	@printf '%-16s %-38s %s\n' TARGET 'BUILD DIRS' DESCRIPTION
+	@printf '%-16s %-38s %s\n' '$(LRG_HOST_TARGET)' 'build/{release,debug}' 'this machine (native)'
+	@$(foreach t,$(filter-out $(LRG_HOST_TARGET),$(LRG_KNOWN_TARGETS)),\
+		printf '%-16s %-38s %s\n' '$(t)' 'build/{release,debug}-$(patsubst linux-%,%,$(t))' \
+			"$$(sed -n 's/^# description: //p' '$(LRG_TARGETS_DIR)/$(t).mk')";)
 
 # =============================================================================
 # Dependency Checks

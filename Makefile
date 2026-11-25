@@ -2491,6 +2491,13 @@ endif
 test-native-unchanged:
 	@bash tests/test-native-unchanged.sh $(if $(BASE),--base $(BASE))
 
+# Every build-system test: target resolution, directories, clean goals,
+# container dispatch, ShellCheck, plus the native no-regression gate above
+.PHONY: test-build-system
+test-build-system:
+	@$(MAKE) --no-print-directory -C tests check-build-system
+	@$(MAKE) --no-print-directory test-native-unchanged
+
 # Explicit binding check: requires python3-gobject and the generated typelib.
 GI_PYTHON ?= /usr/bin/python3
 .PHONY: test-followups-gi
@@ -2925,14 +2932,29 @@ endif
 # Cleanup
 # =============================================================================
 
+# A native `make clean' removes everything under build/ except the cross
+# targets' directories (LRG_CROSS_BUILD_DIRS, from target.mk); a cross
+# `make WINDOWS=1 clean' removes only that target's release and debug
+# directories and keeps the shared generated headers.  `make clean-targets'
+# removes every cross directory, `make distclean' all of build/.
 clean:
+ifeq ($(LRG_IS_CROSS),1)
+	$(call print_status,"Cleaning $(LRG_TARGET) build artifacts...")
+	$(RMDIR) build/release$(LRG_BUILD_SUFFIX) build/debug$(LRG_BUILD_SUFFIX)
+else
 	$(call print_status,"Cleaning build artifacts...")
-	$(RMDIR) build
+	$(RMDIR) $(filter-out $(LRG_CROSS_BUILD_DIRS),$(wildcard build/* build/.[!.]*))
 	$(RM) src/lrg-version.h
 	$(RM) src/config.h
+endif
+
+clean-targets:
+	$(call print_status,"Cleaning every cross target's build artifacts...")
+	$(RMDIR) $(LRG_CROSS_BUILD_DIRS)
 
 distclean: clean deps-clean
 	$(call print_status,"Cleaning all generated files...")
+	$(RMDIR) build
 
 # =============================================================================
 # Debug Target (shorthand for DEBUG=1)
@@ -3655,7 +3677,7 @@ $(OBJDIR)/src/steam/lrg-workshop-manager.o: src/steam/lrg-workshop-manager.c src
 # =============================================================================
 
 .PHONY: all lib lib-static lib-shared gir test tests check examples docs docs-check
-.PHONY: install uninstall clean distclean debug-build generate
+.PHONY: install uninstall clean clean-targets distclean debug-build generate
 .PHONY: deps deps-graylib deps-yamlglib deps-crispy deps-clean check-deps
 
 # Explicit local integrations; neither target contacts a production service.

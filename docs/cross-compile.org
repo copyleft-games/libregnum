@@ -1,334 +1,189 @@
+#+title: Cross-Compilation Guide
+#+description: Building libregnum for Windows, Linux aarch64 and Android from one checkout
+#+authors: Zach Podbielniak
+#+categories: libregnum build
+
 * Cross-Compilation Guide
 :PROPERTIES:
 :CUSTOM_ID: cross-compilation-guide
 :END:
-Libregnum supports cross-compilation for Windows using MinGW-w64.
+One checkout builds libregnum for the machine you are on (the /native/ build) and for other /targets/: Windows on x86_64, Linux on aarch64 and Android on arm64-v8a. Every target has its own output directory, so a cross build never touches the native one, and switching back and forth costs nothing.
 
-** Prerequisites
+** Overview
 :PROPERTIES:
-:CUSTOM_ID: prerequisites
+:CUSTOM_ID: overview
 :END:
-*** Fedora
-:PROPERTIES:
-:CUSTOM_ID: fedora
-:END:
-#+begin_src sh
-sudo dnf install \
-    mingw64-gcc \
-    mingw64-glib2 \
-    mingw64-pkg-config \
-    wine  # For testing
-#+end_src
+| Target          | Switch      | Toolchain                                  | Output                                 |
+|-----------------+-------------+--------------------------------------------+----------------------------------------|
+| native          | (none)      | the host's =gcc=                           | =build/release=, =build/debug=         |
+| =windows-amd64= | =WINDOWS=1= | MinGW-w64 gcc                              | =build/{release,debug}-windows-amd64= |
+| =linux-arm64=   | =ARM64=1=   | aarch64 gcc against a Fedora sysroot       | =build/{release,debug}-arm64=         |
+| =android-arm64= | =ANDROID=1= | Android NDK clang (API 29+)                | =build/{release,debug}-android-arm64= |
 
-*** Ubuntu/Debian
-:PROPERTIES:
-:CUSTOM_ID: ubuntudebian
-:END:
-#+begin_src sh
-sudo apt install \
-    gcc-mingw-w64-x86-64 \
-    mingw-w64-x86-64-dev
-#+end_src
+Guarantees the build system keeps:
 
-Note: Ubuntu may require additional setup for MinGW GLib.
+- *The native build is unchanged.* =make -j16 all= on its own builds for the host, into =build/release=, exactly as before cross targets existed. =make test-native-unchanged= proves it (see [[#testing-cross-builds][Testing cross builds]]).
+- *Targets never share outputs.* Objects, libraries, executables and the bundled dependencies' archives of a cross target all live under that target's directory.
+- *One profile per target.* Everything that defines a target is in =build-aux/mk/targets/<target>.mk=.
 
-** Building for Windows
+** Quick start
 :PROPERTIES:
-:CUSTOM_ID: building-for-windows
-:END:
-*** Basic Windows Build
-:PROPERTIES:
-:CUSTOM_ID: basic-windows-build
+:CUSTOM_ID: quick-start
 :END:
 #+begin_src sh
-make WINDOWS=1
+make -j16                     # native, build/release
+make -j16 DEBUG=1             # native, build/debug
+make -j16 WINDOWS=1           # build/release-windows-amd64
+make -j16 ARM64=1 DEBUG=1     # build/debug-arm64
+make -j16 ANDROID=1           # build/release-android-arm64
+make targets                  # every target, its directories and toolchain
+make WINDOWS=1 print-target   # what a build with these switches would do
 #+end_src
 
-This automatically:
-
-- Sets =CROSS=x86_64-w64-mingw32=
-- Uses MinGW toolchain (=x86_64-w64-mingw32-gcc=, etc.)
-- Links Windows libraries (=-lopengl32 -lgdi32 -lwinmm -lshell32=)
-- Produces =.dll= and =.exe= files
-- Disables GIR generation (not supported for cross-compilation)
-
-*** Windows + Steam
+** Target model
 :PROPERTIES:
-:CUSTOM_ID: windows--steam
+:CUSTOM_ID: target-model
 :END:
-#+begin_src sh
-make WINDOWS=1 STEAM=1
-#+end_src
+A target is named =<os>-<arch>= (=linux-amd64=, =linux-arm64=, =windows-amd64=, =android-arm64=); the arch half uses the Debian/OCI spellings =amd64= and =arm64=. =build-aux/mk/target.mk= resolves it before anything else is read, using nothing but =uname=, and both =config.mk= and the subdirectory makefiles (=tests/=, =examples/=, =bench/=) include it, so they always agree on the target and the output directory.
 
-This links against =steam_api64.dll= from the Steamworks SDK.
-
-*** Debug Windows Build
+*** Choosing a target
 :PROPERTIES:
-:CUSTOM_ID: debug-windows-build
+:CUSTOM_ID: choosing-a-target
 :END:
-#+begin_src sh
-make WINDOWS=1 DEBUG=1
-#+end_src
+| Spelling                     | Target          | Notes                               |
+|------------------------------+-----------------+-------------------------------------|
+| =LRG_TARGET=<target>=        | =<target>=      | the canonical spelling              |
+| =WINDOWS=1=                  | =windows-amd64= |                                     |
+| =ARM64=1=                    | =linux-arm64=   |                                     |
+| =ANDROID=1=                  | =android-arm64= |                                     |
+| =CROSS=x86_64-w64-mingw32=   | =windows-amd64= | legacy; no other triple is accepted |
 
-** Output Files
+At most one may be given. =make ARM64=1 WINDOWS=1=, or =LRG_TARGET= naming a different target than a switch, stops with =Conflicting targets requested=. An unknown =LRG_TARGET= stops with the list of known ones. =SANITIZE=1= is native-only and stops when combined with a cross target.
+
+*** Host and native builds
 :PROPERTIES:
-:CUSTOM_ID: output-files
+:CUSTOM_ID: host-and-native-builds
 :END:
-| Platform | Static Library | Shared Library | Executables   |
-|----------+----------------+----------------+---------------|
-| Linux    | =libregnum.a=  | =libregnum.so= | =example=     |
-| Windows  | =libregnum.a=  | =regnum.dll=   | =example.exe= |
+The host target comes from =uname -s= and =uname -m= (=x86_64= → =amd64=, =aarch64= → =arm64=). A request for the host's own target is a native build: on an Asahi (aarch64) machine =make ARM64=1= builds into =build/release= with the host compiler, exactly like a plain =make=. =LRG_HOST_TARGET= can be set on the command line; the build-system tests use it to behave like an aarch64 host on an x86_64 one.
 
-Windows builds also produce an import library: =libregnum.dll.a=
-
-** Platform Detection
+*** Directory suffix
 :PROPERTIES:
-:CUSTOM_ID: platform-detection
+:CUSTOM_ID: directory-suffix
 :END:
-The build system creates a =.platform-marker= file to track the target platform. When switching between platforms, an automatic clean is performed:
+A cross target's build directory is =build/<release|debug>-<target>=, with a leading =linux-= dropped: =-windows-amd64=, =-arm64=, =-android-arm64=. The native build has no suffix. =LRG_BUILD_SUFFIX= holds it; inside a build container it is handed in by the make that started the container rather than derived again (an aarch64 container would otherwise see itself as native).
 
-#+begin_src sh
-make               # Builds for Linux
-make WINDOWS=1     # Detects platform change, cleans, then builds for Windows
-make               # Detects platform change, cleans, then builds for Linux
-#+end_src
-
-** Manual Cross-Compilation
+*** Target profiles
 :PROPERTIES:
-:CUSTOM_ID: manual-cross-compilation
+:CUSTOM_ID: target-profiles
 :END:
-For other cross-compilers:
+=config.mk= reads the target's profile right after its own tool defaults, so the profile's =CC=, =AR=, =RANLIB= and =PKG_CONFIG= replace them while anything given on the command line (=make WINDOWS=1 CC=my-gcc=) still wins. A profile sets:
 
-#+begin_src sh
-make CROSS=aarch64-linux-gnu   # ARM64 Linux
-make CROSS=arm-linux-gnueabihf # ARM32 Linux (Raspberry Pi)
-#+end_src
+| Variable                 | Meaning                                                                |
+|--------------------------+------------------------------------------------------------------------|
+| =LRG_TARGET_TRIPLE=      | the GNU triple (=x86_64-w64-mingw32=, =aarch64-linux-gnu=, ...)        |
+| =CC=, =AR=, =RANLIB=     | the toolchain                                                          |
+| =PKG_CONFIG=             | a pkg-config that answers for the target's libraries                   |
+| =TARGET_PLATFORM=        | =windows=, =linux= or =android=; the source keys platform code on it   |
+| forced defaults          | e.g. =BUILD_GIR := 0= (GIR runs the library it scans)                  |
+| =LRG_EXEC_WRAPPER=       | how to run the target's test binaries (=wine=, =qemu-aarch64 ...=)     |
+| =LRG_CONTAINER_PLATFORM= | the =--platform= of its build container, empty for the host's arch    |
 
-The =CROSS= variable sets the toolchain prefix for:
+The first line under the copyright, =# description: ...=, is what =make targets= prints.
 
-- =CC= → =$(CROSS)-gcc=
-- =AR= → =$(CROSS)-ar=
-- =RANLIB= → =$(CROSS)-ranlib=
-- =PKG_CONFIG= → =$(CROSS)-pkg-config=
+When the target's toolchain is not installed (its =PKG_CONFIG= is not on =PATH=), any goal that compiles stops with one message naming the missing tool, instead of a screen of failed pkg-config probes. Goals that never compile (=clean=, =clean-targets=, =distclean=, =print-target=, =targets=, =help=) work without it.
 
-** Testing Windows Builds
+** Output layout
 :PROPERTIES:
-:CUSTOM_ID: testing-windows-builds
+:CUSTOM_ID: output-layout
 :END:
-*** Using Wine
+#+begin_example
+build/
+├── release/                     native (unchanged)
+├── debug/                       native DEBUG=1 (unchanged)
+├── sanitize/                    native SANITIZE=1 (unchanged)
+├── release-windows-amd64/
+│   ├── obj/  lib/  tests/  ...  same layout as build/release
+│   └── deps/                    graylib, raylib, yaml-glib built for windows
+├── debug-arm64/
+└── release-android-arm64/
+#+end_example
+
+Native builds keep their dependency archives where they always were (=deps/graylib/build/lib=, raylib inside =deps/graylib/deps/raylib/src=, =deps/yaml-glib/build/<type>=), because cmacs links against those paths. Cross builds put their dependency builds under =$(BUILDDIR)/deps/=.
+
+The generated headers =src/lrg-version.h= and =src/config.h= hold only version numbers, identical for every target, so they stay in =src/= and are shared.
+
+*** Cleaning
 :PROPERTIES:
-:CUSTOM_ID: using-wine
+:CUSTOM_ID: cleaning
 :END:
-#+begin_src sh
-# Run a test executable
-wine ./build/release/tests/test-registry.exe
+| Goal                  | Removes                                                                               |
+|-----------------------+---------------------------------------------------------------------------------------|
+| =make clean=          | everything under =build/= except the cross targets' directories, and the generated headers |
+| =make WINDOWS=1 clean= | =build/release-windows-amd64= and =build/debug-windows-amd64= only                    |
+| =make clean-targets=  | every cross target's directories                                                      |
+| =make distclean=      | all of =build/=, plus =make clean= in the bundled graylib and yaml-glib               |
 
-# Run with library path
-WINEPATH="./build/release/lib;./deps/graylib/build/lib;./deps/yaml-glib/build/release" \
-    wine ./build/release/examples/hello.exe
-#+end_src
-
-*** Using a Windows VM
+** Per-target notes
 :PROPERTIES:
-:CUSTOM_ID: using-a-windows-vm
+:CUSTOM_ID: per-target-notes
 :END:
-Copy the following to your Windows machine:
-
-- =build/release/lib/regnum.dll=
-- =deps/graylib/build/lib/graylib.dll=
-- =deps/yaml-glib/build/release/yaml-glib-1.0.dll=
-- =deps/steamworks_sdk/sdk/redistributable_bin/win64/steam_api64.dll= (if STEAM=1)
-- Your executable
-
-** Distributing Windows Builds
+*** Windows (windows-amd64)
 :PROPERTIES:
-:CUSTOM_ID: distributing-windows-builds
+:CUSTOM_ID: windows-amd64
 :END:
-*** Required DLLs
+MinGW-w64 gcc builds =libregnum.dll= with its import library =liblibregnum.dll.a=, the static =liblibregnum.a= and =.exe= tools. GIR is off. Steam works with =make WINDOWS=1 STEAM=1=, linking =steam_api64.dll= from the Steamworks SDK submodule.
+
+**** Shipping a Windows build
 :PROPERTIES:
-:CUSTOM_ID: required-dlls
+:CUSTOM_ID: shipping-a-windows-build
 :END:
-When distributing your game, include:
+A game needs, next to its =.exe=:
 
-1. *Libregnum DLLs*:
-
-   - =regnum.dll=
-   - =graylib.dll=
-   - =yaml-glib.dll=
-
-2. *GLib Runtime* (from MinGW or MSYS2):
-
-   - =libglib-2.0-0.dll=
-   - =libgobject-2.0-0.dll=
-   - =libgio-2.0-0.dll=
-   - =libintl-8.dll=
-   - =libffi-8.dll=
-   - =libiconv-2.dll=
-   - =libpcre2-8-0.dll=
-   - =zlib1.dll=
-
-3. *Steam* (if STEAM=1):
-
-   - =steam_api64.dll=
-
-4. *Raylib dependencies* (usually statically linked, but check):
-
-   - OpenGL32.dll (system)
-   - Other system DLLs
-
-*** Finding MinGW DLLs
-:PROPERTIES:
-:CUSTOM_ID: finding-mingw-dlls
-:END:
-On Fedora, MinGW DLLs are in:
-
-#+begin_src sh
-/usr/x86_64-w64-mingw32/sys-root/mingw/bin/
-#+end_src
-
-*** Creating a Distribution Package
-:PROPERTIES:
-:CUSTOM_ID: creating-a-distribution-package
-:END:
-#+begin_src sh
-#!/bin/bash
-# Package a Windows distribution
-
-DIST_DIR="dist/windows"
-mkdir -p "$DIST_DIR"
-
-# Copy game executable
-cp build/release/bin/mygame.exe "$DIST_DIR/"
-
-# Copy library DLLs
-cp build/release/lib/regnum.dll "$DIST_DIR/"
-cp deps/graylib/build/lib/graylib.dll "$DIST_DIR/"
-cp deps/yaml-glib/build/release/yaml-glib-1.0.dll "$DIST_DIR/"
-
-# Copy MinGW runtime DLLs
-MINGW_BIN="/usr/x86_64-w64-mingw32/sys-root/mingw/bin"
-cp "$MINGW_BIN/libglib-2.0-0.dll" "$DIST_DIR/"
-cp "$MINGW_BIN/libgobject-2.0-0.dll" "$DIST_DIR/"
-cp "$MINGW_BIN/libgio-2.0-0.dll" "$DIST_DIR/"
-cp "$MINGW_BIN/libintl-8.dll" "$DIST_DIR/"
-cp "$MINGW_BIN/libffi-8.dll" "$DIST_DIR/"
-cp "$MINGW_BIN/libiconv-2.dll" "$DIST_DIR/"
-cp "$MINGW_BIN/libpcre2-8-0.dll" "$DIST_DIR/"
-cp "$MINGW_BIN/zlib1.dll" "$DIST_DIR/"
-
-# Copy Steam DLL (if applicable)
-if [ "$STEAM" = "1" ]; then
-    cp deps/steamworks_sdk/sdk/redistributable_bin/win64/steam_api64.dll "$DIST_DIR/"
-fi
-
-# Copy game data
-cp -r data "$DIST_DIR/"
-
-echo "Distribution created in $DIST_DIR"
-#+end_src
+1. =libregnum.dll=, =graylib.dll= and =yaml-glib-1.0.dll= from the target's build directory.
+2. The GLib runtime from the MinGW sysroot (=/usr/x86_64-w64-mingw32/sys-root/mingw/bin/= on Fedora): =libglib-2.0-0.dll=, =libgobject-2.0-0.dll=, =libgio-2.0-0.dll=, =libgmodule-2.0-0.dll=, =libintl-8.dll=, =libffi-8.dll=, =libiconv-2.dll=, =libpcre2-8-0.dll=, =zlib1.dll= and the rest of what =x86_64-w64-mingw32-objdump -p game.exe | grep 'DLL Name'= lists.
+3. =steam_api64.dll= when built with =STEAM=1=.
+4. The game's data directory.
 
 ** Troubleshooting
 :PROPERTIES:
 :CUSTOM_ID: troubleshooting
 :END:
-*** Missing pkg-config for MinGW
+*** "The <target> toolchain is not installed"
 :PROPERTIES:
-:CUSTOM_ID: missing-pkg-config-for-mingw
+:CUSTOM_ID: toolchain-not-installed
 :END:
-Ensure MinGW pkg-config is installed and configured:
+The target's =PKG_CONFIG= is not on =PATH=. Install the target's packages, or point the build at your own with =PKG_CONFIG=, =CC=, =AR= and =RANLIB= on the command line. =make <switch> print-target= shows what the build is looking for.
 
-#+begin_src sh
-# Check if MinGW pkg-config works
-x86_64-w64-mingw32-pkg-config --cflags glib-2.0
-#+end_src
-
-If not working, you may need to set:
-
-#+begin_src sh
-export PKG_CONFIG_PATH="/usr/x86_64-w64-mingw32/sys-root/mingw/lib/pkgconfig"
-export PKG_CONFIG_LIBDIR="/usr/x86_64-w64-mingw32/sys-root/mingw/lib/pkgconfig"
-#+end_src
-
-*** GLib Not Found
+*** "Conflicting targets requested"
 :PROPERTIES:
-:CUSTOM_ID: glib-not-found
+:CUSTOM_ID: conflicting-targets
 :END:
-Install MinGW GLib:
+Two switches named different targets (=WINDOWS=1 ARM64=1=), or =LRG_TARGET= disagrees with a switch. Give exactly one.
 
-#+begin_src sh
-# Fedora
-sudo dnf install mingw64-glib2
+*** "SANITIZE=1 is native-only"
+:PROPERTIES:
+:CUSTOM_ID: sanitize-native-only
+:END:
+ASan and UBSan builds run on the host (=build/sanitize=). Sanitize the native build; cross targets are tested with their own runners.
 
-# Or build from source for other distros
-#+end_src
-
-*** Steam API Not Found
+*** Steam API not found
 :PROPERTIES:
 :CUSTOM_ID: steam-api-not-found
 :END:
-Ensure the Steamworks SDK submodule is initialized:
+Initialise the Steamworks SDK submodule: =git submodule update --init deps/steamworks_sdk=.
 
-#+begin_src sh
-git submodule update --init --recursive
-#+end_src
-
-*** Wine Crashes
-:PROPERTIES:
-:CUSTOM_ID: wine-crashes
-:END:
-Windows builds may need the Visual C++ runtime. Install =winetricks=:
-
-#+begin_src sh
-winetricks vcrun2019
-#+end_src
-
-** Continuous Integration
-:PROPERTIES:
-:CUSTOM_ID: continuous-integration
-:END:
-Example GitHub Actions workflow:
-
-#+begin_src yaml
-name: Build
-
-on: [push, pull_request]
-
-jobs:
-  build-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc make pkgconf libglib2.0-dev
-      - name: Build
-        run: make
-
-  build-windows:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64
-      - name: Build
-        run: make WINDOWS=1
-#+end_src
-
-** Build Flags Reference
+** Build flags reference
 :PROPERTIES:
 :CUSTOM_ID: build-flags-reference
 :END:
-| Flag        | Default | Description                             |
-|-------------+---------+-----------------------------------------|
-| =WINDOWS=   | 0       | Enable Windows cross-compilation        |
-| =CROSS=     | (empty) | Cross-compiler prefix                   |
-| =STEAM=     | 0       | Enable Steam SDK integration            |
-| =DEBUG=     | 0       | Debug build with symbols                |
-| =BUILD_GIR= | 1       | Generate GIR files (disabled for cross) |
+| Flag               | Default        | Description                                                          |
+|--------------------+----------------+----------------------------------------------------------------------|
+| =LRG_TARGET=       | host           | target to build for, =<os>-<arch>=                                   |
+| =WINDOWS=          | 0              | =1= = =LRG_TARGET=windows-amd64=                                     |
+| =ARM64=            | 0              | =1= = =LRG_TARGET=linux-arm64=                                       |
+| =ANDROID=          | 0              | =1= = =LRG_TARGET=android-arm64=                                     |
+| =CROSS=            | (empty)        | legacy; only =x86_64-w64-mingw32= (= =WINDOWS=1=)                    |
+| =LRG_HOST_TARGET=  | from =uname=   | the host target; override only to test the build system              |
+| =STEAM=            | 0              | Steam SDK integration                                                |
+| =DEBUG=            | 0              | debug build with symbols                                             |
+| =BUILD_GIR=        | 1              | GIR files; forced to 0 for every cross target                        |

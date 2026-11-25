@@ -16,6 +16,15 @@
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
 
+** 0.12.0 (unreleased, branch build/cross-targets)
+:PROPERTIES:
+:CUSTOM_ID: changelog-0-12-0
+:END:
+Cross-target builds: Windows (x86_64), Linux (aarch64) and Android (arm64-v8a) from one checkout, each in its own build directory, with the native build unchanged. See [[file:cross-compile.org][Cross-Compilation Guide]].
+
+- Build: a target model (=build-aux/mk/target.mk=). =LRG_TARGET=<os>-<arch>= or the =WINDOWS=1=, =ARM64=1=, =ANDROID=1= switches pick a target; asking for the host's own target is a native build. One profile per cross target in =build-aux/mk/targets/=. Cross builds go to =build/<release|debug>-<target>= (=-windows-amd64=, =-arm64=, =-android-arm64=); =build/release= and =build/debug= stay native-only, so a =WINDOWS=1= build no longer wipes the native objects. New goals =print-target=, =targets= and =clean-targets=; =make clean= keeps the cross targets' directories, =make WINDOWS=1 clean= removes only Windows'. Conflicting switches, unknown targets and =SANITIZE=1= with a cross target stop with an error, and a missing cross toolchain is one clear message.
+- Tests: =make test-build-system= (target resolution for every spelling and host, the clean goals, ShellCheck) and =make test-native-unchanged [BASE=ref]=, which diffs the native =make -Bn= output against a base ref rebuilt in a hard-linked copy of the tree.
+
 ** 0.11.0
 :PROPERTIES:
 :CUSTOM_ID: changelog-0-11-0

@@ -473,12 +473,30 @@ SANITIZE_BINARIES ?= $(filter-out $(TEST_BUILDDIR)/test-scripting%,$(TEST_BINARI
 # Targets
 # =============================================================================
 
-.PHONY: all run run-sanitize run-valgrind check-build-config check-version-lockstep check-sanitize-exit clean
+.PHONY: all run run-sanitize run-valgrind check-build-config check-build-system check-version-lockstep check-sanitize-exit clean
 
 all: $(TEST_BINARIES)
 
 check-build-config:
 	@sh $(CURDIR)/test-build-config.sh
+
+# Build-system regression tests: target resolution, build directories, the
+# clean goals and (from build-aux/mk/container.mk) the container dispatch.
+# No compiling, no podman.  ShellCheck is part of the check, so a missing
+# shellcheck fails rather than skipping.  docs/cross-compile.org, "Testing
+# cross builds".
+BUILD_SYSTEM_SCRIPTS := \
+	$(CURDIR)/build-system-lib.sh \
+	$(CURDIR)/test-build-targets.sh \
+	$(CURDIR)/test-build-clean.sh \
+	$(CURDIR)/test-native-unchanged.sh
+
+check-build-system:
+	@command -v shellcheck > /dev/null 2>&1 || \
+		{ echo "check-build-system: shellcheck is required (Fedora: ShellCheck)" >&2; exit 1; }
+	@cd $(PROJECT_ROOT) && shellcheck -x $(BUILD_SYSTEM_SCRIPTS)
+	@bash $(CURDIR)/test-build-targets.sh
+	@bash $(CURDIR)/test-build-clean.sh
 
 # libregnum and the bundled graylib share MAJOR.MINOR (AGENTS.md, Versioning)
 check-version-lockstep:
@@ -502,7 +520,9 @@ else
 MCP_LD_PATH :=
 endif
 
-run: check-build-config check-version-lockstep all
+# The build-system checks describe the host's make, not the target, so a
+# cross test run (in its container) leaves them to the native one
+run: check-build-config check-version-lockstep $(if $(filter 1,$(LRG_IS_CROSS)),,check-build-system) all
 	$(call print_status,"Running tests...")
 	@failed=0; \
 	for test in $(TEST_BINARIES); do \

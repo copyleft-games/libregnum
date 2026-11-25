@@ -15,6 +15,10 @@
 CONFIG_MK_PATH := $(dir $(lastword $(MAKEFILE_LIST)))
 PROJECT_ROOT := $(realpath $(CONFIG_MK_PATH))
 
+# Build target (native or cross) and the build directory suffix.  Cheap: only
+# uname.  See build-aux/mk/target.mk and docs/cross-compile.org.
+include $(PROJECT_ROOT)/build-aux/mk/target.mk
+
 # =============================================================================
 # Version Information
 # =============================================================================
@@ -219,31 +223,31 @@ else
 endif
 
 # =============================================================================
-# Windows Cross-Compilation Support
+# Cross-Compilation Targets
 # =============================================================================
 #
-# Usage: make WINDOWS=1
-#        make CROSS=x86_64-w64-mingw32  (equivalent, for advanced users)
+# Usage: make LRG_TARGET=<target>   (windows-amd64, linux-arm64, android-arm64)
+#        make WINDOWS=1 | ARM64=1 | ANDROID=1
 #
-# Requires: mingw64-glib2, mingw64-gcc, mingw64-pkg-config (on Fedora)
+# build-aux/mk/target.mk resolved the target above.  A cross target's profile
+# (build-aux/mk/targets/<target>.mk) sets the toolchain (CC, AR, RANLIB,
+# PKG_CONFIG), TARGET_PLATFORM and its forced feature defaults; it is read
+# here, after the tool defaults, so its := assignments win over them while
+# anything given on the command line still wins over the profile.
+# Cross builds land in build/<type>-<target>/; see docs/cross-compile.org.
 
-WINDOWS ?= 0
-CROSS ?=
-
-# Set CROSS based on convenience variable
-ifeq ($(WINDOWS),1)
-    CROSS := x86_64-w64-mingw32
-endif
-
-# Apply cross-compilation settings when CROSS is set
-ifneq ($(CROSS),)
-    CC := $(CROSS)-gcc
-    AR := $(CROSS)-ar
-    RANLIB := $(CROSS)-ranlib
-    PKG_CONFIG := $(CROSS)-pkg-config
-    TARGET_PLATFORM := windows
-    # GIR not supported for cross-compilation (requires host compiler)
-    BUILD_GIR := 0
+ifeq ($(LRG_IS_CROSS),1)
+    include $(LRG_TARGET_PROFILE)
+    # Outside the build container (NO_BUILD_CONTAINER=1) the target's
+    # toolchain must be installed.  Say so once instead of letting every
+    # pkg-config probe below fail on its own.  Goals that never compile
+    # (clean, print-target, ...) still work: they get a no-op pkg-config.
+    ifeq ($(shell command -v $(firstword $(PKG_CONFIG)) 2>/dev/null),)
+        ifneq ($(filter-out $(LRG_HOST_SAFE_GOALS),$(or $(MAKECMDGOALS),all)),)
+            $(error The $(LRG_TARGET) toolchain is not installed ('$(firstword $(PKG_CONFIG))' not found). Build in the container (drop NO_BUILD_CONTAINER=1) or install the packages listed in docs/cross-compile.org, "Building without containers")
+        endif
+        PKG_CONFIG := :
+    endif
 else
     TARGET_PLATFORM := $(PLATFORM)
 endif
@@ -501,6 +505,9 @@ PC_FILE := libregnum-$(API_VERSION).pc
 # Build Directories
 # =============================================================================
 
+# A cross target appends its suffix (build/release-windows-amd64, ...); the
+# native build keeps build/release and build/debug.  SANITIZE is native-only
+# (target.mk rejects it for a cross target).
 ifeq ($(SANITIZE),1)
     # Sanitized build: implies debug + both sanitizers, isolated output dir.
     DEBUG := 1
@@ -508,9 +515,9 @@ ifeq ($(SANITIZE),1)
     UBSAN := 1
     BUILDDIR := build/sanitize
 else ifeq ($(DEBUG),1)
-    BUILDDIR := build/debug
+    BUILDDIR := build/debug$(LRG_BUILD_SUFFIX)
 else
-    BUILDDIR := build/release
+    BUILDDIR := build/release$(LRG_BUILD_SUFFIX)
 endif
 
 OBJDIR := $(BUILDDIR)/obj
