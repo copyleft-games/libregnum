@@ -88,3 +88,23 @@ SQLITE_SHA256=926ef8d3eab93fbf6e06011901273eec076b25594a4e1cdadd50c987f4f6d64e
 OPENSSL_VERSION=4.0.3
 OPENSSL_URL=https://github.com/openssl/openssl/releases/download/openssl-4.0.3/openssl-4.0.3.tar.gz
 OPENSSL_SHA256=325b5c806167c13b40b1ffeadfe0248197c00eccc4cf123ec1e28d2d2fd216d9
+
+# LuaJIT: a rolling release with no tarballs; pinned to the v2.1 commit
+# Fedora packages (luajit-2.1.1767980792, the commit's timestamp) through
+# GitHub's archive of it, whose sum was recorded on first download
+LUAJIT_VERSION=2.1.1767980792
+LUAJIT_COMMIT=707c12bf00dafdfd3899b1a6c36435dbbf6c7022
+LUAJIT_URL=https://github.com/LuaJIT/LuaJIT/archive/707c12bf00dafdfd3899b1a6c36435dbbf6c7022.tar.gz
+LUAJIT_SHA256=ac2defd1e9b4ab07ac0a52f2403318ffb0d54505b975dff0cfc49a927ab84d90
+
+# bzip2: sourceware.org publishes signatures only; sum recorded on first
+# download (the same sum distributions verify 1.0.8 with)
+BZIP2_VERSION=1.0.8
+BZIP2_URL=https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz
+BZIP2_SHA256=ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269
+
+# libjpeg-turbo: the project signs its releases instead of publishing
+# sums; recorded on first download
+LIBJPEG_TURBO_VERSION=3.1.3
+LIBJPEG_TURBO_URL=https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.3/libjpeg-turbo-3.1.3.tar.gz
+LIBJPEG_TURBO_SHA256=075920b826834ac4ddf97661cc73491047855859affd671d52079c6867c1c6c0
