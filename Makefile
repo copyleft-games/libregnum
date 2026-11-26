@@ -2650,6 +2650,13 @@ test-cross:
 test-native-unchanged:
 	@bash tests/test-native-unchanged.sh $(if $(BASE),--base $(BASE)) $(if $(filter 1,$(EXCLUDE_ADDED)),--exclude-added)
 
+# Record the base's native commands as the stored baseline
+# (tests/golden/native-make-n/, with this host's signature); review and
+# commit the diff.  The test compares against it on a matching host only.
+.PHONY: update-native-golden
+update-native-golden:
+	@bash tests/test-native-unchanged.sh --update-golden --exclude-added $(if $(BASE),--base $(BASE))
+
 # Every built-in shader compiled by glslangValidator as GLSL 3.30 (desktop)
 # and GLSL ES 3.00 (Android's header, LRG_GLSL_ES), from the preprocessed
 # sources with the library's own flags.  Needs glslangValidator (Fedora:

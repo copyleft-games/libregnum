@@ -1,0 +1,5 @@
+arch=x86_64
+os=fedora-44
+cc=16.2.1
+pkgs=02ef8d83145be457
+base=c255f1ec063e568f9089b05c998c378b6ab4958a

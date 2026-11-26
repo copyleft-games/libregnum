@@ -32,6 +32,18 @@
 #
 # `make -n` needs the dependency archives to exist (graylib's raylib rule
 # is a shell test), so a native `make all` must have run first.
+#
+# Stored baseline
+# ---------------
+# --update-golden also writes the base's commands to tests/golden/
+# native-make-n/commands.log.xz (its distinct lines, the tree's path replaced by @ROOT@) with a
+# host.txt naming the machine that recorded them (architecture, OS
+# release, compiler version, the base commit).  Every run then compares
+# the current commands with that file as well, but only on a matching
+# host: the commands embed pkg-config output and probe results, so on any
+# other machine the stored file is reported as skipped and the live
+# comparison above is the gate.  Files added since the recorded base are
+# left out of both sides (as with --exclude-added).
 
 set -euo pipefail
 
@@ -52,6 +64,9 @@ Options:
                   their compiles and their entries in link lists; compares
                   the distinct command lines (order and counts not checked)
   -k, --keep      keep the scratch copy and the two command logs
+  -u, --update-golden
+                  record the base's commands in tests/golden/native-make-n/
+                  (with this host's signature); review the diff, commit it
   -h, --help      show this help
   --license       show the license
 
@@ -61,6 +76,7 @@ Examples:
   tests/test-native-unchanged.sh --exclude-added
   make test-native-unchanged BASE=master
   make test-native-unchanged EXCLUDE_ADDED=1
+  make update-native-golden BASE=master
 
 Exit status: 0 when the commands match, 1 when they differ (a unified
 diff is printed), 2 on usage or setup errors.
@@ -186,6 +202,48 @@ exclude_added_files () {
 	mv -- "${log}.x" "${log}"
 }
 
+# The pkg-config packages config.mk and the dependencies probe (required
+# and optional): their versions are part of the host signature
+GOLDEN_PKGS=(
+	glib-2.0 gobject-2.0 gio-2.0 gio-unix-2.0 gmodule-2.0 json-glib-1.0
+	yaml-0.1 libsoup-3.0 libdex-1 sqlite3 openssl zlib libpq fribidi
+	luajit python3-embed gjs-1.0 gobject-introspection-1.0 alsa openxr
+	libavformat libavcodec libswscale libswresample x11 gl wayland-client
+	xkbcommon readline
+)
+
+# host_signature <root> <commit>
+#
+# What the stored baseline depends on besides the sources: one key=value
+# per line.  Two machines with the same signature print the same native
+# commands for the same commit.
+host_signature () {
+	if [[ $# -ne 2 ]]
+	then
+		die 'host_signature() requires 2 positional arguments'
+	fi
+
+	local root="${1}"
+	local commit="${2}"
+	local os_id=''
+	local os_version=''
+
+	if [[ -r /etc/os-release ]]
+	then
+		os_id="$(sed -n 's/^ID=//p' /etc/os-release | tr -d '"')"
+		os_version="$(sed -n 's/^VERSION_ID=//p' /etc/os-release | tr -d '"')"
+	fi
+	printf 'arch=%s\n' "$(uname -m)"
+	printf 'os=%s-%s\n' "${os_id}" "${os_version}"
+	printf 'cc=%s\n' "$("${CC:-gcc}" -dumpfullversion 2>/dev/null || echo unknown)"
+	# the versions of every package the native build asks pkg-config about
+	printf 'pkgs=%s\n' "$(for pkg in "${GOLDEN_PKGS[@]}"
+	do
+		printf '%s:%s ' "${pkg}" "$("${PKG_CONFIG:-pkg-config}" --modversion "${pkg}" 2>/dev/null || echo none)"
+	done | sha256sum | cut -c1-16)"
+	printf 'base=%s\n' "$(git -C "${root}" rev-parse "${commit}")"
+}
+
 # dry_run <tree> <log>
 #
 # Print the native build's commands for the root, tests and examples.
@@ -199,7 +257,9 @@ dry_run () {
 	local log="${2}"
 
 	# a caller's MAKEFLAGS (-j, -n, variable overrides) must not leak in
+	# TERM=dumb: rules.mk's colours come from tput and the terminal
 	{
+		export TERM=dumb
 		echo '### make -Bn all'
 		env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL make -Bn --no-print-directory -C "${tree}" all 2>&1 || true
 		echo '### make -Bn -C tests all'
@@ -213,6 +273,9 @@ main () {
 	local root
 	local base=''
 	local keep=0
+	local update_golden=0
+	local golden_dir
+	local golden_base
 	local exclude_added=0
 	local base_commit
 	local scratch
@@ -236,6 +299,10 @@ main () {
 				;;
 			-k|--keep)
 				keep=1
+				shift
+				;;
+			-u|--update-golden)
+				update_golden=1
 				shift
 				;;
 			-h|--help)
@@ -301,6 +368,42 @@ main () {
 	# the base ran in the copy; rewrite its path to the real tree
 	sed "s|${copy}|${root}|g" "${scratch}/base.raw" > "${scratch}/base.log"
 
+	golden_dir="${root}/tests/golden/native-make-n"
+	if [[ "${update_golden}" -eq 1 ]]
+	then
+		mkdir -p -- "${golden_dir}"
+		# distinct lines only (what the comparison uses), xz-compressed:
+		# ~3 MB of text becomes ~40 KB in the repository
+		sed -E "s|${root}|@ROOT@|g; s/[ \t]+/ /g; s/ +\$//" "${scratch}/base.log" | LC_ALL=C sort -u \
+			| xz -9 > "${golden_dir}/commands.log.xz"
+		host_signature "${root}" "${base_commit}" > "${golden_dir}/host.txt"
+		printf 'Recorded %s (%s distinct lines) from %s\n' "${golden_dir}/commands.log.xz" \
+			"$(xz -dc -- "${golden_dir}/commands.log.xz" | wc -l)" "${base}"
+	fi
+
+	# the stored baseline, on the host that recorded it
+	if [[ -f "${golden_dir}/commands.log.xz" && -f "${golden_dir}/host.txt" ]]
+	then
+		golden_base="$(sed -n 's/^base=//p' "${golden_dir}/host.txt")"
+		if [[ "$(host_signature "${root}" "${golden_base}")" != "$(cat -- "${golden_dir}/host.txt")" ]]
+		then
+			printf 'SKIP: stored baseline recorded on another host (%s); the live comparison is the gate\n' \
+				"$(paste -sd' ' "${golden_dir}/host.txt")"
+		else
+			xz -dc -- "${golden_dir}/commands.log.xz" | sed "s|@ROOT@|${root}|g" > "${scratch}/golden.log"
+			cp -- "${scratch}/current.log" "${scratch}/current-golden.log"
+			exclude_added_files "${root}" "${golden_base}" "${scratch}/golden.log"
+			exclude_added_files "${root}" "${golden_base}" "${scratch}/current-golden.log"
+			if ! diff -u --label 'stored baseline' --label 'current' "${scratch}/golden.log" "${scratch}/current-golden.log"
+			then
+				printf '\nFAIL: native build commands differ from the stored baseline (%s)\n' "${golden_dir}" >&2
+				rc=1
+			else
+				printf 'Native build commands match the stored baseline (%s)\n' "${golden_base}"
+			fi
+		fi
+	fi
+
 	if [[ "${exclude_added}" -eq 1 ]]
 	then
 		exclude_added_files "${root}" "${base_commit}" "${scratch}/base.log"
@@ -311,7 +414,8 @@ main () {
 	then
 		printf '\nFAIL: native build commands differ from %s\n' "${base}" >&2
 		rc=1
-	else
+	elif [[ "${rc}" -eq 0 ]]
+	then
 		printf 'Native build commands unchanged against %s (%s lines)\n' \
 			"${base}" "$(wc -l < "${scratch}/current.log")"
 	fi

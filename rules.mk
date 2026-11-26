@@ -134,6 +134,8 @@ help:
 	@echo "  targets      List build targets and their directories"
 	@echo "  print-target Show the target, build dir and toolchain in use"
 	@echo "  test-build-system  Build-system tests + native no-regression gate"
+	@echo "  test-native-unchanged  Native make -Bn against BASE and the stored baseline"
+	@echo "  update-native-golden   Re-record the stored native baseline (BASE=master)"
 	@echo "  test-minimal-features  Build without libsoup/libpq (build/minimal), test the stubs"
 	@echo "  test-cross-arm64   arm64: all, test (qemu), examples, binary checks"
 	@echo "  test-cross-windows Windows: all, test (Wine), examples, binary checks"
