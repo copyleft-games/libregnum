@@ -122,6 +122,14 @@ bs_eq 'image, make and the goals come last' \
 bs_contains 'the image is the windows one' 'localhost/libregnum-build-windows-amd64:' "${args}"
 bs_eq 'existing image is not rebuilt' 0 "$(calls build)"
 
+
+echo '== as root (CI: podman in a privileged container) there is no keep-id'
+dispatch WINDOWS=1 LRG_CONTAINER_UID=0 all > /dev/null
+args="$(run_args)"
+bs_not_contains 'root: no keep-id' 'keep-id' "${args}"
+bs_eq 'root: still one run' 1 "$(calls run)"
+dispatch WINDOWS=1 LRG_CONTAINER_UID=1000 all > /dev/null
+bs_contains 'a user: keep-id' '--userns=keep-id' "$(run_args)"
 echo '== goals and defaults'
 dispatch WINDOWS=1 > /dev/null
 bs_eq 'no goal means all' "$(printf 'make\nall')" "$(run_args | tail -n 2)"

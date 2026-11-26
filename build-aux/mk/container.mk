@@ -120,14 +120,24 @@ LRG_GIT_OUTSIDE_DIRS := $(call lrg_container_outside,$(LRG_GIT_COMMON_DIRS),$(LR
 LRG_CONTAINER_GIT_MOUNT := $(foreach g,$(LRG_GIT_OUTSIDE_DIRS),\
     $(if $(filter $(addsuffix /%,$(LRG_GIT_OUTSIDE_DIRS)),$(g)),,-v $(g):$(g):ro))
 
+# keep-id maps the caller's uid into the container (rootless podman), so
+# the files the build writes belong to the caller.  As root (a CI job that
+# runs podman in a privileged container) there is no one to map, and
+# keep-id makes podman copy every image layer with remapped owners, which
+# nested storage refuses ("creating an ID-mapped copy of layer ...: lchown
+# ...: invalid argument", exit 125): no keep-id for root.
+LRG_CONTAINER_UID ?= $(shell id -u)
+LRG_CONTAINER_USERNS ?= $(if $(filter 0,$(LRG_CONTAINER_UID)),,--userns=keep-id)
+
 # How every container starts.  Same-path mount: .d files, rpaths and
-# compile_commands entries stay valid on the host.  keep-id: the files the
-# build writes belong to the caller.  label=disable: no SELinux relabelling
-# of the checkout.  HOME=/tmp: keep-id's home directory does not exist in
-# the image.  LRG_CONTAINER_ENV: by name only, never NAME=value.
+# compile_commands entries stay valid on the host.  LRG_CONTAINER_USERNS:
+# the files the build writes belong to the caller (above).  label=disable:
+# no SELinux relabelling of the checkout.  HOME=/tmp: keep-id's home
+# directory does not exist in the image.  LRG_CONTAINER_ENV: by name only,
+# never NAME=value.
 LRG_CONTAINER_RUN = $(CONTAINER_ENGINE) run --rm \
     $(LRG_CONTAINER_PLATFORM_ARG) \
-    --userns=keep-id \
+    $(LRG_CONTAINER_USERNS) \
     --security-opt label=disable \
     -v $(LRG_CONTAINER_MOUNT_ROOT):$(LRG_CONTAINER_MOUNT_ROOT) \
     $(foreach m,$(LRG_CONTAINER_MORE_MOUNTS),-v $(m):$(m)) \
