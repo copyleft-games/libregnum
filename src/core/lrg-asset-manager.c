@@ -19,6 +19,7 @@
 #include <string.h>
 #include <math.h>
 #include "../graphics/lrg-gltf-info.h"
+#include "../graphics/lrg-texture-upload.h"
 #include <raylib.h>
 #include <rlgl.h>
 #include "../lrg-log.h"
@@ -343,6 +344,25 @@ map_texture_wrap (LrgAssetTextureWrap wrap)
  * sRGB texture formats; materials read it from the sidecar
  * (lrg_asset_manager_get_asset_meta()) to decide how to decode.
  */
+/*
+ * load_plain_texture:
+ * @path through lrg_texture_new_from_file(): a .dds whose S3TC blocks the
+ * GPU cannot sample (most Android GPUs) is decoded to the process's
+ * fallback format; anything else loads as grl_texture_new_from_file()
+ * does.  NULL on failure (logged at debug level; the caller reports it).
+ */
+static GrlTexture *
+load_plain_texture (const gchar *path)
+{
+    g_autoptr(GError) error = NULL;
+    GrlTexture *texture;
+
+    texture = lrg_texture_new_from_file (path, LRG_TEXTURE_FALLBACK_DEFAULT, &error);
+    if (texture == NULL)
+        lrg_debug (LRG_LOG_DOMAIN_CORE, "texture %s: %s", path, error->message);
+    return texture;
+}
+
 static GrlTexture *
 load_texture_file (const gchar  *path,
                    LrgAssetMeta *meta)
@@ -352,7 +372,7 @@ load_texture_file (const gchar  *path,
     LrgAssetTextureFilter  filter;
 
     if (meta == NULL)
-        return grl_texture_new_from_file (path);
+        return load_plain_texture (path);
 
     /* 1. Size limit: decode, shrink, upload. */
     max_size = lrg_asset_meta_get_texture_max_size (meta);
@@ -377,7 +397,7 @@ load_texture_file (const gchar  *path,
         }
     }
     if (texture == NULL)
-        texture = grl_texture_new_from_file (path);
+        texture = load_plain_texture (path);
     if (texture == NULL || !grl_texture_is_valid (texture))
         return texture;
 

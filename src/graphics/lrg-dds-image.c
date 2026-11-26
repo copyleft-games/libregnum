@@ -26,6 +26,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "graphics/lrg-dds-image.h"
+#include "graphics/lrg-texture-codec-private.h"
 
 #define DDS_MAGIC            (0x20534444u)  /* "DDS " */
 #define DDS_HEADER_SIZE      (124u)
@@ -517,115 +518,13 @@ lrg_dds_image_get_mip_data (LrgDdsImage *self,
                                    self->levels[level].size);
 }
 
-/* --- block decoding --- */
-
-static void
-rgb565 (guint16  v,
-        guint8  *out)
-{
-    guint r = (v >> 11) & 0x1f;
-    guint g = (v >> 5) & 0x3f;
-    guint b = v & 0x1f;
-
-    out[0] = (guint8)((r << 3) | (r >> 2));
-    out[1] = (guint8)((g << 2) | (g >> 4));
-    out[2] = (guint8)((b << 3) | (b >> 2));
-    out[3] = 255;
-}
-
-/*
- * decode_color_block:
- * The 8-byte BC1 colour block into a 4x4 RGBA tile.  @dxt1 enables the
- * three-colour mode with transparent black when c0 <= c1; BC2 and BC3
- * colour blocks always use four colours.
+/* --- block decoding ---
+ *
+ * BC1 .. BC3 blocks are decoded by the shared codec
+ * (lrg-texture-codec-private.h, also behind lrg_texture_decode()); DDS
+ * DXT1 always reads three-colour blocks with transparent black, since
+ * the header cannot say whether the 1-bit alpha is used.
  */
-static void
-decode_color_block (const guint8 *block,
-                    gboolean      dxt1,
-                    guint8        tile[16][4])
-{
-    guint8 palette[4][4];
-    guint16 c0 = (guint16)(block[0] | (block[1] << 8));
-    guint16 c1 = (guint16)(block[2] | (block[3] << 8));
-    guint32 bits = read_u32 (block, 4);
-    guint i;
-    guint k;
-
-    rgb565 (c0, palette[0]);
-    rgb565 (c1, palette[1]);
-    if (!dxt1 || c0 > c1)
-    {
-        for (k = 0; k < 3; k++)
-        {
-            palette[2][k] = (guint8)((2 * palette[0][k] + palette[1][k]) / 3);
-            palette[3][k] = (guint8)((palette[0][k] + 2 * palette[1][k]) / 3);
-        }
-        palette[2][3] = 255;
-        palette[3][3] = 255;
-    }
-    else
-    {
-        for (k = 0; k < 3; k++)
-            palette[2][k] = (guint8)((palette[0][k] + palette[1][k]) / 2);
-        palette[2][3] = 255;
-        palette[3][0] = 0;
-        palette[3][1] = 0;
-        palette[3][2] = 0;
-        palette[3][3] = 0;
-    }
-
-    for (i = 0; i < 16; i++)
-    {
-        guint index = (bits >> (2 * i)) & 3;
-
-        memcpy (tile[i], palette[index], 4);
-    }
-}
-
-/* BC2: sixteen explicit 4-bit alphas */
-static void
-decode_explicit_alpha (const guint8 *block,
-                       guint8        tile[16][4])
-{
-    guint i;
-
-    for (i = 0; i < 16; i++)
-    {
-        guint8 nibble = (guint8)((block[i / 2] >> ((i % 2) * 4)) & 0xf);
-
-        tile[i][3] = (guint8)(nibble * 17);
-    }
-}
-
-/* BC3: two endpoints and sixteen 3-bit indices into 8 alphas */
-static void
-decode_interpolated_alpha (const guint8 *block,
-                           guint8        tile[16][4])
-{
-    guint8 alpha[8];
-    guint64 bits = 0;
-    guint i;
-
-    alpha[0] = block[0];
-    alpha[1] = block[1];
-    if (alpha[0] > alpha[1])
-    {
-        for (i = 1; i < 7; i++)
-            alpha[i + 1] = (guint8)(((7 - i) * alpha[0] + i * alpha[1]) / 7);
-    }
-    else
-    {
-        for (i = 1; i < 5; i++)
-            alpha[i + 1] = (guint8)(((5 - i) * alpha[0] + i * alpha[1]) / 5);
-        alpha[6] = 0;
-        alpha[7] = 255;
-    }
-
-    for (i = 0; i < 6; i++)
-        bits |= (guint64)block[2 + i] << (8 * i);
-    for (i = 0; i < 16; i++)
-        tile[i][3] = alpha[(bits >> (3 * i)) & 7];
-}
 
 /* --- BC7 (BPTC) ---
  *
@@ -1035,35 +934,41 @@ decode_blocks (LrgDdsFormat  format,
 {
     guint blocks_x = (width + 3) / 4;
     guint blocks_y = (height + 3) / 4;
-    guint block_size = format == LRG_DDS_FORMAT_DXT1 ? 8 : 16;
     guint bx;
     guint by;
 
+    switch (format)
+    {
+    case LRG_DDS_FORMAT_DXT1:
+        lrg_texture_decode_bc_level (LRG_BC_KIND_BC1_RGBA, src, width, height, dst);
+        return;
+    case LRG_DDS_FORMAT_DXT3:
+        lrg_texture_decode_bc_level (LRG_BC_KIND_BC2, src, width, height, dst);
+        return;
+    case LRG_DDS_FORMAT_DXT5:
+        lrg_texture_decode_bc_level (LRG_BC_KIND_BC3, src, width, height, dst);
+        return;
+    case LRG_DDS_FORMAT_BC7:
+    case LRG_DDS_FORMAT_RGB:
+    case LRG_DDS_FORMAT_RGBA:
+    case LRG_DDS_FORMAT_LUMINANCE:
+    case LRG_DDS_FORMAT_LUMINANCE_ALPHA:
+    case LRG_DDS_FORMAT_ALPHA:
+    default:
+        break;
+    }
+
+    /* BC7 */
     for (by = 0; by < blocks_y; by++)
     {
         for (bx = 0; bx < blocks_x; bx++)
         {
-            const guint8 *block = src + ((gsize)by * blocks_x + bx) * block_size;
+            const guint8 *block = src + ((gsize)by * blocks_x + bx) * LRG_DDS_BC7_BLOCK_SIZE;
             guint8 tile[16][4];
             guint px;
             guint py;
 
-            if (format == LRG_DDS_FORMAT_DXT1)
-            {
-                decode_color_block (block, TRUE, tile);
-            }
-            else if (format == LRG_DDS_FORMAT_BC7)
-            {
-                decode_bc7_block (block, tile);
-            }
-            else
-            {
-                decode_color_block (block + 8, FALSE, tile);
-                if (format == LRG_DDS_FORMAT_DXT3)
-                    decode_explicit_alpha (block, tile);
-                else
-                    decode_interpolated_alpha (block, tile);
-            }
+            decode_bc7_block (block, tile);
 
             /* blocks overhanging a non-multiple-of-4 edge are clipped */
             for (py = 0; py < 4; py++)

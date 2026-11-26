@@ -218,6 +218,7 @@ TEST_SOURCES := \
 	test-gltf-info.c \
 	test-dds-image.c \
 	test-glsl.c \
+	test-texture-decode.c \
 	test-gltf-animation-roots.c \
 	test-gltf-geometry.c \
 	test-gltf-rig.c \

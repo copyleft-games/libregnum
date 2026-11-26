@@ -6381,3 +6381,96 @@ lrg_glsl_dialect_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+GQuark
+lrg_texture_error_quark (void)
+{
+    return g_quark_from_static_string ("lrg-texture-error-quark");
+}
+
+GType
+lrg_texture_error_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TEXTURE_ERROR_INVALID, "LRG_TEXTURE_ERROR_INVALID", "invalid" },
+            { LRG_TEXTURE_ERROR_TRUNCATED, "LRG_TEXTURE_ERROR_TRUNCATED", "truncated" },
+            { LRG_TEXTURE_ERROR_UNSUPPORTED, "LRG_TEXTURE_ERROR_UNSUPPORTED", "unsupported" },
+            { LRG_TEXTURE_ERROR_UPLOAD, "LRG_TEXTURE_ERROR_UPLOAD", "upload" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTextureError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_texture_compression_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TEXTURE_COMPRESSION_S3TC, "LRG_TEXTURE_COMPRESSION_S3TC", "s3tc" },
+            { LRG_TEXTURE_COMPRESSION_ETC2, "LRG_TEXTURE_COMPRESSION_ETC2", "etc2" },
+            { LRG_TEXTURE_COMPRESSION_ASTC, "LRG_TEXTURE_COMPRESSION_ASTC", "astc" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTextureCompression"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_gpu_cap_override_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_GPU_CAP_OVERRIDE_AUTO, "LRG_GPU_CAP_OVERRIDE_AUTO", "auto" },
+            { LRG_GPU_CAP_OVERRIDE_SUPPORTED, "LRG_GPU_CAP_OVERRIDE_SUPPORTED", "supported" },
+            { LRG_GPU_CAP_OVERRIDE_UNSUPPORTED, "LRG_GPU_CAP_OVERRIDE_UNSUPPORTED", "unsupported" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgGpuCapOverride"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_texture_fallback_format_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TEXTURE_FALLBACK_DEFAULT, "LRG_TEXTURE_FALLBACK_DEFAULT", "default" },
+            { LRG_TEXTURE_FALLBACK_RGBA8, "LRG_TEXTURE_FALLBACK_RGBA8", "rgba8" },
+            { LRG_TEXTURE_FALLBACK_RGB565, "LRG_TEXTURE_FALLBACK_RGB565", "rgb565" },
+            { LRG_TEXTURE_FALLBACK_RGBA4444, "LRG_TEXTURE_FALLBACK_RGBA4444", "rgba4444" },
+            { LRG_TEXTURE_FALLBACK_RGBA5551, "LRG_TEXTURE_FALLBACK_RGBA5551", "rgba5551" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgTextureFallbackFormat"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

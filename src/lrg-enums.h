@@ -6937,6 +6937,108 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_glsl_dialect_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_GLSL_DIALECT (lrg_glsl_dialect_get_type ())
 
+/* ==========================================================================
+ * Compressed textures (graphics/lrg-texture-codec.h, lrg-gpu-caps.h,
+ * lrg-texture-upload.h)
+ * ========================================================================== */
+
+/**
+ * LRG_TEXTURE_ERROR:
+ *
+ * Error domain of the texture codecs and upload helpers.
+ */
+#define LRG_TEXTURE_ERROR (lrg_texture_error_quark ())
+
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_texture_error_quark (void);
+
+/**
+ * LrgTextureError:
+ * @LRG_TEXTURE_ERROR_INVALID: an impossible size, mip count or argument
+ * @LRG_TEXTURE_ERROR_TRUNCATED: the data ends before the chain it claims
+ * @LRG_TEXTURE_ERROR_UNSUPPORTED: a format the CPU codecs do not handle,
+ *   or a compressed format the GPU lacks and nothing can decode
+ * @LRG_TEXTURE_ERROR_UPLOAD: no window, an unreadable file, or GL
+ *   refused the texture
+ *
+ * Error codes in the %LRG_TEXTURE_ERROR domain.
+ */
+typedef enum
+{
+    LRG_TEXTURE_ERROR_INVALID,
+    LRG_TEXTURE_ERROR_TRUNCATED,
+    LRG_TEXTURE_ERROR_UNSUPPORTED,
+    LRG_TEXTURE_ERROR_UPLOAD
+} LrgTextureError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_texture_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TEXTURE_ERROR (lrg_texture_error_get_type ())
+
+/**
+ * LrgTextureCompression:
+ * @LRG_TEXTURE_COMPRESSION_S3TC: S3TC / DXT1, DXT3, DXT5 (BC1 .. BC3)
+ * @LRG_TEXTURE_COMPRESSION_ETC2: ETC2 RGB and EAC RGBA
+ * @LRG_TEXTURE_COMPRESSION_ASTC: ASTC LDR (4x4, 8x8)
+ *
+ * A family of compressed texture formats a GPU supports as a whole
+ * (lrg_gpu_caps_has_texture_compression()).
+ */
+typedef enum
+{
+    LRG_TEXTURE_COMPRESSION_S3TC,
+    LRG_TEXTURE_COMPRESSION_ETC2,
+    LRG_TEXTURE_COMPRESSION_ASTC
+} LrgTextureCompression;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_texture_compression_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TEXTURE_COMPRESSION (lrg_texture_compression_get_type ())
+
+/**
+ * LrgGpuCapOverride:
+ * @LRG_GPU_CAP_OVERRIDE_AUTO: ask the GL context
+ * @LRG_GPU_CAP_OVERRIDE_SUPPORTED: answer "supported"
+ * @LRG_GPU_CAP_OVERRIDE_UNSUPPORTED: answer "not supported"
+ *
+ * A forced capability answer (lrg_gpu_caps_set_override()).
+ */
+typedef enum
+{
+    LRG_GPU_CAP_OVERRIDE_AUTO,
+    LRG_GPU_CAP_OVERRIDE_SUPPORTED,
+    LRG_GPU_CAP_OVERRIDE_UNSUPPORTED
+} LrgGpuCapOverride;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_gpu_cap_override_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_GPU_CAP_OVERRIDE (lrg_gpu_cap_override_get_type ())
+
+/**
+ * LrgTextureFallbackFormat:
+ * @LRG_TEXTURE_FALLBACK_DEFAULT: the process default
+ *   (lrg_texture_get_default_fallback())
+ * @LRG_TEXTURE_FALLBACK_RGBA8: 8 bits per channel, exact
+ * @LRG_TEXTURE_FALLBACK_RGB565: 16-bit 5:6:5, no alpha
+ * @LRG_TEXTURE_FALLBACK_RGBA4444: 16-bit 4:4:4:4
+ * @LRG_TEXTURE_FALLBACK_RGBA5551: 16-bit 5:5:5:1, 1-bit alpha
+ *
+ * What a compressed texture the GPU cannot sample is decoded to before
+ * the upload (lrg-texture-upload.h).
+ */
+typedef enum
+{
+    LRG_TEXTURE_FALLBACK_DEFAULT,
+    LRG_TEXTURE_FALLBACK_RGBA8,
+    LRG_TEXTURE_FALLBACK_RGB565,
+    LRG_TEXTURE_FALLBACK_RGBA4444,
+    LRG_TEXTURE_FALLBACK_RGBA5551
+} LrgTextureFallbackFormat;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_texture_fallback_format_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TEXTURE_FALLBACK_FORMAT (lrg_texture_fallback_format_get_type ())
+
 G_END_DECLS
 
 
