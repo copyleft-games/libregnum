@@ -22,9 +22,10 @@
 #include <raylib.h>
 #include <rlgl.h>
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 static const gchar tonemap_fs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec2 fragTexCoord;\n"
 	"in vec4 fragColor;\n"
 	"uniform sampler2D texture0;\n"

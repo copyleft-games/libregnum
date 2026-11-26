@@ -176,7 +176,7 @@ write_file (Fixture     *f,
             const gchar *rel,
             const gchar *text)
 {
-	gchar            *path = g_build_filename (f->project, rel, NULL);
+	gchar            *path = g_canonicalize_filename (rel, f->project);  /* canonical, as the editor reports paths */
 	g_autofree gchar *dir = g_path_get_dirname (path);
 
 	g_mkdir_with_parents (dir, 0755);
@@ -745,6 +745,7 @@ test_code_ipc (Fixture       *f,
                gconstpointer  data)
 {
 	g_autofree gchar   *path = NULL;
+	g_autofree gchar   *path_json = NULL;
 	g_autofree gchar   *req = NULL;
 	g_autofree gchar   *reply = NULL;
 	g_autofree gchar   *disk = NULL;
@@ -760,7 +761,9 @@ test_code_ipc (Fixture       *f,
 	panel = code_panel (f);
 	path = write_file (f, "scripts/ipc.lua", "print(1)\nprint(2)\nprint(3)\n");
 
-	req = g_strdup_printf ("{\"id\":1,\"method\":\"code.open\",\"params\":{\"path\":\"%s\",\"line\":3}}", path);
+	/* paths go into JSON escaped: Windows paths hold backslashes */
+	path_json = g_strescape (path, NULL);
+	req = g_strdup_printf ("{\"id\":1,\"method\":\"code.open\",\"params\":{\"path\":\"%s\",\"line\":3}}", path_json);
 	reply = lrg_editor_server_dispatch (lrg_editor_app_get_server (f->app), req);
 	g_assert_nonnull (strstr (reply, "\"line\":3"));
 	g_assert_nonnull (strstr (reply, "\"language\":\"lua\""));

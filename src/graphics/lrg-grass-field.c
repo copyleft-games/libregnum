@@ -38,6 +38,7 @@
 #include "graphics/lrg-hash-noise-private.h"
 #include "graphics/lrg-draw-cull-private.h"
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 /* the material maps LoadMaterialDefault() allocates and the draw walks:
  * raylib's MAX_MATERIAL_MAPS (rmodels.c, not exported) */
@@ -59,7 +60,7 @@ typedef struct
 G_DEFINE_BOXED_TYPE (LrgGrassBlade, lrg_grass_blade, lrg_grass_blade_copy, lrg_grass_blade_free)
 
 static const gchar grass_vs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 vertexPosition;\n"
     "in vec2 vertexTexCoord;\n"
     "in mat4 instanceTransform;\n"
@@ -94,7 +95,7 @@ static const gchar grass_vs[] =
     "}\n";
 
 static const gchar grass_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 grassColor;\n"
     "in float grassFade;\n"
     "in vec3 fragPosition;\n"

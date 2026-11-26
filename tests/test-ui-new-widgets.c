@@ -634,6 +634,14 @@ test_label_ellipsize (void)
 	lrg_label_set_ellipsize (label, FALSE);
 	lrg_widget_allocate (LRG_WIDGET (label), 0.0f, 0.0f, natural, 30.0f);
 	whole = count_glyphs (lrg_canvas_record (canvas));
+	if (whole == 0)
+	{
+		/* headless with no system font (a bare container, Wine): there is
+		 * no font to draw with -- raylib's own needs GL -- so nothing to
+		 * compare */
+		g_test_skip ("no font to draw text with (no system font, no GL)");
+		return;
+	}
 
 	/* given a third without ellipsizing, it still draws everything (past its edge) */
 	lrg_widget_allocate (LRG_WIDGET (label), 0.0f, 0.0f, natural / 3.0f, 30.0f);

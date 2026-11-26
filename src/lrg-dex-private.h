@@ -16,6 +16,11 @@
 #pragma once
 
 #include <glib.h>
+
+/* Only with libdex (HAS_LIBDEX): the async halves of the loaders, the save
+ * manager and the net client/server are built only then; without it (the
+ * Windows and Android targets) this header is empty. */
+#ifdef LRG_HAS_LIBDEX
 #include <libdex.h>
 
 G_BEGIN_DECLS
@@ -40,3 +45,14 @@ lrg_dex_ensure_init (void)
 }
 
 G_END_DECLS
+
+#else /* !LRG_HAS_LIBDEX */
+
+/* Without libdex there is nothing to initialise; callers outside the
+ * async sections stay unconditional */
+static inline void
+lrg_dex_ensure_init (void)
+{
+}
+
+#endif /* LRG_HAS_LIBDEX */

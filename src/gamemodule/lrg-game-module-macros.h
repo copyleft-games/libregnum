@@ -36,7 +36,9 @@ G_BEGIN_DECLS
  *   #LRG_GAME_MODULE_ENTRY_SYMBOL so the game can be loaded as a `.so` by the
  *   shim launcher or any embedding host.
  *
- * - Standalone build (default, no flag): emits a `main()` that runs the game
+ * - Standalone build (default, no flag): emits a `main()` that calls
+ *   lrg_platform_prepare() (Android data directories, assets and logging;
+ *   a no-op elsewhere; since 0.12.0) and then runs the game
  *   with lrg_game_run_standalone().
  *
  * Since: 1.0
@@ -74,9 +76,19 @@ G_BEGIN_DECLS
     int                                                                        \
     main (int argc, char **argv)                                               \
     {                                                                          \
-        GObject *_lrg_game = g_object_new ((GameType), NULL);                  \
+        GObject *_lrg_game;                                                    \
+        GError  *_lrg_error = NULL;                                            \
         int      _lrg_rc;                                                      \
                                                                               \
+        /* data dirs, bundled assets, logging (Android; a no-op elsewhere)    \
+         * before the game object exists: its init may already need them */  \
+        if (!lrg_platform_prepare (&_lrg_error))                               \
+        {                                                                      \
+            g_printerr ("%s: %s\n", (name_), _lrg_error->message);             \
+            g_error_free (_lrg_error);                                         \
+            return 1;                                                          \
+        }                                                                      \
+        _lrg_game = g_object_new ((GameType), NULL);                           \
         _lrg_rc = lrg_game_run_standalone (LRG_GAME_TEMPLATE (_lrg_game),      \
                                            argc, argv);                        \
         g_object_unref (_lrg_game);                                            \

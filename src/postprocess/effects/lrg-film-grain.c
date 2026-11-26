@@ -11,6 +11,7 @@
 #include <raylib.h>
 #include <rlgl.h>
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 /*
  * Film grain in one pass. The screen is split into cells of @size pixels;
@@ -22,7 +23,7 @@
  * luminance-response): bright areas get less grain, as on real stock.
  */
 static const gchar grain_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "uniform sampler2D texture0;\n"

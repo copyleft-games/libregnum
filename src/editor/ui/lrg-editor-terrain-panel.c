@@ -420,6 +420,28 @@ store_free (gpointer data)
 	g_free (store);
 }
 
+/* The store's tables key files by path; one file reaches them spelled
+ * several ways (a level node's "dir/terrain/x.rwater" joined, an editor's
+ * canonical path; on Windows with either separator), so keys compare as
+ * canonical paths. */
+static guint
+path_hash (gconstpointer key)
+{
+	g_autofree gchar *canonical = g_canonicalize_filename (key, NULL);
+
+	return g_str_hash (canonical);
+}
+
+static gboolean
+path_equal (gconstpointer a,
+            gconstpointer b)
+{
+	g_autofree gchar *ca = g_canonicalize_filename (a, NULL);
+	g_autofree gchar *cb = g_canonicalize_filename (b, NULL);
+
+	return g_str_equal (ca, cb);
+}
+
 static TerrainStore *
 store_of (LrgEditor *editor)
 {
@@ -429,10 +451,10 @@ store_of (LrgEditor *editor)
 		return store;
 	store = g_new0 (TerrainStore, 1);
 	store->editor = editor;
-	store->terrains = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_object_unref);
-	store->waters = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_object_unref);
-	store->dirty = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
-	store->serials = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+	store->terrains = g_hash_table_new_full (path_hash, path_equal, g_free, g_object_unref);
+	store->waters = g_hash_table_new_full (path_hash, path_equal, g_free, g_object_unref);
+	store->dirty = g_hash_table_new_full (path_hash, path_equal, g_free, NULL);
+	store->serials = g_hash_table_new_full (path_hash, path_equal, g_free, NULL);
 	store->proxies = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, proxy_free);
 	store->saved_id = g_signal_connect (editor, "saved", G_CALLBACK (on_editor_saved), NULL);
 	g_object_set_data_full (G_OBJECT (editor), STORE_KEY, store, store_free);

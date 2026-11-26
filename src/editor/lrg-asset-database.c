@@ -14,6 +14,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../lrg-portable-private.h"
 
 /* ==========================================================================
  * LrgAssetEntry
@@ -331,7 +332,7 @@ lrg_asset_database_wants_sidecar (const gchar *path)
 static gchar *
 real_path (const gchar *path)
 {
-	char  *r = realpath (path, NULL);
+	char  *r = lrg_realpath (path);
 	gchar *g;
 
 	if (r == NULL)
@@ -505,7 +506,10 @@ scan_dir (LrgAssetDatabase *self,
 	for (i = 0; i < names->len; i++)
 	{
 		const gchar      *child = g_ptr_array_index (names, i);
-		g_autofree gchar *child_rel = (rel != NULL) ? g_build_filename (rel, child, NULL) : g_strdup (child);
+		/* The project-relative path always uses '/', whatever the OS:
+		 * it is written into levels and hashed into the legacy guid, so
+		 * a project saved on Windows must still open elsewhere. */
+		g_autofree gchar *child_rel = (rel != NULL) ? g_strconcat (rel, "/", child, NULL) : g_strdup (child);
 		g_autofree gchar *child_full = g_build_filename (full, child, NULL);
 
 		if (g_file_test (child_full, G_FILE_TEST_IS_DIR))
@@ -864,7 +868,7 @@ move_with_meta (LrgAssetDatabase  *self,
 		return FALSE;
 
 	/* 2. The asset itself. */
-	if (g_rename (src, dest) != 0)
+	if (lrg_portable_rename (src, dest) != 0)
 	{
 		int saved = errno;
 
@@ -875,11 +879,11 @@ move_with_meta (LrgAssetDatabase  *self,
 
 	/* 3. Its sidecar (a folder's own "dir.meta" too, when present). On
 	 * failure put the asset back so the pair never splits. */
-	if (g_file_test (src_meta, G_FILE_TEST_IS_REGULAR) && g_rename (src_meta, dest_meta) != 0)
+	if (g_file_test (src_meta, G_FILE_TEST_IS_REGULAR) && lrg_portable_rename (src_meta, dest_meta) != 0)
 	{
 		int saved = errno;
 
-		if (g_rename (dest, src) != 0)
+		if (lrg_portable_rename (dest, src) != 0)
 			g_warning ("Cannot restore %s after a failed sidecar move", src);
 		g_set_error (error, G_IO_ERROR, g_io_error_from_errno (saved), "Cannot move %s to %s: %s", src_meta,
 		             dest_meta, g_strerror (saved));
@@ -903,7 +907,7 @@ lrg_asset_database_rename (LrgAssetDatabase  *self,
 	g_return_val_if_fail (new_name != NULL, FALSE);
 	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
 
-	if (*new_name == '\0' || strchr (new_name, G_DIR_SEPARATOR) != NULL || g_str_equal (new_name, ".") ||
+	if (*new_name == '\0' || strpbrk (new_name, "/\\") != NULL || g_str_equal (new_name, ".") ||
 	    g_str_equal (new_name, "..") || lrg_asset_meta_is_meta_path (new_name))
 	{
 		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_FILENAME, "Invalid asset name '%s'", new_name);

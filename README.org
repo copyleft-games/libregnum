@@ -74,7 +74,7 @@ This will:
 
 #+begin_src bash
 make DEBUG=1        # Debug build with symbols
-make WINDOWS=1      # Cross-compile for Windows (MinGW-w64)
+make WINDOWS=1      # Windows build in build/release-windows-amd64 (see below)
 make STEAM=1        # Build with Steam SDK support
 make test           # Build and run unit tests
 make test-sanitize  # Run tests under ASan+UBSan (own build dir)
@@ -86,20 +86,19 @@ make help           # Show all available targets
 
 ** Cross-Compilation
 
-Build for Windows from Linux using MinGW:
+One checkout builds for Windows (x86_64), Linux (aarch64) and Android (arm64-v8a). Each target has its own build directory, and cross builds run in a podman build container with the right toolchain, so the host needs nothing but podman. The native build is unchanged and never uses a container.
 
 #+begin_src bash
-# Install MinGW (Fedora)
-sudo dnf install mingw64-gcc mingw64-glib2 mingw64-pkg-config
-
-# Build for Windows
-make WINDOWS=1
-
-# Build for Windows with Steam
-make WINDOWS=1 STEAM=1
+make WINDOWS=1            # build/release-windows-amd64 (MinGW-w64)
+make ARM64=1 DEBUG=1      # build/debug-arm64 (gcc + Fedora aarch64 sysroot)
+make ANDROID=1            # build/release-android-arm64 (NDK clang)
+make ANDROID=1 apk APK_GAME=examples/game-chocolate-chip-clicker.c   # an APK
+make WINDOWS=1 STEAM=1    # Windows with Steam
+make targets              # every target and its directories
+make WINDOWS=1 NO_BUILD_CONTAINER=1   # build on the host instead
 #+end_src
 
-See [[file:docs/cross-compile.org][docs/cross-compile.org]] for details.
+See [[file:docs/cross-compile.org][docs/cross-compile.org]] for details, and the platform pages: [[file:docs/platforms/windows.org][Windows]], [[file:docs/platforms/linux-arm64.org][Linux aarch64]], [[file:docs/platforms/android.org][Android]].
 
 ** Steam Integration
 

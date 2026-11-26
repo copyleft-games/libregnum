@@ -197,6 +197,8 @@ lrg_frame_writer_clear (LrgFrameWriter *writer)
 	g_clear_pointer (&writer->pending, g_byte_array_unref);
 }
 
+#ifdef G_OS_UNIX
+/* (the socket I/O that reports errno exists only on Unix) */
 static void
 set_errno_error (GError      **error,
                  gint          err,
@@ -209,6 +211,7 @@ set_errno_error (GError      **error,
 		g_set_error (error, LRG_FRAME_ERROR, LRG_FRAME_ERROR_IO, "%s: %s", what,
 		             g_strerror (err));
 }
+#endif
 
 gboolean
 lrg_frame_writer_flush (LrgFrameWriter  *writer,

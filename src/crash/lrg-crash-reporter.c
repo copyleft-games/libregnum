@@ -17,8 +17,13 @@
 #include <signal.h>
 #include <unistd.h>
 #ifdef __linux__
-#include <execinfo.h>
 #include <sys/utsname.h>
+/* glibc's backtrace(); bionic has it only from API 33 (libregnum's Android
+ * minimum is 29), and debuggerd writes a tombstone with the stack there */
+#ifndef __ANDROID__
+#define LRG_CRASH_HAVE_BACKTRACE 1
+#include <execinfo.h>
+#endif
 #endif
 #endif /* !LRG_PLATFORM_WINDOWS */
 
@@ -136,10 +141,12 @@ build_crash_report (LrgCrashReporter *self,
     struct tm *tm_info;
     gchar time_buf[64];
 #ifdef __linux__
+    struct utsname sys_info;
+#endif
+#ifdef LRG_CRASH_HAVE_BACKTRACE
     void *stack_frames[MAX_STACK_FRAMES];
     gint frame_count;
     gchar **symbols;
-    struct utsname sys_info;
     gint i;
 #endif
     GHashTableIter iter;
@@ -179,7 +186,9 @@ build_crash_report (LrgCrashReporter *self,
         g_string_append_printf (report, "  Node: %s\n", sys_info.nodename);
         g_string_append (report, "\n");
     }
+#endif
 
+#ifdef LRG_CRASH_HAVE_BACKTRACE
     /* Stack trace */
     frame_count = backtrace (stack_frames, MAX_STACK_FRAMES);
     if (frame_count > 0)
@@ -196,6 +205,8 @@ build_crash_report (LrgCrashReporter *self,
             free (symbols);
         }
     }
+#elif defined(__ANDROID__)
+    g_string_append (report, "Stack trace: see the tombstone debuggerd writes (adb bugreport).\n\n");
 #else
     g_string_append (report, "Stack trace not available on this platform.\n\n");
 #endif

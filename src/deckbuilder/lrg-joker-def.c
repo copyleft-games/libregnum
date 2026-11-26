@@ -126,7 +126,7 @@ lrg_joker_def_real_apply_effect (LrgJokerDef       *self,
     {
         lrg_scoring_context_add_chips (ctx, priv->plus_chips);
         lrg_debug (LRG_LOG_DOMAIN,
-                   "Joker '%s' added +%ld chips",
+                   "Joker '%s' added +%" G_GINT64_FORMAT " chips",
                    priv->name, priv->plus_chips);
     }
 
@@ -134,7 +134,7 @@ lrg_joker_def_real_apply_effect (LrgJokerDef       *self,
     {
         lrg_scoring_context_add_mult (ctx, priv->plus_mult);
         lrg_debug (LRG_LOG_DOMAIN,
-                   "Joker '%s' added +%ld mult",
+                   "Joker '%s' added +%" G_GINT64_FORMAT " mult",
                    priv->name, priv->plus_mult);
     }
 

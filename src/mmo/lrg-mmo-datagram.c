@@ -6,7 +6,13 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/x509_vfy.h>
+#ifdef G_OS_WIN32
+/* getpeername() and sockaddr_storage on Winsock (GSocket's fd is a SOCKET) */
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <sys/socket.h>
+#endif
 
 struct _LrgMmoDatagram
 {

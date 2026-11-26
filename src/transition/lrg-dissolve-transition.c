@@ -12,6 +12,7 @@
 #include "../lrg-log.h"
 
 #include <graylib.h>
+#include "graphics/lrg-glsl-private.h"
 
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_TRANSITION
 
@@ -68,7 +69,7 @@ struct _LrgDissolveTransition
  * Uses a hash-based noise function to create the dissolve pattern.
  */
 static const gchar *dissolve_fragment_shader =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "out vec4 finalColor;\n"

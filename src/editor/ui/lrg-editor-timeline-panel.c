@@ -965,9 +965,10 @@ on_autoplay (LrgWidget *chip,
 
 static void
 on_length (LrgSpinBox *spin,
-           gdouble     value,
            gpointer    user_data)
 {
+	/* LrgSpinBox::value-changed passes no value: read it */
+	gdouble value = lrg_spin_box_get_value (spin);
 	LrgEditorTimelinePanel *self = LRG_EDITOR_TIMELINE_PANEL (user_data);
 	LrgTimeline            *tl = current_timeline (self);
 

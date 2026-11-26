@@ -29,6 +29,7 @@
 #include <yaml-glib.h>
 #include <errno.h>
 #include <string.h>
+#include "../lrg-portable-private.h"
 
 /* ==========================================================================
  * Enum types (hand-written; lrg-enums is not ours to touch)
@@ -699,10 +700,14 @@ lrg_asset_meta_importer_for_type (LrgAssetType type)
 gchar *
 lrg_asset_meta_compute_legacy_guid (const gchar *relative_path)
 {
+	g_autofree gchar *portable = NULL;
+
 	g_return_val_if_fail (relative_path != NULL, NULL);
 
-	/* Exactly what LrgAssetDatabase used before sidecars (0.8.0). */
-	return g_compute_checksum_for_string (G_CHECKSUM_SHA256, relative_path, -1);
+	portable = lrg_portable_data_path (g_strdup (relative_path));
+	/* Exactly what LrgAssetDatabase used before sidecars (0.8.0), over the
+	 * '/'-separated path: the same file has the same guid on every OS. */
+	return g_compute_checksum_for_string (G_CHECKSUM_SHA256, portable, -1);
 }
 
 gchar *

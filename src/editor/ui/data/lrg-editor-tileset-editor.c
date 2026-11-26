@@ -2033,7 +2033,6 @@ on_page (LrgWidget *chip,
 
 static void
 on_layout (LrgSpinBox *spin,
-           gdouble     value,
            gpointer    user_data)
 {
 	LrgEditorTilesetEditor *self = LRG_EDITOR_TILESET_EDITOR (user_data);
@@ -2284,9 +2283,10 @@ on_rule_remove (LrgWidget *chip,
 
 static void
 on_rule_seed (LrgSpinBox *spin,
-              gdouble     value,
               gpointer    user_data)
 {
+	/* LrgSpinBox::value-changed passes no value: read it */
+	gdouble value = lrg_spin_box_get_value (spin);
 	LrgEditorTilesetEditor *self = LRG_EDITOR_TILESET_EDITOR (user_data);
 	g_autoptr(GError)       error = NULL;
 
@@ -2352,9 +2352,10 @@ on_output_add (LrgWidget *chip,
 
 static void
 on_weight (LrgSpinBox *spin,
-           gdouble     value,
            gpointer    user_data)
 {
+	/* LrgSpinBox::value-changed passes no value: read it */
+	gdouble value = lrg_spin_box_get_value (spin);
 	LrgEditorTilesetEditor *self = LRG_EDITOR_TILESET_EDITOR (user_data);
 	g_autoptr(GError)       error = NULL;
 

@@ -1338,13 +1338,19 @@ accept_clients (LrgControlServer *self)
                 pid = (gint)peer.pid;
             }
         }
-#else
+#elif defined(G_OS_UNIX)
         credentials = g_socket_get_credentials (socket, NULL);
         if (credentials != NULL)
         {
             uid = (gint)g_credentials_get_unix_user (credentials, NULL);
             pid = (gint)g_credentials_get_unix_pid (credentials, NULL);
         }
+#else
+        /* Windows has no peer credentials on AF_UNIX sockets; the socket
+         * file lives in the user's own runtime directory, whose ACL keeps
+         * other users out (docs/platforms/windows.org) */
+        (void) credentials;
+        (void) uid;
 #endif
 #ifdef G_OS_UNIX
         if (uid != (gint)getuid ())

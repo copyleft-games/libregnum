@@ -1,0 +1,18 @@
+# Containerfile - libregnum build container for the linux-arm64 target
+#
+# Copyright 2026 Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Built by `make <target> container-image' (build-aux/mk/container.mk) with
+# build-aux/ as the context; the tag is a hash of containers/common/, this
+# directory, cross/ and BASE_IMAGE, so any edit here produces a new image.  All the
+# work is in setup.sh, which ends with a toolchain smoke test.
+# docs/cross-compile.org, "Container images".
+
+ARG BASE_IMAGE=registry.fedoraproject.org/fedora:45
+FROM ${BASE_IMAGE}
+
+COPY containers/common/ /usr/local/share/lrg-build/common/
+COPY containers/linux-arm64/ /usr/local/share/lrg-build/target/
+COPY cross/ /usr/local/share/lrg-build/cross/
+RUN bash /usr/local/share/lrg-build/target/setup.sh && dnf clean all

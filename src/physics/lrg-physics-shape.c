@@ -52,14 +52,6 @@ v3_sub (gfloat *o, const gfloat *a, const gfloat *b)
 }
 
 static inline void
-v3_add (gfloat *o, const gfloat *a, const gfloat *b)
-{
-	o[0] = a[0] + b[0];
-	o[1] = a[1] + b[1];
-	o[2] = a[2] + b[2];
-}
-
-static inline void
 v3_madd (gfloat *o, const gfloat *a, const gfloat *b, gfloat s)
 {
 	o[0] = a[0] + b[0] * s;

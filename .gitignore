@@ -49,3 +49,6 @@ examples/data/pbr-showcase/models/knot.obj.meta
 # every asset it sees; opening examples/data/* as a project must not
 # leave them as untracked files (none of the examples ships one)
 examples/data/**/*.meta
+
+# core dumps qemu-user writes when an emulated test aborts
+qemu_*.core

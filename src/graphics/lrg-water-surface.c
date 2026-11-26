@@ -28,6 +28,7 @@
 #include "graphics/lrg-draw-cull-private.h"
 #include "lrg-log.h"
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 /* the material map the scene copy is bound to (raylib binds every map
  * with a texture to its own unit); the albedo map stays the default */
@@ -36,7 +37,7 @@
 #define GL_FRAMEBUFFER_BIND (0x8D40)
 
 static const gchar water_vs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 vertexPosition;\n"
     "in vec2 vertexTexCoord;\n"
     "in vec4 vertexColor;\n"
@@ -74,7 +75,7 @@ static const gchar water_vs[] =
     "}\n";
 
 static const gchar water_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 fragPosition;\n"
     "in vec2 restXZ;\n"
     "in float shore;\n"

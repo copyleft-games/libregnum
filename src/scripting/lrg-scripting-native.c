@@ -18,7 +18,9 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_SCRIPTING
 
 #include <gmodule.h>
+#ifndef G_OS_WIN32
 #include <dlfcn.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -93,6 +95,13 @@ static gboolean
 symbol_in_module (GModule  *module,
                   gpointer  symbol)
 {
+#ifdef G_OS_WIN32
+    /* GetProcAddress() (behind g_module_symbol()) only looks at the DLL's
+     * own export table, never at the DLLs it imports from */
+    (void) module;
+    (void) symbol;
+    return TRUE;
+#else
     Dl_info   info;
     gchar    *mine;
     gchar    *owner;
@@ -108,6 +117,7 @@ symbol_in_module (GModule  *module,
     free (mine);
     free (owner);
     return same;
+#endif
 }
 
 /* Symbol lookup for plain GModule units */

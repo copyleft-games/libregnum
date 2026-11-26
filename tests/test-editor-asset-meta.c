@@ -455,7 +455,7 @@ test_guid_migration (Fixture       *f,
 	g_assert_cmpuint (lrg_asset_database_get_count (again), ==, 2);
 	e = lrg_asset_database_lookup_guid (again, legacy);
 	g_assert_nonnull (e);
-	g_assert_cmpstr (lrg_asset_entry_get_path (e), ==, "sprites" G_DIR_SEPARATOR_S "p.png");
+	g_assert_cmpstr (lrg_asset_entry_get_path (e), ==, "sprites/p.png");
 	g_assert_true (lrg_asset_entry_has_meta_file (e));
 	g_assert_null (lrg_asset_database_lookup_guid (again, "nope"));
 	g_assert_cmpuint (lrg_asset_database_get_orphaned_metas (again)->len, ==, 0);
@@ -518,7 +518,7 @@ test_rename_move_duplicate (Fixture       *f,
 	g_assert_true (g_file_test (moved, G_FILE_TEST_IS_REGULAR));
 	g_assert_true (g_file_test (moved_meta, G_FILE_TEST_IS_REGULAR));
 	e = lrg_asset_database_lookup_guid (db, guid);
-	g_assert_cmpstr (lrg_asset_entry_get_path (e), ==, "other" G_DIR_SEPARATOR_S "hero.png");
+	g_assert_cmpstr (lrg_asset_entry_get_path (e), ==, "other/hero.png");
 
 	/* Moving a folder carries its contents' sidecars. */
 	g_assert_true (lrg_asset_database_move (db, "other", "sprites", &error));
@@ -526,7 +526,7 @@ test_rename_move_duplicate (Fixture       *f,
 	e = lrg_asset_database_lookup_guid (db, guid);
 	g_assert_nonnull (e);
 	g_assert_cmpstr (lrg_asset_entry_get_path (e), ==,
-	                 "sprites" G_DIR_SEPARATOR_S "other" G_DIR_SEPARATOR_S "hero.png");
+	                 "sprites/other/hero.png");
 	g_assert_false (lrg_asset_database_move (db, "sprites", "sprites/other", &error));
 	g_clear_error (&error);
 
@@ -579,7 +579,7 @@ test_orphans_and_guard (Fixture       *f,
 	/* .git is skipped entirely; hidden files are listed but never get
 	 * sidecars; normal assets do. */
 	for (i = 0; i < lrg_asset_database_get_count (db); i++)
-		g_assert_null (strstr (lrg_asset_entry_get_path (lrg_asset_database_get_entry (db, i)), ".git" G_DIR_SEPARATOR_S));
+		g_assert_null (strstr (lrg_asset_entry_get_path (lrg_asset_database_get_entry (db, i)), ".git/"));
 	g_assert_nonnull (lrg_asset_database_lookup_path (db, hidden));
 	g_assert_false (g_file_test (hidden_meta, G_FILE_TEST_EXISTS));
 	g_assert_false (g_file_test (dot_meta, G_FILE_TEST_EXISTS));

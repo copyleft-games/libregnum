@@ -452,7 +452,7 @@ scan_dir (GPtrArray    *out,
 		if (name[0] == '.' || g_strcmp0 (name, "build") == 0 || g_strcmp0 (name, "node_modules") == 0 ||
 		    g_strcmp0 (name, "trees") == 0 || g_str_has_suffix (name, ".meta") || g_str_has_suffix (name, "~"))
 			continue;
-		child_rel = (rel != NULL) ? g_build_filename (rel, name, NULL) : g_strdup (name);
+		child_rel = (rel != NULL) ? g_strconcat (rel, "/", name, NULL) : g_strdup (name);
 		child = g_build_filename (root, child_rel, NULL);
 		if (g_file_test (child, G_FILE_TEST_IS_SYMLINK))
 			continue;

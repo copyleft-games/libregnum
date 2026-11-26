@@ -12,6 +12,7 @@
 #include <raylib.h>
 #include <rlgl.h>
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 /**
  * SECTION:lrg-color-grade
@@ -34,7 +35,7 @@
 /* the shader: raylib's default vertex shader feeds fragTexCoord and
  * fragColor; every step mirrors grade_rgb() below */
 static const gchar grade_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "uniform sampler2D texture0;\n"

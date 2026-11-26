@@ -15,6 +15,7 @@
 #include "../lrg-enums.h"
 #include "../lrg-log.h"
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 /**
  * SECTION:lrg-photo-dof
@@ -41,7 +42,7 @@
 
 /* the shader: the depth texture is unit 1, the colour texture unit 0 */
 static const gchar dof_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "uniform sampler2D texture0;\n"

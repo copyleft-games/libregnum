@@ -15,6 +15,10 @@
 CONFIG_MK_PATH := $(dir $(lastword $(MAKEFILE_LIST)))
 PROJECT_ROOT := $(realpath $(CONFIG_MK_PATH))
 
+# Build target (native or cross) and the build directory suffix.  Cheap: only
+# uname.  See build-aux/mk/target.mk and docs/cross-compile.org.
+include $(PROJECT_ROOT)/build-aux/mk/target.mk
+
 # =============================================================================
 # Version Information
 # =============================================================================
@@ -23,8 +27,8 @@ PROJECT_ROOT := $(realpath $(CONFIG_MK_PATH))
 # .pc file and the shared library name. Bump rules and tagging: AGENTS.md,
 # "Versioning". API_VERSION and SO_VERSION below are separate.
 VERSION_MAJOR := 0
-VERSION_MINOR := 11
-VERSION_MICRO := 1
+VERSION_MINOR := 12
+VERSION_MICRO := 0
 VERSION := $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_MICRO)
 
 # API version for parallel installability (bump on ABI breaks)
@@ -71,6 +75,11 @@ BUILD_EXAMPLES ?= 1
 
 # Build documentation (requires gi-docgen)
 BUILD_DOCS ?= 0
+
+# Build the command-line tools and apps (lrgldr, lrgpack, lrgeditor,
+# lrgeditorctl) as part of `make all'.  Targets without a desktop (Android)
+# turn it off in their profile; the libraries are built either way.
+BUILD_TOOLS ?= 1
 
 # Build the editor/level authoring module (src/editor/). Off-able for headless
 # or minimal builds; the rest of the engine builds without it.
@@ -170,6 +179,7 @@ WARN_CFLAGS += -Wmissing-prototypes
 WARN_CFLAGS += -Wold-style-definition
 WARN_CFLAGS += -Wdeclaration-after-statement
 WARN_CFLAGS += -Wno-unused-parameter
+LRG_PROJECT_WARN_CFLAGS := $(WARN_CFLAGS)
 
 # Feature test macros
 FEATURE_CFLAGS := -D_GNU_SOURCE
@@ -219,31 +229,55 @@ else
 endif
 
 # =============================================================================
-# Windows Cross-Compilation Support
+# Cross-Compilation Targets
 # =============================================================================
 #
-# Usage: make WINDOWS=1
-#        make CROSS=x86_64-w64-mingw32  (equivalent, for advanced users)
+# Usage: make LRG_TARGET=<target>   (windows-amd64, linux-arm64, android-arm64)
+#        make WINDOWS=1 | ARM64=1 | ANDROID=1
 #
-# Requires: mingw64-glib2, mingw64-gcc, mingw64-pkg-config (on Fedora)
+# build-aux/mk/target.mk resolved the target above.  A cross target's profile
+# (build-aux/mk/targets/<target>.mk) sets the toolchain (CC, AR, RANLIB,
+# PKG_CONFIG), TARGET_PLATFORM and its forced feature defaults; it is read
+# here, after the tool defaults, so its := assignments win over them while
+# anything given on the command line still wins over the profile.
+# Cross builds land in build/<type>-<target>/; see docs/cross-compile.org.
 
-WINDOWS ?= 0
-CROSS ?=
-
-# Set CROSS based on convenience variable
-ifeq ($(WINDOWS),1)
-    CROSS := x86_64-w64-mingw32
-endif
-
-# Apply cross-compilation settings when CROSS is set
-ifneq ($(CROSS),)
-    CC := $(CROSS)-gcc
-    AR := $(CROSS)-ar
-    RANLIB := $(CROSS)-ranlib
-    PKG_CONFIG := $(CROSS)-pkg-config
-    TARGET_PLATFORM := windows
-    # GIR not supported for cross-compilation (requires host compiler)
-    BUILD_GIR := 0
+ifeq ($(LRG_IS_CROSS),1)
+    # A cross build is dispatched by GNUmakefile (to the build container, or
+    # on the host with NO_BUILD_CONTAINER=1).  Entered any other way -- from
+    # tests/, examples/, bench/ or with -f Makefile -- it would build with
+    # the host's tools into the target's directory; refuse instead.
+    ifneq ($(LRG_VIA_GNUMAKEFILE)$(LRG_IN_CONTAINER)$(filter 1,$(NO_BUILD_CONTAINER)),)
+    else ifneq ($(filter-out $(LRG_HOST_SAFE_GOALS),$(or $(MAKECMDGOALS),all)),)
+        $(error A $(LRG_TARGET) build must start from the top-level directory: run 'make LRG_TARGET=$(LRG_TARGET) ...' (or its WINDOWS=1/ARM64=1/ANDROID=1 switch) in $(PROJECT_ROOT), or add NO_BUILD_CONTAINER=1 to build on the host)
+    endif
+    include $(LRG_TARGET_PROFILE)
+    # Outside the build container (NO_BUILD_CONTAINER=1) the target's
+    # toolchain must be installed.  Say so once instead of letting every
+    # pkg-config probe below fail on its own.  A profile's
+    # LRG_TOOLCHAIN_CHECK is a shell test of its real tools (and sysroot);
+    # the default asks for CC and PKG_CONFIG on PATH.  Goals that never
+    # compile (clean, print-target, ...) still work: they get a no-op
+    # pkg-config.
+    LRG_TOOLCHAIN_CHECK ?= command -v $(firstword $(CC)) && command -v $(firstword $(PKG_CONFIG))
+    ifeq ($(shell { $(LRG_TOOLCHAIN_CHECK); } > /dev/null 2>&1 && echo ok),)
+        ifneq ($(filter-out $(LRG_HOST_SAFE_GOALS),$(or $(MAKECMDGOALS),all)),)
+            $(error The $(LRG_TARGET) toolchain is not installed ('$(LRG_TOOLCHAIN_CHECK)' failed). Build in the container (drop NO_BUILD_CONTAINER=1) or install the packages listed in docs/cross-compile.org, "Building without containers")
+        endif
+        PKG_CONFIG := :
+    else ifeq ($(LRG_CC_IS_GCC),0)
+        # A compiler other than gcc (Android's NDK clang) may not know
+        # every flag in WARN_CFLAGS.  Keep each one it accepts as an
+        # error-level check and drop only the unknown ones, so the build
+        # stays warning-free with every check that compiler has.  One probe
+        # per flag, cross only; `make print-target' lists what was dropped.
+        WARN_CFLAGS := $(foreach flag,$(WARN_CFLAGS),$(if $(shell $(CC) -Werror $(flag) -E -x c /dev/null -o /dev/null > /dev/null 2>&1 && echo ok),$(flag)))
+        LRG_DROPPED_WARN_CFLAGS := $(filter-out $(WARN_CFLAGS),$(LRG_PROJECT_WARN_CFLAGS))
+        # and the profile's documented dialect gaps between gcc and that
+        # compiler (LRG_DIALECT_WARN_CFLAGS: constructs gcc accepts silently
+        # in gnu89 that are not bugs, e.g. Android's -Wno-typedef-redefinition)
+        WARN_CFLAGS += $(LRG_DIALECT_WARN_CFLAGS)
+    endif
 else
     TARGET_PLATFORM := $(PLATFORM)
 endif
@@ -364,7 +398,7 @@ MCP ?= 0
 ifeq ($(MCP),1)
     MCP_GLIB_DIR := $(PROJECT_ROOT)/deps/mcp-glib
     MCP_CFLAGS := -I$(MCP_GLIB_DIR)/src -DLRG_ENABLE_MCP=1
-    MCP_LIBS := -L$(MCP_GLIB_DIR)/build -lmcp-glib-1.0
+    MCP_LIBS := -L$(MCPGLIB_BUILDDIR) -lmcp-glib-1.0
 else
     MCP_CFLAGS :=
     MCP_LIBS :=
@@ -460,7 +494,8 @@ ifeq ($(TARGET_PLATFORM),windows)
     LIB_IMPORT := lib$(LIB_NAME).dll.a
     EXE_EXT := .exe
     # Platform-specific system libraries
-    PLATFORM_LIBS := -lopengl32 -lgdi32 -lwinmm -lshell32
+    # ws2_32: Winsock (the MMO datagram transport's getpeername())
+    PLATFORM_LIBS := -lopengl32 -lgdi32 -lwinmm -lshell32 -lws2_32
     # Windows shared library linker flags (use = for deferred expansion of LIBOUTDIR)
     LIB_LDFLAGS_PLATFORM = -shared -Wl,--out-implib,$(LIBOUTDIR)/$(LIB_IMPORT)
 else
@@ -471,7 +506,9 @@ else
     LIB_SHARED_SONAME := $(LIB_SHARED).$(SO_VERSION)
     EXE_EXT :=
     # Platform-specific system libraries
-    PLATFORM_LIBS := -lGL -lm -lpthread -ldl -lrt -lX11
+    # A target profile may replace the desktop set (Android: EGL, GLES 3,
+    # libandroid, liblog)
+    PLATFORM_LIBS := $(or $(LRG_PLATFORM_LIBS),-lGL -lm -lpthread -ldl -lrt -lX11)
     # graylib's embedded raylib also gets GLFW's Wayland backend when the
     # Wayland development files exist (WAYLAND=auto|1|0, forwarded to
     # graylib); its libraries then belong on our link line too
@@ -488,6 +525,10 @@ else
     endif
     # Unix shared library linker flags
     LIB_LDFLAGS_PLATFORM = -shared -Wl,-soname,$(LIB_SHARED_SONAME)
+    # and may add link flags (Android: 16 KB page alignment)
+    ifneq ($(strip $(LRG_PLATFORM_LDFLAGS)),)
+        LIB_LDFLAGS_PLATFORM += $(LRG_PLATFORM_LDFLAGS)
+    endif
 endif
 
 # GIR output names
@@ -501,16 +542,23 @@ PC_FILE := libregnum-$(API_VERSION).pc
 # Build Directories
 # =============================================================================
 
+# A cross target appends its suffix (build/release-windows-amd64, ...); the
+# native build keeps build/release and build/debug.  SANITIZE is native-only
+# (target.mk rejects it for a cross target).
 ifeq ($(SANITIZE),1)
     # Sanitized build: implies debug + both sanitizers, isolated output dir.
     DEBUG := 1
     ASAN := 1
     UBSAN := 1
     BUILDDIR := build/sanitize
+else ifeq ($(MINIMAL_FEATURES),1)
+    # Every optional dependency left out (SOUP=0 LIBPQ=0, below), in its own
+    # directory: `make test-minimal-features' checks the stubs natively.
+    BUILDDIR := build/minimal
 else ifeq ($(DEBUG),1)
-    BUILDDIR := build/debug
+    BUILDDIR := build/debug$(LRG_BUILD_SUFFIX)
 else
-    BUILDDIR := build/release
+    BUILDDIR := build/release$(LRG_BUILD_SUFFIX)
 endif
 
 OBJDIR := $(BUILDDIR)/obj
@@ -528,16 +576,39 @@ GIROUTDIR := $(BUILDDIR)/gir
 # Where it built without it, the path arrived by accident through an
 # optional dependency's cflags (gio-unix-2.0 in AI_PKG_DEPS); Ubuntu
 # 24.04, without those, failed in lrg-dap-server.c.
-GLIB_CFLAGS := $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 gio-unix-2.0 gmodule-2.0)
-GLIB_LIBS := $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 gio-unix-2.0 gmodule-2.0)
+# Windows has no gio-unix-2.0, and one missing module makes the whole
+# pkg-config query print nothing, so it is asked for only where it exists
+LRG_GIO_UNIX_PKG := $(if $(filter windows,$(TARGET_PLATFORM)),,gio-unix-2.0)
+GLIB_CFLAGS := $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 $(LRG_GIO_UNIX_PKG) gmodule-2.0)
+GLIB_LIBS := $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 $(LRG_GIO_UNIX_PKG) gmodule-2.0)
 
 # json-glib (for yaml-glib interop, required)
 JSON_CFLAGS := $(shell $(PKG_CONFIG) --cflags json-glib-1.0)
 JSON_LIBS := $(shell $(PKG_CONFIG) --libs json-glib-1.0)
 
-# libsoup3 (for HTTP analytics backend, required)
-SOUP_CFLAGS := $(shell $(PKG_CONFIG) --cflags libsoup-3.0)
-SOUP_LIBS := $(shell $(PKG_CONFIG) --libs libsoup-3.0)
+# libsoup3 (for the HTTP analytics backend).  Required unless SOUP=0, which
+# builds LrgAnalyticsBackendHttp without it: every send then fails with
+# LRG_ANALYTICS_ERROR_BACKEND and batches stay queued (LRG_WITHOUT_SOUP).
+# The Android profile sets SOUP=0 (no libsoup in its GLib stack).
+ifeq ($(MINIMAL_FEATURES),1)
+    SOUP := 0
+    LIBPQ := 0
+endif
+SOUP ?= 1
+ifeq ($(SOUP),1)
+    SOUP_CFLAGS := $(shell $(PKG_CONFIG) --cflags libsoup-3.0)
+    SOUP_LIBS := $(shell $(PKG_CONFIG) --libs libsoup-3.0)
+else
+    SOUP_CFLAGS :=
+    SOUP_LIBS :=
+endif
+
+# libpq (the MMO store's PostgreSQL backend).  Required unless LIBPQ=0,
+# which makes lrg_mmo_store_new_postgres() fail with
+# G_IO_ERROR_NOT_SUPPORTED (LRG_WITHOUT_LIBPQ); the SQLite and in-memory
+# stores are unaffected.  The Android profile sets LIBPQ=0.
+LIBPQ ?= 1
+LIBPQ_PKG := $(if $(filter 1,$(LIBPQ)),libpq)
 
 # libyaml (for yaml-glib, required)
 YAML_CFLAGS := $(shell $(PKG_CONFIG) --cflags yaml-0.1)
@@ -699,21 +770,42 @@ OPENSSL_LIBS := $(shell $(PKG_CONFIG) --libs openssl)
 SQLITE_CFLAGS := $(shell $(PKG_CONFIG) --cflags sqlite3)
 SQLITE_LIBS := $(shell $(PKG_CONFIG) --libs sqlite3)
 
-DEP_CFLAGS := $(shell $(PKG_CONFIG) --cflags zlib libpq) $(OPENSSL_CFLAGS) $(SQLITE_CFLAGS) $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(SOUP_CFLAGS) $(FRIBIDI_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS) $(GI_RUNTIME_CFLAGS) $(GJS_CFLAGS) $(CRISPY_CFLAGS)
-DEP_LIBS := $(shell $(PKG_CONFIG) --libs zlib libpq) $(OPENSSL_LIBS) $(SQLITE_LIBS) $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(SOUP_LIBS) $(FRIBIDI_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS) $(GI_RUNTIME_LIBS) $(GJS_LIBS) $(CRISPY_LIBS)
+DEP_CFLAGS := $(shell $(PKG_CONFIG) --cflags zlib $(LIBPQ_PKG)) $(OPENSSL_CFLAGS) $(SQLITE_CFLAGS) $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(SOUP_CFLAGS) $(FRIBIDI_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS) $(GI_RUNTIME_CFLAGS) $(GJS_CFLAGS) $(CRISPY_CFLAGS)
+DEP_LIBS := $(shell $(PKG_CONFIG) --libs zlib $(LIBPQ_PKG)) $(OPENSSL_LIBS) $(SQLITE_LIBS) $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(SOUP_LIBS) $(FRIBIDI_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS) $(GI_RUNTIME_LIBS) $(GJS_LIBS) $(CRISPY_LIBS)
 
 # Graylib and yaml-glib (built from submodules)
 # Also include raylib headers for rlgl.h etc.
 GRAYLIB_CFLAGS := -I$(GRAYLIB_DIR)/src -I$(GRAYLIB_DIR)/deps/raylib/src
 YAMLGLIB_CFLAGS := -I$(YAMLGLIB_DIR)/src
 
+# Where the bundled dependencies build.  Natively: inside each submodule, as
+# always (cmacs links against these paths).  A cross target builds its own
+# copies under its build directory, $(BUILDDIR)/deps/<name>, so targets
+# never overwrite each other's archives; the Makefile hands these
+# directories to the sub-makes (BUILDDIR=..., graylib's RAYLIB_BUILD_DIR=...).
+ifeq ($(LRG_IS_CROSS),1)
+    DEP_OUT           := $(PROJECT_ROOT)/$(BUILDDIR)/deps
+    GRAYLIB_BUILDDIR  := $(DEP_OUT)/graylib
+    RAYLIB_BUILD_DIR  := $(DEP_OUT)/raylib
+    YAMLGLIB_BUILDDIR := $(DEP_OUT)/yaml-glib
+    CRISPY_BUILDDIR   := $(DEP_OUT)/crispy
+    MCPGLIB_BUILDDIR  := $(DEP_OUT)/mcp-glib
+else
+    DEP_OUT           :=
+    GRAYLIB_BUILDDIR  := $(GRAYLIB_DIR)/build
+    RAYLIB_BUILD_DIR  := $(GRAYLIB_DIR)/deps/raylib/src
+    YAMLGLIB_BUILDDIR := $(YAMLGLIB_DIR)/build
+    CRISPY_BUILDDIR   := $(CRISPY_DIR)/build
+    MCPGLIB_BUILDDIR  := $(PROJECT_ROOT)/deps/mcp-glib/build
+endif
+
 # Static archives for embedding graylib, raylib, and yaml-glib into libregnum
-GRAYLIB_STATIC  := $(GRAYLIB_DIR)/build/lib/libgraylib.a
-RAYLIB_STATIC   := $(GRAYLIB_DIR)/deps/raylib/src/libraylib.a
+GRAYLIB_STATIC  := $(GRAYLIB_BUILDDIR)/lib/libgraylib.a
+RAYLIB_STATIC   := $(RAYLIB_BUILD_DIR)/libraylib.a
 # yaml-glib (its three-file Makefile) builds into build/<debug|release>/,
 # keyed on DEBUG like crispy: DEP_BUILD_FLAGS forwards DEBUG to it
-YAMLGLIB_STATIC := $(YAMLGLIB_DIR)/build/$(DEP_BUILD_TYPE)/libyaml-glib-1.0.a
-CRISPY_STATIC   := $(CRISPY_DIR)/build/$(DEP_BUILD_TYPE)/libcrispy.a
+YAMLGLIB_STATIC := $(YAMLGLIB_BUILDDIR)/$(DEP_BUILD_TYPE)/libyaml-glib-1.0.a
+CRISPY_STATIC   := $(CRISPY_BUILDDIR)/$(DEP_BUILD_TYPE)/libcrispy.a
 
 # =============================================================================
 # Composite Flags
@@ -778,13 +870,24 @@ endif
 ifeq ($(HAS_CRISPY),1)
     OPT_CFLAGS += -DLRG_HAS_CRISPY=1
 endif
+# Optional dependencies that are on by default are marked when OFF, so the
+# default build's command lines stay as they were
+ifneq ($(SOUP),1)
+    OPT_CFLAGS += -DLRG_WITHOUT_SOUP=1
+endif
+ifneq ($(LIBPQ),1)
+    OPT_CFLAGS += -DLRG_WITHOUT_LIBPQ=1
+endif
 ifeq ($(BUILD_EDITOR_UI),1)
     OPT_CFLAGS += -DLRG_BUILD_EDITOR_UI=1
 endif
 
-# Windows cross-compile marker
+# Platform marker for the source (Android is not LRG_PLATFORM_LINUX: bionic
+# differs from glibc where the code checks, e.g. no execinfo before API 33)
 ifeq ($(TARGET_PLATFORM),windows)
     OPT_CFLAGS += -DLRG_PLATFORM_WINDOWS=1
+else ifeq ($(TARGET_PLATFORM),android)
+    OPT_CFLAGS += -DLRG_PLATFORM_ANDROID=1
 else
     OPT_CFLAGS += -DLRG_PLATFORM_LINUX=1
 endif
@@ -819,6 +922,11 @@ LIB_CFLAGS += $(AI_CFLAGS)
 LIB_CFLAGS += $(FFMPEG_CFLAGS)
 LIB_CFLAGS += $(OPENXR_CFLAGS)
 LIB_CFLAGS += $(ALSA_CFLAGS)
+# a target profile's extra compile flags (Android: the NDK's
+# native_app_glue headers for src/core/lrg-platform.c)
+ifneq ($(strip $(LRG_TARGET_CFLAGS)),)
+    LIB_CFLAGS += $(LRG_TARGET_CFLAGS)
+endif
 
 # Library link flags (use platform-specific flags)
 LIB_LDFLAGS := $(LIB_LDFLAGS_PLATFORM)
@@ -835,8 +943,8 @@ ALL_LIBS := $(SANITIZER_LIBS)
 ifeq ($(TARGET_PLATFORM),windows)
     # Windows: link against import libraries for DLLs
     # Note: libregnum.dll requires graylib.dll and yaml-glib.dll at runtime
-    ALL_LIBS += -L$(GRAYLIB_DIR)/build/lib -lgraylib
-    ALL_LIBS += -L$(YAMLGLIB_DIR)/build/$(DEP_BUILD_TYPE) -lyaml-glib-1.0
+    ALL_LIBS += -L$(GRAYLIB_BUILDDIR)/lib -lgraylib
+    ALL_LIBS += -L$(YAMLGLIB_BUILDDIR)/$(DEP_BUILD_TYPE) -lyaml-glib-1.0
 else
     # Unix: embed graylib, raylib, and yaml-glib directly into libregnum (self-contained).
     # --whole-archive ensures all graylib/yaml-glib symbols are included.

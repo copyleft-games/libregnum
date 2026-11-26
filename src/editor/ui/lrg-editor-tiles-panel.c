@@ -2111,9 +2111,10 @@ on_tool (LrgWidget *chip,
 
 static void
 on_brush (LrgSpinBox *spin,
-          gdouble     value,
           gpointer    user_data)
 {
+	/* LrgSpinBox::value-changed passes no value: read it */
+	gdouble value = lrg_spin_box_get_value (spin);
 	LrgEditorTilesPanel *self = LRG_EDITOR_TILES_PANEL (user_data);
 
 	if (!self->syncing && painter (self) != NULL)
@@ -2122,9 +2123,10 @@ on_brush (LrgSpinBox *spin,
 
 static void
 on_tile (LrgSpinBox *spin,
-         gdouble     value,
          gpointer    user_data)
 {
+	/* LrgSpinBox::value-changed passes no value: read it */
+	gdouble value = lrg_spin_box_get_value (spin);
 	LrgEditorTilesPanel *self = LRG_EDITOR_TILES_PANEL (user_data);
 
 	if (!self->syncing && painter (self) != NULL)
@@ -2149,7 +2151,6 @@ on_create_grid (LrgWidget *chip,
 /* Grid size and slicing: one undo step per change */
 static void
 on_grid_changed (LrgSpinBox *spin,
-                 gdouble     value,
                  gpointer    user_data)
 {
 	LrgEditorTilesPanel *self = LRG_EDITOR_TILES_PANEL (user_data);
@@ -2193,7 +2194,6 @@ on_layout_combo (LrgComboBox *combo,
 
 static void
 on_layout_spin (LrgSpinBox *spin,
-                gdouble     value,
                 gpointer    user_data)
 {
 	apply_layout_widgets (LRG_EDITOR_TILES_PANEL (user_data));

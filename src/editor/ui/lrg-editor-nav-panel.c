@@ -96,6 +96,7 @@
 #include <math.h>
 #include <string.h>
 #include <raylib.h>
+#include "../../lrg-portable-private.h"
 
 #define PANEL_KEY        "lrg-editor-nav-panel"
 #define STATE_SEPARATOR  "\n--rnav--\n"
@@ -1109,14 +1110,12 @@ level_ref (LrgEditorNavPanel *self,
            const gchar       *path)
 {
 	g_autofree gchar *dir = level_dir (self);
+	gchar            *rel = lrg_portable_relative_path (dir, path);
 
-	if (dir != NULL)
-	{
-		g_autofree gchar *prefix = g_strconcat (dir, G_DIR_SEPARATOR_S, NULL);
-
-		if (g_str_has_prefix (path, prefix))
-			return g_strdup (path + strlen (prefix));
-	}
+	/* '/'-separated on every OS: the reference is stored in the level */
+	if (rel != NULL && *rel != '\0')
+		return rel;
+	g_free (rel);
 	return g_strdup (path);
 }
 
@@ -4301,7 +4300,7 @@ scan_rnav (const gchar *root,
 
 	while (d != NULL && (name = g_dir_read_name (d)) != NULL)
 	{
-		g_autofree gchar *child_rel = (rel != NULL) ? g_build_filename (rel, name, NULL) : g_strdup (name);
+		g_autofree gchar *child_rel = (rel != NULL) ? g_strconcat (rel, "/", name, NULL) : g_strdup (name);
 		g_autofree gchar *child = g_build_filename (root, child_rel, NULL);
 
 		if (name[0] == '.' || g_strcmp0 (name, "build") == 0)

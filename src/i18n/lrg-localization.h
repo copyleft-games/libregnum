@@ -187,6 +187,13 @@ const gchar *lrg_localization_get_plural (LrgLocalization *self,
  * Gets a localized string and formats it with the given arguments.
  * The string should contain printf-style format specifiers.
  *
+ * A translated format is checked before use: its conversions must read
+ * the same argument types as the fallback locale's string for @key (it
+ * may use fewer arguments, never more or other types), and `%n` is never
+ * accepted.  A translation that fails is logged once and the fallback's
+ * text is used instead, so a bad locale file cannot misread the
+ * arguments.  Since 0.12.0.
+ *
  * Returns: (transfer full) (nullable): a newly allocated formatted string
  */
 LRG_AVAILABLE_IN_ALL
@@ -202,6 +209,9 @@ gchar *lrg_localization_format (LrgLocalization *self,
  * @...: format arguments
  *
  * Gets a pluralized string and formats it with the given arguments.
+ * The translation is checked as for lrg_localization_format(), against
+ * the fallback's form for @count or its general plural form (a singular
+ * may leave out the number).
  *
  * Returns: (transfer full) (nullable): a newly allocated formatted string
  */

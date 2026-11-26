@@ -11,6 +11,7 @@
 #include <raylib.h>
 #include <rlgl.h>
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 /**
  * SECTION:lrg-colorblind-filter
@@ -40,7 +41,7 @@
 /* the shader mirrors filter_rgb() below: linear light, the matrix,
  * back to sRGB, mixed by the intensity */
 static const gchar colorblind_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "uniform sampler2D texture0;\n"

@@ -397,7 +397,7 @@ lrg_scoring_context_calculate_score (LrgScoringContext *self)
     score = (gint64)((gdouble)total_chips * final_mult);
 
     lrg_debug (LRG_LOG_DOMAIN,
-               "Score: %ld chips x %ld mult x %.2f x_mult = %ld",
+               "Score: %" G_GINT64_FORMAT " chips x %" G_GINT64_FORMAT " mult x %.2f x_mult = %" G_GINT64_FORMAT "",
                total_chips, total_mult, self->x_mult, score);
 
     return score;

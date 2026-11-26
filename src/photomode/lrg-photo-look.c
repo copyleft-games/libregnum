@@ -14,6 +14,7 @@
 #include "lrg-photo-look.h"
 #include "../lrg-log.h"
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 /**
  * SECTION:lrg-photo-look
@@ -34,7 +35,7 @@
 /* the vignette and grain shader: the same arithmetic as
  * lrg_photo_look_get_vignette_factor() and lrg_photo_look_get_grain_value() */
 static const gchar finish_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "uniform sampler2D texture0;\n"

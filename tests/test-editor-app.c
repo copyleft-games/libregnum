@@ -606,7 +606,12 @@ test_app_thumbnails (Fixture       *f,
 	r = efx_ipc_result (f, "{'id':1,'method':'asset.thumbnail','params':{'path':'crate.png','wait':true}}");
 	first = g_strdup (json_object_get_string_member (json_node_get_object (r), "thumbnail"));
 	g_clear_pointer (&r, json_node_unref);
-	g_assert_nonnull (strstr (first, ".cache/thumbnails/"));
+	{
+		/* either separator: Windows paths use '\\' */
+		g_autofree gchar *norm = g_strdelimit (g_strdup (first), "\\", '/');
+
+		g_assert_nonnull (strstr (norm, ".cache/thumbnails/"));
+	}
 	g_assert_true (g_file_test (first, G_FILE_TEST_IS_REGULAR));
 
 	/* Asynchronous: pending first, ready after a few frames. */
@@ -1211,6 +1216,7 @@ test_ipc_asset_meta (void)
 	g_autofree gchar          *asset = NULL;
 	g_autofree gchar          *meta_path = NULL;
 	g_autofree gchar          *legacy = lrg_asset_meta_compute_legacy_guid ("textures/brick.png");
+	g_autofree gchar          *meta_json = NULL;
 	g_autoptr(LrgEditor)       editor = lrg_editor_new ();
 	g_autoptr(LrgEditorServer) server = lrg_editor_server_new (editor);
 	g_autofree gchar          *sub = NULL;
@@ -1276,10 +1282,12 @@ test_ipc_asset_meta (void)
 	json_node_unref (r);
 
 	/* null resets to the default; "guid" replaces the identifier; the
-	 * sidecar path itself is accepted as "path". */
+	 * sidecar path itself is accepted as "path" (escaped: Windows paths
+	 * hold backslashes). */
+	meta_json = g_strescape (meta_path, NULL);
 	r = ipc_callf (server, "{\"id\":6,\"method\":\"asset.meta.set\",\"params\":{\"path\":\"%s\","
 	                       "\"settings\":{\"filter\":null},\"guid\":\"0f0f0f0f-1111-4222-8333-444455556666\"}}",
-	               meta_path);
+	               meta_json);
 	o = ipc_obj (r);
 	g_assert_cmpstr (json_object_get_string_member (o, "path"), ==, asset);
 	g_assert_cmpstr (json_object_get_string_member (o, "guid"), ==, "0f0f0f0f-1111-4222-8333-444455556666");

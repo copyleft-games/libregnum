@@ -1,9 +1,17 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 #pragma once
 #include "lrg-mmo-store.h"
+#ifndef LRG_WITHOUT_LIBPQ
 #include <libpq-fe.h>
+#else
+/* Built without libpq (LIBPQ=0, e.g. Android): the store's PostgreSQL
+ * backend is a stub whose open fails with G_IO_ERROR_NOT_SUPPORTED, so no
+ * connection ever exists.  The type stays for the shared declarations. */
+typedef struct pg_conn PGconn;
+#endif
 G_GNUC_INTERNAL PGconn *_lrg_mmo_store_postgres (LrgMmoStore *self);
 G_GNUC_INTERNAL PGconn *_lrg_mmo_pg_open (const gchar *connection, GError **error);
+G_GNUC_INTERNAL void _lrg_mmo_pg_close (PGconn *db);
 G_GNUC_INTERNAL GBytes *_lrg_mmo_pg_read (PGconn *db, const gchar *key, guint64 *revision, GError **error);
 G_GNUC_INTERNAL gboolean _lrg_mmo_pg_commit (PGconn *db, GVariant *changes, const gchar *operation, const gchar *digest, gboolean *duplicate, const gchar *zone, const gchar *owner, guint64 fence, GError **error);
 G_GNUC_INTERNAL GVariant *_lrg_mmo_pg_audit (PGconn *db, guint64 after, guint limit, GError **error);

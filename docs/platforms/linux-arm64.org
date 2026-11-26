@@ -1,0 +1,88 @@
+#+title: Linux aarch64
+#+description: Building libregnum for Linux on aarch64 from an x86_64 machine: the gcc cross toolchain, the Fedora sysroot, testing under qemu, known gaps
+#+authors: Zach Podbielniak
+#+categories: libregnum platform linux aarch64
+
+* Linux aarch64
+:PROPERTIES:
+:CUSTOM_ID: linux-arm64
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > Platforms > Linux aarch64
+#+end_quote
+
+=make ARM64=1= builds libregnum for Linux on aarch64 (Asahi Macs, Raspberry Pi 4/5 class boards, Ampere servers) from an x86_64 machine, into =build/{release,debug}-arm64=. On an aarch64 machine =ARM64=1= is simply the native build. It is a true cross build with gcc; nothing is emulated except the test runs.
+
+#+begin_src sh
+make -j16 ARM64=1                 # libraries and tools: build/release-arm64
+make -j16 ARM64=1 test            # the unit tests, under qemu-aarch64
+make ARM64=1 container-shell      # the toolchain, interactively
+#+end_src
+
+** Toolchain
+:PROPERTIES:
+:CUSTOM_ID: toolchain
+:END:
+Fedora's =gcc-aarch64-linux-gnu= compiles kernels: it has no C library, no crt files and no =libgcc_s=. The build container (=build-aux/containers/linux-arm64/setup.sh=) pairs it with a Fedora aarch64 /sysroot/ in =/opt/sysroot/aarch64=:
+
+- installed with =dnf --installroot --forcearch=aarch64= from the same Fedora release as the image, with every =-devel= package libregnum links (GLib, json-glib, libsoup, libyaml, libdex, OpenSSL, SQLite, libpq, readline, fribidi, LuaJIT, ALSA, Mesa GL/EGL, X11, Wayland, xkbcommon) plus =gcc= (for its runtime), fontconfig and the Noto/DejaVu fonts (the UI font, for tests);
+- with Fedora's usr-merge symlinks made first (=/lib64= → =usr/lib64= and the rest), or the =filesystem= package fails to unpack;
+- without scriptlets (=tsflags=noscripts=): they are aarch64 programs, and a sysroot needs only headers, libraries and data. The scriptlet results the tests read, the compiled GSettings schemas and the MIME database, are made with the host's =glib-compile-schemas= and =update-mime-database=.
+
+Two one-word wrappers in =build-aux/cross/= make it usable as =CC= and =PKG_CONFIG= (one word, because the build hands them to graylib, raylib and yaml-glib on their command lines):
+
+| Wrapper                     | Does                                                                              |
+|-----------------------------+-----------------------------------------------------------------------------------|
+| =lrg-aarch64-linux-gnu-gcc= | =aarch64-linux-gnu-gcc --sysroot=$LRG_SYSROOT -B<gcc dir> -L<gcc dir>=, where the gcc dir is the sysroot's =/usr/lib/gcc/aarch64-redhat-linux/<version>/= (crtbegin.o, libgcc, libgcc_s) |
+| =lrg-sysroot-pkg-config=    | the host pkg-config, reading only the sysroot's =.pc= files and prefixing their paths with it |
+
+The cross gcc and the sysroot's gcc are the same major version (both from the image's Fedora release). The image's smoke test builds a GLib + json-glib program with the wrappers and runs it under qemu, so a mismatch fails the image build, not yours.
+
+Both wrappers read =LRG_SYSROOT=, which the profile (=build-aux/mk/targets/linux-arm64.mk=) exports from =ARM64_SYSROOT= (default =/opt/sysroot/aarch64=). On a host with its own sysroot: =make ARM64=1 NO_BUILD_CONTAINER=1 ARM64_SYSROOT=/path=.
+
+Everything builds as natively: the library, graylib, raylib (GLFW with X11 and Wayland), yaml-glib, crispy, mcp-glib, =lrgldr=, =lrgpack=, =lrgeditor=, =lrgeditorctl=. GObject Introspection does not (=g-ir-scanner= runs the library it scans), so the GI-based scripting backends (gjs, pygobject) are off.
+
+** Testing under qemu
+:PROPERTIES:
+:CUSTOM_ID: testing
+:END:
+=make ARM64=1 test= runs every test binary as =qemu-aarch64-static -L /opt/sysroot/aarch64 <test>= (the profile's =LRG_EXEC_WRAPPER=), in the build container; no binfmt registration is needed on the host. =-L= makes absolute paths the test opens resolve inside the sysroot first, which is why the sysroot carries fonts and compiled schemas. Programs the tests start themselves (=dbus-daemon= for GTestDBus) are host programs and run natively.
+
+Emulation is many times slower than native (one music-rendering test takes over five minutes); budget an hour or more for the whole suite.
+
+Test paths that cannot run under user-mode qemu are skipped with GTest's =-s= (=LRG_TEST_SKIP_PATHS= in the profile, each with its reason), and listed at the end of the run:
+
+| Group (variable in the profile) | Test paths | Why |
+|----------------------------------+------------+-----|
+| =LRG_ARM64_SKIP_SUBPROCESS= | =/billboard-batch/invalid-size=, =/paint/list/measure-headless=, =/paint/renderer/headless=, =/paint/list/unbalanced-pops=, =/template/base/max-frames-in-flight-env= | =g_test_trap_subprocess()= re-executes the aarch64 test binary, which the host kernel cannot start without binfmt |
+| =LRG_ARM64_SKIP_SPAWN= | the six =/lrgldr/*= tests, =/workflows/merge-files= | start another aarch64 program (=lrgldr=, =lrgeditor --merge=): binfmt again |
+| =LRG_ARM64_SKIP_COMPILE= | the five =/scripting-crispy/*= tests, =/script-reload/crispy=, =/pack-writer/plugin=, =/editor-app/dialogs/plugin-dock= | compile C at test time with the container's x86_64 gcc |
+| =LRG_ARM64_SKIP_SANDBOX= | the five =/sandbox/apply/*= tests | user-mode qemu implements neither Landlock nor seccomp for its guest |
+| =LRG_ARM64_SKIP_AUDIO= | the five =/audio/manager/procedural-*= tests | need an audio output device; the build container has none |
+| =LRG_ARM64_SKIP_TIMING= | =/broadphase/perf/10k= | a frame-time budget, meaningless under emulation |
+
+Paths are exact: GTest's =-s= does not skip by prefix, and its =--skip-prefix= had no effect in these runs.
+
+** Known aarch64 bugs
+:PROPERTIES:
+:CUSTOM_ID: known-bugs
+:END:
+The first aarch64 run (2026-11-24) found three real failures. They are skipped (=LRG_TEST_KNOWN_FAILURES=) so the rest of their binaries run, and every test run names them in yellow at the end until they are fixed:
+
+| Test | Failure |
+|------+---------|
+| =/replay/golden/physics-timers-rng= | the golden replay diverges on aarch64: some simulation result differs from x86-64, which breaks the cross-architecture determinism contract ([[file:../modules/replay/determinism.org][Determinism]]) |
+| =/collide/random-consistency= | a contact depth misses its tolerance on aarch64 |
+| =/foley-patch/pinned-bytes= | synthesised audio hashes differently from the pinned x86-64 result |
+
+All three point at floating-point code that is not bit-identical across architectures: a C library transcendental (=sin=, =exp=, ...) in simulation or synthesis code, or code built without =-ffp-contract=off=. They are engine work, outside the build system.
+
+=/ui/label/ellipsize= failed in that run too, and on Windows, but was not an aarch64 bug: headless with no GL, text can only be drawn with a system font, and these environments have none it could use (raylib's built-in font needs GL). The test now skips there with that reason, and runs wherever a font is found or a display is used (=build-aux/xrun.sh=).
+
+The sysroot carries what the tests read from the system so that the rest pass as natively: Noto Sans (the host's UI font; fontconfig would otherwise pick DejaVu and every text metric would differ; =FONTCONFIG_FILE= points fontconfig at the sysroot's config, which it does not find through qemu's path mapping), the compiled GSettings schemas and the shared MIME database.
+
+** Running the result
+:PROPERTIES:
+:CUSTOM_ID: running
+:END:
+The binaries link against the same libraries an aarch64 Fedora system has (=libglib-2.0.so.0=, =libsoup-3.0.so.0=, ...). Copy =build/release-arm64/= to such a machine and run =lrgeditor=, =lrgldr= or a game; the tools' =RPATH= (=$ORIGIN/lib=) finds the library next to them. (=make install= has not been exercised for cross targets yet.)

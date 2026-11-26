@@ -6,6 +6,10 @@
  *
  * An absurdist idle clicker where the cookie itself evolves, gains
  * sentience, and eventually conquers reality. Uses libregnum's idle module.
+ *
+ * Also the Android example: it is played by tapping, so
+ * `make ANDROID=1 apk APK_GAME=examples/game-chocolate-chip-clicker.c'
+ * turns it into an APK (see examples/android/README.org).
  */
 
 /* =============================================================================
@@ -904,9 +908,20 @@ main (int   argc,
     g_autoptr (ChipClickerGame) game   = NULL;
     g_autoptr (GrlWindow)       window = NULL;
     g_autoptr (GrlColor) bg_color      = NULL;
+    g_autoptr (GError)   error         = NULL;
 
     (void) argc;
     (void) argv;
+
+    /* A game with its own main() prepares the platform first: on Android
+     * that sets up the data directories, unpacks the APK's assets and
+     * sends logs to logcat (make ANDROID=1 apk APK_GAME=<this file>);
+     * on a desktop it does nothing */
+    if (!lrg_platform_prepare (&error))
+    {
+        g_printerr ("chip-clicker: %s\n", error->message);
+        return 1;
+    }
 
     /* Initialize window */
     window = grl_window_new (WINDOW_WIDTH, WINDOW_HEIGHT, "Chocolate Chip Clicker");

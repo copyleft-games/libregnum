@@ -799,7 +799,13 @@ test_brush_undo (void)
 	lrg_terrain_edit_get_region (stroke, &x, &z, &w, &h);
 	g_assert_cmpuint (x, ==, 0);
 	g_assert_cmpuint (w, >=, 14);
-	after = g_memdup2 (lrg_terrain_asset_get_heights (t, &n), sizeof (gfloat) * n);
+	{
+		/* n must be set before it is read: in one call expression the
+		 * argument order is unspecified (MinGW gcc read n first) */
+		const gfloat *heights = lrg_terrain_asset_get_heights (t, &n);
+
+		after = g_memdup2 (heights, sizeof (gfloat) * n);
+	}
 
 	/* undo restores the slope exactly, redo the stroke */
 	g_assert_true (lrg_terrain_edit_apply (stroke, t, FALSE));

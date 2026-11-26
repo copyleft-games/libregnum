@@ -1,0 +1,72 @@
+#!/bin/bash
+# lrg-aarch64-linux-gnu-gcc - gcc for linux-arm64 against a Fedora sysroot
+# Copyright (C) 2026  Zach Podbielniak
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# Why a wrapper: Fedora's gcc-aarch64-linux-gnu is built for kernels, so it
+# has no userland C library, crt files or libgcc_s.  A Fedora aarch64
+# sysroot (dnf --installroot --forcearch=aarch64, see
+# build-aux/containers/linux-arm64/setup.sh) has all of that, including its
+# own gcc's runtime in /usr/lib/gcc/aarch64-redhat-linux/<version>/.  This
+# runs the cross gcc with --sysroot and -B/-L pointing at that runtime, so
+# crtbegin.o, libgcc.a and libgcc_s come from the sysroot's gcc (the same
+# major version as the cross gcc in the build container).
+#
+# One word for CC: the build hands CC to graylib, raylib and yaml-glib on
+# their command lines, where an argument list would not survive.
+#
+# Environment:
+#   LRG_SYSROOT   the aarch64 sysroot (default /opt/sysroot/aarch64)
+#   LRG_CROSS_GCC the cross compiler (default aarch64-linux-gnu-gcc)
+
+set -euo pipefail
+
+case "${1:-}" in
+	--lrg-help)
+		sed -n '18,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+		echo 'Example: LRG_SYSROOT=/opt/sysroot/aarch64 lrg-aarch64-linux-gnu-gcc -o hello hello.c'
+		exit 0
+		;;
+	--lrg-license)
+		sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+		exit 0
+		;;
+esac
+
+sysroot="${LRG_SYSROOT:-/opt/sysroot/aarch64}"
+cross_gcc="${LRG_CROSS_GCC:-aarch64-linux-gnu-gcc}"
+
+if [[ ! -d "${sysroot}/usr/lib64" ]]
+then
+	printf 'lrg-aarch64-linux-gnu-gcc: no aarch64 sysroot at %s (set LRG_SYSROOT)\n' "${sysroot}" >&2
+	exit 1
+fi
+
+# the sysroot gcc's runtime directory, newest version if several
+gcc_dir=''
+for candidate in "${sysroot}"/usr/lib/gcc/aarch64-redhat-linux/*/
+do
+	if [[ -f "${candidate}crtbegin.o" ]]
+	then
+		gcc_dir="${candidate%/}"
+	fi
+done
+if [[ -z "${gcc_dir}" ]]
+then
+	printf 'lrg-aarch64-linux-gnu-gcc: %s has no gcc runtime (install gcc into the sysroot)\n' "${sysroot}" >&2
+	exit 1
+fi
+
+exec "${cross_gcc}" --sysroot="${sysroot}" -B"${gcc_dir}" -L"${gcc_dir}" "$@"

@@ -351,7 +351,7 @@ lrg_scoring_manager_start_round (LrgScoringManager *self,
     g_signal_emit (self, signals[SIGNAL_ROUND_STARTED], 0, target_score);
 
     lrg_debug (LRG_LOG_DOMAIN,
-               "Round started: target=%ld, hands=%d, discards=%d",
+               "Round started: target=%" G_GINT64_FORMAT ", hands=%d, discards=%d",
                target_score, hands, discards);
 }
 
@@ -389,7 +389,7 @@ lrg_scoring_manager_end_round (LrgScoringManager *self)
                    victory, priv->current_score);
 
     lrg_debug (LRG_LOG_DOMAIN,
-               "Round ended: %s (score: %ld / %ld)",
+               "Round ended: %s (score: %" G_GINT64_FORMAT " / %" G_GINT64_FORMAT ")",
                victory ? "VICTORY" : "DEFEAT",
                priv->current_score, priv->target_score);
 }
@@ -767,7 +767,7 @@ lrg_scoring_manager_play_hand (LrgScoringManager *self,
     g_signal_emit (self, signals[SIGNAL_HAND_SCORED], 0, ctx, score);
 
     lrg_debug (LRG_LOG_DOMAIN,
-               "Played hand: %s = %ld (total: %ld/%ld)",
+               "Played hand: %s = %" G_GINT64_FORMAT " (total: %" G_GINT64_FORMAT "/%" G_GINT64_FORMAT ")",
                priv->rules != NULL ?
                    lrg_scoring_rules_get_hand_name (priv->rules, hand_type) :
                    "Unknown",

@@ -131,6 +131,7 @@
 #include <raylib.h>
 #include <math.h>
 #include <string.h>
+#include "../../lrg-portable-private.h"
 
 /* Content types of asset drags (docs/modules/ui/drag-and-drop.org) */
 #define ASSET_MIME      "application/x-lrg-asset"
@@ -435,14 +436,13 @@ static gchar *
 rel_path (LrgEditorAssetsPanel *self,
           const gchar          *path)
 {
-	gsize len;
+	gchar *rel;
 
 	if (self->root == NULL || !path_is_under (path, self->root))
 		return g_strdup (path);
-	len = strlen (self->root);
-	if (path[len] == '\0')
-		return g_strdup ("");
-	return g_strdup (path + len + 1);
+	/* '/'-separated on every OS: it lands in levels and other data */
+	rel = lrg_portable_relative_path (self->root, path);
+	return (rel != NULL) ? rel : g_strdup (path);
 }
 
 /* The asset database the file operations use: the app's (project), or a
@@ -2873,10 +2873,12 @@ write_sliced_sprite (const gchar  *path,
 	sheet = lrg_sprite_sheet_new (base);
 
 	/* the image reference is relative to the .rsprite */
-	if (g_str_has_prefix (image, dir) && image[strlen (dir)] == G_DIR_SEPARATOR)
-		rel = g_strdup (image + strlen (dir) + 1);
-	else
+	rel = lrg_portable_relative_path (dir, image);
+	if (rel == NULL || *rel == '\0')
+	{
+		g_free (rel);
 		rel = g_strdup (image);
+	}
 	lrg_sprite_sheet_set_texture_path (sheet, rel);
 
 	/* CPU decode only: no GL context needed */

@@ -11,6 +11,7 @@
 #include <raylib.h>
 #include <rlgl.h>
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 /*
  * Screen shake in one pass: every pixel samples the source rotated about
@@ -19,7 +20,7 @@
  * just enough (overscan) to keep the shifted, rotated edges off screen.
  */
 static const gchar shake_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "uniform sampler2D texture0;\n"

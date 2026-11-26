@@ -41,6 +41,7 @@
 #include "lrg-light-set.h"
 #include "../core/lrg-data-loader.h"
 #include "../lrg-log.h"
+#include "graphics/lrg-glsl-private.h"
 
 /* ========================================================================== */
 /* Enums and error domain                                                     */
@@ -2344,7 +2345,7 @@ lrg_shader_asset_get_time (LrgShaderAsset *self)
 /* ========================================================================== */
 
 static const gchar default_vertex_source[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec3 vertexPosition;\n"
 	"in vec2 vertexTexCoord;\n"
 	"in vec3 vertexNormal;\n"
@@ -2599,8 +2600,8 @@ build_stage (LrgShaderAsset *self,
 			if (strstr (lit_vertex, "#version") != NULL)
 				return g_strdup (lit_vertex);
 			if (out_preamble != NULL)
-				*out_preamble = 1;
-			return g_strconcat ("#version 330\n", lit_vertex, NULL);
+				*out_preamble = LRG_GLSL_HEADER_LINES;
+			return g_strconcat (LRG_GLSL_HEADER, lit_vertex, NULL);
 		}
 		return g_strdup (default_vertex_source);
 	}
@@ -2613,7 +2614,7 @@ build_stage (LrgShaderAsset *self,
 	collect_declarations (user, declared);
 	collect_declarations (library, declared);
 
-	g_string_append (text, "#version 330\n");
+	g_string_append (text, LRG_GLSL_HEADER);
 	g_string_append (text, "#define LRG_SHADER_ASSET 1\n");
 	g_string_append (text, stage == LRG_SHADER_STAGE_VERTEX ? "#define LRG_VERTEX_STAGE 1\n"
 	                                                         : "#define LRG_FRAGMENT_STAGE 1\n");

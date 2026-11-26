@@ -21,10 +21,11 @@
 #endif
 #include "postprocess/effects/lrg-sharpen.h"
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 /* the shader mirrors lrg_sharpen_pixel() below; one texel is 1 / textureSize */
 static const gchar sharpen_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "uniform sampler2D texture0;\n"

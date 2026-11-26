@@ -50,11 +50,14 @@
 #include "../../graphics/lrg-grl-window.h"
 #include "drawing/grl-fast2d-private.h"
 #include <glib/gstdio.h>
+#ifdef G_OS_UNIX
 #include <glib-unix.h>
+#endif
 #include <raylib.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include "../../lrg-portable-private.h"
 
 #define AUTOSAVE_DIR          ".lrg-editor/autosave"
 #define PROBLEMS_DEBOUNCE     (0.4)
@@ -747,11 +750,14 @@ editor_app_project_path (LrgEditorApp *self,
 
 	if (path == NULL)
 		return NULL;
-	if (g_path_is_absolute (path))
-		return g_strdup (path);
 
+	/* Canonical, so one file has one spelling: editors and panels are
+	 * found again by path, and on Windows "dir\\a/b" and "dir\\a\\b" (or
+	 * "a/../b") would otherwise open a second editor on the same file. */
+	if (g_path_is_absolute (path))
+		return g_canonicalize_filename (path, NULL);
 	base = editor_app_base_dir (self);
-	return (base != NULL) ? g_build_filename (base, path, NULL) : g_canonicalize_filename (path, NULL);
+	return g_canonicalize_filename (path, base);
 }
 
 gchar *
@@ -759,16 +765,19 @@ editor_app_relative_path (LrgEditorApp *self,
                           const gchar  *path)
 {
 	const gchar *base = editor_app_base_dir (self);
-	gsize        len;
+	gchar       *rel;
 
 	if (path == NULL)
 		return NULL;
 	if (base == NULL || !g_path_is_absolute (path))
 		return g_strdup (path);
 
-	len = strlen (base);
-	if (g_str_has_prefix (path, base) && path[len] == G_DIR_SEPARATOR)
-		return g_strdup (path + len + 1);
+	/* A project-relative path is data (levels, project files): '/' on
+	 * every OS, so a project saved on Windows opens elsewhere. */
+	rel = lrg_portable_relative_path (base, path);
+	if (rel != NULL && *rel != '\0')
+		return rel;
+	g_free (rel);
 	return g_strdup (path);
 }
 
@@ -2372,12 +2381,15 @@ lrg_editor_app_run (LrgEditorApp *self)
 	return 0;
 }
 
+#ifdef G_OS_UNIX
+/* SIGINT/SIGTERM end a headless run (Windows: Ctrl+C ends the process) */
 static gboolean
 on_quit_signal (gpointer user_data)
 {
 	g_main_loop_quit (user_data);
 	return G_SOURCE_CONTINUE;
 }
+#endif
 
 typedef struct
 {
@@ -2427,7 +2439,10 @@ lrg_editor_app_run_headless (LrgEditorApp *self)
 {
 	g_autoptr(GMainLoop) loop = NULL;
 	HeadlessData         data;
-	guint                sigint, sigterm, tick;
+	guint                tick;
+#ifdef G_OS_UNIX
+	guint                sigint, sigterm;
+#endif
 
 	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), 1);
 
@@ -2436,15 +2451,19 @@ lrg_editor_app_run_headless (LrgEditorApp *self)
 	data.loop = loop;
 	data.last = 0;
 
+#ifdef G_OS_UNIX
 	sigint = g_unix_signal_add (SIGINT, on_quit_signal, loop);
 	sigterm = g_unix_signal_add (SIGTERM, on_quit_signal, loop);
+#endif
 	tick = g_timeout_add (100, headless_tick, &data);
 
 	g_main_loop_run (loop);
 
 	g_source_remove (tick);
+#ifdef G_OS_UNIX
 	g_source_remove (sigint);
 	g_source_remove (sigterm);
+#endif
 	return 0;
 }
 

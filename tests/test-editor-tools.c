@@ -377,9 +377,11 @@ test_open_emacs_first_and_spawn (void)
 	g_assert_no_error (error);
 	g_assert_cmpstr (seen, ==, "/tmp/z.lua:2:5");
 
-	/* Not routed when integration is off or the editor is not Emacs: a
-	 * real (harmless) process is spawned instead. */
 	g_signal_handler_disconnect (ext, id);
+#ifndef G_OS_WIN32
+	/* Not routed when integration is off or the editor is not Emacs: a
+	 * real (harmless) process is spawned instead -- POSIX true(1), which
+	 * Windows does not have. */
 	g_clear_pointer (&seen, g_free);
 	g_object_set (s, "external-editor", "custom", "external-editor-command", "true {file}", NULL);
 	g_signal_connect (ext, "open-file", G_CALLBACK (handle_open), &seen);
@@ -397,6 +399,14 @@ test_open_emacs_first_and_spawn (void)
 		while (g_get_monotonic_time () < deadline)
 			g_main_context_iteration (NULL, FALSE);
 	}
+#else
+	/* the same setup as above, without the spawn */
+	g_clear_pointer (&seen, g_free);
+	g_object_set (s, "external-editor", "custom", NULL);
+	g_signal_connect (ext, "open-file", G_CALLBACK (handle_open), &seen);
+	g_unsetenv ("LRG_EXTERNAL_EDITOR");
+	g_signal_connect (ext, "launched", G_CALLBACK (on_launched), &launched);
+#endif
 
 	/* A missing program reports an error. */
 	g_object_set (s, "external-editor-command", "/nonexistent/editor-xyz {file}", NULL);

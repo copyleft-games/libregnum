@@ -1384,14 +1384,17 @@ lrg_lsp_client_start (LrgLspClient  *self,
 	/*
 	 * A dead server turns our next write into SIGPIPE, which kills the
 	 * process by default. Ignore it (only when nobody installed a
-	 * handler) so the write fails with EPIPE instead.
+	 * handler) so the write fails with EPIPE instead.  Windows has no
+	 * SIGPIPE: a write to a closed pipe just fails there.
 	 */
+#ifndef G_OS_WIN32
 	{
 		struct sigaction old;
 
 		if (sigaction (SIGPIPE, NULL, &old) == 0 && old.sa_handler == SIG_DFL)
 			signal (SIGPIPE, SIG_IGN);
 	}
+#endif
 
 	launcher = g_subprocess_launcher_new (G_SUBPROCESS_FLAGS_STDIN_PIPE | G_SUBPROCESS_FLAGS_STDOUT_PIPE |
 	                                      G_SUBPROCESS_FLAGS_STDERR_SILENCE);

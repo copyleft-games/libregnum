@@ -2624,6 +2624,12 @@ conv_vector2 (const Lv   *v,
 	return FALSE;
 }
 
+/* The largest integer every double holds exactly (2^53).  A 64-bit long's
+ * own limits are not representable (G_MAXLONG becomes 2^63 as a double,
+ * one past the type, which then overflows on the cast back), so wide types
+ * are checked against this instead, as gint64 always was. */
+#define LRG_UI_DOUBLE_EXACT_MAX (9007199254740992.0)
+
 /* Integer property: the number must be integral and inside the type */
 static gboolean
 conv_integer (const Lv  *v,
@@ -2691,12 +2697,13 @@ conv_property (GParamSpec *pspec,
 		g_value_set_uint (out, (guint)d);
 		break;
 	case G_TYPE_LONG:
-		if (!conv_integer (v, G_MINLONG, G_MAXLONG, &d, msg))
+		if (!conv_integer (v, MAX ((gdouble) G_MINLONG, -LRG_UI_DOUBLE_EXACT_MAX),
+		                   MIN ((gdouble) G_MAXLONG, LRG_UI_DOUBLE_EXACT_MAX), &d, msg))
 			return FALSE;
 		g_value_set_long (out, (glong)d);
 		break;
 	case G_TYPE_ULONG:
-		if (!conv_integer (v, 0, G_MAXULONG, &d, msg))
+		if (!conv_integer (v, 0, MIN ((gdouble) G_MAXULONG, LRG_UI_DOUBLE_EXACT_MAX), &d, msg))
 			return FALSE;
 		g_value_set_ulong (out, (gulong)d);
 		break;

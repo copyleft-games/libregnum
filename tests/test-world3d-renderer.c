@@ -495,14 +495,19 @@ test_world (void)
  * Assets
  * ========================================================================== */
 
-/* Resolves "guid:<name>" to <dir>/<name>.png. */
+/* Resolves "guid:<name>" to <dir>/<name>.png, joined with
+ * g_build_filename() like the default resolution and the expected path
+ * (so with '\\' on Windows). */
 static gchar *
 guid_resolver (const gchar *asset,
                gpointer     user_data)
 {
+	g_autofree gchar *name = NULL;
+
 	if (!g_str_has_prefix (asset, "guid:"))
 		return NULL;
-	return g_strdup_printf ("%s/%s.png", (const gchar *) user_data, asset + 5);
+	name = g_strconcat (asset + 5, ".png", NULL);
+	return g_build_filename ((const gchar *) user_data, name, NULL);
 }
 
 static void

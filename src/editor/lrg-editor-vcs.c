@@ -28,6 +28,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../lrg-portable-private.h"
 
 /* ==========================================================================
  * Status enum
@@ -336,7 +337,7 @@ lrg_editor_vcs_get_property (GObject    *object,
 static gchar *
 real_path (const gchar *path)
 {
-	char  *r = realpath (path, NULL);
+	char  *r = lrg_realpath (path);
 	gchar *g;
 
 	if (r == NULL)

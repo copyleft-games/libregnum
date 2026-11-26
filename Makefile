@@ -44,6 +44,7 @@ PUBLIC_HEADERS := \
 	src/core/lrg-event-bus.h \
 	src/core/lrg-random-stream.h \
 	src/core/lrg-cpu-affinity.h \
+	src/core/lrg-platform.h \
 	src/core/lrg-prewarmable.h \
 	src/core/lrg-prewarm.h \
 	src/core/lrg-timer-manager.h \
@@ -874,6 +875,7 @@ SOURCES := \
 	src/core/lrg-event-bus.c \
 	src/core/lrg-random-stream.c \
 	src/core/lrg-cpu-affinity.c \
+	src/core/lrg-platform.c \
 	src/core/lrg-prewarmable.c \
 	src/core/lrg-prewarm.c \
 	src/core/lrg-timer-manager.c \
@@ -2204,6 +2206,7 @@ all: check-deps platform-check deps generate
 ifeq ($(BUILD_GIR),1)
 	@$(MAKE) --no-print-directory gir
 endif
+ifeq ($(BUILD_TOOLS),1)
 ifeq ($(BUILD_SHARED),1)
 	@$(MAKE) --no-print-directory lrgldr
 	@$(MAKE) --no-print-directory lrgpack
@@ -2213,6 +2216,7 @@ endif
 endif
 ifeq ($(BUILD_EDITOR),1)
 	@$(MAKE) --no-print-directory lrgeditorctl
+endif
 endif
 
 # Internal target for actual library build (called after generate)
@@ -2249,12 +2253,13 @@ endif
 
 # Pass cross-compilation settings to dependencies
 ifeq ($(TARGET_PLATFORM),windows)
-    GRAYLIB_LIB := $(GRAYLIB_DIR)/build/lib/graylib.dll
-    YAMLGLIB_LIB := $(YAMLGLIB_DIR)/build/$(DEP_BUILD_TYPE)/yaml-glib-1.0.dll
-    DEP_BUILD_FLAGS := WINDOWS=1
+    GRAYLIB_LIB := $(GRAYLIB_BUILDDIR)/lib/graylib.dll
+    YAMLGLIB_LIB := $(YAMLGLIB_BUILDDIR)/$(DEP_BUILD_TYPE)/yaml-glib-1.0.dll
+    # DEBUG reaches yaml-glib, whose archive directory is keyed on it
+    DEP_BUILD_FLAGS := WINDOWS=1 $(if $(filter 1,$(DEBUG)),DEBUG=1)
 else
-    GRAYLIB_LIB := $(GRAYLIB_DIR)/build/lib/libgraylib.a
-    YAMLGLIB_LIB := $(YAMLGLIB_DIR)/build/$(DEP_BUILD_TYPE)/libyaml-glib-1.0.a
+    GRAYLIB_LIB := $(GRAYLIB_BUILDDIR)/lib/libgraylib.a
+    YAMLGLIB_LIB := $(YAMLGLIB_BUILDDIR)/$(DEP_BUILD_TYPE)/libyaml-glib-1.0.a
     # Forward DEBUG to the bundled deps (graylib/yaml-glib/mcp-glib) so a
     # `make DEBUG=1` libregnum also gets debug-instrumented graylib etc.
     # (they build to build/ regardless, so only the flags change).
@@ -2269,21 +2274,40 @@ endif
 # host-side backends.)
 DEP_DEBUG_FLAG := $(if $(filter debug,$(DEP_BUILD_TYPE)),DEBUG=1)
 
+# Each bundled dependency's make flags.  A cross target sends every one of
+# them to its own directory under $(BUILDDIR)/deps (GRAYLIB_BUILDDIR and
+# friends, config.mk) and adds whatever its profile needs the dependencies
+# to know (LRG_DEP_FLAGS: a toolchain, LRG_GRAYLIB_FLAGS: raylib's platform);
+# the native build passes exactly what it always did.
+ifeq ($(LRG_IS_CROSS),1)
+    # (GIR scans by running the library: never for a cross target)
+    GRAYLIB_MAKE_FLAGS := $(DEP_BUILD_FLAGS) $(LRG_DEP_FLAGS) BUILD_GIR=0 BUILDDIR=$(GRAYLIB_BUILDDIR) \
+                          RAYLIB_BUILD_DIR=$(RAYLIB_BUILD_DIR) $(LRG_GRAYLIB_FLAGS)
+    YAMLGLIB_MAKE_FLAGS := $(DEP_BUILD_FLAGS) $(LRG_DEP_FLAGS) BUILD_GIR=0 BUILDDIR=$(YAMLGLIB_BUILDDIR)
+    CRISPY_MAKE_FLAGS := $(DEP_DEBUG_FLAG) $(LRG_DEP_FLAGS) BUILDDIR=$(CRISPY_BUILDDIR)
+    MCPGLIB_MAKE_FLAGS := $(DEP_BUILD_FLAGS) $(LRG_DEP_FLAGS) BUILDDIR=$(MCPGLIB_BUILDDIR)
+else
+    GRAYLIB_MAKE_FLAGS := $(DEP_BUILD_FLAGS)
+    YAMLGLIB_MAKE_FLAGS := $(DEP_BUILD_FLAGS)
+    CRISPY_MAKE_FLAGS := $(DEP_DEBUG_FLAG)
+    MCPGLIB_MAKE_FLAGS := $(DEP_BUILD_FLAGS)
+endif
+
 # graylib/yaml-glib/crispy get merged into liblibregnum.a (ADDLIB below),
 # so their sub-makes always run and decide incrementality themselves.  An
 # existence check alone left stale archives behind when their sources
 # changed, which surfaced as undefined references at the final link.
 deps-graylib:
-	@$(MAKE) -C $(GRAYLIB_DIR) $(DEP_BUILD_FLAGS)
+	@$(MAKE) -C $(GRAYLIB_DIR) $(GRAYLIB_MAKE_FLAGS)
 
 deps-yamlglib:
-	@$(MAKE) -C $(YAMLGLIB_DIR) $(DEP_BUILD_FLAGS)
+	@$(MAKE) -C $(YAMLGLIB_DIR) $(YAMLGLIB_MAKE_FLAGS)
 
 # Crispy: the vendored compiled-C scripting backend (deps/crispy submodule).
 # Built standalone here so libregnum is self-contained; its `lib' target
 # produces build/$(DEP_BUILD_TYPE)/libcrispy.a (debug when DEBUG=1).
 deps-crispy:
-	@$(MAKE) -C $(CRISPY_DIR) $(DEP_DEBUG_FLAG) lib
+	@$(MAKE) -C $(CRISPY_DIR) $(CRISPY_MAKE_FLAGS) lib
 
 # cad-glib: the bundled parametric CAD kernel (deps/cad-glib submodule),
 # built standalone so a CAD=1 libregnum is self-contained.  Builds its own
@@ -2301,21 +2325,26 @@ deps-ai-glib:
 
 ifeq ($(MCP),1)
 ifeq ($(TARGET_PLATFORM),windows)
-    MCP_GLIB_LIB := $(MCP_GLIB_DIR)/build/mcp-glib.dll
+    MCP_GLIB_LIB := $(MCPGLIB_BUILDDIR)/mcp-glib.dll
 else
-    MCP_GLIB_LIB := $(MCP_GLIB_DIR)/build/libmcp-glib.so
+    MCP_GLIB_LIB := $(MCPGLIB_BUILDDIR)/libmcp-glib.so
 endif
 
 deps-mcp:
 	@if [ ! -f "$(MCP_GLIB_LIB)" ]; then \
 		$(call print_status,"Building mcp-glib ($(TARGET_PLATFORM))..."); \
-		$(MAKE) -C $(MCP_GLIB_DIR) $(DEP_BUILD_FLAGS); \
+		$(MAKE) -C $(MCP_GLIB_DIR) $(MCPGLIB_MAKE_FLAGS); \
 	fi
 endif
 
 deps-clean:
+ifeq ($(LRG_IS_CROSS),1)
+	$(MAKE) -C $(GRAYLIB_DIR) $(GRAYLIB_MAKE_FLAGS) clean raylib-clean
+	$(MAKE) -C $(YAMLGLIB_DIR) $(YAMLGLIB_MAKE_FLAGS) clean
+else
 	$(MAKE) -C $(GRAYLIB_DIR) clean
 	$(MAKE) -C $(YAMLGLIB_DIR) clean
+endif
 ifeq ($(MCP),1)
 	$(MAKE) -C $(MCP_GLIB_DIR) clean
 endif
@@ -2471,18 +2500,178 @@ $(GIROUTDIR)/$(TYPELIB_NAME): $(GIROUTDIR)/$(GIR_NAME)
 # Tests
 # =============================================================================
 
+# A cross target runs its tests through its profile's LRG_EXEC_WRAPPER
+# (Wine for windows-amd64, qemu for linux-arm64) in its build container;
+# Android has no runner (tests/Makefile, docs/cross-compile.org)
 test tests check: lib
-ifeq ($(TARGET_PLATFORM),windows)
-	$(call print_warning,"Cross-compiled tests cannot be run on Linux.")
-	$(call print_info,"Use Wine or copy to Windows to run tests.")
-	$(call print_status,"Building tests only...")
-	@$(MAKE) -C tests
+ifeq ($(TARGET_PLATFORM),android)
+	$(call print_warning,"Android test binaries cannot run in the build container.")
+	$(call print_info,"Use make ANDROID=1 test-apk test-shaders, and a device for the game.")
 else ifeq ($(BUILD_TESTS),1)
 	$(call print_status,"Building and running tests...")
 	@$(MAKE) -C tests run
 else
 	$(call print_warning,"Tests disabled (BUILD_TESTS=0)")
 endif
+
+# =============================================================================
+# Android APK (docs/platforms/android.org, "The APK")
+# =============================================================================
+#
+#   make ANDROID=1 apk APK_GAME=examples/game-chocolate-chip-clicker.c
+#   make ANDROID=1 apk-install apk-run APK_GAME=...   (host: adb + a device)
+#
+# One shared object per game, libmain.so: the game's source, the static
+# liblibregnum.a (graylib and raylib, with its NativeActivity glue, inside)
+# and the static GLib stack.  build-aux/android/mkapk.sh packages it with
+# APK_ASSETS (extracted on the device by lrg_platform_prepare()).
+
+APK_GAME ?=
+APK_NAME ?= $(basename $(notdir $(APK_GAME)))
+APK_ASSETS ?=
+APK_PACKAGE ?= org.libregnum.$(subst -,_,$(APK_NAME))
+APK_LABEL ?= $(APK_NAME)
+APK_VERSION_CODE ?= 1
+APK_VERSION_NAME ?= $(VERSION)
+APK_ORIENTATION ?= landscape
+APK_DIR := $(BUILDDIR)/apk
+APK_FILE := $(APK_DIR)/$(APK_NAME).apk
+APK_LIB := $(APK_DIR)/$(APK_NAME)/libmain.so
+
+# A game compiles like an example (examples/Makefile)
+APK_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS) $(PIC_CFLAGS) \
+              -I$(CURDIR)/src -isystem $(GRAYLIB_DIR)/src -isystem $(GRAYLIB_DIR)/deps/raylib/src \
+              -isystem $(YAMLGLIB_DIR)/src $(subst -I,-isystem ,$(DEP_CFLAGS)) $(LRG_TARGET_CFLAGS)
+
+# -u ANativeActivity_onCreate: keep the glue's entry point Android calls;
+# --wrap=fopen: raylib's Android layer reads files from the APK's assets
+# first (rcore_android.c); --no-undefined: every symbol resolved now, not
+# at load time on a phone; 16 KB pages for Android 15+
+APK_LDFLAGS := -shared -Wl,--no-undefined -Wl,-z,max-page-size=16384 \
+               -u ANativeActivity_onCreate -Wl,--wrap=fopen
+
+.PHONY: apk apk-install apk-run apk-check-game
+apk-check-game:
+	@if [ -z "$(APK_GAME)" ]; then \
+		echo "Set APK_GAME=<game.c>, e.g. make ANDROID=1 apk APK_GAME=examples/game-chocolate-chip-clicker.c" >&2; \
+		exit 1; \
+	fi
+
+apk: apk-check-game
+ifneq ($(TARGET_PLATFORM),android)
+	@echo "make apk builds an Android APK: add ANDROID=1" >&2; exit 1
+else
+	@$(MAKE) --no-print-directory all
+	$(call print_link,$(APK_NAME)/libmain.so)
+	@$(MKDIR_P) $(dir $(APK_LIB))
+	@$(CC) $(APK_CFLAGS) $(APK_LDFLAGS) -o $(APK_LIB) $(APK_GAME) \
+		$(LIBOUTDIR)/$(LIB_STATIC) $(DEP_LIBS) $(PLATFORM_LIBS)
+	@bash build-aux/android/mkapk.sh --lib $(APK_LIB) --out $(APK_FILE) \
+		$(if $(APK_ASSETS),--assets $(APK_ASSETS)) \
+		--package $(APK_PACKAGE) --label "$(APK_LABEL)" \
+		--version-code $(APK_VERSION_CODE) --version-name $(APK_VERSION_NAME) \
+		--orientation $(APK_ORIENTATION) --min-sdk $(ANDROID_MIN_API)
+endif
+
+# On the host, with a device connected (adb from Fedora's android-tools)
+apk-install: apk-check-game
+	@command -v adb > /dev/null || { echo "adb not found (Fedora: android-tools)" >&2; exit 1; }
+	@test -f $(APK_FILE) || { echo "no $(APK_FILE): run make ANDROID=1 apk APK_GAME=$(APK_GAME) first" >&2; exit 1; }
+	adb install -r $(APK_FILE)
+
+apk-run: apk-check-game
+	@command -v adb > /dev/null || { echo "adb not found (Fedora: android-tools)" >&2; exit 1; }
+	adb shell am start -n $(APK_PACKAGE)/android.app.NativeActivity
+
+# The game on a real device or emulator, from the host (adb): installs,
+# starts, checks it keeps running, logs no GLib warning and draws something
+# (tests/test-apk-device.sh).  Skips with the reason when adb sees nothing.
+.PHONY: test-device
+test-device: apk-check-game
+	@bash tests/test-apk-device.sh --apk $(APK_FILE) --package $(APK_PACKAGE)
+
+# The APK's structure (in the android-arm64 container: aapt2, zipalign,
+# apksigner, llvm-readelf)
+.PHONY: test-apk
+test-apk: apk
+	@bash tests/test-apk-layout.sh --apk $(APK_FILE) --package $(APK_PACKAGE) \
+		--min-sdk $(ANDROID_MIN_API) $(if $(APK_ASSETS),--assets $(APK_ASSETS))
+
+# Cross-target checks (docs/cross-compile.org, "Testing cross builds").
+#
+# test-cross-artifacts runs in the target's container after a build and
+# checks what its tests cannot see: architecture, 16 KB alignment, DLL
+# exports and imports (tests/test-cross-artifacts.sh).
+#
+# test-cross-<target> is the whole gate for one target, run from the host:
+# build, unit tests (qemu / Wine), examples and artifacts; for Android, which
+# has no test runner off a device, the libraries, the shaders and an APK.
+# test-cross runs all three, one after another.  Each step is its own make
+# so `all' and `test' never build the library twice at once.
+TEST_CROSS_APK_GAME ?= examples/game-chocolate-chip-clicker.c
+
+.PHONY: test-cross-artifacts test-cross test-cross-arm64 test-cross-windows test-cross-android
+test-cross-artifacts:
+ifeq ($(LRG_IS_CROSS),1)
+	@bash tests/test-cross-artifacts.sh --target $(LRG_TARGET) --builddir $(BUILDDIR) \
+		$(if $(LRG_READELF),--readelf $(LRG_READELF)) $(if $(LRG_OBJDUMP),--objdump $(LRG_OBJDUMP)) \
+		$(if $(LRG_MINGW_BIN),--dll-path $(LRG_MINGW_BIN))
+else
+	$(error test-cross-artifacts checks a cross build: add WINDOWS=1, ARM64=1 or ANDROID=1)
+endif
+
+test-cross-arm64:
+	$(MAKE) ARM64=1 all
+	$(MAKE) ARM64=1 test
+	$(MAKE) ARM64=1 examples
+	$(MAKE) ARM64=1 test-cross-artifacts
+
+test-cross-windows:
+	$(MAKE) WINDOWS=1 all
+	$(MAKE) WINDOWS=1 test
+	$(MAKE) WINDOWS=1 examples
+	$(MAKE) WINDOWS=1 test-cross-artifacts
+
+test-cross-android:
+	$(MAKE) ANDROID=1 all
+	$(MAKE) ANDROID=1 test-cross-artifacts
+	$(MAKE) ANDROID=1 test-shaders
+	$(MAKE) ANDROID=1 test-apk APK_GAME=$(TEST_CROSS_APK_GAME)
+
+test-cross:
+	$(MAKE) test-cross-arm64
+	$(MAKE) test-cross-windows
+	$(MAKE) test-cross-android
+
+# Native no-regression gate: `make -Bn` for all, tests and examples must print
+# the same commands as BASE (default: the merge-base with master).  Needs a
+# native `make all` first.  See docs/cross-compile.org, "Testing cross builds".
+.PHONY: test-native-unchanged
+test-native-unchanged:
+	@bash tests/test-native-unchanged.sh $(if $(BASE),--base $(BASE)) $(if $(filter 1,$(EXCLUDE_ADDED)),--exclude-added)
+
+# Record the base's native commands as the stored baseline
+# (tests/golden/native-make-n/, with this host's signature); review and
+# commit the diff.  The test compares against it on a matching host only.
+.PHONY: update-native-golden
+update-native-golden:
+	@bash tests/test-native-unchanged.sh --update-golden --exclude-added $(if $(BASE),--base $(BASE))
+
+# Every built-in shader compiled by glslangValidator as GLSL 3.30 (desktop)
+# and GLSL ES 3.00 (Android's header, LRG_GLSL_ES), from the preprocessed
+# sources with the library's own flags.  Needs glslangValidator (Fedora:
+# glslang); the android-arm64 build container has it: make ANDROID=1
+# test-shaders.  docs/guides/rendering-pipeline.org, "ES compatibility".
+.PHONY: test-shaders
+test-shaders: generate
+	@CC="$(CC)" LRG_SHADER_CFLAGS="$(LIB_CFLAGS)" bash tests/test-shader-glsl.sh
+
+# Every build-system test: target resolution, directories, clean goals,
+# container dispatch, ShellCheck, plus the native no-regression gate above
+.PHONY: test-build-system
+test-build-system:
+	@$(MAKE) --no-print-directory -C tests check-build-system
+	@$(MAKE) --no-print-directory test-native-unchanged EXCLUDE_ADDED=1
 
 # Explicit binding check: requires python3-gobject and the generated typelib.
 GI_PYTHON ?= /usr/bin/python3
@@ -2506,6 +2695,25 @@ test-mmo-gi: lib
 	@GI_TYPELIB_PATH="$(GIROUTDIR):$(GRAYLIB_DIR)/build/gir:$$GI_TYPELIB_PATH" \
 	 LD_LIBRARY_PATH="$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
 	 $(GI_PYTHON) tests/test-mmo-gi.py
+
+# Builds the library with every optional dependency left out (libsoup,
+# libpq: SOUP=0 LIBPQ=0) into build/minimal and runs the suites that cover
+# what those switches change: test-optional-features checks each stub's
+# documented error, test-analytics and test-mmo that the rest still works.
+# The Android target always builds this way; this keeps the stubs tested
+# on the host (docs/building.org, "Optional features").
+.PHONY: test-minimal-features
+test-minimal-features:
+ifeq ($(LRG_IS_CROSS),1)
+	$(error test-minimal-features is native-only)
+else ifeq ($(BUILD_TESTS),1)
+	$(call print_status,"Building the library without optional dependencies (build/minimal)...")
+	$(MAKE) MINIMAL_FEATURES=1 deps
+	$(MAKE) MINIMAL_FEATURES=1 lib
+	@$(MAKE) -C tests MINIMAL_FEATURES=1 run-minimal-features
+else
+	$(call print_warning,"Tests disabled (BUILD_TESTS=0)")
+endif
 
 # Run the test suite under AddressSanitizer + UndefinedBehaviorSanitizer.
 # Builds into an isolated build/sanitize/ directory (SANITIZE=1 implies
@@ -2571,8 +2779,11 @@ LRGLDR_CFLAGS += $(DEP_CFLAGS)
 # globals. --export-dynamic puts libregnum's symbols in the dynamic table so a
 # host-agnostic module (which does not link libregnum itself) resolves them here.
 LRGLDR_LIBS := -L$(LIBOUTDIR) -l$(LIB_NAME)
+ifneq ($(TARGET_PLATFORM),windows)
+# (ELF only: a Windows .exe finds its DLLs next to it, and exports nothing)
 LRGLDR_LIBS += -Wl,--export-dynamic
 LRGLDR_LIBS += -Wl,-rpath,'$$ORIGIN/lib' -Wl,-rpath,'$$ORIGIN/../lib'
+endif
 LRGLDR_LIBS += $(GLIB_LIBS) $(PLATFORM_LIBS)
 
 .PHONY: lrgldr
@@ -2611,7 +2822,7 @@ lrgeditor: lib-shared $(LRG_EDITOR_BIN)
 # builds both programs without it.
 EDITOR_MCP ?= $(shell $(PKG_CONFIG) --exists libsoup-3.0 libdex-1 2>/dev/null && echo 1 || echo 0)
 EDITOR_MCP_DIR := $(PROJECT_ROOT)/deps/mcp-glib
-EDITOR_MCP_STATIC := $(EDITOR_MCP_DIR)/build/libmcp-glib-1.0.a
+EDITOR_MCP_STATIC := $(MCPGLIB_BUILDDIR)/libmcp-glib-1.0.a
 EDITOR_MCP_SOURCES := src/editorctl/lrgeditorctl-mcp.c src/editorctl/lrgeditorctl-client.c
 
 ifeq ($(EDITOR_MCP),1)
@@ -2627,7 +2838,7 @@ endif
 
 $(EDITOR_MCP_STATIC):
 	$(call print_status,"Building mcp-glib for the editor...")
-	@$(MAKE) -C $(EDITOR_MCP_DIR) $(DEP_BUILD_FLAGS)
+	@$(MAKE) -C $(EDITOR_MCP_DIR) $(MCPGLIB_MAKE_FLAGS)
 
 ifeq ($(EDITOR_MCP),1)
 $(LRG_EDITOR_BIN): src/launcher/lrgeditor.c $(EDITOR_MCP_SOURCES) $(LIBOUTDIR)/$(LIB_SHARED) $(EDITOR_MCP_DEP)
@@ -2661,7 +2872,7 @@ LRGEDITORCTL_HEADERS := \
 	src/editorctl/lrgeditorctl-mcp.h
 
 LRGEDITORCTL_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS) -Isrc/editorctl
-LRGEDITORCTL_CFLAGS += $(GLIB_CFLAGS) $(JSON_CFLAGS) $(shell $(PKG_CONFIG) --cflags gio-unix-2.0)
+LRGEDITORCTL_CFLAGS += $(GLIB_CFLAGS) $(JSON_CFLAGS) $(if $(LRG_GIO_UNIX_PKG),$(shell $(PKG_CONFIG) --cflags gio-unix-2.0))
 LRGEDITORCTL_CFLAGS += -isystem $(YAMLGLIB_DIR)/src $(YAML_CFLAGS)
 LRGEDITORCTL_CFLAGS += -DLRG_EDITORCTL_VERSION=\"$(VERSION)\"
 # -lm last: the static mcp-glib calls isfinite(), which glibc expands inline
@@ -2918,14 +3129,29 @@ endif
 # Cleanup
 # =============================================================================
 
+# A native `make clean' removes everything under build/ except the cross
+# targets' directories (LRG_CROSS_BUILD_DIRS, from target.mk); a cross
+# `make WINDOWS=1 clean' removes only that target's release and debug
+# directories and keeps the shared generated headers.  `make clean-targets'
+# removes every cross directory, `make distclean' all of build/.
 clean:
+ifeq ($(LRG_IS_CROSS),1)
+	$(call print_status,"Cleaning $(LRG_TARGET) build artifacts...")
+	$(RMDIR) build/release$(LRG_BUILD_SUFFIX) build/debug$(LRG_BUILD_SUFFIX)
+else
 	$(call print_status,"Cleaning build artifacts...")
-	$(RMDIR) build
+	$(RMDIR) $(filter-out $(LRG_CROSS_BUILD_DIRS),$(wildcard build/* build/.[!.]*))
 	$(RM) src/lrg-version.h
 	$(RM) src/config.h
+endif
+
+clean-targets:
+	$(call print_status,"Cleaning every cross target's build artifacts...")
+	$(RMDIR) $(LRG_CROSS_BUILD_DIRS)
 
 distclean: clean deps-clean
 	$(call print_status,"Cleaning all generated files...")
+	$(RMDIR) build
 
 # =============================================================================
 # Debug Target (shorthand for DEBUG=1)
@@ -3648,7 +3874,7 @@ $(OBJDIR)/src/steam/lrg-workshop-manager.o: src/steam/lrg-workshop-manager.c src
 # =============================================================================
 
 .PHONY: all lib lib-static lib-shared gir test tests check examples docs docs-check
-.PHONY: install uninstall clean distclean debug-build generate
+.PHONY: install uninstall clean clean-targets distclean debug-build generate
 .PHONY: deps deps-graylib deps-yamlglib deps-crispy deps-clean check-deps
 
 # Explicit local integrations; neither target contacts a production service.

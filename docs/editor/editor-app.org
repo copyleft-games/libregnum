@@ -631,7 +631,10 @@ The two theme files use the official Catppuccin Macchiato and Frappé palettes m
 2. =$XDG_DATA_HOME/libregnum/editor/themes= (your own themes),
 3. =PREFIX/share/libregnum/editor/themes= when the library was built with =LRG_DATADIR=,
 4. =libregnum/editor/themes= under each directory of =$XDG_DATA_DIRS=,
-5. =data/editor/themes= next to the running executable or in one of its parents (an uninstalled build tree).
+5. =share/libregnum/editor/themes= beside the executable's =bin= directory (a relocatable install: how a Windows install, whose build-time prefix means nothing on the user's machine, finds them),
+6. =data/editor/themes= next to the running executable or in one of its parents (an uninstalled build tree).
+
+The executable's own path comes from =/proc/self/exe= on Linux and Android and from =GetModuleFileNameW()= on Windows (~lrg_portable_exe_path~ in =src/lrg-portable-private.h=).
 
 When the file is found ~lrg_editor_settings_get_theme_file~ returns it and ~lrg_editor_settings_get_theme_preset~ returns =NULL=; when it is not, the name falls back to the =catppuccin-mocha= preset like any unknown name. The 0.8.0 names themselves keep resolving to presets (=macchiato= and =frappe= to =catppuccin-mocha=) in a file that has not been migrated yet.
 

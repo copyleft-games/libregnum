@@ -75,6 +75,21 @@ Mod system errors.
 
 *Macro:* =LRG_WORLD3D_ERROR=
 
+*** Features built out (SOUP=0, LIBPQ=0, ...)
+:PROPERTIES:
+:CUSTOM_ID: features-built-out
+:END:
+A build can leave out optional system libraries (the Android target always does; see [[file:../building.org::#feature-matrix][Building, feature matrix]]). The API stays; the calls that need the missing library report it:
+
+| Built without | Call                                                     | Error                                                        |
+|---------------+----------------------------------------------------------+--------------------------------------------------------------|
+| libsoup (=SOUP=0=) | =LrgAnalyticsBackendHttp= sending a batch (=lrg_analytics_flush()= and the automatic sends) | =LRG_ANALYTICS_ERROR= / =LRG_ANALYTICS_ERROR_BACKEND=, "HTTP analytics is not built in"; the batch stays queued |
+| libpq (=LIBPQ=0=)  | =lrg_mmo_store_new_postgres()= (and the shard directory over it) | =G_IO_ERROR= / =G_IO_ERROR_NOT_SUPPORTED=, "PostgreSQL support is not built in" |
+| a manifest, on Android | =lrg_platform_extract_assets()=, =lrg_platform_prepare()= | =G_IO_ERROR_INVALID_DATA= for a malformed or unsafe =lrg-assets.list=; =G_IO_ERROR_NOT_FOUND= for a listed asset missing from the APK |
+| translations  | =lrg_localization_format()= with a translation whose arguments do not match the fallback string | no error: a warning is logged once and the fallback's text is used |
+
+=make test-minimal-features= builds the library natively with both left out (=build/minimal=) and checks the first two rows (=tests/test-optional-features.c=); see [[file:../cross-compile.org::#minimal-features][Optional features, natively]].
+
 ** Error Handling Pattern
 :PROPERTIES:
 :CUSTOM_ID: error-handling-pattern

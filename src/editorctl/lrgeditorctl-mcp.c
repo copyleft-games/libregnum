@@ -14,6 +14,7 @@
 #include "lrgeditorctl-mcp.h"
 #include <glib/gstdio.h>
 #include <string.h>
+#include "../lrg-portable-private.h"
 
 #define NODE_ARG \
 	"\"node\":{\"type\":\"string\",\"description\":\"Node GUID or slash-separated name path from the top of the level, e.g. \\\"House/Door\\\"\"}"
@@ -2237,7 +2238,7 @@ tool_sessions (void)
 static gchar *
 mcp_find_lrgeditor (void)
 {
-	g_autofree gchar *exe = g_file_read_link ("/proc/self/exe", NULL);
+	g_autofree gchar *exe = lrg_portable_exe_path ();
 	g_autofree gchar *dir = NULL;
 	gchar            *beside;
 

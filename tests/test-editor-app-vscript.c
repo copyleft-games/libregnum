@@ -24,7 +24,7 @@ write_project_file (EditorAppFixture *f,
 		g_assert_true (lrg_editor_app_new_project (f->app, f->project, "Demo", &error));
 		g_assert_no_error (error);
 	}
-	path = g_build_filename (f->project, rel, NULL);
+	path = g_canonicalize_filename (rel, f->project);  /* canonical, as the editor reports paths */
 	dir = g_path_get_dirname (path);
 	g_mkdir_with_parents (dir, 0755);
 	g_free (dir);
@@ -314,9 +314,16 @@ test_vscript_ipc (EditorAppFixture *f,
 	                  >=, 1);
 	g_clear_pointer (&result, json_node_unref);
 
+	/* GObject Introspection search exists only in builds with the GI
+	 * runtime (not BUILD_GIR=0, not the cross targets); without it the
+	 * call answers, saying it is unavailable */
 	result = efx_ipc_result (f, "{'id':6,'method':'vscript.gi_search','params':{'query':'Object','limit':5}}");
+#ifdef LRG_HAS_GI
 	g_assert_true (json_object_get_boolean_member (json_node_get_object (result), "available"));
 	g_assert_nonnull (json_object_get_array_member (json_node_get_object (result), "results"));
+#else
+	g_assert_false (json_object_get_boolean_member (json_node_get_object (result), "available"));
+#endif
 	g_clear_pointer (&result, json_node_unref);
 
 	result = efx_ipc_result (f, "{'id':7,'method':'vscript.add_node','params':{'path':'scripts/hello.rvscript',"

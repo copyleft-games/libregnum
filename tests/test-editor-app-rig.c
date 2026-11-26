@@ -79,7 +79,7 @@ write_project_file (EditorAppFixture *f,
 		g_assert_true (lrg_editor_app_new_project (f->app, f->project, "Demo", &error));
 		g_assert_no_error (error);
 	}
-	path = g_build_filename (f->project, rel, NULL);
+	path = g_canonicalize_filename (rel, f->project);  /* canonical, as the editor reports paths */
 	dir = g_path_get_dirname (path);
 	g_mkdir_with_parents (dir, 0755);
 	g_assert_true (g_file_set_contents (path, text, -1, &error));
@@ -886,7 +886,12 @@ test_rig_ipc (EditorAppFixture *f,
 	{
 		g_autoptr(JsonNode) r = efx_ipc_result (f, "{'id':1,'method':'skel2d.create','params':{'path':'rigs/hero.rskel2d','name':'hero'}}");
 
-		g_assert_true (g_str_has_suffix (json_object_get_string_member (result_object (r), "path"), "rigs/hero.rskel2d"));
+		{
+			/* either separator: Windows paths use '\\' */
+			g_autofree gchar *saved = g_strdelimit (g_strdup (json_object_get_string_member (result_object (r), "path")), "\\", '/');
+
+			g_assert_true (g_str_has_suffix (saved, "rigs/hero.rskel2d"));
+		}
 	}
 	reply = efx_ipc (f, "{'id':2,'method':'skel2d.create','params':{'path':'rigs/hero.rskel2d'}}");
 	g_assert_nonnull (strstr (reply, "error"));

@@ -89,7 +89,8 @@ sort_array (gpointer         array,
 #endif
 #endif
 
-#define DOMAIN              LRG_VSCRIPT_ERROR
+/* (not DOMAIN: MinGW's math.h defines that) */
+#define VS_ERROR_DOMAIN     LRG_VSCRIPT_ERROR
 #define DEFAULT_FIXED_STEP  (1.0 / 60.0)
 
 /* ==========================================================================
@@ -742,13 +743,13 @@ lrg_vscript_graph_add_node (LrgVscriptGraph  *self,
 
 	if (!id_is_valid (node->id))
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_INVALID,
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_INVALID,
 		             "'%s' is not a valid node id (letters, digits, '_' and '-')", node->id);
 		return FALSE;
 	}
 	if (g_hash_table_contains (self->by_id, node->id))
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "a node '%s' already exists", node->id);
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "a node '%s' already exists", node->id);
 		return FALSE;
 	}
 	node->in_graph = TRUE;
@@ -836,20 +837,20 @@ lrg_vscript_graph_rename_node (LrgVscriptGraph  *self,
 	node = lrg_vscript_graph_get_node (self, id);
 	if (node == NULL)
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_NOT_FOUND, "no node '%s'", id);
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_NOT_FOUND, "no node '%s'", id);
 		return FALSE;
 	}
 	if (g_strcmp0 (id, new_id) == 0)
 		return TRUE;
 	if (!id_is_valid (new_id))
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_INVALID,
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_INVALID,
 		             "'%s' is not a valid node id (letters, digits, '_' and '-')", new_id);
 		return FALSE;
 	}
 	if (g_hash_table_contains (self->by_id, new_id))
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "a node '%s' already exists", new_id);
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "a node '%s' already exists", new_id);
 		return FALSE;
 	}
 	for (i = 0; i < self->links->len; i++)
@@ -1969,7 +1970,7 @@ gi_find_callable (const gchar *function,
 	{
 		if (info != NULL)
 			gi_base_info_unref (info);
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_NOT_FOUND, "no GI callable '%s'", function != NULL ? function : "");
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_NOT_FOUND, "no GI callable '%s'", function != NULL ? function : "");
 		return NULL;
 	}
 	return info;
@@ -2021,7 +2022,7 @@ arg_to_gi (const GValue *value,
 		gi_base_info_unref (iface);
 	if (!tag_supported (tag) || tag == GI_TYPE_TAG_VOID)
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_UNSUPPORTED, "GI argument type is not supported");
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_UNSUPPORTED, "GI argument type is not supported");
 		return FALSE;
 	}
 	if (tag == GI_TYPE_TAG_BOOLEAN)
@@ -2250,7 +2251,7 @@ lrg_vscript_priv_gi_invoke (const gchar   *function,
 		if (n_in < 1 || in_i >= 64)
 		{
 			gi_base_info_unref (info);
-			g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "gi call '%s' needs an instance", function);
+			g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "gi call '%s' needs an instance", function);
 			return FALSE;
 		}
 		in_args[in_i].v_pointer = G_VALUE_HOLDS_OBJECT (&in_values[0]) ? g_value_get_object (&in_values[0]) : NULL;
@@ -2267,7 +2268,7 @@ lrg_vscript_priv_gi_invoke (const gchar   *function,
 		{
 			gi_base_info_unref (arg);
 			gi_base_info_unref (info);
-			g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_UNSUPPORTED, "GI out arguments are not supported");
+			g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_UNSUPPORTED, "GI out arguments are not supported");
 			return FALSE;
 		}
 		ti = gi_arg_info_get_type_info (arg);
@@ -2277,7 +2278,7 @@ lrg_vscript_priv_gi_invoke (const gchar   *function,
 			gi_base_info_unref (ti);
 			gi_base_info_unref (arg);
 			gi_base_info_unref (info);
-			g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "gi call '%s' is missing an argument", function);
+			g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "gi call '%s' is missing an argument", function);
 			return FALSE;
 		}
 		if (!arg_to_gi (&in_values[src], ti, &in_args[in_i], error))
@@ -2293,15 +2294,15 @@ lrg_vscript_priv_gi_invoke (const gchar   *function,
 	}
 	ret_ti = gi_callable_info_get_return_type (callable);
 	ok = gi_callable_info_invoke (callable, NULL, in_args, in_i, NULL, 0, &ret_arg, error);
-	if (!ok && error != NULL && *error != NULL && (*error)->domain != DOMAIN)
+	if (!ok && error != NULL && *error != NULL && (*error)->domain != VS_ERROR_DOMAIN)
 	{
 		GError *gi_err = g_steal_pointer (error);
 
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_RUNTIME, "%s", gi_err->message);
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_RUNTIME, "%s", gi_err->message);
 		g_error_free (gi_err);
 	}
 	else if (!ok && (error == NULL || *error == NULL))
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_RUNTIME, "GI call '%s' failed", function != NULL ? function : "");
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_RUNTIME, "GI call '%s' failed", function != NULL ? function : "");
 	if (ok)
 	{
 		GITypeTag tag = gi_type_info_get_tag (ret_ti);
@@ -2330,7 +2331,7 @@ lrg_vscript_priv_gi_invoke (const gchar   *function,
 	(void) in_values;
 	(void) n_in;
 	(void) out_values;
-	g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_UNSUPPORTED, "GObject-Introspection is not available");
+	g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_UNSUPPORTED, "GObject-Introspection is not available");
 	return FALSE;
 #endif
 }
@@ -2340,6 +2341,9 @@ lrg_vscript_priv_gi_invoke (const gchar   *function,
 /* ==========================================================================
  * LrgVscriptProgram
  * ========================================================================== */
+
+static gboolean vs_fail (GError **error, gint code, const gchar *path,
+                         const gchar *fmt, ...) G_GNUC_PRINTF (4, 5);
 
 static gboolean
 vs_fail (GError      **error,
@@ -2355,9 +2359,9 @@ vs_fail (GError      **error,
 	msg = g_strdup_vprintf (fmt, ap);
 	va_end (ap);
 	if (path != NULL && path[0] != '\0')
-		g_set_error (error, DOMAIN, code, "%s: %s", path, msg);
+		g_set_error (error, VS_ERROR_DOMAIN, code, "%s: %s", path, msg);
 	else
-		g_set_error_literal (error, DOMAIN, code, msg);
+		g_set_error_literal (error, VS_ERROR_DOMAIN, code, msg);
 	return FALSE;
 }
 
@@ -2516,7 +2520,7 @@ lrg_vscript_graph_create_node (LrgVscriptGraph  *self,
 
 	if (!lrg_vscript_node_type_exists (kind))
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "unknown node kind '%s'", kind);
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "unknown node kind '%s'", kind);
 		return NULL;
 	}
 	if (id == NULL)
@@ -2789,13 +2793,13 @@ lrg_vscript_program_add_subgraph (LrgVscriptProgram  *self,
 
 	if (!id_is_valid (name))
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_INVALID,
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_INVALID,
 		             "'%s' is not a valid subgraph name", name != NULL ? name : "");
 		return NULL;
 	}
 	if (lrg_vscript_program_get_graph (self, name) != NULL)
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "a subgraph '%s' already exists", name);
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "a subgraph '%s' already exists", name);
 		return NULL;
 	}
 	g = graph_new (name);
@@ -3165,7 +3169,7 @@ lrg_vscript_program_to_data (LrgVscriptProgram  *self,
 	text = yaml_generator_to_data (gen, NULL, &local);
 	if (text == NULL)
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_IO, "%s", local != NULL ? local->message : "write failed");
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_IO, "%s", local != NULL ? local->message : "write failed");
 		return NULL;
 	}
 	return text;
@@ -3681,14 +3685,14 @@ lrg_vscript_program_new_from_data (const gchar  *data,
 	parser = yaml_parser_new ();
 	if (!yaml_parser_load_from_data (parser, data, length, &local))
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_PARSE, "%s",
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_PARSE, "%s",
 		             local != NULL ? local->message : "the document is not YAML");
 		return NULL;
 	}
 	root = yaml_parser_get_root (parser);
 	if (root == NULL)
 	{
-		g_set_error_literal (error, DOMAIN, LRG_VSCRIPT_ERROR_PARSE, "the document is empty");
+		g_set_error_literal (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_PARSE, "the document is empty");
 		return NULL;
 	}
 	prog = lrg_vscript_program_new ();
@@ -3711,7 +3715,7 @@ lrg_vscript_program_new_from_file (const gchar  *path,
 
 	if (!g_file_get_contents (path, &text, &len, &local))
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_IO, "%s: %s", path, local->message);
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_IO, "%s: %s", path, local->message);
 		return NULL;
 	}
 	prog = lrg_vscript_program_new_from_data (text, (gssize) len, error);
@@ -3742,7 +3746,7 @@ lrg_vscript_program_save_to_file (LrgVscriptProgram  *self,
 		return FALSE;
 	if (!g_file_set_contents (path, text, -1, &local))
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_IO, "%s: %s", path, local->message);
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_IO, "%s: %s", path, local->message);
 		return FALSE;
 	}
 	dir = g_path_get_dirname (path);
@@ -4152,12 +4156,12 @@ lrg_vscript_program_connect (LrgVscriptProgram  *self,
 	dst = lrg_vscript_graph_get_node (graph, to_node);
 	if (src == NULL)
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_NOT_FOUND, "no node '%s'", from_node != NULL ? from_node : "");
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_NOT_FOUND, "no node '%s'", from_node != NULL ? from_node : "");
 		return FALSE;
 	}
 	if (dst == NULL)
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_NOT_FOUND, "no node '%s'", to_node != NULL ? to_node : "");
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_NOT_FOUND, "no node '%s'", to_node != NULL ? to_node : "");
 		return FALSE;
 	}
 	src_pins = lrg_vscript_program_dup_node_pins (self, graph, src);
@@ -4166,23 +4170,23 @@ lrg_vscript_program_connect (LrgVscriptProgram  *self,
 	inp = pin_named (dst_pins, to_pin, LRG_VSCRIPT_PIN_INPUT);
 	if (outp == NULL)
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_NOT_FOUND, "no pin '%s' on node '%s'", from_pin, from_node);
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_NOT_FOUND, "no pin '%s' on node '%s'", from_pin, from_node);
 		return FALSE;
 	}
 	if (inp == NULL)
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_NOT_FOUND, "no pin '%s' on node '%s'", to_pin, to_node);
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_NOT_FOUND, "no pin '%s' on node '%s'", to_pin, to_node);
 		return FALSE;
 	}
 	if (outp->exec != inp->exec)
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "type mismatch: %s.%s (%s) -> %s.%s (%s)",
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "type mismatch: %s.%s (%s) -> %s.%s (%s)",
 		             from_node, from_pin, outp->type, to_node, to_pin, inp->type);
 		return FALSE;
 	}
 	if (!outp->exec && !lrg_vscript_priv_types_compatible (outp->type, inp->type))
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "type mismatch: %s.%s (%s) -> %s.%s (%s)",
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "type mismatch: %s.%s (%s) -> %s.%s (%s)",
 		             from_node, from_pin, outp->type, to_node, to_pin, inp->type);
 		return FALSE;
 	}
@@ -4190,20 +4194,20 @@ lrg_vscript_program_connect (LrgVscriptProgram  *self,
 		return TRUE;
 	if (!outp->exec && g_strcmp0 (from_node, to_node) == 0)
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "data cycle: %s.%s -> %s.%s",
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "data cycle: %s.%s -> %s.%s",
 		             from_node, from_pin, to_node, to_pin);
 		return FALSE;
 	}
 	if (!outp->exec && data_reaches (self, graph, to_node, from_node, from_node, from_pin, to_node, to_pin))
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "data cycle: %s.%s -> %s.%s",
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "data cycle: %s.%s -> %s.%s",
 		             from_node, from_pin, to_node, to_pin);
 		return FALSE;
 	}
 	drop_exclusive (graph, outp, from_node, from_pin, inp, to_node, to_pin);
 	if (!lrg_vscript_graph_add_link (graph, from_node, from_pin, to_node, to_pin))
 	{
-		g_set_error (error, DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "could not link %s.%s -> %s.%s",
+		g_set_error (error, VS_ERROR_DOMAIN, LRG_VSCRIPT_ERROR_INVALID, "could not link %s.%s -> %s.%s",
 		             from_node, from_pin, to_node, to_pin);
 		return FALSE;
 	}
@@ -4211,6 +4215,9 @@ lrg_vscript_program_connect (LrgVscriptProgram  *self,
 }
 
 /* --- validation ---------------------------------------------------------- */
+
+static void add_issue (GPtrArray *found, LrgVscriptSeverity severity, const gchar *graph,
+                       const gchar *node, const gchar *path, const gchar *fmt, ...) G_GNUC_PRINTF (6, 7);
 
 static void
 add_issue (GPtrArray          *found,
@@ -4339,15 +4346,19 @@ validate_node (LrgVscriptProgram *self,
 	}
 	if (kind_is (kind, "gi.call"))
 	{
-		const gchar *fn = lrg_vscript_node_get_param_string (node, "function");
 		const gchar *args = lrg_vscript_node_get_param_string (node, "args");
 		const gchar *returns = lrg_vscript_node_get_param_string (node, "returns");
-		gboolean     have_fn = fn != NULL && fn[0] != '\0';
 		gboolean     have_sig = (args != NULL && args[0] != '\0') || (returns != NULL && returns[0] != '\0');
 
 		if (lrg_vscript_gi_available ())
 		{
 #ifdef VSCRIPT_HAVE_GI
+			/* the callable is only looked up where the GI runtime is built
+			 * in; without it (BUILD_GIR=0, every cross target) these
+			 * would be unused */
+			const gchar *fn = lrg_vscript_node_get_param_string (node, "function");
+			gboolean     have_fn = fn != NULL && fn[0] != '\0';
+
 			if (have_fn)
 			{
 				GIBaseInfo *gi = gi_find_callable (fn, NULL);

@@ -10,6 +10,7 @@
 #include <raylib.h>
 #include <rlgl.h>
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 /*
  * One pass: darken towards @color with distance from the centre. The
@@ -18,7 +19,7 @@
  * The same arithmetic as the editor preview pass in LrgWorld3DRenderer.
  */
 static const gchar vignette_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "uniform sampler2D texture0;\n"

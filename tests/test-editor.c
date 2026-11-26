@@ -1059,7 +1059,7 @@ test_asset_database_scan (void)
 			if (lrg_asset_entry_get_asset_type (e) == LRG_ASSET_TYPE_TEXTURE)
 			{
 				g_assert_cmpstr (lrg_asset_entry_get_path (e), ==,
-				                 "sprites" G_DIR_SEPARATOR_S "p.png");
+				                 "sprites/p.png");
 				g_assert_cmpstr (lrg_asset_entry_get_name (e), ==, "p.png");
 				g_assert_nonnull (lrg_asset_entry_get_guid (e));
 				found = TRUE;

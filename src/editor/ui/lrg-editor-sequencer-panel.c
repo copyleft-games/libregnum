@@ -3147,9 +3147,10 @@ on_curves (LrgWidget *chip,
 
 static void
 on_length (LrgSpinBox *spin,
-           gdouble     value,
            gpointer    user_data)
 {
+	/* LrgSpinBox::value-changed passes no value: read it */
+	gdouble value = lrg_spin_box_get_value (spin);
 	LrgEditorSequencerPanel *self = LRG_EDITOR_SEQUENCER_PANEL (user_data);
 	LrgSequence             *edit;
 
@@ -3163,9 +3164,10 @@ on_length (LrgSpinBox *spin,
 
 static void
 on_fps (LrgSpinBox *spin,
-        gdouble     value,
         gpointer    user_data)
 {
+	/* LrgSpinBox::value-changed passes no value: read it */
+	gdouble value = lrg_spin_box_get_value (spin);
 	LrgEditorSequencerPanel *self = LRG_EDITOR_SEQUENCER_PANEL (user_data);
 	LrgSequence             *edit;
 
@@ -3347,11 +3349,11 @@ edit_section_field (LrgEditorSequencerPanel *self,
 
 static void on_sec_name (LrgTextInput *i, gpointer d)    { edit_section_field (d, SF_NAME, 0.0, lrg_text_input_get_text (i)); }
 static void on_sec_payload (LrgTextInput *i, gpointer d) { edit_section_field (d, SF_PAYLOAD, 0.0, lrg_text_input_get_text (i)); }
-static void on_sec_start (LrgSpinBox *s, gdouble v, gpointer d)    { edit_section_field (d, SF_START, v, NULL); }
-static void on_sec_duration (LrgSpinBox *s, gdouble v, gpointer d) { edit_section_field (d, SF_DURATION, v, NULL); }
-static void on_sec_offset (LrgSpinBox *s, gdouble v, gpointer d)   { edit_section_field (d, SF_OFFSET, v, NULL); }
-static void on_sec_rate (LrgSpinBox *s, gdouble v, gpointer d)     { edit_section_field (d, SF_RATE, v, NULL); }
-static void on_sec_weight (LrgSpinBox *s, gdouble v, gpointer d)   { edit_section_field (d, SF_WEIGHT, v, NULL); }
+static void on_sec_start (LrgSpinBox *s, gpointer d)    { edit_section_field (d, SF_START, lrg_spin_box_get_value (s), NULL); }
+static void on_sec_duration (LrgSpinBox *s, gpointer d) { edit_section_field (d, SF_DURATION, lrg_spin_box_get_value (s), NULL); }
+static void on_sec_offset (LrgSpinBox *s, gpointer d)   { edit_section_field (d, SF_OFFSET, lrg_spin_box_get_value (s), NULL); }
+static void on_sec_rate (LrgSpinBox *s, gpointer d)     { edit_section_field (d, SF_RATE, lrg_spin_box_get_value (s), NULL); }
+static void on_sec_weight (LrgSpinBox *s, gpointer d)   { edit_section_field (d, SF_WEIGHT, lrg_spin_box_get_value (s), NULL); }
 static void on_sec_loop (LrgWidget *c, gpointer d)                 { edit_section_field (d, SF_LOOP, 0.0, NULL); }
 
 /* --- Key fields ------------------------------------------------------------ */
@@ -3420,10 +3422,10 @@ key_field (LrgEditorSequencerPanel *self,
 	curve_commit (self, field == 2 ? "Key Tangent" : "Edit Key", edit_key_field, &f);
 }
 
-static void on_key_time (LrgSpinBox *s, gdouble v, gpointer d)  { key_field (d, 0, v); }
-static void on_key_value (LrgSpinBox *s, gdouble v, gpointer d) { key_field (d, 1, v); }
-static void on_key_in (LrgSpinBox *s, gdouble v, gpointer d)    { key_field (d, 3, v); }
-static void on_key_out (LrgSpinBox *s, gdouble v, gpointer d)   { key_field (d, 4, v); }
+static void on_key_time (LrgSpinBox *s, gpointer d)  { key_field (d, 0, lrg_spin_box_get_value (s)); }
+static void on_key_value (LrgSpinBox *s, gpointer d) { key_field (d, 1, lrg_spin_box_get_value (s)); }
+static void on_key_in (LrgSpinBox *s, gpointer d)    { key_field (d, 3, lrg_spin_box_get_value (s)); }
+static void on_key_out (LrgSpinBox *s, gpointer d)   { key_field (d, 4, lrg_spin_box_get_value (s)); }
 
 static void
 on_key_tangent (LrgComboBox *combo,

@@ -21,9 +21,9 @@ LIBREGNUM_LIB := ../$(LIBOUTDIR)/$(LIB_SHARED)
 
 # Static library paths
 LIBREGNUM_STATIC := ../$(LIBOUTDIR)/$(LIB_STATIC)
-GRAYLIB_STATIC := $(GRAYLIB_DIR)/build/lib/libgraylib.a
-# YAMLGLIB_STATIC comes from config.mk (build/<debug|release>/libyaml-glib-1.0.a)
-RAYLIB_STATIC := $(GRAYLIB_DIR)/deps/raylib/src/libraylib.a
+# GRAYLIB_STATIC, RAYLIB_STATIC and YAMLGLIB_STATIC come from config.mk: the
+# submodules' own build directories natively, $(BUILDDIR)/deps/ for a cross
+# target
 
 EXAMPLE_CFLAGS := $(COMMON_CFLAGS) $(WARN_CFLAGS) $(OPT_CFLAGS)
 EXAMPLE_CFLAGS += -I../src
@@ -88,8 +88,8 @@ else
     EXAMPLE_LDFLAGS :=
     ifeq ($(TARGET_PLATFORM),windows)
         # Windows: graylib/yaml-glib are still separate DLLs
-        EXAMPLE_LDFLAGS += -L$(GRAYLIB_DIR)/build/lib
-        EXAMPLE_LDFLAGS += -L$(YAMLGLIB_DIR)/build
+        EXAMPLE_LDFLAGS += -L$(GRAYLIB_BUILDDIR)/lib
+        EXAMPLE_LDFLAGS += -L$(YAMLGLIB_BUILDDIR)/$(DEP_BUILD_TYPE)
     endif
     ifeq ($(MCP),1)
         EXAMPLE_LDFLAGS += -L$(MCP_GLIB_DIR)/build
@@ -214,8 +214,8 @@ copy-dlls: | $(EXAMPLES_BUILDDIR)
 ifeq ($(TARGET_PLATFORM),windows)
 	$(call print_status,"Copying DLLs for Windows...")
 	@cp ../$(LIBOUTDIR)/libregnum.dll $(EXAMPLES_BUILDDIR)/
-	@cp $(GRAYLIB_DIR)/build/lib/graylib.dll $(EXAMPLES_BUILDDIR)/
-	@cp $(YAMLGLIB_DIR)/build/$(DEP_BUILD_TYPE)/yaml-glib-1.0.dll $(EXAMPLES_BUILDDIR)/
+	@cp $(GRAYLIB_BUILDDIR)/lib/graylib.dll $(EXAMPLES_BUILDDIR)/
+	@cp $(YAMLGLIB_BUILDDIR)/$(DEP_BUILD_TYPE)/yaml-glib-1.0.dll $(EXAMPLES_BUILDDIR)/
 	@cp $(MINGW_BIN)/libglib-2.0-0.dll $(EXAMPLES_BUILDDIR)/
 	@cp $(MINGW_BIN)/libgobject-2.0-0.dll $(EXAMPLES_BUILDDIR)/
 	@cp $(MINGW_BIN)/libgio-2.0-0.dll $(EXAMPLES_BUILDDIR)/
@@ -402,10 +402,17 @@ $(EXAMPLES_BUILDDIR)/game-chair-simulator$(EXE_EXT): game-chair-simulator.c | $(
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
-# Creature Collector needs --export-dynamic so native mods can call game functions
+# Creature Collector needs --export-dynamic so native mods can call game
+# functions.  A Windows .exe has no dynamic symbol table to export into (the
+# linker warns and ignores it): its mods cannot call back into the game.
+ifeq ($(TARGET_PLATFORM),windows)
+CREATURE_EXPORT_DYNAMIC :=
+else
+CREATURE_EXPORT_DYNAMIC := -Wl,--export-dynamic
+endif
 $(EXAMPLES_BUILDDIR)/game-creature-collector$(EXE_EXT): game-creature-collector.c creature-registry.h | $(EXAMPLES_BUILDDIR) mods
 	$(call print_compile,$<)
-	@$(CC) $(EXAMPLE_CFLAGS) -Wl,--export-dynamic -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+	@$(CC) $(EXAMPLE_CFLAGS) $(CREATURE_EXPORT_DYNAMIC) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/scripted-lua-game$(EXE_EXT): scripted-lua-game.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)

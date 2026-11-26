@@ -35,7 +35,7 @@ lrg_mmo_store_finalize (GObject *object)
     if (self->db != NULL)
         sqlite3_close (self->db);
     if (self->postgres != NULL)
-        PQfinish (self->postgres);
+        _lrg_mmo_pg_close (self->postgres);
     G_OBJECT_CLASS (lrg_mmo_store_parent_class)->finalize (object);
 }
 

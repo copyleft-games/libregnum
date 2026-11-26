@@ -45,9 +45,12 @@
 #include "scripting/lrg-script-module.h"
 #include "scripting/lrg-script-reloader.h"
 #include "scripting/lrg-scriptable.h"
+#ifdef LRG_HAS_GI
 #include "scripting/lrg-scripting-gi.h"
+#endif
 #include "scripting/lrg-scripting-manager.h"
 #include "scripting/lrg-scripting.h"
+#include "../lrg-portable-private.h"
 
 /* Unresolved when the reloader is still the stub. `new` is strong. */
 #pragma weak lrg_script_reloader_get_default
@@ -418,10 +421,15 @@ context_open (LrgEditorScriptApi *self,
 		lrg_scripting_set_global (scripting, "editor", &value, &ignored);
 		g_value_unset (&value);
 		g_clear_error (&ignored);
+#ifdef LRG_HAS_GI
+		/* GI-based backends (gjs, pygobject) also see it as a GObject;
+		 * builds without the GI runtime (BUILD_GIR=0, cross targets)
+		 * have no such backend */
 		if (LRG_IS_SCRIPTING_GI (scripting))
 			lrg_scripting_gi_expose_object (LRG_SCRIPTING_GI (scripting), "editor",
 			                                G_OBJECT (self), &ignored);
 		g_clear_error (&ignored);
+#endif
 	}
 	if (node != NULL)
 	{
@@ -430,10 +438,15 @@ context_open (LrgEditorScriptApi *self,
 		lrg_scripting_set_global (scripting, "node", &value, &ignored);
 		g_value_unset (&value);
 		g_clear_error (&ignored);
+#ifdef LRG_HAS_GI
+		/* GI-based backends (gjs, pygobject) also see it as a GObject;
+		 * builds without the GI runtime (BUILD_GIR=0, cross targets)
+		 * have no such backend */
 		if (LRG_IS_SCRIPTING_GI (scripting))
 			lrg_scripting_gi_expose_object (LRG_SCRIPTING_GI (scripting), "node",
 			                                G_OBJECT (node), &ignored);
 		g_clear_error (&ignored);
+#endif
 	}
 	install_print (self, scripting, language);
 	return scripting;

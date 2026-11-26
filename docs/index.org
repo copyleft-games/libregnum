@@ -17,6 +17,7 @@ Libregnum is a GObject-based game engine library built on top of [[https://githu
 - *[[file:modules/scripting/index.org][Scripting Manager]]* - LrgScriptingManager, LrgScriptComponent, Crispy backend
 - *[[file:api/classes.org][API Classes Index]]* - All classes and types
 - *[[file:building.org][Building]]* - Build and installation instructions
+- *[[file:cross-compile.org][Cross-Compilation]]* - Windows, Linux aarch64 and Android builds in containers ([[file:platforms/windows.org][Windows]], [[file:platforms/linux-arm64.org][Linux aarch64]], [[file:platforms/android.org][Android]])
 - *[[file:performance.org][Performance]]* - =lrg-bench= frame-time benchmarks, per-frame cost rules, the framerate pass
 
 ** Key Features

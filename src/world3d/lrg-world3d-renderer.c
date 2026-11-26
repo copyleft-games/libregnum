@@ -66,6 +66,7 @@
 #include <string.h>
 #include <raylib.h>
 #include <rlgl.h>
+#include "graphics/lrg-glsl-private.h"
 
 #define RENDER_LOG_DOMAIN "Libregnum-World3D-Render"
 
@@ -593,7 +594,7 @@ unit_to_byte (gfloat v)
  * where they started.
  */
 static const gchar shader_scene_vs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"/* lrgeditor scene vertex shader (lit, unlit and normals modes).\n"
 	" * raylib attribute and uniform names, so DrawMesh() feeds it. */\n"
 	"in vec3 vertexPosition;\n"
@@ -612,7 +613,7 @@ static const gchar shader_scene_vs[] =
 ;
 
 static const gchar shader_lit_fs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"/* lrgeditor fallback lit shader: one two-sided directional light plus\n"
 	" * ambient. Used when the engine light set's shader is unavailable. */\n"
 	"in vec2 fragTexCoord;\n"
@@ -633,7 +634,7 @@ static const gchar shader_lit_fs[] =
 ;
 
 static const gchar shader_unlit_fs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"/* lrgeditor unlit mode: flat albedo (texture times material colour). */\n"
 	"in vec2 fragTexCoord;\n"
 	"in vec3 fragNormal;\n"
@@ -649,7 +650,7 @@ static const gchar shader_unlit_fs[] =
 ;
 
 static const gchar shader_normals_fs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"/* lrgeditor normals mode: world-space normals as colours\n"
 	" * (x -> red, y -> green, z -> blue, remapped from -1..1 to 0..1). */\n"
 	"in vec2 fragTexCoord;\n"
@@ -665,7 +666,7 @@ static const gchar shader_normals_fs[] =
 /* Overdraw view: every fragment adds a dim orange (additive blending, no
  * depth test), so the brightness counts the layers. */
 static const gchar shader_overdraw_fs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"out vec4 finalColor;\n"
 	"void main ()\n"
 	"{\n"
@@ -676,7 +677,7 @@ static const gchar shader_overdraw_fs[] =
 /* UV view: U in red, V in green (wrapped), over an 8 x 8 checker that
  * shows texel density, stretching and seams. */
 static const gchar shader_uv_fs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec2 fragTexCoord;\n"
 	"in vec3 fragNormal;\n"
 	"out vec4 finalColor;\n"
@@ -691,7 +692,7 @@ static const gchar shader_uv_fs[] =
 /* Head of the lit-library debug views: raylib's varyings as the light
  * set's vertex shader writes them (the library follows). */
 static const gchar shader_dbg_head[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec3 fragPosition;\n"
 	"in vec2 fragTexCoord;\n"
 	"in vec4 fragColor;\n"

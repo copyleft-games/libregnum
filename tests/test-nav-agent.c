@@ -100,6 +100,19 @@ count_cb (gpointer  instance,
 	(*(guint *) user_data)++;
 }
 
+/* For LrgNavCrowd::stepped, which passes the step (a gfloat) before the
+ * user data: count_cb's two-argument form would read the wrong argument
+ * where the ABI assigns registers by position (Windows x64) */
+static void
+stepped_cb (gpointer  instance,
+            gfloat    delta,
+            gpointer  user_data)
+{
+	(void) instance;
+	(void) delta;
+	(*(guint *) user_data)++;
+}
+
 /* ------------------------------------------------------------------ */
 /* One agent                                                            */
 
@@ -516,7 +529,7 @@ test_crowd_membership_and_debug (void)
 		lrg_nav_agent_warp (agent, p);
 		lrg_nav_agent_set_destination (agent, g);
 	}
-	g_signal_connect (crowd, "stepped", G_CALLBACK (count_cb), &stepped);
+	g_signal_connect (crowd, "stepped", G_CALLBACK (stepped_cb), &stepped);
 	lrg_nav_crowd_step (crowd, STEP);
 	lrg_nav_crowd_step (crowd, STEP);
 	g_assert_cmpuint (stepped, ==, 2);

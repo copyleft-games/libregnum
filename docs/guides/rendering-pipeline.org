@@ -171,6 +171,39 @@ The numbers come from a scratch benchmark driving the public API; any game can r
 :END:
 The editor viewport draws through the same renderer, so the passes above are what the viewport shows. The viewport's =Render Mode= menu holds the five debug views, the =Shadows=, =Sky= and =Post= overlays switch those passes, each viewport has a render-layer mask, and the level's =environment:= block and =post_stack:= show while authoring (as the renderer's fallback look). The environment panel's settings and its bake, the post-stack editor's live preview, decal and reflection-probe nodes, the level's baked lightmaps and probe grids (the Lighting panel, [[file:../editor/bake.org][Lighting Bake]]) and the inspector's LOD preview all land in this pipeline. See [[file:../modules/world3d/renderer.org::#editor][the renderer page]] and [[file:../editor/environment.org][the environment panel]].
 
+** ES compatibility
+:PROPERTIES:
+:CUSTOM_ID: es-compatibility
+:END:
+The engine's shaders run on desktop OpenGL 3.3 and on OpenGL ES 3 (Android). Every built-in shader starts with =LRG_GLSL_HEADER= from =src/graphics/lrg-glsl-private.h= instead of a literal =#version= line:
+
+| Build                 | =LRG_GLSL_HEADER=                                                                  |
+|-----------------------+------------------------------------------------------------------------------------|
+| desktop               | =#version 330=                                                                     |
+| Android (or =-DLRG_GLSL_ES=) | =#version 300 es= + =precision highp= for =float=, =int=, =sampler2D=, =samplerCube=, =sampler3D=, =sampler2DShadow=, =sampler2DArray= |
+
+#+begin_src c
+static const gchar my_fs[] =
+	LRG_GLSL_HEADER
+	"in vec2 fragTexCoord;\n"
+	"uniform sampler2D texture0;\n"
+	"out vec4 finalColor;\n"
+	"void main () { finalColor = texture (texture0, fragTexCoord); }\n";
+#+end_src
+
+=LRG_GLSL_HEADER_LINES= is how many lines the header takes (1 or 8); code that maps compile errors back to a source line counts it, as =LrgShaderAsset= does.
+
+Write shaders in the common subset of GLSL 3.30 and GLSL ES 3.00:
+
+- *No implicit int → float conversions:* =1.0= not =1= in float expressions, =float (i)= where an int meets a float.
+- *No =double=*, no geometry or tessellation stages, no =gl_ClipDistance=.
+- *Fragment outputs* are declared =out vec4 name;= (no =gl_FragColor=); =layout (location = N)= is fine on vertex inputs and fragment outputs, not on fragment inputs.
+- *Integer textures and bit operations* exist in both; =texelFetch= and =textureSize= take =int=/=ivec= arguments in both.
+- *Precision:* the header sets =highp= defaults; a shader that needs a different precision for a variable says so on the declaration.
+- *Differences that cannot be avoided* go behind =#ifdef GL_ES=, the macro every ES compiler predefines.
+
+=make test-shaders= (needs =glslangValidator=, Fedora package =glslang=) or =make ANDROID=1 test-shaders= (the Android build container has it) runs =tests/test-shader-glsl.sh=: it preprocesses every source that uses =LRG_GLSL_HEADER= with the library's own flags, extracts each complete shader, and compiles it as GLSL 3.30 and as GLSL ES 3.00. The stage comes from the C array's name (=*_vs=/=*vert*= vertex, =*_fs=/=*frag*= fragment), so name new shader arrays that way. User shaders loaded at run time (=LrgShaderAsset=, =.rshader= files) get the header from the asset, so they follow the same rules when they should run on Android.
+
 ** See also
 :PROPERTIES:
 :CUSTOM_ID: see-also

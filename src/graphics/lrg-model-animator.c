@@ -32,6 +32,7 @@
 #endif
 #include "graphics/lrg-model-animator.h"
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-glsl-private.h"
 
 /* ------------------------------------------------------------------------ */
 /* LrgModelAnimState                                                        */
@@ -173,7 +174,7 @@ G_DEFINE_TYPE_WITH_CODE (LrgModelAnimator, lrg_model_animator, G_TYPE_OBJECT,
  * scale the position the same way on both paths. raylib binds vertexBoneIndices / vertexBoneWeights to its
  * bone attribute locations at link time. */
 static const gchar default_skin_vertex_source[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 vertexPosition;\n"
     "in vec2 vertexTexCoord;\n"
     "in vec4 vertexColor;\n"
@@ -201,7 +202,7 @@ static const gchar default_skin_vertex_source[] =
     "}\n";
 
 static const gchar default_skin_fragment_source[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "out vec4 finalColor;\n"

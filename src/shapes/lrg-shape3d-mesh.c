@@ -30,6 +30,7 @@
 #endif
 #include "shapes/lrg-shape3d-mesh-private.h"
 #include "graphics/lrg-draw-cull-private.h"
+#include "graphics/lrg-glsl-private.h"
 
 /* raylib's DEG2RAD (raymath.h / raylib.h), spelled the same way so the
  * constant folds to the same float */
@@ -102,7 +103,7 @@ static gboolean   batch_program_failed = FALSE;
  * colDiffuse, times the default vertex colour of 1), with the MVP and
  * the colour per instance; the colour is flat so it is not interpolated */
 static const gchar batch_vs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec3 vertexPosition;\n"
 	"in vec4 vertexColor;\n"
 	"in mat4 instanceTransform;\n"
@@ -114,7 +115,7 @@ static const gchar batch_vs[] =
 	"}\n";
 
 static const gchar batch_fs[] =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"flat in vec4 fragColor;\n"
 	"out vec4 finalColor;\n"
 	"void main ()\n"

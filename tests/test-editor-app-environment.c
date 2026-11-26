@@ -596,8 +596,11 @@ test_post_ipc (EditorAppFixture *f,
 		g_autoptr(JsonNode) r = efx_ipc_result (
 			f, "{'id':2,'method':'post.create','params':{'path':'looks/empty','preset':'empty'}}");
 
-		g_assert_true (g_str_has_suffix (json_object_get_string_member (json_node_get_object (r), "path"),
-		                                 "looks/empty.rpost"));
+		/* either separator: Windows paths use '\\' */
+		g_autofree gchar *saved = g_strdelimit (g_strdup (json_object_get_string_member (json_node_get_object (r), "path")),
+		                                        "\\", '/');
+
+		g_assert_true (g_str_has_suffix (saved, "looks/empty.rpost"));
 	}
 	{
 		g_autoptr(JsonNode) r = efx_ipc_result (

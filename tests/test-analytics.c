@@ -488,6 +488,13 @@ test_analytics_http_batch_does_not_block (void)
     gint64                             elapsed;
     guint                              i;
 
+#ifdef LRG_WITHOUT_SOUP
+    /* nothing is ever sent without libsoup: test-optional-features checks
+     * that the send fails as documented */
+    g_test_skip ("built with SOUP=0: the HTTP backend cannot send");
+    return;
+#endif
+
     server = slow_server_new (300);
     url = g_strdup_printf ("http://127.0.0.1:%u/events", server->port);
     backend = lrg_analytics_backend_http_new (url);
@@ -581,7 +588,12 @@ test_analytics_http_failed_batch_kept (void)
                                                          event, &error));
     }
     g_assert_false (lrg_analytics_backend_flush (LRG_ANALYTICS_BACKEND (backend), &error));
+#ifdef LRG_WITHOUT_SOUP
+    /* SOUP=0: the stub's documented error; the batch is kept all the same */
+    g_assert_error (error, LRG_ANALYTICS_ERROR, LRG_ANALYTICS_ERROR_BACKEND);
+#else
     g_assert_error (error, LRG_ANALYTICS_ERROR, LRG_ANALYTICS_ERROR_NETWORK);
+#endif
     g_clear_error (&error);
     g_assert_cmpuint (lrg_analytics_backend_http_get_pending_count (backend), ==, 3);
     g_assert_false (lrg_analytics_backend_flush (LRG_ANALYTICS_BACKEND (backend), &error));

@@ -406,8 +406,10 @@ const gchar * lrg_editor_settings_get_theme_file (LrgEditorSettings *self);
  * `$XDG_DATA_HOME/libregnum/editor/themes`, the install prefix's
  * `share/libregnum/editor/themes` (when the library was built with
  * `LRG_DATADIR`), `libregnum/editor/themes` under each of
- * `$XDG_DATA_DIRS`, and finally `data/editor/themes` in the executable's
- * directory or one of its parents (an uninstalled build tree). The
+ * `$XDG_DATA_DIRS`, `share/libregnum/editor/themes` beside the
+ * executable's `bin` directory (a relocatable install, such as a Windows
+ * one), and finally `data/editor/themes` in the executable's directory or
+ * one of its parents (an uninstalled build tree). The
  * editor ships "catppuccin-macchiato" and "catppuccin-frappe" there.
  *
  * Returns: (transfer full) (nullable): the file's path, or %NULL when

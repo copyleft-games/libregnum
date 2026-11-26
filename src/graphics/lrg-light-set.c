@@ -49,6 +49,7 @@
 #include "graphics/lrg-ssao-glsl-private.h"
 #include "graphics/lrg-decal-glsl-private.h"
 #include "lighting/lrg-baked-glsl-private.h"
+#include "graphics/lrg-glsl-private.h"
 
 typedef struct
 {
@@ -234,7 +235,7 @@ static LrgLightSet *bound_light_set = NULL;
 /* GLSL 330 with raylib's default attribute and uniform names. Also the
  * vertex source of user lit shaders (lrg_light_set_get_vertex_source()). */
 static const gchar light_vs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 vertexPosition;\n"
     "in vec2 vertexTexCoord;\n"
     "in vec3 vertexNormal;\n"
@@ -544,7 +545,7 @@ static const gchar light_vs[] =
 static const gchar light_library[] = LIGHT_LIBRARY;
 
 static const gchar light_fs[] =
-    "#version 330\n"
+    LRG_GLSL_HEADER
     "in vec3 fragPosition;\n"
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"

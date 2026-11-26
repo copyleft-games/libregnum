@@ -27,12 +27,13 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "lrg-particle-mesh-renderer.h"
+#include "graphics/lrg-glsl-private.h"
 
 /* First attribute location of the instance data */
 #define INSTANCE_LOCATION (10)
 
 static const gchar *VERTEX_SHADER =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec3 vertexPosition;\n"
 	"in vec2 vertexTexCoord;\n"
 	"in vec3 vertexNormal;\n"
@@ -53,7 +54,7 @@ static const gchar *VERTEX_SHADER =
 	"}\n";
 
 static const gchar *FRAGMENT_SHADER =
-	"#version 330\n"
+	LRG_GLSL_HEADER
 	"in vec2 fragTexCoord;\n"
 	"in vec4 fragColor;\n"
 	"in vec3 fragNormal;\n"

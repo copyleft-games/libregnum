@@ -283,7 +283,9 @@ const gchar * lrg_asset_meta_importer_for_type (LrgAssetType type);
  *
  * Computes the identifier assets had before sidecars existed:
  * the lowercase hex SHA-256 of @relative_path. Sidecars created for
- * existing assets use it so references keep resolving.
+ * existing assets use it so references keep resolving. The path is
+ * hashed '/'-separated (Windows' '\' separators are turned into '/'
+ * first), so an asset has the same guid on every OS.
  *
  * Returns: (transfer full): the legacy guid
  */

@@ -53,7 +53,8 @@ static gchar *
 proj (EditorAppFixture *f,
       const gchar      *rel)
 {
-	return g_build_filename (f->project, rel, NULL);
+	/* canonical, as the editor reports paths (one separator kind on Windows) */
+	return g_canonicalize_filename (rel, f->project);
 }
 
 static LrgEditorAssetsPanel *

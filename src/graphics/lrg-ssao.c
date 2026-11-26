@@ -30,11 +30,12 @@
 #include "lrg-ssao-glsl-private.h"
 #include "../core/lrg-math3d.h"
 #include "lrg-light-set-private.h"
+#include "graphics/lrg-glsl-private.h"
 
 /* shared fragment-shader prelude: raylib's default vertex shader feeds
  * these; the passes work from gl_FragCoord instead */
 #define PASS_PRELUDE \
-	"#version 330\n" \
+	LRG_GLSL_HEADER \
 	"in vec2 fragTexCoord;\n" \
 	"in vec4 fragColor;\n" \
 	"out vec4 finalColor;\n" \
