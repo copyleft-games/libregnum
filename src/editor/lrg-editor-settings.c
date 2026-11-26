@@ -1614,8 +1614,9 @@ try_theme_dir (const gchar *dir,
  *
  * Walks up from the running executable's directory looking for
  * data/editor/themes/@file, so an editor (or a test) run from an
- * uninstalled build tree finds the themes it was built with. Uses
- * /proc/self/exe; on systems without it the walk is skipped.
+ * uninstalled build tree finds the themes it was built with. The program
+ * comes from lrg_portable_exe_path() (/proc/self/exe, or Windows' module
+ * file name); where the system cannot say, the walk is skipped.
  */
 static gchar *
 try_source_tree (const gchar *file)
@@ -1624,7 +1625,7 @@ try_source_tree (const gchar *file)
 	g_autofree gchar *dir = NULL;
 	guint             up;
 
-	exe = g_file_read_link ("/proc/self/exe", NULL);
+	exe = lrg_portable_exe_path ();
 	if (exe == NULL)
 		return NULL;
 	dir = g_path_get_dirname (exe);
@@ -1710,6 +1711,23 @@ lrg_editor_settings_find_theme_file (const gchar *name)
 			return found;
 	}
 
-	/* 6. An uninstalled build tree next to the running executable */
+	/* 6. A relocatable install: <prefix>/bin/<program> finds
+	 * <prefix>/share/libregnum/editor/themes (how a Windows install, whose
+	 * build-time prefix means nothing on the user's machine, finds them) */
+	{
+		g_autofree gchar *exe = lrg_portable_exe_path ();
+
+		if (exe != NULL)
+		{
+			g_autofree gchar *bin = g_path_get_dirname (exe);
+			g_autofree gchar *prefix = g_path_get_dirname (bin);
+			g_autofree gchar *dir = g_build_filename (prefix, "share", "libregnum", "editor", "themes", NULL);
+
+			if ((found = try_theme_dir (dir, file)) != NULL)
+				return found;
+		}
+	}
+
+	/* 7. An uninstalled build tree next to the running executable */
 	return try_source_tree (file);
 }

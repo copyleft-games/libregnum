@@ -66,6 +66,7 @@
 #include <string.h>
 #include <raylib.h>
 #include <rlgl.h>
+#include "../../../lrg-portable-private.h"
 
 #define PREVIEW_KEY        "lrg-editor-mat-preview"
 #define INSTALLED_KEY      "lrg-editor-material-installed"
@@ -130,30 +131,13 @@ shape_from_nick (const gchar *nick)
  * ========================================================================== */
 
 /* @path relative to the directory @from_dir ("../x/y.png" when outside);
- * both absolute. */
+ * both absolute.  '/'-separated on every OS: it is written into the
+ * material. */
 gchar *
 editor_mat_relative_to (const gchar *from_dir,
                         const gchar *path)
 {
-	g_autofree gchar *ca = g_canonicalize_filename (from_dir, NULL);
-	g_autofree gchar *cb = g_canonicalize_filename (path, NULL);
-	g_auto(GStrv)     pa = g_strsplit (ca, G_DIR_SEPARATOR_S, -1);
-	g_auto(GStrv)     pb = g_strsplit (cb, G_DIR_SEPARATOR_S, -1);
-	GString          *out = g_string_new (NULL);
-	guint             i = 0, j;
-
-	while (pa[i] != NULL && pb[i] != NULL && g_strcmp0 (pa[i], pb[i]) == 0)
-		i++;
-	for (j = i; pa[j] != NULL; j++)
-		if (*pa[j] != '\0')
-			g_string_append (out, ".." G_DIR_SEPARATOR_S);
-	for (j = i; pb[j] != NULL; j++)
-	{
-		g_string_append (out, pb[j]);
-		if (pb[j + 1] != NULL)
-			g_string_append_c (out, G_DIR_SEPARATOR);
-	}
-	return g_string_free (out, FALSE);
+	return lrg_portable_relative_to (from_dir, path);
 }
 
 /* @path made absolute against the app's project (or the cwd). */

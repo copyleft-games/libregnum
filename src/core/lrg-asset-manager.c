@@ -22,6 +22,7 @@
 #include <raylib.h>
 #include <rlgl.h>
 #include "../lrg-log.h"
+#include "../lrg-portable-private.h"
 
 typedef struct
 {
@@ -2522,7 +2523,8 @@ index_scan_dir (LrgAssetManagerPrivate *priv,
     for (i = 0; i < names->len; i++)
     {
         const gchar      *child = g_ptr_array_index (names, i);
-        g_autofree gchar *child_rel = (rel != NULL) ? g_build_filename (rel, child, NULL) : g_strdup (child);
+        /* '/' on every OS, as the editor's asset database writes it */
+        g_autofree gchar *child_rel = (rel != NULL) ? g_strconcat (rel, "/", child, NULL) : g_strdup (child);
         g_autofree gchar *child_full = g_build_filename (full, child, NULL);
 
         if (g_file_test (child_full, G_FILE_TEST_IS_DIR))
@@ -2871,12 +2873,13 @@ lrg_asset_manager_save_guid_index (LrgAssetManager  *self,
     keys = g_list_sort (keys, (GCompareFunc) g_strcmp0);
     for (l = keys; l != NULL; l = l->next)
     {
-        const gchar *abs = g_hash_table_lookup (priv->guid_to_path, l->data);
-        gsize        n = priv->project_root != NULL ? strlen (priv->project_root) : 0;
+        const gchar      *abs = g_hash_table_lookup (priv->guid_to_path, l->data);
+        /* project-relative and '/'-separated on every OS, so the index
+         * written on one OS is read on another */
+        g_autofree gchar *rel = lrg_portable_relative_path (priv->project_root, abs);
 
-        if (priv->project_root != NULL && g_str_has_prefix (abs, priv->project_root) &&
-            abs[n] == G_DIR_SEPARATOR)
-            yaml_mapping_set_string_member (assets, l->data, abs + n + 1);
+        if (rel != NULL && *rel != '\0')
+            yaml_mapping_set_string_member (assets, l->data, rel);
         else
             yaml_mapping_set_string_member (assets, l->data, abs);
     }

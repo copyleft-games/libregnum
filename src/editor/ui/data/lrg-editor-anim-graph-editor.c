@@ -85,6 +85,7 @@
 #include <string.h>
 #include <raylib.h>
 #include <rlgl.h>
+#include "../../../lrg-portable-private.h"
 
 #define INSTALLED_KEY     "lrg-editor-anim-installed"
 #define ANY_ID            LRG_EDITOR_ANIM_GRAPH_ANY_STATE
@@ -1029,7 +1030,7 @@ collect_models (const gchar *root,
 		if (g_file_test (child, G_FILE_TEST_IS_DIR))
 			collect_models (root, child, out, depth + 1);
 		else if (g_str_has_suffix (name, ".glb") || g_str_has_suffix (name, ".gltf"))
-			g_ptr_array_add (out, g_strdup (child + strlen (root) + 1));
+			g_ptr_array_add (out, lrg_portable_data_path (g_strdup (child + strlen (root) + 1)));
 	}
 }
 

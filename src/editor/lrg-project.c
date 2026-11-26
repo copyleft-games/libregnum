@@ -13,6 +13,7 @@
 #include "../physics/lrg-physics-layers.h"
 #include <yaml-glib.h>
 #include <string.h>
+#include "../lrg-portable-private.h"
 
 struct _LrgProject
 {
@@ -506,7 +507,7 @@ lrg_project_relativize (LrgProject  *self,
 {
 	g_autofree gchar *root = NULL;
 	g_autofree gchar *abs = NULL;
-	gsize             len;
+	g_autofree gchar *rel = NULL;
 
 	g_return_val_if_fail (LRG_IS_PROJECT (self), NULL);
 	g_return_val_if_fail (path != NULL, NULL);
@@ -516,12 +517,13 @@ lrg_project_relativize (LrgProject  *self,
 
 	root = g_canonicalize_filename (self->root, NULL);
 	abs = g_canonicalize_filename (path, root);
-	len = strlen (root);
 
-	/* Inside the root: strip "root/" */
-	if (g_str_has_prefix (abs, root) && abs[len] == G_DIR_SEPARATOR)
-		return g_strdup (abs + len + 1);
-	if (g_strcmp0 (abs, root) == 0)
+	/* Inside the root: strip "root/", '/'-separated on every OS (the
+	 * result is written into project data) */
+	rel = lrg_portable_relative_path (root, abs);
+	if (rel != NULL && *rel != '\0')
+		return g_steal_pointer (&rel);
+	if (rel != NULL)
 		return g_strdup (".");
 	return g_strdup (path);
 }

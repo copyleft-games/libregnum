@@ -49,6 +49,7 @@
 #include "../lrg-enums.h"
 #include <math.h>
 #include <string.h>
+#include "../lrg-portable-private.h"
 
 /* ==========================================================================
  * Parameter helpers
@@ -1138,11 +1139,11 @@ legacy_guid_for (LrgEditorServer *server,
                  const gchar     *full)
 {
 	g_autofree gchar *base = project_dir_of (server);
-	g_autofree gchar *prefix = g_strconcat (base, G_DIR_SEPARATOR_S, NULL);
+	g_autofree gchar *rel = lrg_portable_relative_path (base, full);
 	g_autofree gchar *name = NULL;
 
-	if (g_str_has_prefix (full, prefix))
-		return lrg_asset_meta_compute_legacy_guid (full + strlen (prefix));
+	if (rel != NULL && *rel != '\0')
+		return lrg_asset_meta_compute_legacy_guid (rel);
 	name = g_path_get_basename (full);
 	return lrg_asset_meta_compute_legacy_guid (name);
 }

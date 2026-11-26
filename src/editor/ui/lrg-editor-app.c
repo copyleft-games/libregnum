@@ -57,6 +57,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include "../../lrg-portable-private.h"
 
 #define AUTOSAVE_DIR          ".lrg-editor/autosave"
 #define PROBLEMS_DEBOUNCE     (0.4)
@@ -749,11 +750,14 @@ editor_app_project_path (LrgEditorApp *self,
 
 	if (path == NULL)
 		return NULL;
-	if (g_path_is_absolute (path))
-		return g_strdup (path);
 
+	/* Canonical, so one file has one spelling: editors and panels are
+	 * found again by path, and on Windows "dir\\a/b" and "dir\\a\\b" (or
+	 * "a/../b") would otherwise open a second editor on the same file. */
+	if (g_path_is_absolute (path))
+		return g_canonicalize_filename (path, NULL);
 	base = editor_app_base_dir (self);
-	return (base != NULL) ? g_build_filename (base, path, NULL) : g_canonicalize_filename (path, NULL);
+	return g_canonicalize_filename (path, base);
 }
 
 gchar *
@@ -761,16 +765,19 @@ editor_app_relative_path (LrgEditorApp *self,
                           const gchar  *path)
 {
 	const gchar *base = editor_app_base_dir (self);
-	gsize        len;
+	gchar       *rel;
 
 	if (path == NULL)
 		return NULL;
 	if (base == NULL || !g_path_is_absolute (path))
 		return g_strdup (path);
 
-	len = strlen (base);
-	if (g_str_has_prefix (path, base) && path[len] == G_DIR_SEPARATOR)
-		return g_strdup (path + len + 1);
+	/* A project-relative path is data (levels, project files): '/' on
+	 * every OS, so a project saved on Windows opens elsewhere. */
+	rel = lrg_portable_relative_path (base, path);
+	if (rel != NULL && *rel != '\0')
+		return rel;
+	g_free (rel);
 	return g_strdup (path);
 }
 

@@ -39,6 +39,7 @@
 #include "../../../paint/lrg-paint-list.h"
 #include <graylib.h>
 #include <string.h>
+#include "../../../lrg-portable-private.h"
 
 #define ASSET_MIME "application/x-lrg-asset"
 
@@ -143,32 +144,13 @@ sound_folder (LrgEditorSoundBankEditor *self)
 	return g_build_filename (dir, base, NULL);
 }
 
-/* @path relative to the directory @from ("../x/y.wav" when outside). */
+/* @path relative to the directory @from ("../x/y.wav" when outside),
+ * '/'-separated on every OS: it is written into the bank. */
 static gchar *
 relative_to (const gchar *from,
              const gchar *path)
 {
-	g_autoptr(GFile) a = g_file_new_for_path (from);
-	g_autoptr(GFile) b = g_file_new_for_path (path);
-	g_autofree gchar *ca = g_file_get_path (a);
-	g_autofree gchar *cb = g_file_get_path (b);
-	g_auto(GStrv)     pa = g_strsplit (ca, G_DIR_SEPARATOR_S, -1);
-	g_auto(GStrv)     pb = g_strsplit (cb, G_DIR_SEPARATOR_S, -1);
-	GString          *out = g_string_new (NULL);
-	guint             i = 0, j;
-
-	while (pa[i] != NULL && pb[i] != NULL && g_strcmp0 (pa[i], pb[i]) == 0)
-		i++;
-	for (j = i; pa[j] != NULL; j++)
-		if (*pa[j] != '\0')
-			g_string_append (out, ".." G_DIR_SEPARATOR_S);
-	for (j = i; pb[j] != NULL; j++)
-	{
-		g_string_append (out, pb[j]);
-		if (pb[j + 1] != NULL)
-			g_string_append_c (out, G_DIR_SEPARATOR);
-	}
-	return g_string_free (out, FALSE);
+	return lrg_portable_relative_to (from, path);
 }
 
 /* An asset path from a drop (project-relative or absolute) as a sound

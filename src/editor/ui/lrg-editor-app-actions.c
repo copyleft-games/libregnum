@@ -26,6 +26,7 @@
 #include "../../ui/lrg-menu.h"
 #include <math.h>
 #include <string.h>
+#include "../../lrg-portable-private.h"
 
 #define APP(p) LRG_EDITOR_APP (p)
 
@@ -777,7 +778,7 @@ static void
 a_docs (gpointer data)
 {
 	LrgEditorApp     *self = APP (data);
-	g_autofree gchar *exe = g_file_read_link ("/proc/self/exe", NULL);
+	g_autofree gchar *exe = lrg_portable_exe_path ();
 	g_autofree gchar *exe_dir = (exe != NULL) ? g_path_get_dirname (exe) : NULL;
 	g_autofree gchar *tree = (exe_dir != NULL)
 	                         ? g_build_filename (exe_dir, "..", "..", "docs", "editor", "overview.org", NULL)

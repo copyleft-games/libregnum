@@ -73,6 +73,7 @@
 #include <string.h>
 #include <raylib.h>
 #include <rlgl.h>
+#include "../../../lrg-portable-private.h"
 
 #define INSTALLED_KEY       "lrg-editor-skeleton2d-installed"
 #define ASSET_MIME          "application/x-lrg-asset"
@@ -2063,30 +2064,12 @@ lrg_editor_skeleton2d_editor_remove_skin (LrgEditorSkeleton2DEditor  *self,
 }
 
 /* @path relative to the folder @dir, with ".." segments where needed
- * (both absolute). */
+ * (both absolute); '/'-separated on every OS: it is written into the rig. */
 static gchar *
 relative_to (const gchar *dir,
              const gchar *path)
 {
-	g_autofree gchar *cd = g_canonicalize_filename (dir, NULL);
-	g_autofree gchar *cp = g_canonicalize_filename (path, NULL);
-	g_auto(GStrv)     a = g_strsplit (cd, G_DIR_SEPARATOR_S, -1);
-	g_auto(GStrv)     b = g_strsplit (cp, G_DIR_SEPARATOR_S, -1);
-	GString          *out = g_string_new (NULL);
-	guint             i = 0, j;
-
-	while (a[i] != NULL && b[i] != NULL && g_str_equal (a[i], b[i]))
-		i++;
-	for (j = i; a[j] != NULL; j++)
-		if (*a[j] != '\0')
-			g_string_append (out, "../");
-	for (j = i; b[j] != NULL; j++)
-	{
-		g_string_append (out, b[j]);
-		if (b[j + 1] != NULL)
-			g_string_append_c (out, '/');
-	}
-	return g_string_free (out, FALSE);
+	return lrg_portable_relative_to (dir, path);
 }
 
 /* @image made relative to the rig's folder (absolute and project-relative
