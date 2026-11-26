@@ -383,6 +383,18 @@ test_canvas (EditorAppFixture *f,
 	g_assert_true (lrg_sequence_curve_get_key (curve, 1, &key));
 	g_assert_cmpint (key.tangent_mode, ==, LRG_SEQUENCE_TANGENT_CONSTANT);
 
+	/* ...and its value through the value field: the spin box's
+	 * value-changed passes no value, so the panel must read the field (a
+	 * handler that took one read whatever was in the register) */
+	lrg_spin_box_set_value (LRG_SPIN_BOX (find (f, "sequencer-key-value")), 3.5);
+	efx_frame (f);
+	curve = lrg_sequence_track_get_channel_curve (lrg_sequence_get_track (lrg_editor_sequencer_panel_get_sequence (panel),
+	                                                                      0), LRG_SEQUENCE_CHANNEL_LOCATION_X);
+	g_assert_true (lrg_sequence_curve_get_key (curve, 1, &key));
+	g_assert_cmpfloat_with_epsilon (key.value, 3.5f, 1e-5f);
+	g_assert_true (lrg_editor_sequencer_panel_undo (panel));
+	efx_frame (f);
+
 	/* 3. Double click on empty curve space adds a key on the curve */
 	n = lrg_sequence_curve_get_n_keys (curve);
 	g_assert_true (lrg_editor_sequencer_panel_get_curve_point (panel, 1, 0, &x, &y));

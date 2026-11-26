@@ -1578,7 +1578,6 @@ on_slice_alpha (LrgWidget *chip,
 
 static void
 on_frame_field (LrgSpinBox *spin,
-                gdouble     value,
                 gpointer    user_data)
 {
 	LrgEditorSpriteEditor *self = LRG_EDITOR_SPRITE_EDITOR (user_data);
@@ -1673,9 +1672,10 @@ on_clip_remove (LrgWidget *chip,
 
 static void
 on_fps (LrgSpinBox *spin,
-        gdouble     value,
         gpointer    user_data)
 {
+	/* LrgSpinBox::value-changed passes no value: read it */
+	gdouble value = lrg_spin_box_get_value (spin);
 	LrgEditorSpriteEditor *self = LRG_EDITOR_SPRITE_EDITOR (user_data);
 	g_autoptr(GError)      error = NULL;
 
@@ -1738,9 +1738,10 @@ on_strip_action (LrgWidget *chip,
 
 static void
 on_duration (LrgSpinBox *spin,
-             gdouble     value,
              gpointer    user_data)
 {
+	/* LrgSpinBox::value-changed passes no value: read it */
+	gdouble value = lrg_spin_box_get_value (spin);
 	LrgEditorSpriteEditor *self = LRG_EDITOR_SPRITE_EDITOR (user_data);
 	g_autoptr(GError)      error = NULL;
 

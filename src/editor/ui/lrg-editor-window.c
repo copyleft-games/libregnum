@@ -586,7 +586,6 @@ add_tool_buttons (LrgEditorWindow     *self,
 /* A snap increment was edited in the toolbar. */
 static void
 on_snap_changed (LrgSpinBox *spin,
-                 gdouble     value,
                  gpointer    user_data)
 {
 	LrgEditorWindow *self = LRG_EDITOR_WINDOW (user_data);
