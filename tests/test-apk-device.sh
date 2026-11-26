@@ -18,7 +18,9 @@
 # `make ANDROID=1 test-device' (on the host, where adb sees the device):
 #
 #   1. installs the APK and starts its NativeActivity
-#   2. after --wait seconds the process is still alive
+#   2. after --wait seconds the process is still alive and its activity
+#      has the window focus (a finished activity leaves a cached process
+#      behind and the launcher on screen, which steps 2-4 alone would pass)
 #   3. logcat holds no warning, error or fatal line from the app's GLib log
 #      domains (Libregnum-*, GLib*, Graylib*, yaml-glib: the platform layer
 #      sends GLib's log to logcat under the domain as tag)
@@ -111,6 +113,14 @@ then
 	bs_pass "running after ${wait_seconds}s (pid ${pid})"
 else
 	bs_failed "running after ${wait_seconds}s" "$(adb logcat -d -b crash | tail -n 40)"
+fi
+focus="$(adb shell dumpsys window 2> /dev/null | tr -d '\r' | grep -m1 -E 'mCurrentFocus=' || true)"
+if [[ "${focus}" == *"${package}/"* ]]
+then
+	bs_pass 'the activity has the window focus'
+else
+	bs_failed 'the activity has the window focus' \
+		"focus: ${focus:-none}$(printf '\n')$(adb logcat -d -v brief | tail -n 40)"
 fi
 
 # 3. no GLib warning or worse from the app ("brief" format: W/Tag( pid): ...)
