@@ -77,6 +77,7 @@ TEST_SOURCES := \
 	test-random-stream.c \
 	test-cpu-affinity.c \
 	test-platform.c \
+	test-args-file.c \
 	test-timer-manager.c \
 	test-replay.c \
 	test-rollback.c \
@@ -542,6 +543,7 @@ BUILD_SYSTEM_SCRIPTS := \
 	$(CURDIR)/test-cross-artifacts.sh \
 	$(CURDIR)/test-apk-layout.sh \
 	$(CURDIR)/test-apk-device.sh \
+	$(CURDIR)/test-emulator-args.sh \
 	$(CURDIR)/test-shader-glsl.sh \
 	$(PROJECT_ROOT)/build-aux/android/mkapk.sh \
 	$(PROJECT_ROOT)/build-aux/android/emulator-test.sh \
@@ -556,6 +558,7 @@ check-build-system:
 	@bash $(CURDIR)/test-build-targets.sh
 	@bash $(CURDIR)/test-build-clean.sh
 	@bash $(CURDIR)/test-build-dispatch.sh
+	@bash $(CURDIR)/test-emulator-args.sh
 
 # libregnum and the bundled graylib share MAJOR.MINOR (AGENTS.md, Versioning)
 check-version-lockstep:

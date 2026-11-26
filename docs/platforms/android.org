@@ -192,6 +192,56 @@ make ANDROID=1 test-emulator APK_GAME=... EMULATOR_CACHE=~/.cache/lrg-emulator  
 build-aux/android/emulator-test.sh --help
 #+end_src
 
+*** A game's own checks on the emulator
+:PROPERTIES:
+:CUSTOM_ID: emulator-device-script
+:END:
+=tests/test-apk-device.sh= asks four things of any game: it installs, it is still running with its activity in front (=mCurrentFocus= names the package; a finished activity leaves a cached process behind and the launcher on screen, which the other checks alone would pass), logcat holds no GLib warning, and the screen is not one colour. A game with more to check (data copied onto the device first, input sent, several screenshots) passes its own script to =emulator-test.sh=:
+
+| Option | Meaning |
+|--------+---------|
+| =--device-script FILE= | runs in place of =tests/test-apk-device.sh= on the booted emulator, with =adb= on =PATH= and connected; it gets =--apk=, =--package=, =--wait= and =--shot-dir= and its exit status is the run's |
+| =--shot-dir DIR= | the directory the script writes its screenshots (and logs) to; mounted read-write (default =<apk>-emulator/= next to the APK) |
+| =--mount DIR= | a host directory the script reads, mounted read-only at the same path (repeatable): the game's own data to =adb push=, which never belongs in the APK |
+| =--data-size SIZE= | the emulator's data partition (default =6G=); data pushed into the app's storage needs room |
+| =--dry-run= | checks the arguments and prints the container command, without downloading, building or booting anything (no =/dev/kvm= needed); =tests/test-emulator-args.sh= runs it |
+
+#+begin_src sh
+build-aux/android/emulator-test.sh --apk build/release-android-arm64/apk/game.apk \
+    --package org.example.game --device-script tests/android/emulator-run.sh \
+    --mount ~/game-data --data-size 24G --shot-dir build/emulator-shots
+#+end_src
+
+The input a script sends goes through =adb shell input= (=tap X Y=, =swipe X1 Y1 X2 Y2 MS=, =keyevent=, =text=); the emulator's screen is 1080x1920 at 420 dpi, and a landscape game sees it as 1920x1080.
+
+** Command-line arguments: lrg_args_file_merge()
+:PROPERTIES:
+:CUSTOM_ID: args-file
+:END:
+The NativeActivity glue calls the game's =main()= with =argv[0]= alone, so a game that takes options on the desktop gets none on Android. =lrg_args_file_merge()= (=core/lrg-args-file.h=) reads them from a text file and splices them in after =argv[0]=; a natural place is the app's external files directory, which needs no permission and which =adb push= (and =make ANDROID=1 apk-push=) and file managers reach:
+
+#+begin_src c
+int
+main (int argc, char **argv)
+{
+	g_autoptr(GError) error = NULL;
+	g_autofree gchar *args_path = NULL;
+	const gchar *files;
+
+	lrg_platform_prepare (NULL);
+	files = lrg_platform_get_external_data_dir ();
+	if (files != NULL)
+	{
+		args_path = g_build_filename (files, "game.args", NULL);
+		if (!lrg_args_file_merge (args_path, &argc, &argv, &error))
+			g_warning ("%s", error->message);    /* the game still starts */
+	}
+	return game_main (argc, argv);
+}
+#+end_src
+
+The file holds one or more arguments per line, split with shell quoting (=--name "two words"=); blank lines and =#= comments are skipped. A missing file adds nothing; a malformed one (an unterminated quote) is an error naming the line, and the arguments stay as they were. The file's arguments come before the real command line's, so on a desktop the command line wins over the file for an option given in both.
+
 ** Licensing
 :PROPERTIES:
 :CUSTOM_ID: licensing
