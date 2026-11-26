@@ -169,7 +169,7 @@ All goals on the command line become one =make <goals>= in one container, in the
 
 #+begin_src sh
 podman run --rm \
-    --userns=keep-id \                       # output files belong to you
+    --userns=keep-id \                       # output files belong to you (not as root)
     --security-opt label=disable \           # no SELinux relabelling of the checkout
     -v $ROOT:$ROOT \                         # the checkout, at the same path
     -v $GIT_COMMON_DIR:$GIT_COMMON_DIR:ro \  # only in a worktree (see below)
@@ -479,7 +479,7 @@ The recipe's output is in the =make <switch> container-image= log; every step lo
 :PROPERTIES:
 :CUSTOM_ID: container-permissions
 :END:
-The container runs with =--userns=keep-id= (files it writes are yours) and =--security-opt label=disable= (no SELinux relabelling of the checkout). An engine other than podman needs equivalents in =BUILD_CONTAINER_ARGS=. Wine needs its prefix in a directory you own, hence =build/<type>-windows-amd64/wine=.
+The container runs with =--userns=keep-id= (files it writes are yours) and =--security-opt label=disable= (no SELinux relabelling of the checkout). Run as root (=id -u= is 0, e.g. a CI job running podman inside a privileged container) it leaves =keep-id= out: there is no user to map, and with it podman must copy every image layer with remapped owners, which nested container storage refuses ("creating an ID-mapped copy of layer ...: lchown ...: invalid argument", exit 125). =LRG_CONTAINER_UID= overrides the detected uid and =LRG_CONTAINER_USERNS= the flag itself. An engine other than podman needs equivalents in =BUILD_CONTAINER_ARGS=. Wine needs its prefix in a directory you own, hence =build/<type>-windows-amd64/wine=.
 
 *** A recipe change is not picked up
 :PROPERTIES:
