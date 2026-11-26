@@ -541,6 +541,7 @@ BUILD_SYSTEM_SCRIPTS := \
 	$(CURDIR)/test-native-unchanged.sh \
 	$(CURDIR)/test-cross-artifacts.sh \
 	$(CURDIR)/test-apk-layout.sh \
+	$(CURDIR)/test-mkapk.sh \
 	$(CURDIR)/test-apk-device.sh \
 	$(CURDIR)/test-shader-glsl.sh \
 	$(PROJECT_ROOT)/build-aux/android/mkapk.sh \
@@ -556,6 +557,7 @@ check-build-system:
 	@bash $(CURDIR)/test-build-targets.sh
 	@bash $(CURDIR)/test-build-clean.sh
 	@bash $(CURDIR)/test-build-dispatch.sh
+	@bash $(CURDIR)/test-mkapk.sh
 
 # libregnum and the bundled graylib share MAJOR.MINOR (AGENTS.md, Versioning)
 check-version-lockstep:

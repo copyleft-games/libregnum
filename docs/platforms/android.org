@@ -127,7 +127,10 @@ Output: =build/release-android-arm64/apk/<name>.apk= (=build/debug-android-arm64
 |--------------------+-----------------------------------------+---------------------------------------------|
 | =APK_GAME=         | (required)                              | the game's source file                      |
 | =APK_NAME=         | its basename                            | APK and directory name                      |
-| =APK_ASSETS=       | none                                    | directory packed as =assets/=               |
+| =APK_ASSETS=       | none                                    | directories packed as =assets/= (merged; one path in two of them is an error) |
+| =APK_FORBID_GLOBS= | none                                    | globs no asset path may match (=*.MPQ secret/*=); the build fails naming each match |
+| =APK_KEYSTORE=     | none (debug key)                        | release keystore ([[#signing-release][Signing a release]])  |
+| =APK_KEY_ALIAS=    | none                                    | the key's alias in =APK_KEYSTORE=           |
 | =APK_PACKAGE=      | =org.libregnum.<name>= (=-= → =_=)       | application id                              |
 | =APK_LABEL=        | =APK_NAME=                              | launcher label                              |
 | =APK_VERSION_CODE= | 1                                       | integer version (raise it for each release)  |
@@ -138,7 +141,78 @@ Output: =build/release-android-arm64/apk/<name>.apk= (=build/debug-android-arm64
 :PROPERTIES:
 :CUSTOM_ID: signing
 :END:
-Without =--keystore=, =mkapk.sh= signs with a debug key it creates on first use (=build/<type>-android-arm64/apk/debug.keystore=, password =android=); keep that file, or every rebuild has a new key and =adb install -r= refuses the update. A release is signed with your own keystore: call =mkapk.sh= with =--keystore= and =--ks-pass=, or sign the aligned APK with =apksigner= yourself. Never commit a release keystore.
+Without =--keystore=, =mkapk.sh= signs with a debug key it creates on first use (=build/<type>-android-arm64/apk/debug.keystore=, password =android=); keep that file, or every rebuild has a new key and =adb install -r= refuses the update. A release is signed with your own key ([[#signing-release][Signing a release]]). Never commit a keystore.
+
+*** Signing a release
+:PROPERTIES:
+:CUSTOM_ID: signing-release
+:END:
+Android accepts an update only when it is signed with the same key as the installed app, for the app's whole life: make the key once, back it up outside the checkout, never commit it.
+
+#+begin_src sh
+# once, on the host (keytool from a JDK; Fedora: java-21-openjdk-headless):
+# PKCS12, RSA 4096, valid 10000 days; keytool asks for the password and the
+# certificate's name (or KEYSTORE_DNAME='CN=...,O=...'); refuses to overwrite
+make keystore                       # ~/.local/share/libregnum-android/release.jks, alias "release"
+make keystore KEYSTORE_OUT=~/keys/game.jks KEYSTORE_ALIAS=game
+
+# every release build: the passwords come from the environment, by name
+read -rs APK_KEYSTORE_PASSWORD && export APK_KEYSTORE_PASSWORD
+make ANDROID=1 apk APK_GAME=game.c APK_VERSION_CODE=7 \
+    APK_KEYSTORE=~/.local/share/libregnum-android/release.jks APK_KEY_ALIAS=release
+#+end_src
+
+How the passwords travel: =APK_KEYSTORE_PASSWORD= (and =APK_KEY_PASSWORD=, needed only when the key's password differs; a PKCS12 keystore made by =make keystore= has one password) are environment variables. The container run forwards them as =-e APK_KEYSTORE_PASSWORD= (the name only; podman copies the value), mounts =APK_KEYSTORE= read-only at its own path, and =mkapk.sh= passes =--ks-pass env:APK_KEYSTORE_PASSWORD= to =apksigner=, which reads the variable itself. No command line (=ps=, the make log, the shell history) holds a password, so never put one on make's command line (=APK_KEYSTORE_PASSWORD=x make ...= in the environment is fine; =make ... APK_KEYSTORE_PASSWORD=x= is not: it would land in =MAKEFLAGS= and the container's argv).
+
+=mkapk.sh= directly:
+
+| Option               | Meaning                                                                            |
+|----------------------+------------------------------------------------------------------------------------|
+| =--keystore FILE=    | the keystore; with =--ks-pass-env= it must exist (a release key is never created) |
+| =--ks-key-alias A=   | the key's alias (needed when the keystore holds several keys)                      |
+| =--ks-pass-env VAR=  | keystore password from =VAR= (=apksigner --ks-pass env:VAR=)                       |
+| =--key-pass-env VAR= | key password from =VAR= (default: the keystore's variable)                         |
+| =--ks-pass PASS=     | kept for compatibility and the debug key; on the command line, so not for a release |
+
+=apksigner verify --print-certs <apk>= (in =make ANDROID=1 container-shell=) shows the certificate an APK carries.
+
+*** Forbidden files
+:PROPERTIES:
+:CUSTOM_ID: forbidden-files
+:END:
+=APK_FORBID_GLOBS= (=mkapk.sh --forbid GLOB=, repeatable) names files that must never ship, such as a game's licensed data the player provides at run time or key material; each glob is matched against every staged path relative to =assets/= (=*= also matches =/=, so =*.MPQ= matches at any depth). Any match fails the build and lists every offending path. Several =APK_ASSETS= roots are merged; the same path in two roots is an error naming both, never a silent override.
+
+*** Another project's APK
+:PROPERTIES:
+:CUSTOM_ID: consumer-apk
+:END:
+A project that embeds libregnum builds for =android-arm64= in libregnum's build container through its own =GNUmakefile= (see [[file:../cross-compile.org::#consumers][Consuming the cross builds from another project]]); inside it, its =Makefile= builds libregnum with =$(MAKE) -C deps/libregnum lib=, links its own =libmain.so= and packages it. The profile exports what that needs:
+
+| Variable             | Value                                                                                               |
+|----------------------+-----------------------------------------------------------------------------------------------------|
+| =LRG_APK_LDFLAGS=    | =-shared -Wl,--no-undefined -Wl,-z,max-page-size=16384 -u ANativeActivity_onCreate -Wl,--wrap=fopen= |
+| =LRG_MKAPK=          | =$(LRG_ROOT)/build-aux/android/mkapk.sh= (=--help= lists every option)                              |
+| =LRG_PLATFORM_LIBS=  | =-lEGL -lGLESv3 -landroid -llog -lm -ldl=                                                           |
+| =LRG_TARGET_CFLAGS=  | the NativeActivity glue's include directory                                                         |
+| =CC=, =ANDROID_MIN_API= | the NDK's clang for API 29                                                                       |
+
+#+begin_src makefile
+# in the parent's Makefile, inside the container (LRG_TARGET_OS = android)
+GAME_APK_LIB := build/android/libmain.so
+
+game-apk: libregnum $(GAME_OBJS)
+	$(CC) $(LRG_APK_LDFLAGS) -o $(GAME_APK_LIB) $(GAME_OBJS) \
+		deps/libregnum/build/release-android-arm64/lib/liblibregnum.a \
+		$(GAME_DEP_LIBS) $(LRG_PLATFORM_LIBS)
+	bash $(LRG_MKAPK) --lib $(GAME_APK_LIB) \
+		--out build/android/game.apk --package org.example.game --label Game \
+		--assets data --assets build/android/generated --forbid '*.MPQ' \
+		$(if $(APK_KEYSTORE),--keystore $(APK_KEYSTORE) --ks-pass-env APK_KEYSTORE_PASSWORD) \
+		$(if $(APK_KEY_ALIAS),--ks-key-alias $(APK_KEY_ALIAS)) \
+		--min-sdk $(ANDROID_MIN_API)
+#+end_src
+
+=$(GAME_DEP_LIBS)= is the static GLib stack the game needs (=$(PKG_CONFIG) --libs --static ...= with the profile's =PKG_CONFIG=). For the release key, set =APK_KEYSTORE= in the parent's =GNUmakefile= before including =container.mk= (or add the keystore to =LRG_CONTAINER_RO_MOUNTS= and the password names to =LRG_CONTAINER_ENV=): =container.mk= then mounts it and forwards the password variables, as for libregnum's own =apk=.
 
 *** Manifest
 :PROPERTIES:
@@ -158,6 +232,21 @@ make ANDROID=1 apk-run APK_GAME=examples/game-chocolate-chip-clicker.c      # am
 adb logcat -s libregnum Libregnum-Core
 #+end_src
 
+*** Pushing data to the device
+:PROPERTIES:
+:CUSTOM_ID: apk-push
+:END:
+Data too large for the APK, or that must not ship in it (=APK_FORBID_GLOBS=), goes to the app's external files directory, =/sdcard/Android/data/<package>/files/= (what =getExternalFilesDir()= returns; the app reads and writes it without any permission, and it is removed with the app). =apk-push= runs on the host with =adb=:
+
+#+begin_src sh
+make ANDROID=1 apk-push APK_GAME=game.c PUSH_FILES='~/games/data/Data' PUSH_DEST=client
+# adb shell mkdir -p /sdcard/Android/data/org.libregnum.game/files/client
+# adb push ~/games/data/Data /sdcard/Android/data/org.libregnum.game/files/client/
+make apk-push APK_PACKAGE=org.example.game PUSH_FILES='a.cfg b.cfg'   # a parent's package
+#+end_src
+
+=PUSH_FILES= is one or more files or directories (=adb push= copies directories recursively); =PUSH_DEST= is a directory below =files/= (empty: =files/= itself). The package is =APK_PACKAGE= (derived from =APK_GAME= unless set).
+
 ** Testing
 :PROPERTIES:
 :CUSTOM_ID: testing
@@ -165,6 +254,7 @@ adb logcat -s libregnum Libregnum-Core
 | Goal                          | Where         | Checks                                                              |
 |-------------------------------+---------------+---------------------------------------------------------------------|
 | =make ANDROID=1 test-apk=     | container     | =tests/test-apk-layout.sh=: signature, manifest (package, minSdk, NativeActivity, no code, libraries not extracted, GLES 3.2), =libmain.so= stored, 16 KB aligned in the zip and in its LOAD segments, AArch64, =ANativeActivity_onCreate= exported, only system libraries needed, every listed asset present (and equal to =APK_ASSETS=) |
+| =make test-mkapk= / =make ANDROID=1 test-mkapk= | host / container | =tests/test-mkapk.sh=: merged asset roots, a duplicate path and a forbidden file fail, a release key's password reaches =apksigner= as =env:VAR= and is in no argv (stub build tools, any host); in the container also a real PKCS12 release key with an alias, verified by =apksigner= |
 | =make ANDROID=1 test-shaders= | container     | every built-in shader compiles as GLSL ES 3.00 (and GLSL 3.30)      |
 | =make test= (native)          | host          | =tests/test-platform.c=: data root, extraction (first run, same stamp, new stamp, interrupted run, unsafe paths, bad and missing manifests), the logcat priority mapping |
 | =make ANDROID=1 test-device APK_GAME=...= | host, adb | =tests/test-apk-device.sh= on a phone or emulator adb sees: installs, starts, still running, no GLib warning in logcat, screenshot not blank |

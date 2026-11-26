@@ -38,7 +38,7 @@ BUILD_GIR := 0
 # and friends).  Its prefix lives in the build directory: Wine refuses a
 # new prefix whose parent the user does not own (the container's /tmp), and
 # it is reused.
-LRG_EXEC_WRAPPER ?= $(PROJECT_ROOT)/build-aux/cross/lrg-wine-run
+LRG_EXEC_WRAPPER ?= $(LRG_ROOT)/build-aux/cross/lrg-wine-run
 
 # Test paths Wine cannot run (tests/Makefile passes each as -s PATH -- exact
 # paths -- and `make WINDOWS=1 test' lists them), one group per cause:

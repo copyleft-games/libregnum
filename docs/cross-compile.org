@@ -149,7 +149,7 @@ Cross builds run inside a podman container that has the target's toolchain; the 
 :PROPERTIES:
 :CUSTOM_ID: gnumakefile
 :END:
-GNU make reads =GNUmakefile= before =Makefile=, so every =make= in the checkout starts there. It includes =build-aux/mk/target.mk= (cheap: no pkg-config, no compiler) and then decides:
+GNU make reads =GNUmakefile= before =Makefile=, so every =make= in the checkout starts there. It includes =build-aux/mk/target.mk= (cheap: no pkg-config, no compiler) and =build-aux/mk/dispatch.mk= (which sets =LRG_USE_CONTAINER= and =LRG_DISPATCH=; another project's =GNUmakefile= includes the same two files, see [[#consumers][Consuming the cross builds from another project]]) and then decides:
 
 | Situation                                                    | What happens                                                  |
 |--------------------------------------------------------------+---------------------------------------------------------------|
@@ -159,7 +159,7 @@ GNU make reads =GNUmakefile= before =Makefile=, so every =make= in the checkout 
 | cross target, every goal is host-only (see below)            | =Makefile= on the host; nothing compiles                      |
 | cross target, anything else                                  | =build-aux/mk/container.mk=: the goals run in the container   |
 
-Host-only goals: =clean=, =clean-targets=, =distclean=, =print-target=, =targets=, =help=, =container-image=, =container-shell=, =container-prune=, =print-container= (and the adb goals of the Android APK flow). A cross build cannot skip the root makefile: =make -C tests WINDOWS=1= or =make -f Makefile WINDOWS=1 lib= stops and names =make WINDOWS=1 ...= from the top level, or =NO_BUILD_CONTAINER=1=.
+Host-only goals: =clean=, =clean-targets=, =distclean=, =print-target=, =targets=, =help=, =container-image=, =container-shell=, =container-prune=, =print-container= (and the Android goals that run on the host: =apk-install=, =apk-run=, =apk-push=, =keystore=, =test-device=, =test-emulator=). A cross build cannot skip the root makefile: =make -C tests WINDOWS=1= or =make -f Makefile WINDOWS=1 lib= stops and names =make WINDOWS=1 ...= from the top level, or =NO_BUILD_CONTAINER=1=.
 
 *** The container run
 :PROPERTIES:
@@ -260,6 +260,84 @@ A prebuilt image must have been built from the same recipe; the build does not c
 
 Common to all: =make gcc pkgconf-pkg-config glib2-devel python3 git-core rsync=. On an image-based host (Silverblue and friends) these belong in the image, which is why the container is the default.
 
+** Consuming the cross builds from another project
+:PROPERTIES:
+:CUSTOM_ID: consumers
+:END:
+A project that embeds libregnum (as a submodule, e.g. =deps/libregnum=) can build itself for the same targets in the same images: its own =GNUmakefile= includes libregnum's =target.mk=, =dispatch.mk= and =container.mk=, exactly as libregnum's does. The image is libregnum's (same recipe, same hash, same tag), so a parent never builds an image of its own and shares the one libregnum already built.
+
+*** The parent's GNUmakefile
+:PROPERTIES:
+:CUSTOM_ID: consumer-gnumakefile
+:END:
+A complete example, for a project =game/= with libregnum in =deps/libregnum= and its real build in =Makefile=:
+
+#+begin_src makefile
+# GNUmakefile - game: native here, cross targets in libregnum's containers
+PROJECT_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
+
+# libregnum's checkout: the submodule, or another one (a worktree falling
+# back to the main checkout's submodule); target.mk sets LRG_ROOT itself
+# when it is left out
+LRG_ROOT := $(PROJECT_ROOT)/deps/libregnum
+
+# This project's goals that never compile: they run on the host even for
+# a cross target (set before dispatch.mk)
+LRG_EXTRA_HOST_SAFE_GOALS := help distclean apk-install apk-push
+
+# Data outside the tree the build reads, and the names (never the values)
+# of environment variables the build needs inside the container
+LRG_CONTAINER_EXTRA_MOUNTS := $(HOME)/game-data
+LRG_CONTAINER_ENV := GAME_BUILD_ID
+
+include $(LRG_ROOT)/build-aux/mk/target.mk
+include $(LRG_ROOT)/build-aux/mk/dispatch.mk
+
+ifeq ($(LRG_DISPATCH),1)
+    # the goals run as one `make <goals>' in libregnum's image
+    # (container.mk reads the target's profile)
+    .DEFAULT_GOAL := all
+    include $(LRG_ROOT)/build-aux/mk/container.mk
+else
+    # native, NO_BUILD_CONTAINER=1, host-safe goals, or the inner make
+    # inside the container (LRG_IN_CONTAINER=1)
+    include $(PROJECT_ROOT)/Makefile
+    ifeq ($(LRG_USE_CONTAINER),1)
+        include $(LRG_ROOT)/build-aux/mk/container.mk
+    endif
+endif
+#+end_src
+
+=make ANDROID=1=, =make WINDOWS=1 DEBUG=1 all test= and the rest then behave as in libregnum: one container run per invocation, the parent's tree mounted at the same path, =MAKEFLAGS= forwarded. =make ANDROID=1 print-container=, =container-image=, =container-shell= and =container-prune= work from the parent too.
+
+*** Building libregnum from the inner make
+:PROPERTIES:
+:CUSTOM_ID: consumer-inner-make
+:END:
+Inside the container the parent's =Makefile= builds libregnum for the target with a sub-make; =LRG_IN_CONTAINER=1= (set by the run) lets libregnum's =config.mk= accept it, and =LRG_BUILD_SUFFIX= comes from the environment, so libregnum lands in its own =build/<type>-<target>/=:
+
+#+begin_src makefile
+libregnum:
+	$(MAKE) -C deps/libregnum LRG_TARGET=$(LRG_TARGET) lib
+#+end_src
+
+(=ANDROID=1= and the other switches are in =MAKEFLAGS= already, so =$(MAKE) -C deps/libregnum lib= is enough.) An Android parent links its own =libmain.so= with the profile's =LRG_APK_LDFLAGS= and packages it with =$(LRG_MKAPK)= (=build-aux/android/mkapk.sh=); see [[file:platforms/android.org::#consumer-apk][Another project's APK]]. The target's toolchain is the profile's: after =include $(LRG_TARGET_PROFILE)= (the parent's =Makefile= may include it too when =LRG_IS_CROSS= is =1=) =CC=, =AR=, =PKG_CONFIG= and =LRG_PLATFORM_LIBS= are set, and the profile's paths into libregnum (the cross wrappers) go through =LRG_ROOT=, not =PROJECT_ROOT=.
+
+*** Variables for a parent
+:PROPERTIES:
+:CUSTOM_ID: consumer-variables
+:END:
+| Variable                     | Default                         | Meaning                                                                                                         |
+|------------------------------+---------------------------------+-----------------------------------------------------------------------------------------------------------------|
+| =LRG_ROOT=                   | libregnum's directory (=target.mk='s =../..=) | where the profiles, the container recipes (the build context) and the cross wrappers are                          |
+| =LRG_CONTAINER_MOUNT_ROOT=   | =PROJECT_ROOT=                  | the tree mounted at its own path; its git directory is checked as libregnum's is                               |
+| =LRG_CONTAINER_EXTRA_MOUNTS= | (empty)                         | more host directories, each mounted read-write at its own path; =LRG_ROOT= is added when outside the mount root |
+| =LRG_CONTAINER_RO_MOUNTS=    | (empty; =APK_KEYSTORE= when set) | host files or directories mounted read-only at their own path                                                  |
+| =LRG_CONTAINER_ENV=          | (empty)                         | names of environment variables passed in with =-e NAME=: the engine copies the value, no command line shows it   |
+| =LRG_EXTRA_HOST_SAFE_GOALS=  | (empty)                         | the parent's goals that never compile (set before =dispatch.mk=)                                               |
+
+Every git directory of a mounted tree that lies outside the mounts (the main checkout's =.git= of a worktree, of the parent or of libregnum) is mounted read-only at the same path, as for libregnum itself. With all of them left at their defaults, libregnum's own runs are unchanged (=tests/test-build-dispatch.sh= checks both, with a throwaway parent).
+
 ** Per-target notes
 :PROPERTIES:
 :CUSTOM_ID: per-target-notes
@@ -288,7 +366,7 @@ What every cross target leaves out: GObject Introspection (=g-ir-scanner= runs t
 |--------+--------|
 | =tests/test-build-targets.sh= | target resolution for every spelling (=WINDOWS=1=, =LRG_TARGET==, legacy =CROSS==) and host (=LRG_HOST_TARGET=), build directories, dependency output paths and flags, profile defaults, refused requests, subdirectory makefiles agreeing with the root, goals that work without a toolchain |
 | =tests/test-build-clean.sh= | what =clean=, a cross =clean=, =clean-targets= and =distclean= remove, in a scratch project |
-| =tests/test-build-dispatch.sh= | the container command line, through a stub =CONTAINER_ENGINE= that records its arguments: one run for all goals, mounts, user namespace, =MAKEFLAGS= without the jobserver, values with spaces, image tags following the recipe, prebuilt images, extra arguments, per-target platforms, the worktree's git directory, prune, refused bypasses |
+| =tests/test-build-dispatch.sh= | the container command line, through a stub =CONTAINER_ENGINE= that records its arguments: one run for all goals, mounts, user namespace, =MAKEFLAGS= without the jobserver, values with spaces, image tags following the recipe, prebuilt images, extra arguments, per-target platforms, the worktree's git directory, prune, refused bypasses, and a throwaway parent project including the mk files (its mounts, extra mounts, environment by name, its host-safe goals, libregnum's image, the inner make building libregnum) |
 | ShellCheck | every build-system script (=build-aux/cross=, =build-aux/containers=, =build-aux/android=, the tests) |
 | =tests/test-native-unchanged.sh= | the native build's commands against a base ref (below) |
 
@@ -332,7 +410,7 @@ One goal per target runs everything above in order, each step its own make (so =
 |------+------|
 | =make test-cross-arm64= | =ARM64=1 all=, =test= (qemu), =examples=, =test-cross-artifacts= |
 | =make test-cross-windows= | =WINDOWS=1 all=, =test= (Wine), =examples=, =test-cross-artifacts= |
-| =make test-cross-android= | =ANDROID=1 all=, =test-cross-artifacts=, =test-shaders=, =test-apk= with =TEST_CROSS_APK_GAME= (default the clicker example) |
+| =make test-cross-android= | =ANDROID=1 all=, =test-cross-artifacts=, =test-shaders=, =test-apk= with =TEST_CROSS_APK_GAME= (default the clicker example), =test-mkapk= (=mkapk.sh= with the real build tools) |
 | =make test-cross= | the three, one after another |
 
 A full =make test-cross= takes a while (the arm64 unit tests under qemu alone run for most of an hour); run the one target a change touches.

@@ -183,6 +183,19 @@ dispatch ARM64=1 lib > /dev/null
 bs_not_contains 'arm64 image uses the host arch' '--platform' "$(run_args)"
 bs_contains 'arm64 suffix' 'LRG_BUILD_SUFFIX=-arm64' "$(run_args)"
 
+echo '== a release keystore'
+ks_dir="${SCRATCH}/keys"
+mkdir -p -- "${ks_dir}"
+: > "${ks_dir}/release.jks"
+APK_KEYSTORE_PASSWORD='s3cr3t-keystore-pw' dispatch ANDROID=1 "APK_KEYSTORE=${ks_dir}/release.jks" \
+	APK_KEY_ALIAS=release apk APK_GAME=examples/game-chocolate-chip-clicker.c > /dev/null
+args="$(run_args)"
+bs_contains 'keystore mounted read-only' "$(printf -- '-v\n%s:%s:ro' "${ks_dir}/release.jks" "${ks_dir}/release.jks")" "${args}"
+bs_contains 'passwords forwarded by name' "$(printf -- '-e\nAPK_KEYSTORE_PASSWORD\n-e\nAPK_KEY_PASSWORD')" "${args}"
+bs_not_contains 'password not on the command line' 's3cr3t-keystore-pw' "$(logged)"
+dispatch ANDROID=1 apk APK_GAME=examples/game-chocolate-chip-clicker.c > /dev/null
+bs_not_contains 'no keystore: no password variables' 'APK_KEYSTORE_PASSWORD' "$(run_args)"
+
 echo '== the git directory of a worktree'
 common="$(cd "${BS_ROOT}" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
 dispatch WINDOWS=1 lib > /dev/null
@@ -194,13 +207,14 @@ else
 fi
 
 echo '== nothing is dispatched'
-for goals in clean print-target targets help print-container test-device test-emulator
+for goals in clean print-target targets help print-container test-device test-emulator keystore apk-push
 do
-	# clean only as a dry run: really running it would delete the
-	# checkout's own windows build
-	if [[ "${goals}" == 'clean' ]]
+	# clean, keystore and apk-push only as dry runs: they would delete
+	# the checkout's own windows build, ask for a password, or talk to
+	# a device
+	if [[ "${goals}" == 'clean' || "${goals}" == 'keystore' || "${goals}" == 'apk-push' ]]
 	then
-		dispatch -n WINDOWS=1 clean > /dev/null || true
+		dispatch -n WINDOWS=1 "${goals}" > /dev/null || true
 	else
 		dispatch WINDOWS=1 "${goals}" > /dev/null || true
 	fi
@@ -224,6 +238,81 @@ STUB_IMAGES="${current} localhost/libregnum-build-windows-amd64:0123456789ab" \
 bs_eq 'prune removes one image' 1 "$(calls rmi)"
 bs_contains 'prune removes the old image' 'localhost/libregnum-build-windows-amd64:0123456789ab' "$(logged)"
 bs_not_contains 'prune keeps the current image' "$(printf 'rmi\n%s' "${current}")" "$(logged)"
+
+echo '== a parent project reuses the cross builds'
+# A throwaway parent with libregnum outside its tree (as in a worktree that
+# falls back to the main checkout's submodule): its GNUmakefile is the
+# example in docs/cross-compile.org, "Consuming the cross builds from
+# another project"
+parent="${SCRATCH}/parent"
+outside="${SCRATCH}/outside-data"
+mkdir -p -- "${parent}" "${outside}"
+# shellcheck disable=SC2016
+sed -e "s|@LRG_ROOT@|${BS_ROOT}|" > "${parent}/GNUmakefile" <<'MKEOF'
+PROJECT_ROOT := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
+LRG_ROOT := @LRG_ROOT@
+LRG_EXTRA_HOST_SAFE_GOALS := parent-help
+include $(LRG_ROOT)/build-aux/mk/target.mk
+include $(LRG_ROOT)/build-aux/mk/dispatch.mk
+ifeq ($(LRG_DISPATCH),1)
+    .DEFAULT_GOAL := all
+    include $(LRG_ROOT)/build-aux/mk/container.mk
+else
+    include $(PROJECT_ROOT)/Makefile
+    ifeq ($(LRG_USE_CONTAINER),1)
+        include $(LRG_ROOT)/build-aux/mk/container.mk
+    endif
+endif
+MKEOF
+# shellcheck disable=SC2016
+printf '%s\n' '.PHONY: all parent-help inner-libregnum' \
+	'all:' '	@echo parent-all' \
+	'parent-help:' '	@echo parent-help' \
+	'inner-libregnum:' \
+	'	@$(MAKE) -s -C $(LRG_ROOT) -f GNUmakefile -f $(AUDIT) lrg-audit-vars LRG_AUDIT_VARS="BUILDDIR LRG_BUILD_SUFFIX" PKG_CONFIG=: LRG_TOOLCHAIN_CHECK=true' \
+	> "${parent}/Makefile"
+printf '%s' "${BS_AUDIT_MK}" > "${SCRATCH}/audit.mk"
+
+# parent ARGS... -- dispatch from the parent, like dispatch above
+parent () {
+	: > "${STUB_LOG}"
+	bs_make -s -C "${parent}" CONTAINER_ENGINE="${STUB}" "${AMD}" "$@" 2>&1
+}
+
+LRG_TEST_SECRET='s3cr3t-not-on-argv' parent ANDROID=1 \
+	"LRG_CONTAINER_EXTRA_MOUNTS=${outside}" 'LRG_CONTAINER_ENV=LRG_TEST_SECRET LRG_TEST_OTHER' all > /dev/null
+args="$(run_args)"
+bs_eq 'parent: one run' 1 "$(calls run)"
+bs_contains 'parent: its tree mounted at the same path' "$(printf -- '-v\n%s:%s' "${parent}" "${parent}")" "${args}"
+bs_contains 'parent: runs in its directory' "$(printf -- '-w\n%s' "${parent}")" "${args}"
+bs_contains 'parent: libregnum outside it is mounted' "$(printf -- '-v\n%s:%s\n' "${BS_ROOT}" "${BS_ROOT}")" "${args}"
+bs_contains 'parent: extra mount' "$(printf -- '-v\n%s:%s\n' "${outside}" "${outside}")" "${args}"
+bs_contains 'parent: env forwarded by name' "$(printf -- '-e\nLRG_TEST_SECRET\n-e\nLRG_TEST_OTHER\n')" "${args}"
+bs_not_contains 'parent: env value not on the command line' 's3cr3t-not-on-argv' "$(logged)"
+bs_contains 'parent: suffix handed in' 'LRG_BUILD_SUFFIX=-android-arm64' "${args}"
+bs_eq 'parent: image, make and the goal come last' "$(printf 'make\nall')" "$(tail -n 2 <<< "${args}")"
+if [[ -n "${common}" && "${common}" != "${BS_ROOT}"/* ]]
+then
+	bs_contains "parent: libregnum's git dir mounted read-only" "${common}:${common}:ro" "${args}"
+fi
+parent_tag="$(bs_make -s -C "${parent}" CONTAINER_ENGINE="${STUB}" "${AMD}" ANDROID=1 print-container 2>/dev/null \
+	| sed -n 's/^Image: *//p')"
+bs_eq "parent: the image is libregnum's" "$(tag_of ANDROID=1)" "${parent_tag}"
+parent ANDROID=1 parent-help > /dev/null
+bs_eq 'parent: its own host-safe goal stays on the host' 0 "$(calls run)"
+parent ANDROID=1 print-target > /dev/null || true
+bs_eq "parent: libregnum's host-safe goals stay on the host" 0 "$(calls run)"
+parent > /dev/null
+bs_eq 'parent: native, no engine' '' "$(logged)"
+dispatch WINDOWS=1 lib > /dev/null
+bs_eq 'libregnum: no extra mount or env' 0 \
+	"$(run_args | grep -cxF -e "${outside}:${outside}" -e LRG_TEST_SECRET || true)"
+# Inside the container the parent's own make builds libregnum for the
+# target: config.mk accepts it and the suffix comes from the environment
+out="$(LRG_IN_CONTAINER=1 LRG_BUILD_SUFFIX=-android-arm64 parent ANDROID=1 "AUDIT=${SCRATCH}/audit.mk" inner-libregnum)"
+bs_eq 'parent inside: no engine' '' "$(logged)"
+bs_contains 'parent inside: libregnum builds for the target' 'BUILDDIR=build/release-android-arm64' "${out}"
+bs_not_contains 'parent inside: not refused' 'top-level directory' "${out}"
 
 echo '== a cross build cannot skip the root makefile'
 out="$(bs_make -s -C "${BS_ROOT}/tests" "${AMD}" WINDOWS=1 PKG_CONFIG=: all 2>&1 || true)"

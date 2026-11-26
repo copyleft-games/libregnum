@@ -11,6 +11,9 @@ make -j16 ARM64=1 DEBUG=1        # build/debug-arm64 (gcc + Fedora aarch64 sysro
 make -j16 ANDROID=1              # build/release-android-arm64 (NDK clang)
 make -j16 ANDROID=1 apk APK_GAME=examples/game-chocolate-chip-clicker.c
 make ANDROID=1 apk-install apk-run APK_GAME=...   # host adb + device
+make keystore                                     # host: a release key (PKCS12, refuses to overwrite)
+APK_KEYSTORE_PASSWORD=... make ANDROID=1 apk APK_GAME=... APK_KEYSTORE=~/.local/share/libregnum-android/release.jks APK_KEY_ALIAS=release
+make ANDROID=1 apk-push APK_GAME=... PUSH_FILES=dir PUSH_DEST=sub   # host: adb push into the app's files dir
 make ANDROID=1 test-emulator APK_GAME=...         # APK on an Android 15 emulator (podman + /dev/kvm)
 make WINDOWS=1 test              # under Wine;  make ARM64=1 test: under qemu (slow: hours)
 make ANDROID=1 test-apk test-shaders
@@ -23,6 +26,10 @@ make test-build-system           # build-system tests + native no-regression gat
 ## How it works (one paragraph)
 
 `GNUmakefile` (read before `Makefile`) includes `build-aux/mk/target.mk`; for a cross target it runs every goal as one `make` inside a podman image built from `build-aux/containers/<target>/` (tag = hash of the recipe, `common/`, `build-aux/cross/`, base image), mounting the checkout at the same path with `--userns=keep-id`, forwarding `MAKEFLAGS` minus the jobserver. Host-only goals (`clean`, `print-target`, `targets`, `container-*`, adb goals) never dispatch; `NO_BUILD_CONTAINER=1` builds on the host. `config.mk` reads the target profile `build-aux/mk/targets/<target>.mk` (toolchain, `TARGET_PLATFORM`, forced defaults, test wrapper, skip lists). Cross builds put graylib/raylib/yaml-glib/crispy/mcp-glib under `$(BUILDDIR)/deps/`; native builds keep them in the submodules.
+
+## A parent project reusing the cross builds
+
+A project embedding libregnum (e.g. librewow, `deps/libregnum`) writes its own `GNUmakefile` that includes libregnum's `build-aux/mk/target.mk`, `dispatch.mk` and (when `LRG_DISPATCH`/`LRG_USE_CONTAINER` is 1) the target profile and `container.mk`; full example in `docs/cross-compile.org`, "Consuming the cross builds from another project". Knobs: `LRG_ROOT` (libregnum's dir, derived by `target.mk`), `LRG_CONTAINER_MOUNT_ROOT` (default `PROJECT_ROOT`), `LRG_CONTAINER_EXTRA_MOUNTS` (more dirs at the same path; `LRG_ROOT` is auto-added when outside), `LRG_CONTAINER_ENV` (variable *names*, passed as `-e NAME`), `LRG_EXTRA_HOST_SAFE_GOALS` (set before `dispatch.mk`). The image is libregnum's (same tag). Inside the container the parent's make runs `$(MAKE) -C deps/libregnum lib`; `LRG_IN_CONTAINER=1` and the inherited `LRG_BUILD_SUFFIX` put it in `build/<type>-<target>/`. Profiles refer to libregnum files through `$(LRG_ROOT)`, never `$(PROJECT_ROOT)`. An Android parent links its `libmain.so` with the profile's `LRG_APK_LDFLAGS` and packages with `$(LRG_MKAPK)` (`mkapk.sh`: `--assets` repeatable, `--forbid GLOB`, `--keystore`/`--ks-key-alias`/`--ks-pass-env VAR`/`--key-pass-env VAR`). `LRG_CONTAINER_RO_MOUNTS` mounts files read-only; `APK_KEYSTORE` adds itself there and forwards `APK_KEYSTORE_PASSWORD`/`APK_KEY_PASSWORD` by name. Passwords only ever by env var name, never on a make or apksigner command line.
 
 ## Rules when changing the build
 
@@ -38,7 +45,7 @@ make test-build-system           # build-system tests + native no-regression gat
 - Platform guards: `G_OS_WIN32`/`G_OS_UNIX`, `__linux__` (true on Android too) / `__ANDROID__`, `LRG_PLATFORM_{LINUX,WINDOWS,ANDROID}` (from `TARGET_PLATFORM`). POSIX file calls with a Windows equivalent: `src/lrg-portable-private.h` (`lrg_realpath()`, `S_ISLNK`).
 - `gint64` in printf formats: `G_GINT64_FORMAT`, never `%ld` (long is 32-bit on Windows).
 - Shaders start with `LRG_GLSL_HEADER` (`src/graphics/lrg-glsl-private.h`), stay in the GLSL 3.30 / ES 3.00 common subset (no implicit int->float, no double), arrays named `*_vs` / `*_fs`; `make ANDROID=1 test-shaders` compiles all of them both ways.
-- Android: a game's `main()` calls `lrg_platform_prepare()` first (the `LRG_DEFINE_GAME_MODULE` main does it); data files are bundled with `APK_ASSETS=dir`.
+- Android: a game's `main()` calls `lrg_platform_prepare()` first (the `LRG_DEFINE_GAME_MODULE` main does it); data files are bundled with `APK_ASSETS='dir1 dir2'` (merged, duplicates are an error; `APK_FORBID_GLOBS` refuses files that must not ship) or pushed with `apk-push`.
 - Android's clang: `-Wno-typedef-redefinition` is the one accepted gcc/clang gap (decided 2026-11-24); fix everything else in the code. graylib's Android flags carry the same.
 - `SOUP=0` / `LIBPQ=0` builds keep the API and fail with documented errors (`docs/reference/error-codes.org`, "Features built out").
 
@@ -46,7 +53,7 @@ make test-build-system           # build-system tests + native no-regression gat
 
 - linux-arm64: `LRG_TEST_SKIP_PATHS` (emulation limits, with reasons) and `LRG_TEST_KNOWN_FAILURES` (real aarch64 bugs: three determinism breaks) in the profile; both `-s`'d, both listed at the end of the run.
 - windows-amd64: POSIX-only suites are left out (`LRG_WINDOWS_UNPORTED_TESTS` in `tests/Makefile`); the rest run under Wine (`WINEPATH`, `WINEPREFIX` in the build dir).
-- android-arm64: no unit-test runner; `test-apk` (structure, alignment, signature, manifest) and `test-shaders`; the game itself with `test-device` (adb) or `test-emulator` (pinned emulator in a container, `-gpu guest`; screenshot next to the APK).
+- android-arm64: no unit-test runner; `test-apk` (structure, alignment, signature, manifest), `test-shaders` and `test-mkapk` (asset roots, forbidden files, release signing; stub tools on any host, real ones with `ANDROID=1`); the game itself with `test-device` (adb) or `test-emulator` (pinned emulator in a container, `-gpu guest`; screenshot next to the APK).
 
 ## Traps
 
