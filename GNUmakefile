@@ -24,24 +24,9 @@ include $(LRG_ENTRY_ROOT)/build-aux/mk/target.mk
 # it, e.g. `make -C tests WINDOWS=1', is refused there)
 LRG_VIA_GNUMAKEFILE := 1
 
-# A cross target builds in its container unless told otherwise or already
-# inside it
-LRG_USE_CONTAINER := 0
-ifeq ($(LRG_IS_CROSS),1)
-    ifneq ($(NO_BUILD_CONTAINER),1)
-        ifneq ($(LRG_IN_CONTAINER),1)
-            LRG_USE_CONTAINER := 1
-        endif
-    endif
-endif
-
-# Dispatch unless every goal is one that never compiles (clean, help, ...)
-LRG_DISPATCH := 0
-ifeq ($(LRG_USE_CONTAINER),1)
-    ifneq ($(filter-out $(LRG_HOST_SAFE_GOALS),$(or $(MAKECMDGOALS),all)),)
-        LRG_DISPATCH := 1
-    endif
-endif
+# LRG_USE_CONTAINER and LRG_DISPATCH (shared with projects that reuse the
+# cross builds)
+include $(LRG_ENTRY_ROOT)/build-aux/mk/dispatch.mk
 
 ifeq ($(LRG_DISPATCH),1)
     # The whole build happens in the container; only the dispatch is read

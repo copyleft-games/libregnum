@@ -25,15 +25,44 @@
 #                         registry); nothing is built locally
 #   BUILD_CONTAINER_ARGS  extra `run' arguments, e.g. a ccache volume
 #   NO_BUILD_CONTAINER=1  build on the host instead (target.mk, GNUmakefile)
+#
+# For a project that includes this file from its own GNUmakefile
+# (docs/cross-compile.org, "Consuming the cross builds from another
+# project"); all default to libregnum's own behaviour:
+#
+#   LRG_ROOT              libregnum's directory (target.mk): the build
+#                         context, so the image and its tag are libregnum's
+#   LRG_CONTAINER_MOUNT_ROOT
+#                         the tree mounted at its own path (default
+#                         PROJECT_ROOT); its git directory is checked too
+#   LRG_CONTAINER_EXTRA_MOUNTS
+#                         more host directories, each mounted read-write at
+#                         its own path; LRG_ROOT is added when it is outside
+#                         the mount root
+#   LRG_CONTAINER_ENV     names of host environment variables passed into
+#                         the container (`-e NAME': the value is copied by
+#                         the engine and never appears on a command line)
 
 CONTAINER_ENGINE ?= podman
 BUILD_CONTAINER_BASE ?= registry.fedoraproject.org/fedora:45
 BUILD_CONTAINER_IMAGE ?=
 BUILD_CONTAINER_ARGS ?=
+LRG_ROOT ?= $(PROJECT_ROOT)
+LRG_CONTAINER_MOUNT_ROOT ?= $(PROJECT_ROOT)
+LRG_CONTAINER_EXTRA_MOUNTS ?=
+LRG_CONTAINER_ENV ?=
 
-# The build context is build-aux/: the recipes (containers/) and the cross
-# wrappers the images install (cross/)
-LRG_CONTAINER_CONTEXT := $(PROJECT_ROOT)/build-aux
+# The target's profile sets LRG_CONTAINER_PLATFORM, which the image and
+# its tag depend on.  libregnum has read it already (GNUmakefile or
+# config.mk); a parent project whose own Makefile does not read it gets it
+# here.  Every profile sets LRG_TARGET_TRIPLE.
+ifndef LRG_TARGET_TRIPLE
+    include $(LRG_TARGET_PROFILE)
+endif
+
+# The build context is libregnum's build-aux/: the recipes (containers/)
+# and the cross wrappers the images install (cross/)
+LRG_CONTAINER_CONTEXT := $(LRG_ROOT)/build-aux
 LRG_CONTAINER_DIR := $(LRG_CONTAINER_CONTEXT)/containers/$(LRG_TARGET)
 LRG_CONTAINER_LABEL := org.libregnum.build-target=$(LRG_TARGET)
 
@@ -57,30 +86,46 @@ LRG_CONTAINER_HASH := $(shell { \
 LRG_CONTAINER_TAG := localhost/libregnum-build-$(LRG_TARGET):$(LRG_CONTAINER_HASH)
 LRG_CONTAINER_REF := $(or $(BUILD_CONTAINER_IMAGE),$(LRG_CONTAINER_TAG))
 
-# The git directory shared by every worktree.  The build asks git about the
-# raylib submodule (graylib's rules.mk), and in a worktree the submodules'
-# .git files point into the main checkout's .git, which is outside the
-# mounted tree; mount it too, read-only, at the same path.
-LRG_GIT_COMMON_DIR := $(shell git -C '$(PROJECT_ROOT)' rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
-LRG_CONTAINER_GIT_MOUNT := $(if $(filter-out $(PROJECT_ROOT)/%,$(LRG_GIT_COMMON_DIR)),\
-    -v $(LRG_GIT_COMMON_DIR):$(LRG_GIT_COMMON_DIR):ro)
+# lrg_container_outside DIRS,ROOTS -- the DIRS that are neither one of
+# ROOTS nor below one
+lrg_container_outside = $(strip $(foreach d,$(1),$(if $(filter $(2) $(addsuffix /%,$(2)),$(d)),,$(d))))
+
+# Mounted besides the root: the extra directories, and libregnum itself
+# when a parent project keeps it outside its tree (a worktree that falls
+# back to the main checkout's submodule)
+LRG_CONTAINER_MORE_MOUNTS := $(call lrg_container_outside,\
+    $(sort $(abspath $(LRG_CONTAINER_EXTRA_MOUNTS) $(LRG_ROOT))),$(LRG_CONTAINER_MOUNT_ROOT))
+LRG_CONTAINER_MOUNTED := $(LRG_CONTAINER_MOUNT_ROOT) $(LRG_CONTAINER_MORE_MOUNTS)
+
+# The git directories shared by every worktree.  The build asks git about
+# the raylib submodule (graylib's rules.mk), and in a worktree the
+# submodules' .git files point into the main checkout's .git, which is
+# outside the mounted tree; mount each such directory too, read-only, at
+# the same path (one below another is covered by it).
+LRG_GIT_COMMON_DIRS := $(sort $(foreach d,$(LRG_CONTAINER_MOUNTED),\
+    $(shell git -C '$(d)' rev-parse --path-format=absolute --git-common-dir 2>/dev/null)))
+LRG_GIT_OUTSIDE_DIRS := $(call lrg_container_outside,$(LRG_GIT_COMMON_DIRS),$(LRG_CONTAINER_MOUNTED))
+LRG_CONTAINER_GIT_MOUNT := $(foreach g,$(LRG_GIT_OUTSIDE_DIRS),\
+    $(if $(filter $(addsuffix /%,$(LRG_GIT_OUTSIDE_DIRS)),$(g)),,-v $(g):$(g):ro))
 
 # How every container starts.  Same-path mount: .d files, rpaths and
 # compile_commands entries stay valid on the host.  keep-id: the files the
 # build writes belong to the caller.  label=disable: no SELinux relabelling
 # of the checkout.  HOME=/tmp: keep-id's home directory does not exist in
-# the image.
+# the image.  LRG_CONTAINER_ENV: by name only, never NAME=value.
 LRG_CONTAINER_RUN = $(CONTAINER_ENGINE) run --rm \
     $(LRG_CONTAINER_PLATFORM_ARG) \
     --userns=keep-id \
     --security-opt label=disable \
-    -v $(PROJECT_ROOT):$(PROJECT_ROOT) \
+    -v $(LRG_CONTAINER_MOUNT_ROOT):$(LRG_CONTAINER_MOUNT_ROOT) \
+    $(foreach m,$(LRG_CONTAINER_MORE_MOUNTS),-v $(m):$(m)) \
     $(LRG_CONTAINER_GIT_MOUNT) \
     -w $(CURDIR) \
     -e HOME=/tmp \
     -e TERM \
     -e LRG_IN_CONTAINER=1 \
-    -e LRG_BUILD_SUFFIX=$(LRG_BUILD_SUFFIX)
+    -e LRG_BUILD_SUFFIX=$(LRG_BUILD_SUFFIX) \
+    $(foreach v,$(LRG_CONTAINER_ENV),-e $(v))
 
 # =============================================================================
 # Image management

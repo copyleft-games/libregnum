@@ -140,6 +140,12 @@ Output: =build/release-android-arm64/apk/<name>.apk= (=build/debug-android-arm64
 :END:
 Without =--keystore=, =mkapk.sh= signs with a debug key it creates on first use (=build/<type>-android-arm64/apk/debug.keystore=, password =android=); keep that file, or every rebuild has a new key and =adb install -r= refuses the update. A release is signed with your own keystore: call =mkapk.sh= with =--keystore= and =--ks-pass=, or sign the aligned APK with =apksigner= yourself. Never commit a release keystore.
 
+*** Another project's APK
+:PROPERTIES:
+:CUSTOM_ID: consumer-apk
+:END:
+A project that embeds libregnum builds for =android-arm64= in libregnum's build container through its own =GNUmakefile= (see [[file:../cross-compile.org::#consumers][Consuming the cross builds from another project]]); inside it, its =Makefile= builds libregnum with =$(MAKE) -C deps/libregnum lib= and links its own =libmain.so= against =liblibregnum.a=.
+
 *** Manifest
 :PROPERTIES:
 :CUSTOM_ID: manifest

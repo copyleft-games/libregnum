@@ -38,7 +38,7 @@ LRG_NDK_BIN := $(ANDROID_NDK)/toolchains/llvm/prebuilt/linux-x86_64/bin
 CC := $(LRG_NDK_BIN)/aarch64-linux-android$(ANDROID_MIN_API)-clang
 AR := $(LRG_NDK_BIN)/llvm-ar
 RANLIB := $(LRG_NDK_BIN)/llvm-ranlib
-PKG_CONFIG := $(PROJECT_ROOT)/build-aux/cross/lrg-sysroot-pkg-config
+PKG_CONFIG := $(LRG_ROOT)/build-aux/cross/lrg-sysroot-pkg-config
 LRG_CC_IS_GCC := 0
 
 # The one gcc/clang dialect gap the code meets.  Types are forward-declared

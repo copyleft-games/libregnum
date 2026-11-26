@@ -11,6 +11,11 @@
 #
 # Variables it sets (all documented in docs/cross-compile.org):
 #
+#   LRG_ROOT           libregnum's own directory (this file's ../..): the
+#                      profiles, the container recipes and the cross
+#                      wrappers live under it, also when a parent project
+#                      includes this file (docs/cross-compile.org,
+#                      "Consuming the cross builds from another project")
 #   LRG_HOST_TARGET    the machine make runs on, <os>-<arch> (overridable,
 #                      so tests can pretend to be an aarch64 host)
 #   LRG_TARGET         the machine the build is for, <os>-<arch>
@@ -39,6 +44,7 @@ LRG_TARGET_MK_INCLUDED := 1
 
 LRG_MK_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 LRG_TARGETS_DIR := $(LRG_MK_DIR)/targets
+LRG_ROOT ?= $(abspath $(LRG_MK_DIR)/../..)
 
 # Every target with a profile, e.g. "android-arm64 linux-arm64 windows-amd64"
 LRG_KNOWN_TARGETS := $(sort $(patsubst %.mk,%,$(notdir $(wildcard $(LRG_TARGETS_DIR)/*.mk))))

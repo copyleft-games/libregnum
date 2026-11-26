@@ -29,7 +29,7 @@ LRG_TARGET_TRIPLE := aarch64-linux-gnu
 ARM64_SYSROOT ?= /opt/sysroot/aarch64
 export LRG_SYSROOT := $(ARM64_SYSROOT)
 
-LRG_CROSS_DIR := $(PROJECT_ROOT)/build-aux/cross
+LRG_CROSS_DIR := $(LRG_ROOT)/build-aux/cross
 
 # Toolchain (a command-line CC=... etc. still wins over these)
 CC := $(LRG_CROSS_DIR)/lrg-aarch64-linux-gnu-gcc
