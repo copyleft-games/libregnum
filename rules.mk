@@ -134,6 +134,13 @@ help:
 	@echo "  targets      List build targets and their directories"
 	@echo "  print-target Show the target, build dir and toolchain in use"
 	@echo "  test-build-system  Build-system tests + native no-regression gate"
+	@echo "  test-minimal-features  Build without libsoup/libpq (build/minimal), test the stubs"
+	@echo "  test-cross-arm64   arm64: all, test (qemu), examples, binary checks"
+	@echo "  test-cross-windows Windows: all, test (Wine), examples, binary checks"
+	@echo "  test-cross-android Android: all, binary checks, shaders, an APK"
+	@echo "  test-cross         All three test-cross-* gates, one after another"
+	@echo "  test-cross-artifacts  Check a cross build's binaries (e.g. make ARM64=1 test-cross-artifacts)"
+	@echo "  test-device        Run APK_GAME's APK on an adb device (make ANDROID=1 test-device APK_GAME=...)"
 	@echo "  container-image    Build a cross target's build container (e.g. make WINDOWS=1 container-image)"
 	@echo "  container-shell    Shell in a cross target's build container"
 	@echo "  container-prune    Remove a cross target's outdated container images"
@@ -142,6 +149,7 @@ help:
 	@echo "Options:"
 	@echo "  DEBUG=1         Enable debug build (-g3 -O0)"
 	@echo "  SANITIZE=1      ASan+UBSan build (implies DEBUG=1; build/sanitize dir)"
+	@echo "  MINIMAL_FEATURES=1  No optional dependencies (SOUP=0 LIBPQ=0; build/minimal dir)"
 	@echo "  ASAN=1          Enable AddressSanitizer (requires DEBUG=1)"
 	@echo "  UBSAN=1         Enable UndefinedBehaviorSanitizer (requires DEBUG=1)"
 	@echo "  ENABLE_TRACE=1  Enable trace logging at compile time"
@@ -227,6 +235,11 @@ ifeq ($(TARGET_PLATFORM),windows)
 	@$(PKG_CONFIG) --exists json-glib-1.0 || (echo "Missing: mingw64-json-glib" && exit 1)
 	@$(PKG_CONFIG) --exists yaml-0.1 || echo "Note: mingw64-libyaml not found (will use bundled yaml-glib)"
 	$(call print_status,"Windows cross-compile dependencies found")
+else ifeq ($(TARGET_PLATFORM),android)
+	@$(PKG_CONFIG) --exists glib-2.0 gobject-2.0 gio-2.0 gmodule-2.0 || (echo "Missing: the Android GLib stack (build-aux/containers/android-arm64)" && exit 1)
+	@$(PKG_CONFIG) --exists json-glib-1.0 yaml-0.1 || (echo "Missing: json-glib or libyaml in the Android GLib stack" && exit 1)
+	@$(PKG_CONFIG) --exists libdex-1 || echo "Note: no libdex for Android (async helpers built off)"
+	$(call print_status,"Android cross-compile dependencies found")
 else
 	@$(PKG_CONFIG) --exists glib-2.0 || (echo "Missing: glib2-devel" && exit 1)
 	@$(PKG_CONFIG) --exists gobject-2.0 || (echo "Missing: glib2-devel" && exit 1)

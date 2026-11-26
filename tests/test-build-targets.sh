@@ -77,6 +77,9 @@ expect_target 'native release (amd64 host)' \
 expect_target 'native debug' \
 	linux-amd64 0 '' build/debug linux -- "${AMD}" DEBUG=1
 bs_eq 'SANITIZE=1 keeps build/sanitize' build/sanitize "$(bs_var BUILDDIR "${AMD}" SANITIZE=1)"
+bs_eq 'MINIMAL_FEATURES=1 builds in build/minimal' build/minimal "$(bs_var BUILDDIR "${AMD}" MINIMAL_FEATURES=1)"
+bs_eq 'MINIMAL_FEATURES=1 leaves libsoup out' 0 "$(bs_var SOUP "${AMD}" MINIMAL_FEATURES=1)"
+bs_eq 'MINIMAL_FEATURES=1 leaves libpq out' 0 "$(bs_var LIBPQ "${AMD}" MINIMAL_FEATURES=1)"
 expect_target 'LRG_TARGET=<host> is native' \
 	linux-amd64 0 '' build/release linux -- "${AMD}" LRG_TARGET=linux-amd64
 bs_eq 'native GIR stays on' 1 "$(bs_var BUILD_GIR "${AMD}")"
@@ -165,8 +168,48 @@ do
 	bs_eq "${alias} turns GIR off" 0 "$(bs_var BUILD_GIR "${AMD}" "${alias}")"
 	bs_contains "${alias} profile file" "build-aux/mk/targets/" "$(bs_var LRG_TARGET_PROFILE "${AMD}" "${alias}")"
 done
-bs_eq 'windows tests run under wine' wine "$(bs_var LRG_EXEC_WRAPPER "${AMD}" WINDOWS=1)"
+bs_eq 'windows tests run under wine, with a console' "${BS_ROOT}/build-aux/cross/lrg-wine-run" "$(bs_var LRG_EXEC_WRAPPER "${AMD}" WINDOWS=1)"
 bs_eq 'android container is amd64' linux/amd64 "$(bs_var LRG_CONTAINER_PLATFORM "${AMD}" ANDROID=1)"
+
+echo '== per-target defaults and runners'
+for pair in BUILD_TOOLS:0 SOUP:0 LIBPQ:0 HAS_CRISPY:0 BUILD_EDITOR_UI:0 TARGET_PLATFORM:android
+do
+	bs_eq "android ${pair%%:*}" "${pair#*:}" "$(bs_var "${pair%%:*}" "${AMD}" ANDROID=1)"
+done
+bs_eq 'android dialect flag' '-Wno-typedef-redefinition' "$(bs_var LRG_DIALECT_WARN_CFLAGS "${AMD}" ANDROID=1)"
+bs_contains 'android marks itself' '-DLRG_PLATFORM_ANDROID=1' "$(bs_var OPT_CFLAGS "${AMD}" ANDROID=1)"
+bs_contains 'android marks libsoup off' '-DLRG_WITHOUT_SOUP=1' "$(bs_var OPT_CFLAGS "${AMD}" ANDROID=1)"
+bs_contains 'android links GLES 3' '-lGLESv3' "$(bs_var PLATFORM_LIBS "${AMD}" ANDROID=1)"
+bs_contains 'android 16 KB pages' 'max-page-size=16384' "$(bs_var LIB_LDFLAGS "${AMD}" ANDROID=1)"
+bs_contains 'android graylib gets raylib platform' 'RAYLIB_PLATFORM=PLATFORM_ANDROID' "$(bs_var GRAYLIB_MAKE_FLAGS "${AMD}" ANDROID=1)"
+for pair in BUILD_TOOLS:1 SOUP:1 LIBPQ:1
+do
+	bs_eq "native ${pair%%:*}" "${pair#*:}" "$(bs_var "${pair%%:*}" "${AMD}")"
+done
+bs_not_contains 'native marks nothing off' 'LRG_WITHOUT' "$(bs_var OPT_CFLAGS "${AMD}")"
+bs_eq 'native runs tests directly' '' "$(bs_var LRG_EXEC_WRAPPER "${AMD}")"
+# LRG_TEST_ARGS lives in tests/Makefile
+tests_var () {
+	printf '%s' "${BS_AUDIT_MK}" | bs_make -s -C "${BS_ROOT}/tests" -f Makefile -f - \
+		lrg-audit-vars LRG_AUDIT_VARS="${1}" PKG_CONFIG=: NO_BUILD_CONTAINER=1 LRG_TOOLCHAIN_CHECK=true \
+		"${@:2}" 2>/dev/null | sed -n "s/^${1}=//p"
+}
+bs_eq 'native skips no test paths' '' "$(tests_var LRG_TEST_ARGS "${AMD}")"
+bs_contains 'arm64 tests run under qemu' 'qemu-aarch64-static -L' "$(bs_var LRG_EXEC_WRAPPER "${AMD}" ARM64=1)"
+bs_contains 'arm64 CC is the sysroot wrapper' 'build-aux/cross/lrg-aarch64-linux-gnu-gcc' "$(bs_var CC "${AMD}" ARM64=1)"
+bs_contains 'arm64 skips an emulation limit' '-s /broadphase/perf/10k' "$(tests_var LRG_TEST_ARGS "${AMD}" ARM64=1)"
+bs_contains 'arm64 skips a known bug' '-s /replay/golden/physics-timers-rng' "$(tests_var LRG_TEST_ARGS "${AMD}" ARM64=1)"
+bs_contains 'windows Wine finds the DLLs' 'build/release-windows-amd64/lib;' "$(bs_var WINEPATH "${AMD}" WINDOWS=1)"
+bs_contains 'windows links Winsock' '-lws2_32' "$(bs_var PLATFORM_LIBS "${AMD}" WINDOWS=1)"
+bs_eq 'windows asks for no gio-unix' '' "$(bs_var LRG_GIO_UNIX_PKG "${AMD}" WINDOWS=1)"
+bs_eq 'native asks for gio-unix' 'gio-unix-2.0' "$(bs_var LRG_GIO_UNIX_PKG "${AMD}")"
+bs_contains 'cross mcp-glib under deps' 'build/release-arm64/deps/mcp-glib' "$(bs_var MCPGLIB_BUILDDIR "${AMD}" ARM64=1)"
+bs_eq 'native mcp-glib in its submodule' "${BS_ROOT}/deps/mcp-glib/build" "$(bs_var MCPGLIB_BUILDDIR "${AMD}")"
+windows_tests="$(printf '%s' "${BS_AUDIT_MK}" | bs_make -s -C "${BS_ROOT}/tests" -f Makefile -f - \
+	lrg-audit-vars LRG_AUDIT_VARS=TEST_SOURCES PKG_CONFIG=: NO_BUILD_CONTAINER=1 LRG_TOOLCHAIN_CHECK=true \
+	"${AMD}" WINDOWS=1 2>/dev/null)"
+bs_not_contains 'windows leaves out a POSIX-only suite' 'test-vfs.c' "${windows_tests}"
+bs_contains 'windows keeps a portable suite' 'test-platform.c' "${windows_tests}"
 
 echo '== subdirectory makefiles agree with the root'
 for pair in '::build/release' 'WINDOWS=1::build/release-windows-amd64' 'ARM64=1:DEBUG=1:build/debug-arm64'
@@ -195,6 +238,7 @@ bs_fails 'LRG_TARGET against an alias' 'Conflicting targets' "${AMD}" LRG_TARGET
 bs_fails 'unknown target' "Unknown target 'plan9-mips'" "${AMD}" LRG_TARGET=plan9-mips
 bs_fails 'unsupported CROSS triple' 'CROSS=arm-linux-gnueabi is not supported' "${AMD}" CROSS=arm-linux-gnueabi
 bs_fails 'SANITIZE with a cross target' 'SANITIZE=1 is native-only' "${AMD}" SANITIZE=1 WINDOWS=1
+bs_fails 'MINIMAL_FEATURES with a cross target' 'MINIMAL_FEATURES=1 is native-only' "${AMD}" MINIMAL_FEATURES=1 ARM64=1
 bs_fails 'missing toolchain outside the container' 'toolchain is not installed' \
 	"${AMD}" WINDOWS=1 PKG_CONFIG=/nonexistent/x86_64-w64-mingw32-pkg-config
 

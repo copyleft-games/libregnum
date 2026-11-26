@@ -41,7 +41,7 @@ SDK="${ANDROID_ROOT}/sdk"
 
 lrg_install_base
 lrg_dnf_install \
-	meson ninja-build cmake \
+	meson ninja-build cmake perl glslang \
 	java-25-openjdk-headless \
 	unzip zip curl ca-certificates
 

@@ -1,0 +1,97 @@
+#+title: Windows
+#+description: Building libregnum for Windows on x86_64 with MinGW-w64: the toolchain, the DLL layout, what differs from Linux, testing under Wine, shipping
+#+authors: Zach Podbielniak
+#+categories: libregnum platform windows
+
+* Windows
+:PROPERTIES:
+:CUSTOM_ID: windows
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > Platforms > Windows
+#+end_quote
+
+=make WINDOWS=1= builds libregnum for Windows 10 and newer on x86_64 with MinGW-w64 gcc, into =build/{release,debug}-windows-amd64=. It runs in the =windows-amd64= build container; the host needs only podman.
+
+#+begin_src sh
+make -j16 WINDOWS=1           # libregnum.dll, the .exe tools
+make -j16 WINDOWS=1 test      # the unit tests, under Wine
+make WINDOWS=1 STEAM=1        # with the Steamworks SDK
+#+end_src
+
+** Toolchain
+:PROPERTIES:
+:CUSTOM_ID: toolchain
+:END:
+Fedora packages the whole MinGW-w64 toolchain and GLib stack, so the image (=build-aux/containers/windows-amd64/setup.sh=) is package installation: =mingw64-gcc=, =mingw64-binutils=, =mingw64-filesystem= (=x86_64-w64-mingw32-pkg-config=), =mingw64-glib2=, =mingw64-json-glib=, =mingw64-libyaml=, =mingw64-libsoup3=, =mingw64-openssl=, =mingw64-sqlite=, =mingw64-zlib=, =mingw64-postgresql= (libpq), =mingw64-fribidi= when available, and =wine-core=, =wine-common=, =wine-ldap= and =util-linux-script= (the pseudo-terminal) for the tests (=wine-common= is a weak dependency that must be named: without its =winmd= files =wineboot= never finishes; =libpq.dll= imports =WLDAP32.dll= from =wine-ldap=). Its smoke test builds a GLib + json-glib program and runs it under Wine.
+
+Everything libregnum has on Linux is built except: GObject Introspection (it runs the library it scans), the GI scripting backends (gjs, pygobject), crispy (=CRISPY= is off on Windows), libdex (no MinGW package: the =*_async()= loaders are not built), LuaJIT and Python scripting.
+
+** Output
+:PROPERTIES:
+:CUSTOM_ID: output
+:END:
+#+begin_example
+build/release-windows-amd64/
+├── lib/
+│   ├── libregnum.dll           the library
+│   ├── liblibregnum.dll.a      its import library (link with -llibregnum)
+│   └── liblibregnum.a          the static library
+├── lrgldr.exe  lrgpack.exe  lrgeditor.exe  lrgeditorctl.exe
+└── deps/
+    ├── graylib/lib/graylib.dll     graylib, with raylib linked in and exported
+    ├── graylib/lib/libgraylib.dll.a
+    └── yaml-glib/release/yaml-glib-1.0.dll
+#+end_example
+
+Unlike =liblibregnum.so=, which embeds graylib, raylib and yaml-glib, =libregnum.dll= imports them from their own DLLs. A program that calls graylib or raylib directly therefore links =-lgraylib= (and =-lyaml-glib-1.0= for yaml-glib) itself, as the tests and examples do. =graylib.dll= exports raylib's functions too.
+
+** What differs from Linux
+:PROPERTIES:
+:CUSTOM_ID: differences
+:END:
+| Area | Windows behaviour |
+|------+-------------------|
+| Paths | =lrg_realpath()= (=src/lrg-portable-private.h=) is =_fullpath()= plus an existence check: absolute and normalised, but junctions and symbolic links are not followed. =LrgVfsDirSource='s "stays inside its root" check therefore cannot see through a junction. =S_ISLNK= is always false. |
+| Control and editor sockets | AF_UNIX sockets (Windows 10 1803+, =<afunix.h>=). There are no peer credentials: the socket file lives in the user's own runtime directory, whose ACL keeps other users out. |
+| Signals | No SIGPIPE (a write to a closed pipe just fails), no SIGINT/SIGTERM handler for =lrgeditor --headless= (Ctrl+C ends it), "Stop" in the editor's play mode terminates the game process. |
+| Native scripting | Units load with GModule; =GetProcAddress()= only sees the DLL's own exports, so no ownership check is needed. |
+| Networking | Winsock (=-lws2_32=) for the MMO datagram transport. |
+| Async loaders | No libdex: the =DexFuture= API is absent, the synchronous loaders work. |
+
+** Testing under Wine
+:PROPERTIES:
+:CUSTOM_ID: testing
+:END:
+=make WINDOWS=1 test= runs every test =.exe= under Wine through =build-aux/cross/lrg-wine-run= (=LRG_EXEC_WRAPPER= in =build-aux/mk/targets/windows-amd64.mk=) inside the build container. The profile exports what Wine needs:
+
+| Variable     | Value                                                                                       |
+|--------------+---------------------------------------------------------------------------------------------|
+| =WINEPATH=   | the target's =lib/=, graylib's and yaml-glib's DLL directories and the MinGW runtime (GLib and friends) |
+| =WINEPREFIX= | =build/<type>-windows-amd64/wine=: a copy, made on the first run (=LRG_TEST_SETUP=), of the prefix the image created at =/opt/lrg-wine=. That skips the minute =wineboot= needs to create one; Wine also refuses a prefix whose parent the user does not own (the container's =/tmp=). Delete the directory to start over. |
+| =WINEDEBUG=  | =-all= (=err+all= shows why a DLL does not load)                                            |
+| =WINEDLLOVERRIDES= | =mscoree,mshtml== : no .NET or HTML runtime, which console tests do not need          |
+
+Two groups of test paths cannot run under Wine and are skipped by exact path (=LRG_TEST_SKIP_PATHS= in the profile, listed at the end of every run):
+
+| Group (variable in the profile) | Test paths | Why |
+|----------------------------------+------------+-----|
+| =LRG_WINDOWS_SKIP_TRASH= | =/asset-meta/trash= | Wine has no Recycle Bin, so =g_file_trash()= fails; Windows itself trashes the file |
+| =LRG_WINDOWS_SKIP_AUDIO= | the five =/audio/manager/procedural-*= tests | need an audio output device; the build container has none |
+
+Tests run on a pseudo-terminal (=build-aux/cross/lrg-wine-run=): a Windows console program always has a console, but under Wine only when started on a terminal, and without one GLib warns "Failed to determine console output code page" (fatal in a test) whenever it formats a system error.
+
+Some suites test POSIX behaviour directly and are not built for Windows (=LRG_WINDOWS_UNPORTED_TESTS= in =tests/Makefile=): =test-control=, =test-dap-server=, =test-frame-export=, =test-screenshot-frames= (Unix sockets and =sendmsg=), =test-vfs=, =test-pack-writer=, =test-editor-settings-migrate=, =test-ui-file-browser= (=symlink()=, =utimensat()=, =geteuid()=), =test-profiler-capture=, =test-sandbox= (CPU affinity, seccomp), =test-gltf-animation-roots= (unguarded =getpid()=/=alarm()=), =test-net-tls= (libdex), =test-static-batch= (uses the GI runtime without checking for it), =test-lrgldr=, =test-editor-sources=, =test-scripting-native= (load =.so= fixtures). The library code they cover is built; porting the tests is separate work.
+
+** Shipping a Windows build
+:PROPERTIES:
+:CUSTOM_ID: shipping
+:END:
+Next to the game's =.exe=:
+
+1. =libregnum.dll=, =graylib.dll= and =yaml-glib-1.0.dll= from the paths above.
+2. The MinGW runtime DLLs the game needs, from =/usr/x86_64-w64-mingw32/sys-root/mingw/bin/= in the build container: GLib (=libglib-2.0-0.dll=, =libgobject-2.0-0.dll=, =libgio-2.0-0.dll=, =libgmodule-2.0-0.dll=), =libintl-8.dll=, =libffi-8.dll=, =libiconv-2.dll=, =libpcre2-8-0.dll=, =zlib1.dll=, json-glib, libyaml, libsoup and its dependencies, OpenSSL, SQLite, libpq. =x86_64-w64-mingw32-objdump -p <file> | grep 'DLL Name'= lists what a DLL or =.exe= imports; follow it until only Windows' own DLLs remain.
+3. =steam_api64.dll= with =STEAM=1=.
+4. The game's data directory.
+
+=make WINDOWS=1 container-shell= gives a shell with the toolchain and that directory for assembling a package.

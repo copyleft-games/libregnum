@@ -194,9 +194,16 @@ else
 fi
 
 echo '== nothing is dispatched'
-for goals in clean print-target targets help print-container
+for goals in clean print-target targets help print-container test-device
 do
-	dispatch WINDOWS=1 "${goals}" > /dev/null || true
+	# clean only as a dry run: really running it would delete the
+	# checkout's own windows build
+	if [[ "${goals}" == 'clean' ]]
+	then
+		dispatch -n WINDOWS=1 clean > /dev/null || true
+	else
+		dispatch WINDOWS=1 "${goals}" > /dev/null || true
+	fi
 	bs_eq "WINDOWS=1 ${goals} stays on the host" 0 "$(calls run)"
 done
 out="$(dispatch WINDOWS=1 NO_BUILD_CONTAINER=1 print-target)"

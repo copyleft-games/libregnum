@@ -30,7 +30,11 @@ LIBREGNUM_STATIC := ../$(LIBOUTDIR)/$(LIB_STATIC)
 TEST_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS)
 TEST_CFLAGS += -I../src
 TEST_CFLAGS += -DLIBREGNUM_COMPILATION
-TEST_CFLAGS += $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 libdex-1 json-glib-1.0 girepository-2.0)
+# libdex and girepository only where they exist (not Windows; no libdex on
+# Android): one missing module empties the whole pkg-config answer
+LRG_TEST_DEX_PKG := $(if $(filter 1,$(HAS_LIBDEX)),libdex-1)
+LRG_TEST_GIR_PKG := $(if $(filter windows android,$(TARGET_PLATFORM)),,girepository-2.0)
+TEST_CFLAGS += $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 $(LRG_TEST_DEX_PKG) json-glib-1.0 $(LRG_TEST_GIR_PKG))
 
 # Add dependency include paths
 TEST_CFLAGS += -I$(GRAYLIB_DIR)/src
@@ -49,8 +53,14 @@ TEST_LDFLAGS += $(TEST_GUARD_OBJ)
 
 # Test libraries (graylib and yaml-glib are embedded in libregnum)
 TEST_LIBS := -l$(LIB_NAME)
-TEST_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1 girepository-2.0 json-glib-1.0)
+TEST_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 $(LRG_TEST_DEX_PKG) $(LRG_TEST_GIR_PKG) json-glib-1.0)
 TEST_LIBS += $(PYTHON_LIBS) $(GJS_LIBS)
+# libregnum.dll imports graylib (with raylib) and yaml-glib from their DLLs
+# instead of embedding them as liblibregnum.so does, so a test calling them
+# links them itself
+ifeq ($(TARGET_PLATFORM),windows)
+TEST_LIBS += -L$(GRAYLIB_BUILDDIR)/lib -lgraylib -L$(YAMLGLIB_BUILDDIR)/$(DEP_BUILD_TYPE) -lyaml-glib-1.0
+endif
 TEST_LIBS += -lm
 # Link sanitizers into the test binaries when SANITIZE/ASAN/UBSAN is active
 # (SANITIZER_LIBS is empty for a normal build, so this is a no-op then).
@@ -442,7 +452,30 @@ TEST_LIBS += $(FFMPEG_LIBS)
 endif
 
 # Test executables
-TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%,$(TEST_SOURCES))
+# Suites whose test code is POSIX-only, not built for Windows (the library
+# code they cover builds and is exercised by the rest; porting the tests is
+# separate work, listed in docs/platforms/windows.org):
+#   Unix sockets / sendmsg:        test-control test-dap-server
+#                                  test-frame-export test-screenshot-frames
+#   symlink(), utimensat(), geteuid(): test-vfs test-pack-writer
+#                                  test-editor-settings-migrate
+#                                  test-ui-file-browser
+#   sched_setaffinity(), seccomp:  test-profiler-capture test-sandbox
+#   getpid(), alarm() unguarded:   test-gltf-animation-roots
+#   libdex async API (no libdex):  test-net-tls
+#   GI runtime without HAS_GI:     test-static-batch
+#   load .so fixture modules:      test-lrgldr test-editor-sources
+#                                  test-scripting-native
+ifeq ($(TARGET_PLATFORM),windows)
+LRG_WINDOWS_UNPORTED_TESTS := \
+	test-control.c test-dap-server.c test-frame-export.c test-screenshot-frames.c \
+	test-vfs.c test-pack-writer.c test-editor-settings-migrate.c test-ui-file-browser.c \
+	test-profiler-capture.c test-sandbox.c test-gltf-animation-roots.c test-net-tls.c \
+	test-static-batch.c test-lrgldr.c test-editor-sources.c test-scripting-native.c
+TEST_SOURCES := $(filter-out $(LRG_WINDOWS_UNPORTED_TESTS),$(TEST_SOURCES))
+endif
+
+TEST_BINARIES := $(patsubst %.c,$(TEST_BUILDDIR)/%$(EXE_EXT),$(TEST_SOURCES))
 
 # The lrgldr loader binary (built by the root) and the fixture game module used
 # by test-lrgldr. Their absolute paths are baked into the test at compile time.
@@ -454,7 +487,7 @@ FIXTURE_SO_ABS := $(abspath $(FIXTURE_SO))
 # built as a position-independent shared object whose lrg_*/g_* symbols resolve
 # from the host (lrgldr) at load time.
 FIXTURE_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS) -fPIC -I../src -DLRG_GAME_BUILD_MODULE=1
-FIXTURE_CFLAGS += $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 libdex-1 json-glib-1.0 girepository-2.0)
+FIXTURE_CFLAGS += $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 $(LRG_TEST_DEX_PKG) json-glib-1.0 $(LRG_TEST_GIR_PKG))
 FIXTURE_CFLAGS += -I$(GRAYLIB_DIR)/src -I$(GRAYLIB_DIR)/deps/raylib/src -I$(YAMLGLIB_DIR)/src
 
 # Binaries to run under valgrind. The test-scripting* binaries dlopen CPython
@@ -474,7 +507,15 @@ SANITIZE_BINARIES ?= $(filter-out $(TEST_BUILDDIR)/test-scripting%,$(TEST_BINARI
 # profile's LRG_EXEC_WRAPPER (wine, qemu-aarch64) and may list suites that
 # cannot run there in LRG_TEST_SKIP (test names, % patterns allowed); every
 # entry in a profile carries the reason next to it.  Natively: all of them.
-RUN_BINARIES ?= $(filter-out $(addprefix $(TEST_BUILDDIR)/,$(LRG_TEST_SKIP)),$(TEST_BINARIES))
+RUN_BINARIES ?= $(filter-out $(addsuffix $(EXE_EXT),$(addprefix $(TEST_BUILDDIR)/,$(LRG_TEST_SKIP))),$(TEST_BINARIES))
+
+# Single test paths a target cannot run (LRG_TEST_SKIP_PATHS: environment
+# limits, e.g. emulation) and known target bugs (LRG_TEST_KNOWN_FAILURES):
+# both are skipped with GTest's -s in every binary, so the rest of each
+# binary still runs, and the known bugs are named at the end of the run.
+# (Test binaries carry $(EXE_EXT): MinGW writes test-x.exe, and Wine needs
+# the name as written.)
+LRG_TEST_ARGS := $(foreach path,$(LRG_TEST_SKIP_PATHS) $(LRG_TEST_KNOWN_FAILURES),-s $(path))
 
 # =============================================================================
 # Targets
@@ -498,6 +539,11 @@ BUILD_SYSTEM_SCRIPTS := \
 	$(CURDIR)/test-build-clean.sh \
 	$(CURDIR)/test-build-dispatch.sh \
 	$(CURDIR)/test-native-unchanged.sh \
+	$(CURDIR)/test-cross-artifacts.sh \
+	$(CURDIR)/test-apk-layout.sh \
+	$(CURDIR)/test-apk-device.sh \
+	$(CURDIR)/test-shader-glsl.sh \
+	$(PROJECT_ROOT)/build-aux/android/mkapk.sh \
 	$(wildcard $(PROJECT_ROOT)/build-aux/cross/lrg-*) \
 	$(wildcard $(PROJECT_ROOT)/build-aux/containers/*/*.sh)
 
@@ -536,15 +582,40 @@ endif
 run: check-build-config check-version-lockstep $(if $(filter 1,$(LRG_IS_CROSS)),,check-build-system) all
 	$(call print_status,"Running tests...")
 	@failed=0; \
+	$(if $(LRG_TEST_SETUP),$(LRG_TEST_SETUP) || exit 1;) \
+	$(if $(LRG_EXEC_WRAPPER),ulimit -c 0;) \
 	for test in $(RUN_BINARIES); do \
 		LD_LIBRARY_PATH="$(MCP_LD_PATH)../$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
 		G_TEST_SRCDIR="$(shell pwd)" \
-		$(LRG_EXEC_WRAPPER) $$test --tap || failed=1; \
+		$(LRG_EXEC_WRAPPER) $$test --tap $(LRG_TEST_ARGS) || failed=1; \
 	done; \
+	$(if $(strip $(LRG_TEST_SKIP_PATHS)),printf '==> Not run on $(LRG_TARGET) (see its profile for why): %s\n' '$(strip $(LRG_TEST_SKIP_PATHS))';) \
+	$(if $(strip $(LRG_TEST_KNOWN_FAILURES)),printf '\033[33m\033[1m==> KNOWN $(LRG_TARGET) BUGS (skipped):\033[0m %s\n' '$(strip $(LRG_TEST_KNOWN_FAILURES))';) \
 	if [ $$failed -eq 0 ]; then \
 		printf "\033[32m\033[1m==>\033[0m All tests passed!\n"; \
 	else \
 		printf "\033[31m\033[1mERROR:\033[0m Some tests failed!\n"; \
+		exit 1; \
+	fi
+
+# The suites `make test-minimal-features' runs against build/minimal (see
+# the root Makefile); only these are built, not the whole suite.
+MINIMAL_FEATURES_BINARIES := $(addprefix $(TEST_BUILDDIR)/,$(addsuffix $(EXE_EXT),\
+    test-optional-features test-analytics test-mmo))
+
+.PHONY: run-minimal-features
+run-minimal-features: $(MINIMAL_FEATURES_BINARIES)
+	$(call print_status,"Running the optional-feature suites (SOUP=0 LIBPQ=0)...")
+	@failed=0; \
+	for test in $(MINIMAL_FEATURES_BINARIES); do \
+		LD_LIBRARY_PATH="$(MCP_LD_PATH)../$(LIBOUTDIR):$$LD_LIBRARY_PATH" \
+		G_TEST_SRCDIR="$(shell pwd)" \
+		$$test --tap || failed=1; \
+	done; \
+	if [ $$failed -eq 0 ]; then \
+		printf "\033[32m\033[1m==>\033[0m All optional-feature tests passed!\n"; \
+	else \
+		printf "\033[31m\033[1mERROR:\033[0m Some optional-feature tests failed!\n"; \
 		exit 1; \
 	fi
 
@@ -615,7 +686,7 @@ $(GENERATED_HEADERS):
 # each binary listing the headers it includes, so changing a public
 # struct (e.g. LrgCanvasInput) rebuilds the tests that embed it instead
 # of leaving stale binaries that crash on the new layout.
-$(TEST_BUILDDIR)/test-%: test-%.c $(GENERATED_HEADERS) | $(TEST_BUILDDIR)
+$(TEST_BUILDDIR)/test-%$(EXE_EXT): test-%.c $(GENERATED_HEADERS) | $(TEST_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(TEST_CFLAGS) -MMD -MP -MF $@.d -o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
 
@@ -629,7 +700,7 @@ $(TEST_GUARD_OBJ): lrg-test-guard.c | $(TEST_BUILDDIR)
 $(TEST_BINARIES): $(TEST_GUARD_OBJ)
 
 # The replay tests share the deterministic scenario
-$(TEST_BUILDDIR)/test-replay $(TEST_BUILDDIR)/test-rollback: replay-scenario.h
+$(TEST_BUILDDIR)/test-replay$(EXE_EXT) $(TEST_BUILDDIR)/test-rollback$(EXE_EXT): replay-scenario.h
 
 # Build lrgldr by recursing into the root (it links the shared library).
 .PHONY: $(LRGLDR_BIN)

@@ -1,0 +1,55 @@
+#+title: Android example
+#+description: Turning a libregnum example game into an Android APK and running it on a device
+
+* Android example
+:PROPERTIES:
+:CUSTOM_ID: android-example
+:END:
+The Android example is an ordinary example game: [[file:../game-chocolate-chip-clicker.c][game-chocolate-chip-clicker.c]], an idle clicker played by tapping (raylib turns touches into the left mouse button). Nothing in it is Android-specific except the first call in its =main()=, which every game with its own =main()= should make:
+
+#+begin_src c
+if (!lrg_platform_prepare (&error))   /* Android: data dirs, assets, logcat; elsewhere: nothing */
+{
+    g_printerr ("chip-clicker: %s\n", error->message);
+    return 1;
+}
+#+end_src
+
+** Build the APK
+:PROPERTIES:
+:CUSTOM_ID: build
+:END:
+From the top of the checkout (the first run builds the =android-arm64= build container: NDK, SDK build tools, a static GLib stack; later runs reuse it):
+
+#+begin_src sh
+make -j16 ANDROID=1 apk APK_GAME=examples/game-chocolate-chip-clicker.c
+#+end_src
+
+Result: =build/release-android-arm64/apk/game-chocolate-chip-clicker.apk=, package =org.libregnum.game_chocolate_chip_clicker=, landscape, signed with a debug key kept next to it (=debug.keystore=; keep it, or the next build cannot update the installed app).
+
+Check its structure without a device:
+
+#+begin_src sh
+make ANDROID=1 test-apk APK_GAME=examples/game-chocolate-chip-clicker.c
+#+end_src
+
+** Run it
+:PROPERTIES:
+:CUSTOM_ID: run
+:END:
+Connect a device with USB debugging enabled (Android 10 or newer, arm64), then on the host (Fedora: =android-tools= for =adb=):
+
+#+begin_src sh
+make ANDROID=1 apk-install apk-run APK_GAME=examples/game-chocolate-chip-clicker.c
+adb logcat -s libregnum Libregnum-Core Libregnum-Template
+#+end_src
+
+** Your own game
+:PROPERTIES:
+:CUSTOM_ID: your-own-game
+:END:
+- A game defined with =LRG_DEFINE_GAME_MODULE()= needs no code change: its generated =main()= prepares the platform.
+- Data files: =APK_ASSETS=<dir>= packs a directory's contents as the APK's assets; on the device they are extracted next to the game's working directory, so =data/levels/one.yaml= opens unchanged when =<dir>= holds =data/=.
+- Name, id and version: =APK_LABEL=, =APK_PACKAGE=, =APK_VERSION_CODE= (raise it for every release), =APK_VERSION_NAME=, =APK_ORIENTATION=.
+
+Everything else (what the engine does differently on Android, signing for release, troubleshooting) is in [[file:../../docs/platforms/android.org][docs/platforms/android.org]].

@@ -125,6 +125,10 @@ Enables debug symbols (=-g3=) and disables optimization (=-O0=).
 | =make clean-targets= | Clean every cross target's build directories |
 | =make distclean= | Clean everything including deps |
 | =make test-build-system= | Build-system tests plus the native no-regression gate |
+| =make test-minimal-features= | Build without libsoup and libpq (=build/minimal=) and test the stubs |
+| =make test-cross-arm64= / =-windows= / =-android= | One cross target's whole gate: build, tests, examples, binary checks |
+| =make test-cross= | The three =test-cross-*= gates, one after another |
+| =make ANDROID=1 test-device APK_GAME=...= | Run the game's APK on an adb device or emulator (skips without one) |
 | =make test-native-unchanged= | Prove =make -Bn= output matches =BASE= (default: merge-base with master) |
 | =make print-target= | Show the target, build directory and toolchain these switches select |
 | =make targets=   | List every build target and its directories |
@@ -172,6 +176,9 @@ ENABLE_TRACE := 0      # Set to 1 for trace logging
 SANITIZE := 0          # Set to 1 for ASan+UBSan build (implies DEBUG=1;
                        # builds into build/sanitize/ so it cannot collide
                        # with a normal debug build)
+MINIMAL_FEATURES := 0  # Set to 1 to leave every optional dependency out
+                       # (SOUP=0 LIBPQ=0) into build/minimal/; native only
+                       # (make test-minimal-features)
 ASAN := 0              # AddressSanitizer (requires DEBUG=1)
 UBSAN := 0             # UndefinedBehaviorSanitizer (requires DEBUG=1)
 #+end_src
@@ -188,6 +195,30 @@ ANDROID := 0           # 1 = LRG_TARGET=android-arm64
 #+end_src
 
 These belong on the command line, not in =config.mk=. A cross target builds into =build/<release|debug>-<target>=; the native build keeps =build/release= and =build/debug=. Details: [[file:cross-compile.org][Cross-Compilation Guide]].
+
+*** Feature matrix
+:PROPERTIES:
+:CUSTOM_ID: feature-matrix
+:END:
+What each target builds, by default:
+
+| Feature                                   | Linux (native, aarch64) | Windows | Android |
+|-------------------------------------------+-------------------------+---------+---------|
+| library (static and shared)               | yes                     | yes (=libregnum.dll=) | yes |
+| tools: =lrgldr=, =lrgpack=, =lrgeditor=, =lrgeditorctl= (=BUILD_TOOLS=) | yes | yes (=.exe=) | no |
+| editor library module (=BUILD_EDITOR=)    | yes                     | yes     | yes     |
+| GObject Introspection, gjs, pygobject     | native only             | no      | no      |
+| crispy scripting                          | yes                     | no      | no      |
+| LuaJIT, Python scripting                  | when found              | no      | no      |
+| libdex async loaders (=DexFuture=)        | yes                     | no      | no      |
+| HTTP analytics backend (=SOUP=)           | yes                     | yes     | stub    |
+| MMO PostgreSQL store (=LIBPQ=)            | yes                     | yes     | stub    |
+| MMO DTLS / SRP (OpenSSL)                  | yes                     | yes     | yes     |
+| OpenGL                                    | 3.3                     | 3.3     | ES 3    |
+| control / editor sockets                  | Unix sockets            | AF_UNIX (no peer credentials) | yes |
+| tests run by =make test=                  | yes (aarch64: qemu)     | Wine, POSIX-only suites left out | no (=test-apk=, =test-shaders=) |
+
+A stub keeps its API and fails with the error listed in [[file:reference/error-codes.org::#features-built-out][Error codes, features built out]].
 
 *** Testing & Memory Checking
 :PROPERTIES:

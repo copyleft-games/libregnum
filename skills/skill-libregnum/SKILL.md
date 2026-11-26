@@ -26,6 +26,7 @@ libregnum is a GObject-based game engine in C (gnu89) built on graylib (a GObjec
 - `references/workflows.md`: step-by-step recipes for every 0.9.x/0.10.x authoring tool (look, materials, bake, animation, sequences, 2D rigs, physics, navigation, AI, VFX, terrain, audio, 2D tiles, debugging/profiling, visual scripts, scenes/gizmo/VCS/collab)
 - `references/formats.md`: engine YAML formats (.rmat, .ranim, .rbt, .rnav, .rparticles, .rsong, .rfoley, ...)
 - `references/music.md`: composing songs and sound effects through the editor (song.*, foley.*): discovery, `song.apply` batches, mixing by render numbers, export
+- `references/cross-targets.md`: building and testing for Windows, Linux aarch64 and Android (build containers, profiles, APKs) and the rules that keep the native build unchanged
 
 ## When to Use
 
@@ -35,6 +36,7 @@ libregnum is a GObject-based game engine in C (gnu89) built on graylib (a GObjec
 - The user wants to script the editor from bash, Emacs or another program (IPC socket).
 - The user wants to author a material, animation graph, cutscene, ragdoll, navmesh, behaviour tree, particle effect, terrain, mixer, tileset, visual script, song or sound effect for a libregnum game.
 - Building, testing or changing libregnum's C code (engine, editor, GUI toolkit, music/audio, tools).
+- Building libregnum for another platform (`make WINDOWS=1`, `ARM64=1`, `ANDROID=1`, an APK), or changing the build system.
 
 ## Prerequisites
 
@@ -75,7 +77,7 @@ libregnum is a GObject-based game engine in C (gnu89) built on graylib (a GObjec
 
 7. **Set up MCP when asked to let an agent drive the editor.** `claude mcp add libregnum -- lrgeditorctl mcp` (bridge to whatever editor is running, survives restarts), or `claude mcp add libregnum -- lrgeditor --mcp ~/path/to/project` (the agent launches its own editor; headless without a display). Details and other clients in `references/mcp.md`.
 
-8. **Working on libregnum's code.** Read `AGENTS.md` in the checkout first, then `references/engine.md`. Essentials: gnu89 C, tabs, GNU-style `func (args)` calls, `/* */` comments, gtk-doc/GIR comments in headers (once per identifier), zero warnings (`-Werror`, never silence a warning), no `memcpy` into raylib `Matrix`, raylib calls rely on `-include stdbool.h`; work in a git worktree under `./trees/`; build with `make -j"$(nproc)"`; test with `make test`, plus `make test-editorctl`, `make test-emacs` and `make test-editor-x11` for editor work; update the org docs under `docs/` in the same change; Conventional Commits. Tests never touch the desktop: `tests/lrg-test-guard.c` sets `LRG_EXTERNAL_EDITOR=none` in every test binary (do not set it yourself), GPU/editor runs go through `build-aux/xrun.sh`, and nothing in a test opens the audio device.
+8. **Working on libregnum's code.** Read `AGENTS.md` in the checkout first, then `references/engine.md`. Essentials: gnu89 C, tabs, GNU-style `func (args)` calls, `/* */` comments, gtk-doc/GIR comments in headers (once per identifier), zero warnings (`-Werror`, never silence a warning), no `memcpy` into raylib `Matrix`, raylib calls rely on `-include stdbool.h`; work in a git worktree under `./trees/`; build with `make -j"$(nproc)"`; test with `make test`, plus `make test-editorctl`, `make test-emacs` and `make test-editor-x11` for editor work, and `make test-build-system` plus the cross targets (`references/cross-targets.md`) for build or platform work; update the org docs under `docs/` in the same change; Conventional Commits. Tests never touch the desktop: `tests/lrg-test-guard.c` sets `LRG_EXTERNAL_EDITOR=none` in every test binary (do not set it yourself), GPU/editor runs go through `build-aux/xrun.sh`, and nothing in a test opens the audio device.
 
 ## Workflows (index)
 

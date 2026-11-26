@@ -122,9 +122,40 @@ make              # Build dependencies, then library + GIR
 make DEBUG=1      # Debug build with -g3 -O0
 make test         # Build and run all tests
 make install      # Install to PREFIX (default: /usr/local)
-make clean        # Remove build artifacts
+make clean        # Remove build artifacts (cross targets' directories are kept)
 make help         # Show all targets
 ```
+
+### Cross targets (0.12.0; docs/cross-compile.org)
+
+```bash
+make WINDOWS=1    # build/release-windows-amd64, in its podman build container
+make ARM64=1      # build/release-arm64 (gcc + Fedora aarch64 sysroot)
+make ANDROID=1    # build/release-android-arm64 (NDK clang); `apk APK_GAME=x.c`
+make targets      # every target; make <switch> print-target / print-container
+make test-build-system   # build-system tests + native no-regression gate
+```
+
+Rules for build-system changes:
+
+- The native build's commands must not change: `make test-native-unchanged`
+  (add `EXCLUDE_ADDED=1` on a branch that adds sources) diffs `make -Bn`
+  against the merge-base. Put cross-only flags behind `ifeq ($(LRG_IS_CROSS),1)`
+  or a profile variable that is empty natively; append with `ifneq` guards so an
+  empty variable does not leave a stray space in a command.
+- A target is one profile (`build-aux/mk/targets/<target>.mk`) plus one image
+  (`build-aux/containers/<target>/`) plus tests (`tests/test-build-*.sh`) plus a
+  `docs/platforms/<target>.org` page; never add one without all four.
+- Cross dependency builds go to `$(BUILDDIR)/deps/`; native ones stay in the
+  submodules (cmacs links those paths).
+- Platform code: guard with `G_OS_WIN32`/`G_OS_UNIX`, `__linux__`/`__ANDROID__`
+  or `LRG_PLATFORM_{LINUX,WINDOWS,ANDROID}`; POSIX file calls with a Windows
+  equivalent go through `src/lrg-portable-private.h`. Shaders start with
+  `LRG_GLSL_HEADER` and stay in the GLSL 3.30 / ES 3.00 common subset
+  (`make test-shaders`).
+- Android's clang accepts one gcc/clang dialect gap, `-Wno-typedef-redefinition`
+  (decided 2026-11-24); every other warning is fixed in the code.
+- Don't `make -j all test` in one go (both build the library at once).
 
 ## Versioning
 
@@ -1713,7 +1744,7 @@ See `ROADMAP.md` for current completed work and remaining gaps.
 - [x] Demo support (DemoGatable interface, DemoManager)
 - [x] VR support (VRService interface, VRStub, VRComfort)
 - [x] Accessibility features (colorblind modes, screen reader, subtitle manager)
-- [x] Windows cross-compilation support
+- [x] Cross targets: Windows x86_64 (MinGW-w64, tests under Wine), Linux aarch64 (gcc + sysroot, tests under qemu), Android arm64-v8a (NDK clang, APKs); podman build containers (0.12.0)
 
 ### Infrastructure
 - [x] I18N/Localization, Networking (NetServer, NetClient)

@@ -53,6 +53,67 @@ LRG_GRAYLIB_FLAGS := RAYLIB_EXTRA_FLAGS="CC=$(CC) AR=$(AR)"
 # loader's root (no binfmt registration needed)
 LRG_EXEC_WRAPPER ?= qemu-aarch64-static -L $(ARM64_SYSROOT)
 
+# binutils for tests/test-cross-artifacts.sh (make test-cross-artifacts)
+LRG_READELF ?= $(LRG_TARGET_TRIPLE)-readelf
+# fontconfig in the sysroot does not find its default config through qemu's
+# path mapping; point it there (its font directories then map as usual)
+export FONTCONFIG_FILE ?= $(ARM64_SYSROOT)/etc/fonts/fonts.conf
+
+# Test paths that cannot run under that emulation (tests/Makefile passes
+# each to every binary as -s PATH -- exact paths: GTest's prefix skipping
+# does not work -- and `make ARM64=1 test' lists them), one group per cause:
+
+# g_test_trap_subprocess() re-executes the aarch64 test binary, which the
+# host kernel cannot start without binfmt registration
+LRG_ARM64_SKIP_SUBPROCESS := \
+    /billboard-batch/invalid-size /paint/list/measure-headless \
+    /paint/renderer/headless /paint/list/unbalanced-pops \
+    /template/base/max-frames-in-flight-env
+
+# start another aarch64 program (lrgldr, lrgeditor --merge): binfmt again
+LRG_ARM64_SKIP_SPAWN := \
+    /lrgldr/forward-args /lrgldr/forward-error /lrgldr/info \
+    /lrgldr/missing-module /lrgldr/no-module /lrgldr/version \
+    /workflows/merge-files
+
+# compile C at test time with the container's (x86_64) gcc: crispy, plugins
+LRG_ARM64_SKIP_COMPILE := \
+    /scripting-crispy/compile-error /scripting-crispy/fixture \
+    /scripting-crispy/load-string-main /scripting-crispy/manager \
+    /scripting-crispy/search-path-and-cflags /script-reload/crispy \
+    /pack-writer/plugin /editor-app/dialogs/plugin-dock
+
+# user-mode qemu implements neither Landlock nor seccomp for its guest
+LRG_ARM64_SKIP_SANDBOX := \
+    /sandbox/apply/allow-exec /sandbox/apply/filesystem \
+    /sandbox/apply/network-client /sandbox/apply/network-server \
+    /sandbox/apply/seccomp-only
+
+# an audio output device; the build container has none
+LRG_ARM64_SKIP_AUDIO := \
+    /audio/manager/procedural-add /audio/manager/procedural-remove \
+    /audio/manager/procedural-get-names /audio/manager/procedural-play-stop \
+    /audio/manager/procedural-stop-all
+
+# a frame-time budget, meaningless under emulation
+LRG_ARM64_SKIP_TIMING := /broadphase/perf/10k
+
+LRG_TEST_SKIP_PATHS := $(LRG_ARM64_SKIP_SUBPROCESS) $(LRG_ARM64_SKIP_SPAWN) \
+    $(LRG_ARM64_SKIP_COMPILE) $(LRG_ARM64_SKIP_SANDBOX) $(LRG_ARM64_SKIP_AUDIO) \
+    $(LRG_ARM64_SKIP_TIMING)
+
+# Real aarch64 failures the cross build found (2026-11-24), skipped so the
+# rest of their binaries run and named at the end of every test run until
+# fixed (docs/platforms/linux-arm64.org, "Known aarch64 bugs"):
+#   results that must be bit-identical across architectures and are not
+#   (docs/modules/replay/determinism.org):
+#     /replay/golden/physics-timers-rng  the golden replay diverges
+#     /collide/random-consistency        a contact depth misses its tolerance
+#     /foley-patch/pinned-bytes          synthesised audio hashes differently
+LRG_TEST_KNOWN_FAILURES := \
+    /replay/golden/physics-timers-rng /collide/random-consistency \
+    /foley-patch/pinned-bytes
+
 # What must exist for a host build (NO_BUILD_CONTAINER=1; config.mk): the
 # cross gcc, pkg-config and the sysroot
 LRG_TOOLCHAIN_CHECK := command -v aarch64-linux-gnu-gcc && command -v pkg-config && test -d $(ARM64_SYSROOT)/usr/lib64

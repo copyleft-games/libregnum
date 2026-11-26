@@ -82,3 +82,9 @@ FRIBIDI_SHA256=1b1cde5b235d40479e91be2f0e88a309e3214c8ab470ec8a2744d82a5a9ea05c
 SQLITE_VERSION=3.54.1
 SQLITE_URL=https://www.sqlite.org/2026/sqlite-autoconf-3540100.tar.gz
 SQLITE_SHA256=926ef8d3eab93fbf6e06011901273eec076b25594a4e1cdadd50c987f4f6d64e
+
+# OpenSSL: the same major as Fedora 45 (the MMO client's SRP and DTLS code
+# and src/crypto use it); sum from the release's .sha256 file
+OPENSSL_VERSION=4.0.3
+OPENSSL_URL=https://github.com/openssl/openssl/releases/download/openssl-4.0.3/openssl-4.0.3.tar.gz
+OPENSSL_SHA256=325b5c806167c13b40b1ffeadfe0248197c00eccc4cf123ec1e28d2d2fd216d9

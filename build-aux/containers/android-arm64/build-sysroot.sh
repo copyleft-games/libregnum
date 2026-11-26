@@ -20,12 +20,14 @@
 #
 #   glib (+ libffi, pcre2, proxy-libintl through GLib's own meson wraps)
 #   json-glib, libdex (optional: see below), fribidi (meson), libyaml and
-#   sqlite (autotools)
+#   sqlite (autotools), openssl (its own Configure)
 #
 # Everything is a static archive because the game ships as one shared
 # object (libmain.so); pkg-config is then queried with --static so the
 # private dependencies link too (build-aux/cross/lrg-sysroot-pkg-config).
-# zlib, libm, liblog and libandroid come from the NDK.
+# zlib, libm, liblog and libandroid come from the NDK.  Not built: libpq
+# (the MMO server's PostgreSQL store) and libsoup (the analytics HTTP
+# backend); libregnum builds those features off (LIBPQ=0, SOUP=0).
 #
 # libdex uses ucontext-based fibers, which bionic lacks; if it does not
 # build, the stack goes on without it and libregnum's HAS_LIBDEX probe turns
@@ -169,6 +171,32 @@ autotools_build "${src}" || lrg_die 'libyaml did not build for android'
 # sqlite: the autoconf amalgamation
 src="$(fetch_source "${SQLITE_URL}" "${SQLITE_SHA256}")"
 autotools_build "${src}" --disable-readline || lrg_die 'sqlite did not build for android'
+
+# OpenSSL: its own Configure knows the NDK (android-arm64), static only
+src="$(fetch_source "${OPENSSL_URL}" "${OPENSSL_SHA256}")"
+lrg_log 'configure: openssl'
+(
+	cd "${src}"
+	export ANDROID_NDK_ROOT="${NDK}"
+	export PATH="${TOOLCHAIN}/bin:${PATH}"
+	./Configure android-arm64 -D__ANDROID_API__="${API}" \
+		no-shared no-tests no-docs no-apps \
+		--prefix="${PREFIX}" --libdir=lib > /dev/null
+	make -j"$(nproc)" > /dev/null
+	make install_sw > /dev/null
+) || lrg_die 'openssl did not build for android'
+
+# zlib is part of the NDK (libz) but has no .pc file there; libregnum asks
+# pkg-config for it like on every other target
+cat > "${PREFIX}/lib/pkgconfig/zlib.pc" <<EOF
+prefix=${PREFIX}
+
+Name: zlib
+Description: zlib compression library (from the Android NDK)
+Version: 1.3
+Libs: -lz
+Cflags:
+EOF
 
 rm -rf -- "${WORK}"
 lrg_log "android sysroot: $(find "${PREFIX}/lib" -maxdepth 1 -name '*.a' | wc -l) static libraries in ${PREFIX}"

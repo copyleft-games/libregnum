@@ -41,6 +41,16 @@ RANLIB := $(LRG_NDK_BIN)/llvm-ranlib
 PKG_CONFIG := $(PROJECT_ROOT)/build-aux/cross/lrg-sysroot-pkg-config
 LRG_CC_IS_GCC := 0
 
+# The one gcc/clang dialect gap the code meets.  Types are forward-declared
+# in lrg-types.h (typedef struct _LrgWidget LrgWidget;) and declared again by
+# G_DECLARE_*_TYPE; an identical typedef redefinition is valid GNU C in
+# gnu89 (gcc never warns) and valid C11, but clang reports it as a C11
+# extension in gnu89 mode.  It is not a bug, and removing the forward
+# declarations would touch every header, so clang is told to accept what
+# gcc accepts.  Every other warning stays an error.  (Decided 2026-11-24;
+# docs/platforms/android.org, "Compiler".)
+LRG_DIALECT_WARN_CFLAGS := -Wno-typedef-redefinition
+
 # The GLib stack is installed with --prefix=$(ANDROID_SYSROOT) (absolute
 # paths in its .pc files) and is all static archives: query with --static
 export LRG_SYSROOT := $(ANDROID_SYSROOT)
@@ -56,12 +66,22 @@ TARGET_PLATFORM := android
 BUILD_GIR := 0
 $(call lrg_default,BUILD_EDITOR_UI,0)
 $(call lrg_default,CRISPY,0)
+# No desktop tools on Android: `all' builds the libraries (and `apk' the app)
+$(call lrg_default,BUILD_TOOLS,0)
+# Not in the Android GLib stack: libsoup (HTTP analytics) and libpq (the MMO
+# server's PostgreSQL store); both features build as documented stubs
+$(call lrg_default,SOUP,0)
+$(call lrg_default,LIBPQ,0)
 
 # Android links with bionic's libc, liblog (logcat), libandroid (assets,
 # NativeActivity) and GLES 3 through EGL; -z max-page-size keeps every
 # LOAD segment loadable on 16 KB-page devices (Android 15+)
 LRG_PLATFORM_LIBS := -lEGL -lGLESv3 -landroid -llog -lm -ldl
 LRG_PLATFORM_LDFLAGS := -Wl,-z,max-page-size=16384
+
+# The NativeActivity glue raylib is built with (src/core/lrg-platform.c
+# reads the app's internal storage path and asset manager through it)
+LRG_TARGET_CFLAGS := -isystem $(ANDROID_NDK)/sources/android/native_app_glue
 
 # The dependencies build with the same toolchain.  raylib builds its own
 # Android platform layer (rcore_android.c, android_native_app_glue) against
@@ -73,6 +93,9 @@ LRG_GRAYLIB_FLAGS := RAYLIB_PLATFORM=PLATFORM_ANDROID \
 # Android binaries do not run in the build container; tests run on a
 # device (make ANDROID=1 test-device)
 LRG_EXEC_WRAPPER ?=
+
+# binutils for tests/test-cross-artifacts.sh (make test-cross-artifacts)
+LRG_READELF ?= $(LRG_NDK_BIN)/llvm-readelf
 
 # What must exist for a host build (NO_BUILD_CONTAINER=1; config.mk): the
 # NDK's clang, pkg-config and the GLib stack

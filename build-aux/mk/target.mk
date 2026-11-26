@@ -145,6 +145,9 @@ endif
 
 # ASan/UBSan builds are host-only (build/sanitize has no target suffix)
 ifeq ($(LRG_IS_CROSS),1)
+    ifeq ($(MINIMAL_FEATURES),1)
+        $(error MINIMAL_FEATURES=1 is native-only; a cross target sets its own features (its profile))
+    endif
     ifeq ($(SANITIZE),1)
         $(error SANITIZE=1 is native-only; it cannot be combined with the $(LRG_TARGET) target)
     endif
@@ -159,7 +162,8 @@ LRG_CROSS_BUILD_DIRS := $(strip $(foreach t,$(filter-out $(LRG_HOST_TARGET),$(LR
 # target, without its toolchain or build container
 LRG_HOST_SAFE_GOALS := clean clean-targets distclean print-target targets help \
     container-image container-shell container-prune print-container \
-    apk-install apk-run test-device
+    apk-install apk-run test-device \
+    test-cross test-cross-arm64 test-cross-windows test-cross-android
 
 # lrg_default VAR,VALUE -- a profile's default for VAR: applied unless the
 # user set VAR on the command line or in the environment.  Profiles are

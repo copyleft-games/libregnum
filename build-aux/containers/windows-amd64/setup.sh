@@ -36,17 +36,27 @@ lrg_dnf_install \
 	mingw64-gcc mingw64-binutils mingw64-filesystem \
 	mingw64-glib2 mingw64-json-glib mingw64-zlib mingw64-libyaml \
 	mingw64-libsoup3 mingw64-openssl mingw64-sqlite mingw64-postgresql \
-	wine-core
+	wine-core wine-common wine-ldap util-linux-script
 
 # Libraries behind optional features (each gated by a HAS_* probe)
 lrg_dnf_install_optional mingw64-fribidi
 
-# Wine runs the test binaries (LRG_EXEC_WRAPPER in the target profile);
-# prove the toolchain end to end with it
-export WINEPREFIX=/tmp/lrg-smoke-wine
+# Wine runs the test binaries (LRG_EXEC_WRAPPER in the target profile),
+# on a pseudo-terminal from util-linux-script (build-aux/cross/lrg-wine-run).
+# wine-ldap: libpq.dll imports WLDAP32.dll.  wine-common is only a weak
+# dependency of wine-core (and weak dependencies are not installed), but
+# without its /usr/share/wine/winmd files wineboot's wine.inf setup retries
+# the missing copies forever and never finishes.  Prove the toolchain end
+# to end with it; the prefix the smoke test creates is kept as
+# /opt/lrg-wine and a test run copies it into its build directory
+# (LRG_TEST_SETUP in the profile) instead of spending a minute creating one
+export WINEPREFIX=/opt/lrg-wine
 export WINEDEBUG=-all
+export WINEDLLOVERRIDES='mscoree,mshtml='
 export WINEPATH=/usr/x86_64-w64-mingw32/sys-root/mingw/bin
 XDG_RUNTIME_DIR="$(mktemp -d)"
 export XDG_RUNTIME_DIR
 lrg_smoke x86_64-w64-mingw32-gcc x86_64-w64-mingw32-pkg-config /tmp/smoke.exe wine
-rm -rf -- "${WINEPREFIX}" "${XDG_RUNTIME_DIR}" /tmp/smoke.exe
+wineserver -w
+chmod -R a+rX -- "${WINEPREFIX}"
+rm -rf -- "${XDG_RUNTIME_DIR}" /tmp/smoke.exe

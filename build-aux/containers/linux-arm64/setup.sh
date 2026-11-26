@@ -40,9 +40,11 @@ SYSROOT=/opt/sysroot/aarch64
 
 lrg_install_base
 
+# dbus-daemon: GTestDBus spawns it from the aarch64 tests; under qemu-user a
+# host program runs natively (only aarch64 ones need emulation)
 lrg_dnf_install \
 	gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-	wayland-devel qemu-user-static-aarch64
+	wayland-devel qemu-user-static-aarch64 dbus-daemon shared-mime-info
 
 # Fedora release of this image, so the sysroot matches it
 releasever="$(rpm -E '%{fedora}')"
@@ -71,7 +73,19 @@ dnf -y install \
 	mesa-libGL-devel mesa-libEGL-devel \
 	libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel \
 	wayland-devel libxkbcommon-devel \
+	fontconfig google-noto-sans-vf-fonts shared-mime-info \
+	--exclude='dejavu-*' \
 	|| lrg_die 'could not install the aarch64 sysroot'
+
+# What the skipped scriptlets would have done that the tests read (under
+# qemu-aarch64 -L, absolute paths resolve inside the sysroot first): the
+# compiled GSettings schemas and the MIME database (file type tests).
+# Fonts: only Noto Sans, the host's UI font, so text metrics match a native
+# run (fontconfig would otherwise prefer DejaVu)
+glib-compile-schemas "${SYSROOT}/usr/share/glib-2.0/schemas" \
+	|| lrg_die 'could not compile the sysroot GSettings schemas'
+update-mime-database "${SYSROOT}/usr/share/mime" \
+	|| lrg_die 'could not build the sysroot MIME database'
 dnf -y --installroot="${SYSROOT}" --use-host-config clean all > /dev/null 2>&1 || true
 
 # The wrappers ship in the checkout (build-aux/cross); copy them so the

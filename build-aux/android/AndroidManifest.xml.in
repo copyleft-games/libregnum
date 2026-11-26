@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AndroidManifest.xml.in - the manifest of a libregnum game's APK
+
+  Copyright 2026 Zach Podbielniak
+  SPDX-License-Identifier: AGPL-3.0-or-later
+
+  Filled in by build-aux/android/mkapk.sh (@NAME@ placeholders, see its
+  help).  A NativeActivity app with no Java/Kotlin code: Android loads
+  lib/arm64-v8a/lib@LIB_NAME@.so, whose android_native_app_glue starts
+  raylib's android_main(), which calls the game's main().
+  docs/platforms/android.org, "The APK".
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          package="@PACKAGE@"
+          android:versionCode="@VERSION_CODE@"
+          android:versionName="@VERSION_NAME@">
+
+    <!-- GLES 3.2: the engine's shaders are GLSL ES 3.00; 3.2 is what every
+         arm64 device of API 29+ ships, and terrain uses base-vertex draws
+         when available -->
+    <uses-feature android:glEsVersion="0x00030002" android:required="true" />
+
+    <application android:label="@LABEL@"
+                 android:hasCode="false"
+                 android:extractNativeLibs="false"
+                 android:appCategory="game"
+                 android:isGame="true">
+        <activity android:name="android.app.NativeActivity"
+                  android:exported="true"
+                  android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|uiMode|density"
+                  android:screenOrientation="@ORIENTATION@"
+                  android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+            <meta-data android:name="android.app.lib_name" android:value="@LIB_NAME@" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

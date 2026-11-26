@@ -78,19 +78,26 @@ A cross target's build directory is =build/<release|debug>-<target>=, with a lea
 :END:
 =config.mk= reads the target's profile right after its own tool defaults, so the profile's =CC=, =AR=, =RANLIB= and =PKG_CONFIG= replace them while anything given on the command line (=make WINDOWS=1 CC=my-gcc=) still wins. A profile sets:
 
-| Variable                 | Meaning                                                                |
-|--------------------------+------------------------------------------------------------------------|
-| =LRG_TARGET_TRIPLE=      | the GNU triple (=x86_64-w64-mingw32=, =aarch64-linux-gnu=, ...)        |
-| =CC=, =AR=, =RANLIB=     | the toolchain                                                          |
-| =PKG_CONFIG=             | a pkg-config that answers for the target's libraries                   |
-| =TARGET_PLATFORM=        | =windows=, =linux= or =android=; the source keys platform code on it   |
-| forced defaults          | e.g. =BUILD_GIR := 0= (GIR runs the library it scans)                  |
-| =LRG_EXEC_WRAPPER=       | how to run the target's test binaries (=wine=, =qemu-aarch64 ...=)     |
-| =LRG_CONTAINER_PLATFORM= | the =--platform= of its build container, empty for the host's arch    |
+| Variable                  | Meaning                                                                 |
+|---------------------------+-------------------------------------------------------------------------|
+| =LRG_TARGET_TRIPLE=       | the GNU triple (=x86_64-w64-mingw32=, =aarch64-linux-gnu=, ...)         |
+| =CC=, =AR=, =RANLIB=      | the toolchain (one word each: the dependencies get them on their command lines) |
+| =PKG_CONFIG=              | a pkg-config that answers for the target's libraries                    |
+| =LRG_TOOLCHAIN_CHECK=     | a shell test that the toolchain (and sysroot) is installed, for =NO_BUILD_CONTAINER=1= |
+| =TARGET_PLATFORM=         | =windows=, =linux= or =android=; =config.mk= turns it into =LRG_PLATFORM_WINDOWS=, =_LINUX= or =_ANDROID= |
+| forced defaults           | =BUILD_GIR := 0= (GIR runs the library it scans); =$(call lrg_default,VAR,value)= for defaults the command line may still override (=BUILD_TOOLS=, =BUILD_EDITOR_UI=, =CRISPY=, =SOUP=, =LIBPQ=) |
+| =LRG_DEP_FLAGS=           | what every bundled dependency's make gets (the toolchain)               |
+| =LRG_GRAYLIB_FLAGS=       | what graylib's make gets on top (=RAYLIB_PLATFORM=, =RAYLIB_EXTRA_FLAGS=) |
+| =LRG_PLATFORM_LIBS=       | replaces the desktop system libraries (Android: EGL, GLES 3, libandroid, liblog) |
+| =LRG_PLATFORM_LDFLAGS=, =LRG_TARGET_CFLAGS= | extra link and compile flags                          |
+| =LRG_CC_IS_GCC=, =LRG_DIALECT_WARN_CFLAGS= | a non-gcc compiler: =WARN_CFLAGS= is probed flag by flag, plus the profile's documented dialect gaps |
+| =LRG_EXEC_WRAPPER=        | how to run the target's test binaries (=wine=, =qemu-aarch64-static -L ...=) |
+| =LRG_TEST_SKIP_PATHS=, =LRG_TEST_KNOWN_FAILURES= | test paths not run there, and known bugs (see [[#testing-cross-builds][Testing]]) |
+| =LRG_CONTAINER_PLATFORM=  | the =--platform= of its build container, empty for the host's arch      |
 
 The first line under the copyright, =# description: ...=, is what =make targets= prints.
 
-When the target's toolchain is not installed (its =PKG_CONFIG= is not on =PATH=), any goal that compiles stops with one message naming the missing tool, instead of a screen of failed pkg-config probes. Goals that never compile (=clean=, =clean-targets=, =distclean=, =print-target=, =targets=, =help=) work without it.
+When the target's toolchain is not installed (its =LRG_TOOLCHAIN_CHECK= fails; by default: =CC= or =PKG_CONFIG= not on =PATH=), any goal that compiles stops with one message naming the missing tool, instead of a screen of failed pkg-config probes. Goals that never compile (=clean=, =clean-targets=, =distclean=, =print-target=, =targets=, =help=) work without it.
 
 ** Output layout
 :PROPERTIES:
@@ -257,22 +264,95 @@ Common to all: =make gcc pkgconf-pkg-config glib2-devel python3 git-core rsync=.
 :PROPERTIES:
 :CUSTOM_ID: per-target-notes
 :END:
-*** Windows (windows-amd64)
-:PROPERTIES:
-:CUSTOM_ID: windows-amd64
-:END:
-MinGW-w64 gcc builds =libregnum.dll= with its import library =liblibregnum.dll.a=, the static =liblibregnum.a= and =.exe= tools. GIR is off. Steam works with =make WINDOWS=1 STEAM=1=, linking =steam_api64.dll= from the Steamworks SDK submodule.
+Each target has its own page; this is the summary.
 
-**** Shipping a Windows build
-:PROPERTIES:
-:CUSTOM_ID: shipping-a-windows-build
-:END:
-A game needs, next to its =.exe=:
+| Target          | Toolchain | Builds | Tests | Page |
+|-----------------+-----------+--------+-------+------|
+| =windows-amd64= | MinGW-w64 gcc (Fedora packages) | =libregnum.dll= + import library, static library, every tool as =.exe=; graylib and yaml-glib as DLLs | under Wine; POSIX-only suites not built | [[file:platforms/windows.org][Windows]] |
+| =linux-arm64=   | Fedora's aarch64 gcc + a Fedora aarch64 sysroot (wrappers in =build-aux/cross/=) | everything the native build does except GIR | under qemu-aarch64; emulation limits skipped, four known aarch64 bugs | [[file:platforms/linux-arm64.org][Linux aarch64]] |
+| =android-arm64= | NDK r30 clang + a static GLib stack | static and shared library; APKs (=make ANDROID=1 apk=) | APK structure, shaders as GLSL ES; the game on a device | [[file:platforms/android.org][Android]] |
 
-1. From =build/release-windows-amd64/=: =lib/libregnum.dll=, =deps/graylib/lib/graylib.dll= and =deps/yaml-glib/release/yaml-glib-1.0.dll= (=debug/= for =DEBUG=1=).
-2. The GLib runtime from the MinGW sysroot (=/usr/x86_64-w64-mingw32/sys-root/mingw/bin/= on Fedora): =libglib-2.0-0.dll=, =libgobject-2.0-0.dll=, =libgio-2.0-0.dll=, =libgmodule-2.0-0.dll=, =libintl-8.dll=, =libffi-8.dll=, =libiconv-2.dll=, =libpcre2-8-0.dll=, =zlib1.dll= and the rest of what =x86_64-w64-mingw32-objdump -p game.exe | grep 'DLL Name'= lists.
-3. =steam_api64.dll= when built with =STEAM=1=.
-4. The game's data directory.
+What every cross target leaves out: GObject Introspection (=g-ir-scanner= runs the library it scans) and with it the gjs and pygobject backends. Windows and Android have no libdex either, so the =DexFuture= loaders are not built there.
+
+** Testing cross builds
+:PROPERTIES:
+:CUSTOM_ID: testing-cross-builds
+:END:
+*** The build system itself
+:PROPERTIES:
+:CUSTOM_ID: testing-build-system
+:END:
+=make test-build-system= checks the build system without compiling or starting a container, and =make test= runs the first part of it natively:
+
+| Script | Checks |
+|--------+--------|
+| =tests/test-build-targets.sh= | target resolution for every spelling (=WINDOWS=1=, =LRG_TARGET==, legacy =CROSS==) and host (=LRG_HOST_TARGET=), build directories, dependency output paths and flags, profile defaults, refused requests, subdirectory makefiles agreeing with the root, goals that work without a toolchain |
+| =tests/test-build-clean.sh= | what =clean=, a cross =clean=, =clean-targets= and =distclean= remove, in a scratch project |
+| =tests/test-build-dispatch.sh= | the container command line, through a stub =CONTAINER_ENGINE= that records its arguments: one run for all goals, mounts, user namespace, =MAKEFLAGS= without the jobserver, values with spaces, image tags following the recipe, prebuilt images, extra arguments, per-target platforms, the worktree's git directory, prune, refused bypasses |
+| ShellCheck | every build-system script (=build-aux/cross=, =build-aux/containers=, =build-aux/android=, the tests) |
+| =tests/test-native-unchanged.sh= | the native build's commands against a base ref (below) |
+
+*** The native build did not change
+:PROPERTIES:
+:CUSTOM_ID: native-unchanged
+:END:
+=make test-native-unchanged [BASE=ref]= hard-links the tree, puts every file that differs from =BASE= (default: the merge-base with master) back to its base content, in the superproject and every submodule at the commit the base records, and diffs =make -Bn= for =all=, =tests all= and =examples= between the two trees. It needs a native =make all= first (graylib's raylib rule tests for the archive). A branch that adds source files changes those commands legitimately; =EXCLUDE_ADDED=1= (=--exclude-added=) removes every mention of an added file (its compile, its object, its test binary, its entries in link lists) and compares the distinct command lines, so any changed flag or path still shows. =make test-build-system= uses that form.
+
+*** Each target
+:PROPERTIES:
+:CUSTOM_ID: testing-targets
+:END:
+- *Images* end with a smoke test (=build-aux/containers/common/smoke.c=, GLib + json-glib at =-std=gnu89 -Werror=), run under Wine or qemu where the target can run, checked for AArch64 and 16 KB alignment on Android.
+- =make WINDOWS=1 test= and =make ARM64=1 test= run the unit tests through the profile's =LRG_EXEC_WRAPPER=. A profile lists test paths the target cannot run (=LRG_TEST_SKIP_PATHS=, each with its reason in the profile) and known bugs (=LRG_TEST_KNOWN_FAILURES=); both are passed to every binary as GTest =-s PATH=, so the rest of the binary still runs, and every run ends by naming them, the known bugs in yellow. Windows also leaves out the suites whose test code is POSIX-only (=LRG_WINDOWS_UNPORTED_TESTS= in =tests/Makefile=). Emulated runs set =ulimit -c 0= so an aborting test leaves no qemu core file.
+- Android: =make ANDROID=1 test-apk= and =make ANDROID=1 test-shaders= ([[file:platforms/android.org::#testing][Android, Testing]]); =make ANDROID=1 test-device APK_GAME=...= on the host runs the APK on a device or emulator ([[*On a device][On a device]]).
+- =make <TARGET>=1 test-cross-artifacts= checks the binaries themselves, which the unit tests cannot see (=tests/test-cross-artifacts.sh=, in the target's container):
+
+  | Target | Checks |
+  |--------+--------|
+  | linux-arm64 | every shared library, program and static-archive member (libregnum, graylib) is AArch64 |
+  | windows-amd64 | =libregnum.dll=, =graylib.dll= and every =.exe= are PE32+ x86-64; =libregnum.dll= exports =lrg_*=, =graylib.dll= exports =grl_*= and raylib's functions; every DLL =libregnum.dll= imports is found next to it, in the MinGW runtime or among Windows' own DLLs (Wine's copies) |
+  | android-arm64 | the static archive's members and every shared library are AArch64; every shared library's LOAD segments are 16 KB aligned |
+
+- Do not run =make all test= in one invocation with =-j=: both goals build the library at the same time. Run =make all= then =make test=.
+
+*** The whole gate per target
+:PROPERTIES:
+:CUSTOM_ID: test-cross
+:END:
+One goal per target runs everything above in order, each step its own make (so =all= and =test= never build the library at once). They run from the host; each step dispatches to the container as usual:
+
+| Goal | Runs |
+|------+------|
+| =make test-cross-arm64= | =ARM64=1 all=, =test= (qemu), =examples=, =test-cross-artifacts= |
+| =make test-cross-windows= | =WINDOWS=1 all=, =test= (Wine), =examples=, =test-cross-artifacts= |
+| =make test-cross-android= | =ANDROID=1 all=, =test-cross-artifacts=, =test-shaders=, =test-apk= with =TEST_CROSS_APK_GAME= (default the clicker example) |
+| =make test-cross= | the three, one after another |
+
+A full =make test-cross= takes a while (the arm64 unit tests under qemu alone run for most of an hour); run the one target a change touches.
+
+*** On a device
+:PROPERTIES:
+:CUSTOM_ID: on-a-device
+:END:
+=make ANDROID=1 test-device APK_GAME=examples/game-chocolate-chip-clicker.c= runs on the host, where =adb= (Fedora: =android-tools=) sees the device (=ANDROID_SERIAL= picks one of several). =tests/test-apk-device.sh= installs the APK, starts its NativeActivity, waits (=--wait=, 8 s), then checks that the process is still alive, that logcat has no warning, error or fatal line from the app's GLib log domains (the platform layer sends GLib's log to logcat with the domain as tag) and that a screenshot is not one flat colour, and stops the app. With no =adb= or no device it prints why and passes, so it is safe in a script; the APK's structure is still checked without a device by =test-apk=.
+
+*** Optional features, natively
+:PROPERTIES:
+:CUSTOM_ID: minimal-features
+:END:
+Android builds without libsoup and libpq (=SOUP=0 LIBPQ=0=), and so can any host that asks. =make test-minimal-features= keeps those stubs tested on the host: it builds the library with =MINIMAL_FEATURES=1= (every optional dependency off) into =build/minimal= and runs =test-optional-features= (each stub fails with its documented error: [[file:reference/error-codes.org::#features-built-out][Features built out]]), =test-analytics= and =test-mmo= against it. =MINIMAL_FEATURES= is native-only; a cross target's features come from its profile.
+
+** Adding a new target
+:PROPERTIES:
+:CUSTOM_ID: adding-a-target
+:END:
+A worked example: =linux-riscv64=, built like =linux-arm64=.
+
+1. *Profile.* Copy =build-aux/mk/targets/linux-arm64.mk= to =linux-riscv64.mk=. Keep the =# description:= line (=make targets= prints it). Set =LRG_TARGET_TRIPLE=, the toolchain (one-word =CC= etc.: write a wrapper in =build-aux/cross/= when flags are needed), =TARGET_PLATFORM=, =LRG_TOOLCHAIN_CHECK=, =LRG_DEP_FLAGS=/=LRG_GRAYLIB_FLAGS=, =LRG_EXEC_WRAPPER= (=qemu-riscv64-static -L ...=), =LRG_CONTAINER_PLATFORM=. =make targets= now lists it; =LRG_TARGET=linux-riscv64= works and builds into =build/release-riscv64=.
+2. *Image.* Create =build-aux/containers/linux-riscv64/Containerfile= (copy one: it only copies the recipe and runs =setup.sh=) and =setup.sh=: source =common.sh=, =lrg_install_base=, install the toolchain, build or install the sysroot, end with =lrg_smoke=. Pin every download with a checksum. =make LRG_TARGET=linux-riscv64 container-image= builds it.
+3. *Build.* =make -j16 LRG_TARGET=linux-riscv64= until it is warning-free. Fix portability problems in the code, guarded by =G_OS_*=, =__linux__=, =LRG_PLATFORM_*= or a feature macro, so the native commands stay identical (=make test-native-unchanged=).
+4. *Tests.* Add the target to =tests/test-build-targets.sh= (directories, alias if any, defaults) and =tests/test-build-dispatch.sh= (its image and platform); run =make LRG_TARGET=linux-riscv64 test=; list environment limits in =LRG_TEST_SKIP_PATHS= with reasons and real bugs in =LRG_TEST_KNOWN_FAILURES=.
+5. *Docs.* A =docs/platforms/<target>.org= page (toolchain, output, differences, testing, shipping), a row in the tables of this page, =docs/building.org= and =README.org=, a =CHANGELOG.org= entry.
 
 ** Troubleshooting
 :PROPERTIES:
@@ -302,6 +382,42 @@ ASan and UBSan builds run on the host (=build/sanitize=). Sanitize the native bu
 :END:
 Initialise the Steamworks SDK submodule: =git submodule update --init deps/steamworks_sdk=.
 
+*** The image build fails
+:PROPERTIES:
+:CUSTOM_ID: image-build-fails
+:END:
+The recipe's output is in the =make <switch> container-image= log; every step logs a ===>= line, and a failed download or checksum names the URL. Nothing is tagged until the smoke test passes, so the next build retries. A Fedora mirror returning 404 for metadata is retried by dnf on its own.
+
+*** Permission denied, or files owned by another user
+:PROPERTIES:
+:CUSTOM_ID: container-permissions
+:END:
+The container runs with =--userns=keep-id= (files it writes are yours) and =--security-opt label=disable= (no SELinux relabelling of the checkout). An engine other than podman needs equivalents in =BUILD_CONTAINER_ARGS=. Wine needs its prefix in a directory you own, hence =build/<type>-windows-amd64/wine=.
+
+*** A recipe change is not picked up
+:PROPERTIES:
+:CUSTOM_ID: stale-image
+:END:
+The tag is a hash of =build-aux/containers/common/=, =build-aux/containers/<target>/=, =build-aux/cross/=, the base image and the platform; =make <switch> print-container= shows it. A change anywhere else (for example a file a =setup.sh= downloads whose URL did not change) needs a recipe edit, such as a version bump in =versions.sh=. =BUILD_CONTAINER_IMAGE= bypasses all of this.
+
+*** "unknown warning option" from clang
+:PROPERTIES:
+:CUSTOM_ID: unknown-warning-option
+:END:
+Only on Android, and only if the profile's =LRG_CC_IS_GCC := 0= is missing: then =WARN_CFLAGS= is not probed against the NDK's clang. =make ANDROID=1 print-target= shows the warning flags that were dropped.
+
+*** Undefined symbols when running make all test
+:PROPERTIES:
+:CUSTOM_ID: all-test-race
+:END:
+=make -j all test= builds the library twice at the same time (both goals recurse into it). Run =make all=, then =make test=. This is true natively as well.
+
+*** A cross build from tests/ or with -f Makefile is refused
+:PROPERTIES:
+:CUSTOM_ID: bypass-refused
+:END:
+Cross builds start from the top-level directory, where =GNUmakefile= decides about the container. Run =make WINDOWS=1 test= there, or add =NO_BUILD_CONTAINER=1= to build on the host on purpose.
+
 ** Build flags reference
 :PROPERTIES:
 :CUSTOM_ID: build-flags-reference
@@ -317,3 +433,15 @@ Initialise the Steamworks SDK submodule: =git submodule update --init deps/steam
 | =STEAM=            | 0              | Steam SDK integration                                                |
 | =DEBUG=            | 0              | debug build with symbols                                             |
 | =BUILD_GIR=        | 1              | GIR files; forced to 0 for every cross target                        |
+| =BUILD_TOOLS=      | 1              | =lrgldr=, =lrgpack=, =lrgeditor=, =lrgeditorctl= in =make all=; 0 on Android |
+| =SOUP=             | 1              | libsoup for the HTTP analytics backend; 0 builds it as a stub (Android) |
+| =LIBPQ=            | 1              | libpq for the MMO PostgreSQL store; 0 builds it as a stub (Android)  |
+| =NO_BUILD_CONTAINER= | 0            | =1= builds a cross target on the host                                |
+| =CONTAINER_ENGINE= | =podman=       | the container CLI                                                    |
+| =BUILD_CONTAINER_BASE= | =registry.fedoraproject.org/fedora:45= | base image of every recipe                     |
+| =BUILD_CONTAINER_IMAGE= | (empty)   | use this image as is                                                 |
+| =BUILD_CONTAINER_ARGS= | (empty)    | extra =podman run= arguments                                         |
+| =ARM64_SYSROOT=    | =/opt/sysroot/aarch64= | the aarch64 sysroot (linux-arm64)                            |
+| =ANDROID_NDK=, =ANDROID_SDK=, =ANDROID_SYSROOT=, =ANDROID_MIN_API= | =/opt/android/...=, 29 | the Android toolchain (android-arm64) |
+| =APK_GAME=, =APK_ASSETS=, =APK_PACKAGE=, ... | | the APK ([[file:platforms/android.org::#the-apk][Android, The APK]])            |
+| =BASE=, =EXCLUDE_ADDED= | merge-base, 0 | =make test-native-unchanged=                                     |

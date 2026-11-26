@@ -1,0 +1,205 @@
+#+title: Android
+#+description: Building libregnum games for Android (arm64-v8a): the toolchain, what the engine does differently, the APK, running on a device
+#+authors: Zach Podbielniak
+#+categories: libregnum platform android
+
+* Android
+:PROPERTIES:
+:CUSTOM_ID: android
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > Platforms > Android
+#+end_quote
+
+libregnum builds for Android on arm64-v8a, API 29 (Android 10) and newer, and packages a game as an APK with no Java or Kotlin code: a =NativeActivity= that loads the game as one shared library. Everything runs in the =android-arm64= build container; the host needs podman, plus =adb= (Fedora: =android-tools=) to install on a device.
+
+#+begin_src sh
+make -j16 ANDROID=1                                     # libraries: build/release-android-arm64/lib
+make -j16 ANDROID=1 apk APK_GAME=examples/game-chocolate-chip-clicker.c
+make ANDROID=1 apk-install apk-run APK_GAME=examples/game-chocolate-chip-clicker.c
+adb logcat -s libregnum Libregnum-Core Libregnum-I18N   # the game's GLib logs
+#+end_src
+
+** How it fits together
+:PROPERTIES:
+:CUSTOM_ID: how-it-fits
+:END:
+#+begin_example
+Android            loads lib/arm64-v8a/libmain.so from the APK (no extraction)
+  ANativeActivity_onCreate      (NDK native_app_glue, inside raylib)
+    android_main(app)           (raylib's rcore_android.c)
+      main(argc, argv)          the game's main(), unchanged
+        lrg_platform_prepare()  data dirs, assets, logcat (see below)
+        ... the game, as on the desktop ...
+#+end_example
+
+raylib's =PLATFORM_ANDROID= owns the activity: it creates the EGL context for GLES 3, turns touches into mouse and touch input, handles pause/resume and calls the game's =main()= on its own thread. A game that compiles for the desktop compiles for Android unchanged; what differs is below.
+
+** The toolchain
+:PROPERTIES:
+:CUSTOM_ID: toolchain
+:END:
+The image (=build-aux/containers/android-arm64/=, pins in =versions.sh=) holds:
+
+| Path                     | What                                                                 |
+|--------------------------+----------------------------------------------------------------------|
+| =/opt/android/ndk=       | Android NDK r30: clang, the bionic sysroot, =llvm-ar=, =llvm-readelf= |
+| =/opt/android/sdk=       | build-tools 37.0.0 (=aapt2=, =zipalign=, =apksigner=), =platforms/android-36= |
+| =/opt/android/arm64-v8a= | the GLib stack, cross-built static: GLib 2.90 (with libffi, pcre2, proxy-libintl), json-glib, libyaml, fribidi, sqlite, OpenSSL 4.0 |
+| =/opt/android/versions.env= | the paths above, for scripts                                     |
+
+Every download is pinned to a version and checked: SDK archives against the SHA-1 in Google's repository manifest (what sdkmanager checks), sources against SHA-256 sums. Changing a pin changes the image's tag, so the next build makes a new image. The image ends with a smoke test: a GLib + json-glib program linked against the static stack, checked to be AArch64 with every LOAD segment 16 KB aligned.
+
+*** Not in the stack
+:PROPERTIES:
+:CUSTOM_ID: not-in-the-stack
+:END:
+| Missing     | Why                                    | libregnum's behaviour                                                       |
+|-------------+----------------------------------------+-----------------------------------------------------------------------------|
+| libsoup     | (HTTP analytics only)                  | =SOUP=0=: =LrgAnalyticsBackendHttp= keeps queueing; each send fails with =LRG_ANALYTICS_ERROR_BACKEND= |
+| libpq       | the MMO server's PostgreSQL store      | =LIBPQ=0=: =lrg_mmo_store_new_postgres()= fails with =G_IO_ERROR_NOT_SUPPORTED=; SQLite and memory stores work |
+| libdex      | its fibers use ucontext, absent in bionic | the async loaders (=*_async()=, returning =DexFuture=) are not built, as on Windows |
+| GObject Introspection | runs the library it scans     | no =.gir=/=.typelib=; no gjs or pygobject scripting                          |
+| crispy      | compiles C at run time                 | =CRISPY=0=                                                                  |
+| the editor app and tools | desktop programs          | =BUILD_TOOLS=0=, =BUILD_EDITOR_UI=0=; the editor /library/ module is built  |
+
+** Compiler
+:PROPERTIES:
+:CUSTOM_ID: compiler
+:END:
+The NDK has only clang, so Android is the one target not built with gcc. The code is still gnu89 and the same warning list applies, with every warning an error:
+
+- Flags this clang does not know are dropped after a probe (=make ANDROID=1 print-target= lists them; with NDK r30 none are).
+- One gcc/clang dialect gap is accepted: =-Wno-typedef-redefinition=. libregnum and graylib forward-declare types (=typedef struct _LrgWidget LrgWidget;=) and =G_DECLARE_*_TYPE= declares them again. An identical typedef redefinition is valid GNU C in gnu89 (gcc never warns) and valid C11; clang calls it a C11 extension. It is not a bug, so clang is told to accept what gcc accepts (decided 2026-11-24). Set in the profile (=LRG_DIALECT_WARN_CFLAGS=) and graylib's Android flags.
+- Everything else clang reported when Android was first built was fixed in the code (see the 0.12.0 changelog): printf attributes, dead helpers, a misleading indentation, the =volatile= =g_once_init_*= pattern, a long/double range bug.
+
+The NDK headers define a few plain =inline= helpers that call APIs newer than API 29. Under gnu89 such a helper is emitted in every file that includes it, so =src/core/lrg-platform.c= (the only file that includes them) defines =__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__= first: the NDK's own switch that makes newer-API references weak.
+
+** Graphics: OpenGL ES 3
+:PROPERTIES:
+:CUSTOM_ID: graphics
+:END:
+raylib runs on OpenGL ES 3 (=GRAPHICS_API_OPENGL_ES3=); the APK requires GLES 3.2, which every arm64 device with API 29 has.
+
+- *Shaders.* Every built-in shader starts with =LRG_GLSL_HEADER= (=src/graphics/lrg-glsl-private.h=) instead of a literal =#version=: =#version 330= on the desktop, =#version 300 es= with default precisions on Android. The shaders are written in the common subset of GLSL 3.30 and GLSL ES 3.00; the rules are in [[file:../guides/rendering-pipeline.org::#es-compatibility][Rendering pipeline, ES compatibility]]. =make ANDROID=1 test-shaders= compiles all of them both ways with glslang.
+- *Terrain* uses its per-mesh path on GLES (the shared-page path needs desktop GL 3.3 base-vertex draws); it chooses at run time.
+- *Clipboard images* are not available (graylib returns =NULL=); text clipboard works.
+- *Input events with modifiers* (graylib's GLFW callback chain) are not hooked; input is polled, as raylib does on Android.
+
+** Files, data and logs: lrg_platform_prepare()
+:PROPERTIES:
+:CUSTOM_ID: platform-prepare
+:END:
+An Android app has a private directory in internal storage, its files sit compressed in the APK, and stderr goes nowhere. =lrg_platform_prepare()= (=src/core/lrg-platform.h=) makes that look like a desktop before the game runs; it does nothing on other platforms.
+
+1. *Logging first.* GLib's log writer sends every message to logcat, the log domain as the tag and the level mapped to a priority (error → fatal, critical → error, warning → warn, message and info → info, debug → debug). =adb logcat -s Libregnum-Core= shows one domain.
+2. *Data directories.* =lrg_platform_set_data_root()= points =HOME= at the internal storage path and =XDG_DATA_HOME=, =XDG_CONFIG_HOME=, =XDG_CACHE_HOME=, =TMPDIR= at =data=, =config=, =cache=, =tmp= below it, creating them. Saves, settings and anything else that asks GLib for those directories lands there.
+3. *Assets.* =lrg_platform_extract_assets()= copies the APK's =assets/= into =<internal>/assets= and the process changes into that directory, so a game's relative paths (=data/levels/one.yaml=) open as on the desktop. The NDK cannot list subdirectories of APK assets, so the packager writes =assets/lrg-assets.list=: a stamp line (=# lrg-assets <hash>=, a hash of every path and file) and the file list. Extraction:
+   - does nothing when =<internal>/assets/.lrg-assets-stamp= already holds the stamp (every launch after the first, until the APK changes),
+   - otherwise writes into =assets.new=, then swaps it in place of =assets= and deletes the old copy, so an interrupted extraction never leaves two versions mixed and files a new version dropped disappear,
+   - refuses a manifest with an absolute path, an empty, =.= or =..= component or a backslash before writing anything.
+
+   Reading straight from the APK still works: raylib's Android layer wraps =fopen()= (=-Wl,--wrap=fopen=) to look in the APK's assets first, so =LoadTexture("data/x.png")= finds the file with or without extraction. Extraction is what makes GLib file APIs (=g_file_get_contents()= and the rest, used throughout libregnum) see the same files. Extracting costs storage once per version; a future =LrgVfs= source reading APK assets directly would avoid that.
+
+Who calls it:
+
+| Game                                  | Call                                                               |
+|---------------------------------------+--------------------------------------------------------------------|
+| uses =LRG_DEFINE_GAME_MODULE()=       | automatic: the generated =main()= calls it first                   |
+| calls =lrg_game_run_standalone()=     | automatic (and again harmlessly)                                    |
+| its own =main()=                      | call =lrg_platform_prepare()= first, as =examples/game-chocolate-chip-clicker.c= does |
+| any game                              | =lrg_engine_startup()= calls it as a safety net                    |
+
+Only the first call does the work; a failure is reported to every caller.
+
+** The APK
+:PROPERTIES:
+:CUSTOM_ID: the-apk
+:END:
+=make ANDROID=1 apk APK_GAME=<game.c>= builds the libraries, then:
+
+1. *libmain.so.* The game's source compiled like an example and linked with the static =liblibregnum.a= (graylib and raylib with its NativeActivity glue inside) and the static GLib stack into one shared object, with =-Wl,--no-undefined= (every symbol resolved at build time, not on a phone), =-u ANativeActivity_onCreate= (keep the entry point), =-Wl,--wrap=fopen= (raylib's APK asset reader) and 16 KB page alignment. It needs only Android's own libraries (=libc=, =libm=, =libdl=, =liblog=, =libandroid=, =libEGL=, =libGLESv3=, =libz=).
+2. *build-aux/android/mkapk.sh* packages it: stages =APK_ASSETS= and writes =lrg-assets.list=, fills =build-aux/android/AndroidManifest.xml.in=, links the base APK with =aapt2=, adds =lib/arm64-v8a/libmain.so= /stored/ (=android:extractNativeLibs="false"= maps it from the APK), aligns with =zipalign -P 16= (uncompressed libraries on 16 KB boundaries for Android 15+), and signs with =apksigner=.
+
+Output: =build/release-android-arm64/apk/<name>.apk= (=build/debug-android-arm64/...= with =DEBUG=1=).
+
+| Variable           | Default                                 | Meaning                                     |
+|--------------------+-----------------------------------------+---------------------------------------------|
+| =APK_GAME=         | (required)                              | the game's source file                      |
+| =APK_NAME=         | its basename                            | APK and directory name                      |
+| =APK_ASSETS=       | none                                    | directory packed as =assets/=               |
+| =APK_PACKAGE=      | =org.libregnum.<name>= (=-= → =_=)       | application id                              |
+| =APK_LABEL=        | =APK_NAME=                              | launcher label                              |
+| =APK_VERSION_CODE= | 1                                       | integer version (raise it for each release)  |
+| =APK_VERSION_NAME= | libregnum's version                     | version string                              |
+| =APK_ORIENTATION=  | =landscape=                             | =landscape=, =portrait=, =sensor=, ...      |
+
+*** Signing
+:PROPERTIES:
+:CUSTOM_ID: signing
+:END:
+Without =--keystore=, =mkapk.sh= signs with a debug key it creates on first use (=build/<type>-android-arm64/apk/debug.keystore=, password =android=); keep that file, or every rebuild has a new key and =adb install -r= refuses the update. A release is signed with your own keystore: call =mkapk.sh= with =--keystore= and =--ks-pass=, or sign the aligned APK with =apksigner= yourself. Never commit a release keystore.
+
+*** Manifest
+:PROPERTIES:
+:CUSTOM_ID: manifest
+:END:
+=hasCode="false"= (no Java), =android.app.NativeActivity= as the launcher with =android.app.lib_name= = =main=, GLES 3.2 required, =appCategory="game"=, fullscreen, configuration changes handled by the activity (raylib reacts to them) instead of restarting it. =minSdkVersion= 29, =targetSdkVersion= the platform's API (36).
+
+** Running on a device
+:PROPERTIES:
+:CUSTOM_ID: running
+:END:
+=apk-install= and =apk-run= run on the host, not in the container: they need =adb= (Fedora: =android-tools=) and a device with USB debugging on (=adb devices= lists it).
+
+#+begin_src sh
+make ANDROID=1 apk-install APK_GAME=examples/game-chocolate-chip-clicker.c  # adb install -r
+make ANDROID=1 apk-run APK_GAME=examples/game-chocolate-chip-clicker.c      # am start NativeActivity
+adb logcat -s libregnum Libregnum-Core
+#+end_src
+
+** Testing
+:PROPERTIES:
+:CUSTOM_ID: testing
+:END:
+| Goal                          | Where         | Checks                                                              |
+|-------------------------------+---------------+---------------------------------------------------------------------|
+| =make ANDROID=1 test-apk=     | container     | =tests/test-apk-layout.sh=: signature, manifest (package, minSdk, NativeActivity, no code, libraries not extracted, GLES 3.2), =libmain.so= stored, 16 KB aligned in the zip and in its LOAD segments, AArch64, =ANativeActivity_onCreate= exported, only system libraries needed, every listed asset present (and equal to =APK_ASSETS=) |
+| =make ANDROID=1 test-shaders= | container     | every built-in shader compiles as GLSL ES 3.00 (and GLSL 3.30)      |
+| =make test= (native)          | host          | =tests/test-platform.c=: data root, extraction (first run, same stamp, new stamp, interrupted run, unsafe paths, bad and missing manifests), the logcat priority mapping |
+
+The unit tests themselves do not run on Android: there is nothing in the build container to run arm64 Android binaries, and a device run is manual (=apk-install=, =apk-run=, logcat).
+
+** Licensing
+:PROPERTIES:
+:CUSTOM_ID: licensing
+:END:
+The NDK, build-tools and platform archives are Google's, distributed under the Android Software Development Kit License Agreement, which is not a free software licence; using them means accepting it. Nothing from them ends up in libregnum's sources; the APK contains only the game, libregnum, its free dependencies and Android's system libraries by reference. They are pinned and confined to the build container (=versions.sh=). Fedora packages no usable free replacement (=android-tools= has =adb= only).
+
+** Troubleshooting
+:PROPERTIES:
+:CUSTOM_ID: troubleshooting
+:END:
+*** Black screen, then the app closes
+:PROPERTIES:
+:CUSTOM_ID: black-screen
+:END:
+Look at =adb logcat=: GLib's messages are there under their domains. A game whose =main()= returns ends the activity. =lrg_platform_prepare()= failing (no storage, a bad asset manifest) is logged, and the game should exit when it fails.
+
+*** A file is not found on the device
+:PROPERTIES:
+:CUSTOM_ID: file-not-found
+:END:
+Only files under =APK_ASSETS= are in the APK, and paths are relative to it: =APK_ASSETS=data= puts =data/x.png= at =x.png=; pass the parent (=APK_ASSETS=.=, or a staging directory) to keep the =data/= prefix. =unzip -l <apk> 'assets/*'= shows what is inside.
+
+*** INSTALL_FAILED_UPDATE_INCOMPATIBLE
+:PROPERTIES:
+:CUSTOM_ID: update-incompatible
+:END:
+The installed app was signed with another key (a deleted debug keystore). =adb uninstall <package>= first.
+
+*** dlopen failed / 16 KB
+:PROPERTIES:
+:CUSTOM_ID: dlopen-failed
+:END:
+=make ANDROID=1 test-apk= checks the alignment and the libraries =libmain.so= needs. A library added through =LRG_PLATFORM_LIBS= that is not on the device fails at load time.

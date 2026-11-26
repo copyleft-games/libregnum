@@ -31,8 +31,42 @@ TARGET_PLATFORM := windows
 # cannot do
 BUILD_GIR := 0
 
-# Test binaries are PE executables; run them through Wine
-LRG_EXEC_WRAPPER ?= wine
+# Test binaries are PE executables; run them through Wine (the build
+# container has wine-core), on a pseudo-terminal so they get a console as
+# on Windows (build-aux/cross/lrg-wine-run says why).  Wine finds DLLs on
+# WINEPATH: libregnum's, graylib's, yaml-glib's and the MinGW runtime (GLib
+# and friends).  Its prefix lives in the build directory: Wine refuses a
+# new prefix whose parent the user does not own (the container's /tmp), and
+# it is reused.
+LRG_EXEC_WRAPPER ?= $(PROJECT_ROOT)/build-aux/cross/lrg-wine-run
+
+# Test paths Wine cannot run (tests/Makefile passes each as -s PATH -- exact
+# paths -- and `make WINDOWS=1 test' lists them), one group per cause:
+
+# Wine has no Recycle Bin: g_file_trash() fails ("Unknown error"); a real
+# Windows trashes the file
+LRG_WINDOWS_SKIP_TRASH := /asset-meta/trash
+
+# an audio output device; the build container has none
+LRG_WINDOWS_SKIP_AUDIO := \
+    /audio/manager/procedural-add /audio/manager/procedural-remove \
+    /audio/manager/procedural-get-names /audio/manager/procedural-play-stop \
+    /audio/manager/procedural-stop-all
+
+LRG_TEST_SKIP_PATHS := $(LRG_WINDOWS_SKIP_TRASH) $(LRG_WINDOWS_SKIP_AUDIO)
+
+# binutils for tests/test-cross-artifacts.sh (make test-cross-artifacts)
+LRG_OBJDUMP ?= $(LRG_TARGET_TRIPLE)-objdump
+LRG_MINGW_BIN ?= /usr/x86_64-w64-mingw32/sys-root/mingw/bin
+export WINEPATH = $(PROJECT_ROOT)/$(LIBOUTDIR);$(GRAYLIB_BUILDDIR)/lib;$(YAMLGLIB_BUILDDIR)/$(DEP_BUILD_TYPE);$(LRG_MINGW_BIN)
+export WINEPREFIX ?= $(PROJECT_ROOT)/$(BUILDDIR)/wine
+# The prefix is copied from the one the image made (/opt/lrg-wine) the first
+# time, which is much faster than letting wineboot create it
+LRG_TEST_SETUP = test -d "$(WINEPREFIX)/drive_c" || { mkdir -p "$(WINEPREFIX)" && cp -a /opt/lrg-wine/. "$(WINEPREFIX)/"; }
+export WINEDEBUG ?= -all
+# no .NET (Mono) or HTML (Gecko) runtime: tests are plain console programs,
+# and Wine would otherwise try to install them when it creates the prefix
+export WINEDLLOVERRIDES ?= mscoree,mshtml=
 
 # Build container (build-aux/containers/windows-amd64/Containerfile)
 LRG_CONTAINER_PLATFORM :=

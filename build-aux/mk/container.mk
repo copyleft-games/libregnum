@@ -51,7 +51,7 @@ LRG_CONTAINER_PLATFORM_ARG := $(if $(LRG_CONTAINER_PLATFORM),--platform $(LRG_CO
 # recipes apart.
 LRG_CONTAINER_HASH := $(shell { \
         printf '%s\n' '$(BUILD_CONTAINER_BASE)' '$(LRG_CONTAINER_PLATFORM)'; \
-        cd '$(LRG_CONTAINER_CONTEXT)' && find containers/common 'containers/$(LRG_TARGET)' cross \
+        CDPATH= cd '$(LRG_CONTAINER_CONTEXT)' && find containers/common 'containers/$(LRG_TARGET)' cross \
             -type f 2>/dev/null | LC_ALL=C sort | xargs sha256sum; \
     } | sha256sum | cut -c1-12)
 LRG_CONTAINER_TAG := localhost/libregnum-build-$(LRG_TARGET):$(LRG_CONTAINER_HASH)

@@ -1,0 +1,62 @@
+#!/bin/bash
+# lrg-wine-run - run a Windows program under Wine with a console
+# Copyright (C) 2026  Zach Podbielniak
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# The windows-amd64 test runner (LRG_EXEC_WRAPPER).  On Windows a console
+# program always has a console, even with its output piped.  Under Wine it
+# has one only when Wine starts on a terminal; with stdout a pipe (make,
+# the build container) GetConsoleOutputCP() fails, and GLib warns "Failed
+# to determine console output code page" whenever it formats a system
+# error -- a fatal warning in every test that checks an error path.
+#
+# So the program runs on a pseudo-terminal (util-linux script(1)): Wine
+# attaches a console, and the terminal control sequences and carriage
+# returns that the console writes are removed from the output.  stdout and
+# stderr arrive merged, as they would from a terminal.  The exit status is
+# the program's.
+#
+# Usage: lrg-wine-run PROGRAM.exe [ARG...]
+
+set -euo pipefail
+
+case "${1:-}" in
+	-h|--help)
+		sed -n '18,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+		echo 'Example: lrg-wine-run build/release-windows-amd64/tests/test-registry.exe --tap'
+		exit 0
+		;;
+	--license)
+		sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+		exit 0
+		;;
+	'')
+		echo 'lrg-wine-run: no program given (see --help)' >&2
+		exit 2
+		;;
+esac
+
+# One command string for script -c, every word quoted for the shell.  The
+# terminal is made very wide first: Wine's console cuts every line at the
+# terminal's width (80 columns by default), which would cut test messages
+command=''
+printf -v command '%q ' wine "$@"
+command="stty cols 32767 2>/dev/null; ${command}"
+
+# TERM=dumb keeps Wine's console from drawing; what it still writes (CSI
+# and OSC sequences, cursor show/hide, CR) is stripped
+TERM=dumb script -qefc "${command}" /dev/null < /dev/null \
+	| sed -u -e 's/\x1b\[[0-9;?]*[A-Za-z]//g' -e 's/\x1b\][^\x07]*\x07//g' -e 's/\r$//'
+exit "${PIPESTATUS[0]}"

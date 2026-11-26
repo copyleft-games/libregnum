@@ -76,6 +76,11 @@ BUILD_EXAMPLES ?= 1
 # Build documentation (requires gi-docgen)
 BUILD_DOCS ?= 0
 
+# Build the command-line tools and apps (lrgldr, lrgpack, lrgeditor,
+# lrgeditorctl) as part of `make all'.  Targets without a desktop (Android)
+# turn it off in their profile; the libraries are built either way.
+BUILD_TOOLS ?= 1
+
 # Build the editor/level authoring module (src/editor/). Off-able for headless
 # or minimal builds; the rest of the engine builds without it.
 BUILD_EDITOR ?= 1
@@ -268,6 +273,10 @@ ifeq ($(LRG_IS_CROSS),1)
         # per flag, cross only; `make print-target' lists what was dropped.
         WARN_CFLAGS := $(foreach flag,$(WARN_CFLAGS),$(if $(shell $(CC) -Werror $(flag) -E -x c /dev/null -o /dev/null > /dev/null 2>&1 && echo ok),$(flag)))
         LRG_DROPPED_WARN_CFLAGS := $(filter-out $(WARN_CFLAGS),$(LRG_PROJECT_WARN_CFLAGS))
+        # and the profile's documented dialect gaps between gcc and that
+        # compiler (LRG_DIALECT_WARN_CFLAGS: constructs gcc accepts silently
+        # in gnu89 that are not bugs, e.g. Android's -Wno-typedef-redefinition)
+        WARN_CFLAGS += $(LRG_DIALECT_WARN_CFLAGS)
     endif
 else
     TARGET_PLATFORM := $(PLATFORM)
@@ -389,7 +398,7 @@ MCP ?= 0
 ifeq ($(MCP),1)
     MCP_GLIB_DIR := $(PROJECT_ROOT)/deps/mcp-glib
     MCP_CFLAGS := -I$(MCP_GLIB_DIR)/src -DLRG_ENABLE_MCP=1
-    MCP_LIBS := -L$(MCP_GLIB_DIR)/build -lmcp-glib-1.0
+    MCP_LIBS := -L$(MCPGLIB_BUILDDIR) -lmcp-glib-1.0
 else
     MCP_CFLAGS :=
     MCP_LIBS :=
@@ -485,7 +494,8 @@ ifeq ($(TARGET_PLATFORM),windows)
     LIB_IMPORT := lib$(LIB_NAME).dll.a
     EXE_EXT := .exe
     # Platform-specific system libraries
-    PLATFORM_LIBS := -lopengl32 -lgdi32 -lwinmm -lshell32
+    # ws2_32: Winsock (the MMO datagram transport's getpeername())
+    PLATFORM_LIBS := -lopengl32 -lgdi32 -lwinmm -lshell32 -lws2_32
     # Windows shared library linker flags (use = for deferred expansion of LIBOUTDIR)
     LIB_LDFLAGS_PLATFORM = -shared -Wl,--out-implib,$(LIBOUTDIR)/$(LIB_IMPORT)
 else
@@ -541,6 +551,10 @@ ifeq ($(SANITIZE),1)
     ASAN := 1
     UBSAN := 1
     BUILDDIR := build/sanitize
+else ifeq ($(MINIMAL_FEATURES),1)
+    # Every optional dependency left out (SOUP=0 LIBPQ=0, below), in its own
+    # directory: `make test-minimal-features' checks the stubs natively.
+    BUILDDIR := build/minimal
 else ifeq ($(DEBUG),1)
     BUILDDIR := build/debug$(LRG_BUILD_SUFFIX)
 else
@@ -562,8 +576,11 @@ GIROUTDIR := $(BUILDDIR)/gir
 # Where it built without it, the path arrived by accident through an
 # optional dependency's cflags (gio-unix-2.0 in AI_PKG_DEPS); Ubuntu
 # 24.04, without those, failed in lrg-dap-server.c.
-GLIB_CFLAGS := $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 gio-unix-2.0 gmodule-2.0)
-GLIB_LIBS := $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 gio-unix-2.0 gmodule-2.0)
+# Windows has no gio-unix-2.0, and one missing module makes the whole
+# pkg-config query print nothing, so it is asked for only where it exists
+LRG_GIO_UNIX_PKG := $(if $(filter windows,$(TARGET_PLATFORM)),,gio-unix-2.0)
+GLIB_CFLAGS := $(shell $(PKG_CONFIG) --cflags glib-2.0 gobject-2.0 gio-2.0 $(LRG_GIO_UNIX_PKG) gmodule-2.0)
+GLIB_LIBS := $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 $(LRG_GIO_UNIX_PKG) gmodule-2.0)
 
 # json-glib (for yaml-glib interop, required)
 JSON_CFLAGS := $(shell $(PKG_CONFIG) --cflags json-glib-1.0)
@@ -573,6 +590,10 @@ JSON_LIBS := $(shell $(PKG_CONFIG) --libs json-glib-1.0)
 # builds LrgAnalyticsBackendHttp without it: every send then fails with
 # LRG_ANALYTICS_ERROR_BACKEND and batches stay queued (LRG_WITHOUT_SOUP).
 # The Android profile sets SOUP=0 (no libsoup in its GLib stack).
+ifeq ($(MINIMAL_FEATURES),1)
+    SOUP := 0
+    LIBPQ := 0
+endif
 SOUP ?= 1
 ifeq ($(SOUP),1)
     SOUP_CFLAGS := $(shell $(PKG_CONFIG) --cflags libsoup-3.0)
@@ -768,12 +789,14 @@ ifeq ($(LRG_IS_CROSS),1)
     RAYLIB_BUILD_DIR  := $(DEP_OUT)/raylib
     YAMLGLIB_BUILDDIR := $(DEP_OUT)/yaml-glib
     CRISPY_BUILDDIR   := $(DEP_OUT)/crispy
+    MCPGLIB_BUILDDIR  := $(DEP_OUT)/mcp-glib
 else
     DEP_OUT           :=
     GRAYLIB_BUILDDIR  := $(GRAYLIB_DIR)/build
     RAYLIB_BUILD_DIR  := $(GRAYLIB_DIR)/deps/raylib/src
     YAMLGLIB_BUILDDIR := $(YAMLGLIB_DIR)/build
     CRISPY_BUILDDIR   := $(CRISPY_DIR)/build
+    MCPGLIB_BUILDDIR  := $(PROJECT_ROOT)/deps/mcp-glib/build
 endif
 
 # Static archives for embedding graylib, raylib, and yaml-glib into libregnum
@@ -899,6 +922,11 @@ LIB_CFLAGS += $(AI_CFLAGS)
 LIB_CFLAGS += $(FFMPEG_CFLAGS)
 LIB_CFLAGS += $(OPENXR_CFLAGS)
 LIB_CFLAGS += $(ALSA_CFLAGS)
+# a target profile's extra compile flags (Android: the NDK's
+# native_app_glue headers for src/core/lrg-platform.c)
+ifneq ($(strip $(LRG_TARGET_CFLAGS)),)
+    LIB_CFLAGS += $(LRG_TARGET_CFLAGS)
+endif
 
 # Library link flags (use platform-specific flags)
 LIB_LDFLAGS := $(LIB_LDFLAGS_PLATFORM)

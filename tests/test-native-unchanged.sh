@@ -40,13 +40,17 @@ usage () {
 test-native-unchanged.sh - fail when the native build commands differ from
 a base git ref.
 
-Usage: test-native-unchanged.sh [-b REF] [-k] [ROOT]
+Usage: test-native-unchanged.sh [-b REF] [-a] [-k] [ROOT]
 
 Arguments:
   ROOT          libregnum checkout (default: the parent of this script)
 
 Options:
   -b, --base REF  ref to compare against (default: merge-base with master)
+  -a, --exclude-added
+                  ignore files added since REF (a branch that adds sources):
+                  their compiles and their entries in link lists; compares
+                  the distinct command lines (order and counts not checked)
   -k, --keep      keep the scratch copy and the two command logs
   -h, --help      show this help
   --license       show the license
@@ -54,7 +58,9 @@ Options:
 Examples:
   tests/test-native-unchanged.sh
   tests/test-native-unchanged.sh --base v0.11.1
+  tests/test-native-unchanged.sh --exclude-added
   make test-native-unchanged BASE=master
+  make test-native-unchanged EXCLUDE_ADDED=1
 
 Exit status: 0 when the commands match, 1 when they differ (a unified
 diff is printed), 2 on usage or setup errors.
@@ -133,6 +139,53 @@ restore_to_base () {
 	done < <(git -C "${real_dir}" config --file .gitmodules --get-regexp '\.path$' 2>/dev/null | awk '{print $2}')
 }
 
+# exclude_added_files <root> <base> <log>
+#
+# For a branch that adds sources: remove every mention of a .c/.h file
+# added since <base> (the file, its object, dependency file and test
+# binary) from <log>, then reduce <log> to its sorted distinct lines.  What
+# is left compares the build commands of everything both trees share; a
+# changed flag or path still shows, the extra compile of a new file does
+# not.  Line order and repeat counts are no longer compared.
+exclude_added_files () {
+	if [[ $# -ne 3 ]]
+	then
+		die 'exclude_added_files() requires 3 positional arguments'
+	fi
+
+	local root="${1}"
+	local base="${2}"
+	local log="${3}"
+	local stem
+	local sed_args=()
+
+	while IFS= read -r stem
+	do
+		[[ -n "${stem}" ]] || continue
+		stem="${stem%.*}"
+		# a token naming the file in any build directory: src/x/y.c,
+		# build/release/obj/src/x/y.o, tests/build/.../tests/test-y
+		# a line about that file alone (its compile, its "CC" line) goes;
+		# in a list (link line, archive loop) only its token goes
+		sed_args+=(-e "\\#${stem}\\.[chod]\\b#{/^printf|[[:space:]]-c[[:space:]]/d}")
+		sed_args+=(-e "s#[^ \"']*${stem}\.[chod]\b##g")
+		# a test binary's link line is about that test alone
+		sed_args+=(-e "\\#-o [^ ]*/tests/$(basename -- "${stem}")\\b#d")
+		sed_args+=(-e "s#[^ \"']*/tests/$(basename -- "${stem}")\b##g")
+	done < <({
+		git -C "${root}" diff --name-only --diff-filter=A "${base}" -- '*.c' '*.h'
+		git -C "${root}" ls-files --others --exclude-standard -- '*.c' '*.h'
+	} | sed 's#^tests/##')
+
+	if [[ ${#sed_args[@]} -gt 0 ]]
+	then
+		sed -E "${sed_args[@]}" "${log}" | sed -E 's/[ \t]+/ /g; s/ +$//' | LC_ALL=C sort -u > "${log}.x"
+	else
+		LC_ALL=C sort -u "${log}" > "${log}.x"
+	fi
+	mv -- "${log}.x" "${log}"
+}
+
 # dry_run <tree> <log>
 #
 # Print the native build's commands for the root, tests and examples.
@@ -160,6 +213,7 @@ main () {
 	local root
 	local base=''
 	local keep=0
+	local exclude_added=0
 	local base_commit
 	local scratch
 	local copy
@@ -175,6 +229,10 @@ main () {
 				[[ $# -ge 2 ]] || die '--base needs a ref'
 				base="${2}"
 				shift 2
+				;;
+			-a|--exclude-added)
+				exclude_added=1
+				shift
 				;;
 			-k|--keep)
 				keep=1
@@ -242,6 +300,12 @@ main () {
 	dry_run "${root}" "${scratch}/current.log"
 	# the base ran in the copy; rewrite its path to the real tree
 	sed "s|${copy}|${root}|g" "${scratch}/base.raw" > "${scratch}/base.log"
+
+	if [[ "${exclude_added}" -eq 1 ]]
+	then
+		exclude_added_files "${root}" "${base_commit}" "${scratch}/base.log"
+		exclude_added_files "${root}" "${base_commit}" "${scratch}/current.log"
+	fi
 
 	if ! diff -u --label "base (${base})" --label 'current' "${scratch}/base.log" "${scratch}/current.log"
 	then
