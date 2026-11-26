@@ -19,6 +19,7 @@
 #include "lrg-canvas-input.h"
 #include "lrg-canvas-private.h"
 #include "../lrg-log.h"
+#include "../core/lrg-platform.h"
 
 /* Stick deflection that counts as a navigation push, and the
  * deflection it must fall back under before the next push fires */
@@ -609,10 +610,11 @@ lrg_canvas_input_poll (LrgCanvasInput *self,
             lrg_canvas_input_add_key_release (self, (GrlKey) k);
     }
 
-    /* Composed characters (layout, Shift and dead keys applied) */
-    for (ch = grl_input_get_char_pressed ();
+    /* Composed characters (layout, Shift and dead keys applied); through
+     * the platform so Android's keyboards reach text fields too */
+    for (ch = (gint) lrg_platform_get_char_pressed ();
          ch > 0;
-         ch = grl_input_get_char_pressed ())
+         ch = (gint) lrg_platform_get_char_pressed ())
     {
         lrg_canvas_input_add_char (self, (gunichar) ch);
     }

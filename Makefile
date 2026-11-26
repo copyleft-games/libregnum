@@ -127,6 +127,9 @@ PUBLIC_HEADERS := \
 	src/input/lrg-input-action.h \
 	src/input/lrg-input-map.h \
 	src/input/lrg-binding-catalog.h \
+	src/input/lrg-touch-tracker.h \
+	src/input/lrg-touch-button.h \
+	src/input/lrg-touch-controls.h \
 	src/actionbar/lrg-action-slot.h \
 	src/actionbar/lrg-action-slot-provider.h \
 	src/actionbar/lrg-action-bar.h \
@@ -960,6 +963,9 @@ SOURCES := \
 	src/input/lrg-input-mock.c \
 	src/input/lrg-input-software.c \
 	src/input/lrg-input-merge.c \
+	src/input/lrg-touch-tracker.c \
+	src/input/lrg-touch-button.c \
+	src/input/lrg-touch-controls.c \
 	src/input/lrg-input-binding.c \
 	src/input/lrg-input-action.c \
 	src/input/lrg-input-map.c \

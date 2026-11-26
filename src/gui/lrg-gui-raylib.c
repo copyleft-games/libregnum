@@ -14,6 +14,7 @@
 #include "lrg-gui-raylib.h"
 #include <graylib.h>
 #include "lrg-gui-raylib-private.h"
+#include "../core/lrg-platform.h"
 #include "../paint/lrg-paint-renderer.h"
 #include "../paint/lrg-paint-private.h"
 #include "../paint/lrg-paint-font.h"
@@ -615,7 +616,9 @@ lrg_gui_raylib_poll_input (LrgGuiRaylib *self,
 				push_key (input, repeating[i], mods, TRUE);
 	}
 
-	while ((c = GetCharPressed ()) != 0 && input->n_chars < LRG_GUI_MAX_INPUT_EVENTS)
+	/* through the platform: Android's keyboards type there, not into
+	 * raylib's character queue */
+	while (input->n_chars < LRG_GUI_MAX_INPUT_EVENTS && (c = (gint) lrg_platform_get_char_pressed ()) != 0)
 		input->chars[input->n_chars++] = (gunichar) c;
 
 	/* Held state for continuous controls (fly camera). */

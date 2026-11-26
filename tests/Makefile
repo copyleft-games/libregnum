@@ -79,6 +79,7 @@ TEST_SOURCES := \
 	test-platform.c \
 	test-args-file.c \
 	test-input-merge.c \
+	test-touch.c \
 	test-timer-manager.c \
 	test-replay.c \
 	test-rollback.c \

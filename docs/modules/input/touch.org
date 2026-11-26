@@ -1,0 +1,207 @@
+* Touch input
+:PROPERTIES:
+:CUSTOM_ID: touch-input
+:END:
+=lrg-touch-tracker.h=, =lrg-touch-button.h= and =lrg-touch-controls.h= make a touch screen usable for a 3D game: gesture recognition, and the usual phone layout (a floating stick, a look region, buttons) feeding the same =LrgInputMap= actions a gamepad does. Everything is fed per frame, so it is tested with synthetic touches and works with points from anywhere (raylib's touch points on Android, a remote device, a replay).
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+| Type               | What it does                                                                                                     |
+|--------------------+------------------------------------------------------------------------------------------------------------------|
+| =LrgTouchPoint=    | one finger in one frame: =id= (stable while it stays down), =x=, =y= in pixels                                   |
+| =LrgTouchTracker=  | per-frame points in, gestures out: tap, double tap, long press, drag, pinch, two-finger tap                       |
+| =LrgTouchGesture=  | one recognised gesture: type, finger, position, start, movement this frame, pinch scale, duration                 |
+| =LrgTouchButton=   | one on-screen button: anchor, offset and size in dp, label, icon, hold or tap, the action it drives               |
+| =LrgTouchControls= | the layout: stick, look region, buttons; finger ownership; output into an =LrgInputSoftware=; YAML; drawing; auto mode |
+
+#+begin_src c
+LrgInputManager *manager = lrg_input_manager_get_default ();
+g_autoptr(LrgTouchControls) controls = lrg_touch_controls_new ();
+g_autoptr(GError) error = NULL;
+
+if (!lrg_touch_controls_load_from_file (controls, "data/touch.yaml", &error))
+	g_warning ("touch layout: %s", error->message);
+g_object_set (controls, "input-map", game_input_map, NULL);
+lrg_touch_controls_attach (controls, manager);   /* a sink in the manager, the mouse source */
+
+while (!grl_window_should_close (window))
+{
+	gdouble now = grl_window_get_time (window);
+	gfloat dx, dy;
+
+	lrg_touch_controls_update (controls, now);    /* before the manager's poll */
+	lrg_input_manager_poll (manager);
+
+	move (lrg_input_map_get_axis (game_input_map, "move-x"), ...);   /* the stick, like a pad */
+	lrg_touch_controls_get_look_delta (controls, &dx, &dy);           /* exact camera pixels */
+	camera_zoom /= lrg_touch_controls_get_zoom_delta (controls);
+
+	grl_window_begin_drawing (window);
+	draw_world ();
+	lrg_touch_controls_draw (controls);           /* the overlay, last */
+	grl_window_end_drawing (window);
+}
+#+end_src
+
+=examples/game-touch-demo.c= is a complete, small 3D example (a cube moved by the stick, an orbit camera, Jump and Color buttons); it builds natively (the left mouse button is one finger) and as an APK (=make ANDROID=1 apk APK_GAME=examples/game-touch-demo.c=).
+
+** Gestures: LrgTouchTracker
+:PROPERTIES:
+:CUSTOM_ID: tracker
+:END:
+=lrg_touch_tracker_feed (tracker, points, n, time)= processes one frame: fingers missing from =points= lifted, new ids went down. =lrg_touch_tracker_update (tracker, time)= feeds raylib's touch points. Each gesture is emitted as =gesture= (after the whole frame is processed) and kept until the next feed for polling (=lrg_touch_tracker_get_gestures()=, =lrg_touch_tracker_has_gesture()=).
+
+| Gesture          | When                                                                                                            | Fields                                        |
+|------------------+-----------------------------------------------------------------------------------------------------------------+-----------------------------------------------|
+| =tap=            | one finger, up within =tap-max-duration= (0.3 s), never moved more than =tap-slop= (10 dp)                      | =x=, =y= (lift), =start_x=, =start_y=        |
+| =double-tap=     | a tap within =double-tap-interval= (0.3 s) and =double-tap-slop= (40 dp) of the previous tap; the tap is reported too, so single taps are never delayed; a third tap starts over | =start_x=, =start_y=: the first tap |
+| =long-press=     | one finger held still for =long-press-duration= (0.5 s); reported while still down, once; its lift is not a tap | position                                      |
+| =drag-begin=     | the only finger moved past the slop                                                                             | =dx=, =dy=: everything since it went down     |
+| =drag=           | the dragging finger moved this frame                                                                            | =dx=, =dy=: this frame                        |
+| =drag-end=       | it lifted, or a second finger landed                                                                            |                                               |
+| =pinch-begin=    | two fingers down and their distance or centre changed by more than the slop                                     | centre, =scale= (distance now / at the start), =total_scale= |
+| =pinch=          | the pair moved this frame                                                                                       | centre, =dx=, =dy= of the centre, =scale= (now / last frame), =total_scale= (now / start) |
+| =pinch-end=      | one of the two lifted                                                                                           | =total_scale=                                 |
+| =two-finger-tap= | two fingers down and up within twice =tap-max-duration=, neither moved, no third finger                        | centre at the start                           |
+
+Rules that keep gestures from overlapping:
+
+- A finger that was ever part of a two-finger gesture never taps, long-presses or drags (lifting one finger of a pinch does not turn the other into a drag).
+- A finger that moved past the slop is never a tap or a long press; a long-pressed finger may still start a drag.
+- The same id twice in one frame counts once (the first).
+- =lrg_touch_tracker_reset()= forgets every finger without emitting anything (the app paused, the controls hid).
+
+Distances are in dp and multiplied by =dp-scale=, which =LrgTouchControls= sets from =lrg_platform_get_dp_scale()= (Android's density / 160, 1 elsewhere), so thresholds feel the same on every screen.
+
+** On-screen controls: LrgTouchControls
+:PROPERTIES:
+:CUSTOM_ID: controls
+:END:
+*** Widgets and ownership
+:PROPERTIES:
+:CUSTOM_ID: ownership
+:END:
+A finger belongs to one widget, decided when it lands, until it lifts:
+
+1. the topmost =LrgTouchButton= under it (the last added is on top);
+2. the stick, when no finger holds it and the finger is in =stick-region=;
+3. the look region, when the finger is in =look-region=;
+4. otherwise the game's pointer.
+
+A button keeps its finger when it slides off; the stick keeps its finger anywhere on the screen. The look region's fingers and the pointer fingers go through two separate trackers, so a tap with one hand is not lost while the other turns the camera. Both trackers use the thresholds of =lrg_touch_controls_get_tracker()= (set them there).
+
+*** Stick
+:PROPERTIES:
+:CUSTOM_ID: stick
+:END:
+A finger landing in =stick-region= (fractions of the screen: =[x, y, width, height]=, default the lower 65% of the left 45%) spawns the stick where it lands (=stick-floating= =TRUE=, the default) or at the region's centre (=FALSE=). The output (=lrg_touch_controls_get_stick()=):
+
+- the finger's offset divided by =stick-radius= (60 dp), clamped to length 1;
+- 0 inside =stick-deadzone= (0.15 of the radius), then rescaled so the deadzone's edge is 0 and the radius 1: =out = (min(len, 1) - deadzone) / (1 - deadzone)= along the finger's direction;
+- =x= right positive, =y= down positive, like a gamepad stick;
+- =lrg_touch_controls_is_running()= when the output's length reaches =stick-run-threshold= (0.8): walk and run on one stick.
+
+*** Look region
+:PROPERTIES:
+:CUSTOM_ID: look
+:END:
+One finger dragging gives =lrg_touch_controls_get_look_delta()=: the pixels it moved this frame (including the slop on the frame the drag begins) times =look-sensitivity=. Two fingers pinching give =lrg_touch_controls_get_zoom_delta()=: the distance now over the distance last frame (above 1 spreading, below 1 pinching, 1 otherwise); multiply or divide a camera distance by it. A tap or long press in the look region is still the game's pointer (tap to select, drag to look).
+
+*** Buttons
+:PROPERTIES:
+:CUSTOM_ID: buttons
+:END:
+An =LrgTouchButton= is placed from a screen =anchor= (=top-left=, =top=, =top-right=, =left=, =center=, =right=, =bottom-left=, =bottom=, =bottom-right=): its centre is the anchor plus =offset-x=, =offset-y= (dp, down positive), its size =width= x =height= (dp). A =circle= hits inside its ellipse, a =rounded= rectangle inside its rectangle.
+
+| Mode   | Finger lands                        | Finger lifts inside                                     | Finger lifts outside |
+|--------+-------------------------------------+---------------------------------------------------------+----------------------|
+| =hold= | pressed, =button-pressed=, input down | released, =button-released=, input up                 | the same             |
+| =tap=  | shown down, nothing pressed         | pressed and released in that frame, both signals, a one-frame click | cancelled            |
+
+Poll with =lrg_touch_controls_is_button_down()=, =..._pressed()=, =..._released()= (per frame), or connect to the signals.
+
+*** Into the input system
+:PROPERTIES:
+:CUSTOM_ID: input-system
+:END:
+The controls write into an =LrgInputSoftware= (=sink=) that is a source of the =LrgInputManager=, so =LrgInputMap= queries see touch like any other device and the game needs no touch-specific code for actions:
+
+- *Stick*: the sink's gamepad =gamepad= (0) left stick axes (=stick-side= =right= swaps), every frame. Bind actions to =GRL_GAMEPAD_AXIS_LEFT_X=/=Y= as for a real pad.
+- *Look*: the other stick, as a rate: pixels this frame times =look-axis-gain= (0.05), clamped to -1..1, 0 when the finger is still. Games with gamepad camera code get touch look for free; games that want exact pixels read =lrg_touch_controls_get_look_delta()=.
+- *Buttons*: a button presses, in order of preference, its =key=, its =gamepad-button=, or the first key, mouse button or gamepad button binding of its =action= in =input-map=. A tap button's press is released at the next frame; a hold button's when the finger lifts. The direct state (=is_button_down()=, signals) works without any of that.
+- *Pointer*: with =pointer-emulation= (default), the sink's mouse follows the first pointer finger, a tap clicks the left button and a long press the right one (pressed for one frame). The signal =pointer-gesture= reports every gesture the controls did not use (taps, double taps, long presses, two-finger taps, drags and pinches outside the look region).
+- *The raw mouse*: raylib reports every touch as its left mouse button and moves the mouse to the first touch, so the default "mouse" source would click wherever the stick or a button is used. =mouse-source= names a source the controls disable while they are shown with pointer emulation and enable again when they hide (or are disposed). Code that calls raylib's mouse functions directly (not through the input manager) still sees raw touches; use =pointer-gesture= there.
+
+=lrg_touch_controls_attach (controls, manager)= creates the sink (named =touch-controls=), adds it to the manager (replacing a previous one) and sets =mouse-source= to the manager's "mouse".
+
+*Order in a frame:* =lrg_touch_controls_update()= (or =_feed()=) before =lrg_input_manager_poll()=, so presses are seen in the same frame. =LrgGameTemplate= and =LrgEngine= poll the manager themselves; update the controls before their frame (or accept one frame of latency).
+
+*** Showing: auto mode
+:PROPERTIES:
+:CUSTOM_ID: auto-mode
+:END:
+=mode=:
+
+- =auto= (default): hidden until the first frame with a touch; shown from then on, until the mouse, keyboard or a gamepad has been used for =auto-hide-delay= seconds (10) without a single touch. =lrg_touch_controls_update()= detects that input itself (any key down, a mouse button, mouse movement or wheel while no finger is down this frame or last, a gamepad button or a stick past half); a game feeding its own points calls =lrg_touch_controls_note_other_input()=.
+- =shown=, =hidden=: forced.
+
+Hidden controls claim no fingers, emit nothing, release every held button, centre the stick and zero the sink's axes; =visible= (read-only, with notify) tells which. A tablet with a keyboard therefore shows the overlay while it is touched and hides it when the player switches to the keyboard.
+
+*** Scale and skin
+:PROPERTIES:
+:CUSTOM_ID: skin
+:END:
+Pixels per dp are =dp-scale= (=lrg_platform_get_dp_scale()= by default) times =scale= (the player's size preference, 0.25 to 4; offsets scale with sizes, anchors stay on their screen point). =lrg_touch_controls_draw()= draws with graylib's 2D primitives: the stick's base and knob (a faint hint at the region's centre while unused), the buttons as circles or rounded rectangles with their label (or icon name) centred. Colours: =base-color=, =knob-color=, =button-color=, =button-active-color= (held), =text-color=, all multiplied by =opacity= (0.6); labels are =font-size= dp. A game with its own art draws from =lrg_touch_button_get_rect()= and =lrg_touch_button_get_icon()= instead.
+
+** Layout YAML
+:PROPERTIES:
+:CUSTOM_ID: layout-yaml
+:END:
+#+begin_src yaml
+scale: 1.0                         # optional: the player's size preference
+opacity: 0.6                       # optional
+stick:                             # absent: no stick
+  region: [0.0, 0.35, 0.45, 0.65]  # x, y, width, height as fractions of the screen
+  radius: 60                       # dp
+  deadzone: 0.15                   # fraction of the radius, 0..0.95
+  run-threshold: 0.8               # 0..1
+  floating: true
+  side: left                       # left | right gamepad stick
+look:                              # absent: no look region
+  region: [0.45, 0.0, 0.55, 1.0]
+  sensitivity: 1.0
+  axis-gain: 0.05
+buttons:
+  - id: jump                       # required, unique
+    action: jump                   # default: the id
+    label: Jump
+    icon: jump
+    anchor: bottom-right           # top-left top top-right left center right bottom-left bottom bottom-right
+    offset: [-80, -80]             # dp from the anchor to the centre
+    size: [72, 72]                 # dp
+    mode: hold                     # hold | tap
+    shape: circle                  # circle | rounded
+    key: space                     # optional: GrlKey nick
+    gamepad-button: right-face-down  # optional: GrlGamepadButton nick
+#+end_src
+
+=lrg_touch_controls_load_from_file()= / =_load_from_data()= replace the stick, look region and buttons; =scale= and =opacity= change only when given. Everything is parsed into a staging copy and checked before anything is applied: a YAML syntax error (=LRG_TOUCH_CONTROLS_ERROR_PARSE=) or any invalid value (=LRG_TOUCH_CONTROLS_ERROR_INVALID=: an unknown key at any level, a value that is not a number or out of range, a region that does not fit in 0..1, an unknown enum nick, a button without an id or with a duplicate one) returns =FALSE= with a message naming the field, and the controls are exactly as before. Fingers down are released on a successful load.
+
+** Limitations
+:PROPERTIES:
+:CUSTOM_ID: limitations
+:END:
+- Pointer emulation clicks; it does not press-drag-release (dragging UI items with the emulated mouse). Use =pointer-gesture= drags for that.
+- The look axis in the sink is per frame, so its rate depends on the frame rate; exact camera control reads =lrg_touch_controls_get_look_delta()=.
+- On a desktop there are no touch points (GLFW has no touch input); the example uses the mouse as one finger, and tests feed synthetic points.
+- Up to 10 fingers (raylib's limit).
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: related
+:END:
+- [[file:index.org][Input module]], [[file:input-map.org][Input Map]]
+- [[file:../../platforms/android.org][Android]]: density, soft keyboard, lifecycle
+- Tests: =tests/test-touch.c=

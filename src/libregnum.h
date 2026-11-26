@@ -160,6 +160,9 @@
 #include "input/lrg-input-binding.h"
 #include "input/lrg-input-action.h"
 #include "input/lrg-input-map.h"
+#include "input/lrg-touch-tracker.h"
+#include "input/lrg-touch-button.h"
+#include "input/lrg-touch-controls.h"
 #include "input/lrg-binding-catalog.h"
 
 /* Action bars (slots, the game's provider, bars with pages) */
