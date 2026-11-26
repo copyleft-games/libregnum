@@ -360,6 +360,43 @@ log_writer (GLogLevelFlags   level,
 	return G_LOG_WRITER_HANDLED;
 }
 
+/* print_to_logcat: g_print() / g_printerr() -> logcat.  stdout and
+ * stderr go nowhere on Android, and programs that report with
+ * g_printerr() (usage errors, "no such file") would otherwise fail in
+ * silence.  The tag is the program name (g_set_prgname(), read at
+ * print time, so a game may set it after lrg_platform_prepare()); a
+ * trailing newline is dropped, since logcat ends every line itself. */
+static void
+print_to_logcat (const gchar *text,
+                 gint         priority)
+{
+	const gchar *tag;
+	g_autofree gchar *line = NULL;
+	gsize len;
+
+	tag = g_get_prgname ();
+	if (tag == NULL || *tag == '\0')
+		tag = "libregnum";
+	line = g_strdup (text != NULL ? text : "");
+	len = strlen (line);
+	if (len > 0 && line[len - 1] == '\n')
+		line[len - 1] = '\0';
+	if (*line != '\0')
+		__android_log_write (priority, tag, line);
+}
+
+static void
+print_handler (const gchar *text)
+{
+	print_to_logcat (text, ANDROID_LOG_INFO);
+}
+
+static void
+printerr_handler (const gchar *text)
+{
+	print_to_logcat (text, ANDROID_LOG_WARN);
+}
+
 static gboolean
 prepare_android (GError **error)
 {
@@ -367,8 +404,11 @@ prepare_android (GError **error)
 	g_autofree gchar *assets = NULL;
 	const gchar *internal;
 
-	/* logging first, so everything after reaches logcat */
+	/* logging first, so everything after reaches logcat: the structured
+	 * log and plain g_print() / g_printerr() output */
 	g_log_set_writer_func (log_writer, NULL, NULL);
+	g_set_print_handler (print_handler);
+	g_set_printerr_handler (printerr_handler);
 
 	app = GetAndroidApp ();
 	if (app == NULL || app->activity == NULL || app->activity->internalDataPath == NULL)

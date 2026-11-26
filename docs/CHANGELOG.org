@@ -20,6 +20,7 @@ The annotated git tag is the release. This page is the human notes. =ROADMAP.md=
 :PROPERTIES:
 :CUSTOM_ID: changelog-unreleased
 :END:
+- Android: =lrg_platform_prepare()= also sends =g_print()= and =g_printerr()= to logcat (tag: the program name), so a program's reports no longer vanish with stdout and stderr.
 - Core: =lrg_args_file_parse()= and =lrg_args_file_merge()= (=core/lrg-args-file.h=): command-line arguments from a text file, for Android, where the NativeActivity glue passes none ([[file:platforms/android.org::#args-file][Android, Command-line arguments]]).
 - Tests: =emulator-test.sh= runs a game's own device script (=--device-script=, =--shot-dir=), mounts host data read-only for it (=--mount=), sizes the data partition (=--data-size=) and prints its container command without running it (=--dry-run=); =tests/test-apk-device.sh= also checks that the game's activity has the window focus, so a game that exits at once no longer passes on its cached process and the launcher's screenshot ([[file:platforms/android.org::#emulator-device-script][Android, A game's own checks on the emulator]]).
 - Input: =LrgInputMerge= (=input/lrg-input-merge.h=): several inputs read as one (buttons from any part, the largest axis, mouse deltas added), so a game's controller layer reads a real gamepad and a virtual one (touch controls, VR) together ([[file:modules/input/input-merge.org][Input Merge]]).
