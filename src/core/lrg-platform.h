@@ -191,6 +191,32 @@ const gchar *lrg_platform_get_external_data_dir (void);
 LRG_AVAILABLE_IN_ALL
 gfloat       lrg_platform_get_dp_scale      (void);
 
+/**
+ * lrg_platform_get_display_size:
+ * @width: (out) (optional): the display's width in pixels
+ * @height: (out) (optional): the display's height in pixels
+ *
+ * The size of the screen area an app's window gets, in pixels, known
+ * before any window opens: on Android, the configuration's screen size
+ * in dp (`AConfiguration_getScreenWidthDp()`, `..._HeightDp()`) times
+ * the dp scale, in the orientation the configuration reports (which may
+ * still be the launcher's until the activity's own orientation applies:
+ * a landscape game takes the larger as its width).  Open a game's window
+ * at this size on Android: raylib renders a smaller window small and
+ * upscales it, so everything placed in screen pixels (touch controls in
+ * dp, text) comes out too large, and it cannot learn the display's size
+ * itself before its window exists.  Everywhere else there is no such
+ * answer (a desktop window is whatever size the game asks for).
+ *
+ * Returns: %TRUE with the size, %FALSE (outputs untouched) where the
+ *   platform does not say
+ *
+ * Since: 0.13.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean     lrg_platform_get_display_size  (gint *width,
+                                             gint *height);
+
 /* ==========================================================================
  * Soft keyboard and text input
  * ========================================================================== */

@@ -952,6 +952,38 @@ lrg_platform_get_dp_scale (void)
 #endif
 }
 
+/* lrg_platform_get_display_size: documented in lrg-platform.h.  The
+ * configuration's dp size times density/160, rounded; a configuration
+ * without a size (Configuration.SCREEN_*_DP_UNDEFINED, 0) says nothing */
+gboolean
+lrg_platform_get_display_size (gint *width,
+                               gint *height)
+{
+#ifdef LRG_PLATFORM_ANDROID
+	struct android_app *app = GetAndroidApp ();
+	int32_t w_dp;
+	int32_t h_dp;
+	gfloat scale;
+
+	if (app == NULL || app->config == NULL)
+		return FALSE;
+	w_dp = AConfiguration_getScreenWidthDp (app->config);
+	h_dp = AConfiguration_getScreenHeightDp (app->config);
+	if (w_dp <= 0 || h_dp <= 0)
+		return FALSE;
+	scale = lrg_platform_get_dp_scale ();
+	if (width != NULL)
+		*width = (gint) ((gfloat) w_dp * scale + 0.5f);
+	if (height != NULL)
+		*height = (gint) ((gfloat) h_dp * scale + 0.5f);
+	return TRUE;
+#else
+	(void) width;
+	(void) height;
+	return FALSE;
+#endif
+}
+
 /* lrg_platform_show_soft_keyboard: documented in lrg-platform.h */
 void
 lrg_platform_show_soft_keyboard (void)

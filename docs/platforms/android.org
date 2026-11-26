@@ -129,6 +129,12 @@ On every other platform it returns =g_get_user_data_dir()/<prgname>= (=~/.local/
 
 =lrg_platform_get_dp_scale()= is the display density in pixels per dp (=AConfiguration_getDensity()= / 160; 1.0 off Android). Touch layouts are written in dp and multiplied by it ([[file:../modules/input/touch.org][Touch input]]).
 
+** Window size
+:PROPERTIES:
+:CUSTOM_ID: window-size
+:END:
+Open the window at the display's size: raylib renders a smaller window small and upscales it to the display, so everything placed in screen pixels (touch controls sized in dp, text) comes out too large, and its Android layer learns the display's size only once its window exists (asked for 0 x 0 it falls back to 800 x 600). =lrg_platform_get_display_size (&w, &h)= gives the size from the activity's configuration (dp size times the dp scale) before any window opens; it may still be in the launcher's orientation, so a landscape game takes the larger value as its width. Off Android it returns =FALSE=.
+
 ** Touch controls
 :PROPERTIES:
 :CUSTOM_ID: touch-controls

@@ -557,6 +557,20 @@ test_lifecycle_simulated (void)
 	g_signal_handler_disconnect (platform, id_notify);
 }
 
+/* the display's size is Android's to give: off Android, FALSE and the
+ * outputs untouched (NULL outputs allowed) */
+static void
+test_display_size_desktop (void)
+{
+	gint width = -7;
+	gint height = -9;
+
+	g_assert_false (lrg_platform_get_display_size (&width, &height));
+	g_assert_cmpint (width, ==, -7);
+	g_assert_cmpint (height, ==, -9);
+	g_assert_false (lrg_platform_get_display_size (NULL, NULL));
+}
+
 int
 main (int    argc,
       char **argv)
@@ -578,6 +592,7 @@ main (int    argc,
 	g_test_add_func ("/platform/external-dir/desktop", test_external_dir_desktop);
 	g_test_add_func ("/platform/external-dir/unwritable", test_external_dir_unwritable);
 	g_test_add_func ("/platform/dp-scale/desktop", test_dp_scale_desktop);
+	g_test_add_func ("/platform/display-size/desktop", test_display_size_desktop);
 	g_test_add_func ("/platform/soft-keyboard/desktop", test_soft_keyboard_desktop);
 	g_test_add_func ("/platform/char-pressed/desktop", test_char_pressed_desktop);
 	g_test_add_func ("/platform/lifecycle/simulated", test_lifecycle_simulated);
