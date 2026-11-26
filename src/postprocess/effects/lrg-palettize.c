@@ -213,7 +213,7 @@ ensure_gpu (LrgPalettize *self)
     if (self->shader == NULL && !self->shader_tried)
     {
         self->shader_tried = TRUE;
-        self->shader = grl_shader_new_from_memory (NULL, palettize_fs, &error);
+        self->shader = lrg_glsl_shader_new_from_memory (NULL, palettize_fs, &error);
         if (self->shader == NULL)
         {
             g_warning ("palettize: %s", error != NULL ? error->message : "no shader");

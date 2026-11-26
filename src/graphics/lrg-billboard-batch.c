@@ -1225,7 +1225,7 @@ ensure_shader (LrgBillboardBatch *self)
         return;
     self->shader_tried = TRUE;
 
-    self->shader = LoadShaderFromMemory (cutout_vs, cutout_fs);
+    self->shader = lrg_glsl_load_shader (cutout_vs, cutout_fs);
     if (self->shader.id == 0 || self->shader.id == rlGetShaderIdDefault ())
         return;
 
@@ -1303,7 +1303,7 @@ gpu_ensure_shader (LrgBillboardBatch *self)
         return self->gpu_loaded;
     self->gpu_tried = TRUE;
 
-    self->gpu_shader = LoadShaderFromMemory (gpu_vs, gpu_fs);
+    self->gpu_shader = lrg_glsl_load_shader (gpu_vs, gpu_fs);
     if (self->gpu_shader.id == 0 || self->gpu_shader.id == rlGetShaderIdDefault ())
         return FALSE;
 
@@ -2019,7 +2019,7 @@ cast_ensure_shader (LrgBillboardBatch *self)
         return self->cast_loaded;
     self->cast_tried = TRUE;
 
-    self->cast_shader = LoadShaderFromMemory (gpu_vs, cast_fs);
+    self->cast_shader = lrg_glsl_load_shader (gpu_vs, cast_fs);
     if (self->cast_shader.id == 0 || self->cast_shader.id == rlGetShaderIdDefault ())
         return FALSE;
     self->cast_loc_mvp = GetShaderLocation (self->cast_shader, "mvp");

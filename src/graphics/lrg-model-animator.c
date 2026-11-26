@@ -231,7 +231,7 @@ default_skin_acquire (void)
     {
         if (default_skin_failed || !IsWindowReady ())
             return FALSE;
-        default_skin = LoadShaderFromMemory (default_skin_vertex_source,
+        default_skin = lrg_glsl_load_shader (default_skin_vertex_source,
                                              default_skin_fragment_source);
         if (default_skin.id == 0 || default_skin.id == rlGetShaderIdDefault () ||
             default_skin.locs == NULL ||

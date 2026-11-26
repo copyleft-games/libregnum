@@ -1272,7 +1272,8 @@ gboolean lrg_shader_asset_get_watch (LrgShaderAsset *self);
  * is not empty).  It writes the contract varyings `fragPosition` (world
  * space), `fragTexCoord`, `fragColor` and `fragNormal` (world space).
  *
- * Returns: (transfer none): GLSL 330 text including `#version`
+ * Returns: (transfer none): GLSL text including the build's `#version`
+ *   header (an asset passes it through lrg_glsl_prepare_source())
  */
 LRG_AVAILABLE_IN_ALL
 const gchar * lrg_shader_asset_get_default_vertex_source (void);

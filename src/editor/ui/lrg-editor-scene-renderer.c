@@ -56,6 +56,7 @@
 #include "../../lighting/lrg-probe-grid.h"
 #include "../../postprocess/lrg-post-stack.h"
 #include "lrg-editor-terrain-panel.h"
+#include "../../graphics/lrg-glsl-private.h"
 #include "../../world3d/components/lrg-terrain-component.h"
 #include <math.h>
 #include <string.h>
@@ -244,7 +245,7 @@ ensure_thumb_shader (LrgEditorSceneRenderer *self)
 		return TRUE;
 	if (!IsWindowReady ())
 		return FALSE;
-	self->thumb_lit = LoadShaderFromMemory (lrg_world3d_renderer_get_shader_source ("scene.vs"),
+	self->thumb_lit = lrg_glsl_load_shader (lrg_world3d_renderer_get_shader_source ("scene.vs"),
 	                                        lrg_world3d_renderer_get_shader_source ("lit.fs"));
 	if (!IsShaderValid (self->thumb_lit) || self->thumb_lit.id == rlGetShaderIdDefault ())
 	{

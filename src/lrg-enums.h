@@ -6911,6 +6911,32 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_widget_direction_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_WIDGET_DIRECTION (lrg_widget_direction_get_type ())
 
+/* ==========================================================================
+ * GLSL dialects (graphics/lrg-glsl.h)
+ * ========================================================================== */
+
+/**
+ * LrgGlslDialect:
+ * @LRG_GLSL_DIALECT_AUTO: the build's own dialect (GLSL ES 3.00 on
+ *   Android, GLSL 3.30 elsewhere); only meaningful as an argument to
+ *   lrg_glsl_set_dialect()
+ * @LRG_GLSL_DIALECT_GLSL_330: desktop OpenGL 3.3, `#version 330`
+ * @LRG_GLSL_DIALECT_GLSL_ES_300: OpenGL ES 3, `#version 300 es` plus
+ *   default precisions
+ *
+ * The GLSL dialect lrg_glsl_prepare_source() writes shaders in.
+ */
+typedef enum
+{
+    LRG_GLSL_DIALECT_AUTO,
+    LRG_GLSL_DIALECT_GLSL_330,
+    LRG_GLSL_DIALECT_GLSL_ES_300
+} LrgGlslDialect;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_glsl_dialect_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_GLSL_DIALECT (lrg_glsl_dialect_get_type ())
+
 G_END_DECLS
 
 

@@ -67,6 +67,7 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-vector-image.h \
 	src/graphics/lrg-gltf-info.h \
 	src/graphics/lrg-dds-image.h \
+	src/graphics/lrg-glsl.h \
 	src/graphics/lrg-gltf-geometry.h \
 	src/graphics/lrg-meshopt.h \
 	src/graphics/lrg-model-animator.h \
@@ -898,6 +899,7 @@ SOURCES := \
 	src/graphics/lrg-vector-image.c \
 	src/graphics/lrg-gltf-info.c \
 	src/graphics/lrg-dds-image.c \
+	src/graphics/lrg-glsl.c \
 	src/graphics/lrg-gltf-geometry.c \
 	src/graphics/lrg-meshopt.c \
 	src/graphics/lrg-model-animator.c \
@@ -3004,7 +3006,7 @@ $(REEL_CLI_BIN): src/reel-cli/lrg-reel-cli.c $(LIBOUTDIR)/$(LIB_SHARED)
 # Every public symbol of the paint, spring and retained UI modules must
 # be mentioned somewhere under docs/ (org pages)
 DOCS_CHECK_HEADERS := src/scripting/lrg-script-debugger.h src/scripting/lrg-script-reloader.h src/scripting/lrg-dap-server.h src/scripting/lrg-scripting-graph.h src/scripting/lrg-vscript-program.h src/debug/lrg-gpu-timer.h src/debug/lrg-frame-capture.h src/debug/lrg-memory-profiler.h src/net/lrg-net-stats.h $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween/lrg-spring.h src/i18n/lrg-po.h \
-	$(filter-out %-private.h,$(wildcard src/level/*.h)) src/core/lrg-math3d.h \
+	$(filter-out %-private.h,$(wildcard src/level/*.h)) src/core/lrg-math3d.h src/graphics/lrg-glsl.h \
 	$(wildcard src/editor/*.h) $(wildcard src/editor/ui/*.h) $(wildcard src/editor/ui/data/*.h) \
 	src/debug/lrg-debug-draw.h src/graphics/lrg-camera.h src/graphics/lrg-static-batch.h src/graphics/lrg-billboard-batch.h src/graphics/lrg-terrain.h src/lighting/lrg-shadow-renderer.h src/particles/lrg-particle-system.h src/particles/lrg-particle-billboard-renderer.h \
 	src/world3d/lrg-entity3d.h src/world3d/lrg-world3d.h src/ecs/lrg-component.h \

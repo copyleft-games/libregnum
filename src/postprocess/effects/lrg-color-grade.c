@@ -902,7 +902,7 @@ lrg_color_grade_get_shader (LrgColorGrade *self)
     self->shader_tried = TRUE;
 
     /* on a compile failure raylib hands back its default shader */
-    self->shader = grl_shader_new_from_memory (NULL, grade_fs, &error);
+    self->shader = lrg_glsl_shader_new_from_memory (NULL, grade_fs, &error);
     if (self->shader == NULL)
     {
         g_warning ("color grade: %s", error != NULL ? error->message : "no shader");

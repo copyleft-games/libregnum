@@ -95,6 +95,7 @@
 #include "graphics/lrg-vector-image.h"
 #include "graphics/lrg-gltf-info.h"
 #include "graphics/lrg-dds-image.h"
+#include "graphics/lrg-glsl.h"
 #include "graphics/lrg-gltf-geometry.h"
 #include "graphics/lrg-meshopt.h"
 #include "graphics/lrg-model-animator.h"

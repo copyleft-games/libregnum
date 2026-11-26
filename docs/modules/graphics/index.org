@@ -31,6 +31,7 @@ The Graphics module provides:
 - *[[file:render-layers.org][Render layers]]* - Camera cull masks and per-drawable visibility layers
 - *[[file:material.org][LrgMaterial]]* - Material assets (=.rmat=): shading model, PBR parameters, texture slots, render state, instances, the lit shader uniform contract
 - *[[file:shader-asset.org][LrgShaderAsset]]* - user shaders (=.rshader=): GLSL 330 stages with the lit library, described uniforms, line-mapped compile errors, hot reload
+- *[[file:shaders.org][Shaders on desktop GL and OpenGL ES]]* - =lrg_glsl_prepare_source()=: one shader body for GLSL 330 and GLSL ES 300, and =build-aux/check-glsl.sh= to validate shader files against both
 - *[[file:shader-graph.org][LrgShaderGraph]]* - node shader graphs (=.rshadergraph=): typed node library, validation, deterministic GLSL generation
 - *[[file:skinned-sprite.org][LrgSkinnedSprite]]* - deformable 2D sprite meshes (up to 4 bone weights, atlas regions, CPU skinning)
 - *[[file:uv-unwrap.org][LrgUvUnwrap / LrgUvMesh]]* - lightmap UV2 chart unwrapper, headless CPU mesh, renderer primitives, rect packer

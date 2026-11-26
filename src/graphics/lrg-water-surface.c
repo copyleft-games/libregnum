@@ -820,7 +820,7 @@ ensure_shader (LrgWaterSurface *self)
         return FALSE;
     self->shader_tried = TRUE;
 
-    self->shader = LoadShaderFromMemory (water_vs, water_fs);
+    self->shader = lrg_glsl_load_shader (water_vs, water_fs);
     if (self->shader.id == 0 || self->shader.id == rlGetShaderIdDefault ())
     {
         g_warning ("water surface: the shader did not compile (GLSL 330 needed)");

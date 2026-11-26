@@ -25,9 +25,13 @@
 #   3. pulls out every string-literal sequence that starts with "#version"
 #      and contains "void main" (complete shaders; the pieces the shader
 #      asset assembles at run time are covered by its own tests),
-#   4. compiles each with glslangValidator as the stage its C array names
-#      (*_vs, *vert* or *_fs, *frag*), or else as a vertex shader when it
-#      writes gl_Position and a fragment shader otherwise.
+#   4. writes each as a .vert or .frag file, the stage its C array names
+#      (*_vs, *vert* or *_fs, *frag*), or else a vertex shader when it
+#      writes gl_Position and a fragment shader otherwise,
+#   5. checks each dialect's files with build-aux/check-glsl.sh, which
+#      replaces the #version line with that dialect's header (as
+#      lrg_glsl_prepare_source() does at run time) and compiles it with
+#      glslangValidator.
 #
 # A shader that is valid GLSL 3.30 but not GLSL ES 3.00 (an implicit int
 # to float conversion, a double, a sampler without precision) fails here,
@@ -174,7 +178,6 @@ extract () {
 }
 
 failures=0
-checked=0
 mapfile -t sources < <(cd "${root}" && grep -rl --include='*.c' 'LRG_GLSL_HEADER' src | sort)
 if [[ ${#sources[@]} -eq 0 ]]
 then
@@ -188,49 +191,44 @@ do
 	for dialect in desktop es
 	do
 		dir="${work}/${dialect}"
-		mkdir -p -- "${dir}"
+		mkdir -p -- "${dir}" "${work}/logs"
 		extra=()
 		if [[ "${dialect}" == 'es' ]]
 		then
 			extra=(-DLRG_GLSL_ES=1)
 		fi
 		if ! (cd "${root}" && "${cc}" -E -P "${cflags[@]}" "${extra[@]}" -I"${root}/src" \
-			"${source}" -o "${dir}/${name}.i") 2> "${dir}/${name}.cpp-err"
+			"${source}" -o "${work}/logs/${dialect}-${name}.i") 2> "${work}/logs/${dialect}-${name}.cpp-err"
 		then
 			echo "  FAIL  ${source}: preprocessing failed" >&2
-			sed 's/^/        /' "${dir}/${name}.cpp-err" | head -5 >&2
+			sed 's/^/        /' "${work}/logs/${dialect}-${name}.cpp-err" | head -5 >&2
 			failures=$((failures + 1))
 			continue
 		fi
-		count="$(extract "${dir}/${name}.i" "${dir}" "${name}")"
-		if [[ "${count}" -eq 0 ]]
-		then
-			continue
-		fi
-		for shader in "${dir}/${name}"-*.vert "${dir}/${name}"-*.frag
-		do
-			[[ -f "${shader}" ]] || continue
-			checked=$((checked + 1))
-			if out="$(glslangValidator "${shader}" 2>&1)"
-			then
-				printf '  ok    %s %s\n' "${dialect}" "$(basename -- "${shader}")"
-			else
-				failures=$((failures + 1))
-				printf '  FAIL  %s %s (%s)\n' "${dialect}" "$(basename -- "${shader}")" "${source}" >&2
-				grep -E 'ERROR' <<< "${out}" | head -5 | sed 's/^/        /' >&2
-			fi
-		done
+		extract "${work}/logs/${dialect}-${name}.i" "${dir}" "${name}" > /dev/null
 	done
 done
 
-printf 'test-shader-glsl: %d shaders checked, %d failed\n' "${checked}" "${failures}"
+# each dialect's extracted shaders through the consumer-facing checker,
+# which, like lrg_glsl_prepare_source() at run time, replaces the
+# literal's #version line with that dialect's header
+for dialect in desktop es
+do
+	if ! compgen -G "${work}/${dialect}/*" > /dev/null
+	then
+		echo "test-shader-glsl: no complete ${dialect} shader found (extraction broken?)" >&2
+		exit 1
+	fi
+	if ! bash "${root}/build-aux/check-glsl.sh" --stage-from-name --dialect "${dialect}" \
+		"${work}/${dialect}"
+	then
+		failures=$((failures + 1))
+	fi
+done
+
 if [[ "${keep}" -eq 1 ]]
 then
 	printf 'kept: %s\n' "${work}"
 fi
-if [[ "${checked}" -eq 0 ]]
-then
-	echo 'test-shader-glsl: no complete shader found (extraction broken?)' >&2
-	exit 1
-fi
+printf 'test-shader-glsl: %d failed step(s)\n' "${failures}"
 [[ "${failures}" -eq 0 ]]
