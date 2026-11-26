@@ -674,7 +674,7 @@ get_shader (LrgPhotoLook *self)
         return NULL;
     self->shader_tried = TRUE;
 
-    self->shader = grl_shader_new_from_memory (NULL, finish_fs, &error);
+    self->shader = lrg_glsl_shader_new_from_memory (NULL, finish_fs, &error);
     if (self->shader == NULL)
     {
         g_warning ("photo look: %s", error != NULL ? error->message : "no shader");

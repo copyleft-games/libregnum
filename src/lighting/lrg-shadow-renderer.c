@@ -1211,7 +1211,7 @@ lrg_shadow_renderer_get_caster_shader (LrgShadowRenderer *self)
     {
         g_autofree gchar *fs = caster_fs_with_lod (caster_fs);
 
-        self->caster = grl_shader_new_from_memory (caster_vs, fs, &error);
+        self->caster = lrg_glsl_shader_new_from_memory (caster_vs, fs, &error);
     }
     if (self->caster == NULL)
         return NULL;

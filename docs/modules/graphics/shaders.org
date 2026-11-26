@@ -1,0 +1,136 @@
+#+title: Shaders on desktop GL and OpenGL ES
+#+description: The platform GLSL dialect (lrg-glsl.h) and the shader checker build-aux/check-glsl.sh
+#+created: 2026-11-26
+
+* Shaders on desktop GL and OpenGL ES
+:PROPERTIES:
+:CUSTOM_ID: shaders
+:END:
+libregnum runs on desktop OpenGL 3.3 and on OpenGL ES 3 (Android). The two GLSL dialects differ in their first lines: desktop shaders start with =#version 330=, ES shaders with =#version 300 es= and the default precisions ES leaves undefined (fragment =float=, and every sampler type other than =sampler2D= and =samplerCube=). Everything after that is shared when the shader stays in the common subset of GLSL 3.30 and GLSL ES 3.00.
+
+So a shader is written once, as a /body/ without a dialect line, and the engine puts the platform's header in front of it at run time. =graphics/lrg-glsl.h= is that step as public API, for the engine's built-in shaders and for a game's own; =build-aux/check-glsl.sh= checks a game's shader files against both dialects on the desktop, before a device sees them.
+
+- *Header* - =graphics/lrg-glsl.h= (included by =<libregnum.h>=)
+- *Enum* - =LrgGlslDialect= (=auto=, =glsl-330=, =glsl-es-300=), =lrg-enums.h=
+- *Private* - =graphics/lrg-glsl-private.h=: the two header texts (=LRG_GLSL_HEADER_DESKTOP=, =LRG_GLSL_HEADER_ES=), =LRG_GLSL_HEADER= for the built-in literals, =lrg_glsl_load_shader()=
+- *Checker* - =build-aux/check-glsl.sh=; tests =tests/test-glsl.c=, =tests/test-check-glsl.sh=
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+#+begin_src c
+LrgGlslDialect  lrg_glsl_get_dialect            (void);
+void            lrg_glsl_set_dialect            (LrgGlslDialect dialect);
+gboolean        lrg_glsl_is_es                  (void);
+const gchar    *lrg_glsl_get_header             (void);
+guint           lrg_glsl_get_header_lines       (void);
+gchar          *lrg_glsl_prepare_source         (const gchar *body,
+                                                 const gchar *defines);
+GrlShader      *lrg_glsl_shader_new_from_memory (const gchar  *vs_code,
+                                                 const gchar  *fs_code,
+                                                 GError      **error);
+#+end_src
+
+| Function                            | What it does                                                                                                   |
+|-------------------------------------+----------------------------------------------------------------------------------------------------------------|
+| =lrg_glsl_get_dialect()=            | the effective dialect: the one set, else the build's (=glsl-es-300= on Android, =glsl-330= elsewhere); never =auto= |
+| =lrg_glsl_set_dialect()=            | chooses the dialect for every shader prepared afterwards (process wide, atomic); =auto= restores the build's    |
+| =lrg_glsl_is_es()=                  | whether the effective dialect is GLSL ES 3.00                                                                  |
+| =lrg_glsl_get_header()=             | the header text of the effective dialect (static string, every line ends in a newline)                         |
+| =lrg_glsl_get_header_lines()=       | its line count: 1 (desktop) or 8 (ES)                                                                          |
+| =lrg_glsl_prepare_source()=         | header + defines + body, replacing a leading =#version= of the body; newly allocated                           |
+| =lrg_glsl_shader_new_from_memory()= | =grl_shader_new_from_memory()= with both stages prepared; =NULL= stages are raylib's defaults                 |
+
+*** The headers
+:PROPERTIES:
+:CUSTOM_ID: headers
+:END:
+| Dialect       | Header                                                                                                                                                  |
+|---------------+---------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =glsl-330=    | =#version 330=                                                                                                                                          |
+| =glsl-es-300= | =#version 300 es=, then =precision highp= for =float=, =int=, =sampler2D=, =samplerCube=, =sampler3D=, =sampler2DShadow=, =sampler2DArray= (8 lines) |
+
+The texts are defined once, in =lrg-glsl-private.h=. The built-in shader literals start with =LRG_GLSL_HEADER= (the build's text, so =make test-shaders= can extract complete shaders from the preprocessed C), and every built-in is loaded through =lrg_glsl_load_shader()= or =lrg_glsl_shader_new_from_memory()=, so its literal =#version= line is replaced by the run-time header like any other source. =LrgShaderAsset= builds its stages on =lrg_glsl_get_header()= directly, and =LrgPostEffect= and =LrgShaderTransition= pass user sources through =lrg_glsl_shader_new_from_memory()=.
+
+*** Preparing a source
+:PROPERTIES:
+:CUSTOM_ID: prepare-source
+:END:
+=lrg_glsl_prepare_source (body, defines)= returns, in this order:
+
+1. =lrg_glsl_get_header()=;
+2. =defines= (may be =NULL= or empty), with a newline added when it does not end with one; this is the place for =#define= lines and =#extension= directives, which GLSL wants before any code;
+3. =body= (=NULL= is the empty string).
+
+*An existing =#version= is replaced.* When the body's first directive, after any whitespace, =//= comments and =/* */= comments (the only things GLSL allows before it), is =#version= (=#  version= and tabs count too), its text is blanked and its newline kept. A legacy desktop shader beginning with =#version 330= or =#version 330 core= therefore works unchanged on Android, and so does an ES shader on the desktop. Because the line stays, body line /n/ is always result line =lrg_glsl_get_header_lines() + (lines of defines) + n=, which is how compiler messages map back to the file.
+
+*Already prepared:* a body that starts with exactly the effective header (a source prepared before, or a literal written for this dialect such as the built-ins' =LRG_GLSL_HEADER=) keeps it; the defines go after it and nothing else changes, so preparing twice gives the same text.
+
+Not replaced: a =#version= after code (the compiler rejects it anyway), one inside a comment, an identifier such as =#versionx=, and every line after the first directive. Precision statements and =#extension= lines in the body are kept; a duplicate precision statement is legal GLSL (the later one wins).
+
+#+begin_src c
+/* a game's lit shader, written once */
+g_autofree gchar *fs = lrg_glsl_prepare_source (lit_fs_body, "#define USE_FOG 1\n");
+g_autoptr(GrlShader) shader = grl_shader_new_from_memory (NULL, fs, &error);
+
+/* or, without defines */
+g_autoptr(GrlShader) water = lrg_glsl_shader_new_from_memory (water_vs, water_fs, &error);
+#+end_src
+
+*** Forcing a dialect
+:PROPERTIES:
+:CUSTOM_ID: set-dialect
+:END:
+The build's dialect is right for a normal run. =lrg_glsl_set_dialect()= exists for tests that check the ES text on a desktop build (=tests/test-glsl.c= does) and for a desktop build that runs on an OpenGL ES 3 context (ANGLE, a GLES driver). It changes shaders prepared after the call; shaders already compiled keep their text, so set it before the window's first shader.
+
+** Writing shaders for both dialects
+:PROPERTIES:
+:CUSTOM_ID: common-subset
+:END:
+Stay in the common subset of GLSL 3.30 and GLSL ES 3.00 (the full list is in [[file:../../guides/rendering-pipeline.org::#es-compatibility][the rendering pipeline guide]]):
+
+- no implicit int to float conversions (=1.0=, not =1=, in float expressions; =float (i)=);
+- no =double=, no geometry or tessellation stages, no =gl_FragColor= (declare =out vec4=);
+- =layout (location = N)= on vertex inputs and fragment outputs only;
+- the header sets =highp= defaults; say otherwise on the declaration;
+- differences that cannot be avoided go behind =#ifdef GL_ES=.
+
+** check-glsl.sh
+:PROPERTIES:
+:CUSTOM_ID: check-glsl
+:END:
+=build-aux/check-glsl.sh [OPTIONS] FILE|DIR...= validates shader files the way the engine will compile them: it blanks a leading =#version= line, puts the dialect's header (and any =--define= lines) in front and runs =glslangValidator= (Fedora package =glslang=; the android-arm64 build container has it) once per dialect. A game keeps its shaders as files and runs it from its own test target, for example =deps/libregnum/build-aux/check-glsl.sh data/shaders=.
+
+| Option                | Meaning                                                                                       |
+|-----------------------+-----------------------------------------------------------------------------------------------|
+| =--stage-from-name=   | take the stage from the name only; a file whose name gives none is skipped                    |
+| =--skip GLOB=         | skip files whose base name matches (repeatable)                                               |
+| =--dialect D=         | =desktop=, =es= or =both= (default)                                                           |
+| =-D=, =--define TEXT= | a line after the header, e.g. ='#define LRG_LIT 1'= (repeatable)                              |
+| =--print-header D=    | print the =desktop= or =es= header (the same text as =lrg_glsl_get_header()=) and exit        |
+| =-k=, =--keep=        | keep the prepared files and print where                                                       |
+| =-q=, =--quiet=       | print only failures and the summary                                                           |
+
+- *Stage:* =.vs= =.vert= =.vsh= are vertex shaders and =.fs= =.frag= =.fsh= fragment shaders, each also with a trailing =.glsl= (=water.vs.glsl=), plus =*_vs.glsl=, =*_vert.glsl=, =*_fs.glsl=, =*_frag.glsl=. Another name is a vertex shader when it writes =gl_Position=, else a fragment shader, unless =--stage-from-name= is given.
+- *Include pieces:* a file without =void main= is skipped (reported as =skip=), so a directory of shaders and shared snippets can be checked as a whole.
+- *Directories* are searched recursively for the names above and =*.glsl=, in sorted order.
+- *Exit status:* 0 when every shader compiled in every dialect, 1 when one failed or nothing was checked, 2 for a usage error or a missing =glslangValidator=.
+
+#+begin_src sh
+build-aux/check-glsl.sh data/shaders
+build-aux/check-glsl.sh --stage-from-name --skip 'common*' data/shaders
+build-aux/check-glsl.sh --dialect es water.fs.glsl water.vs.glsl
+podman run --rm -v "$PWD:/w:z" -w /w libregnum-build-android-arm64 \
+	deps/libregnum/build-aux/check-glsl.sh data/shaders
+#+end_src
+
+=make test-shaders= is built on it: =tests/test-shader-glsl.sh= extracts the engine's built-in shaders from the preprocessed C sources (desktop and =-DLRG_GLSL_ES=1=) and passes each dialect's files to =check-glsl.sh --stage-from-name --dialect D=.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+- =tests/test-glsl.c= - the header of each dialect (forced on a desktop build), the build default, =auto=, define placement, =#version= replacement after whitespace and comments, kept line numbers, the cases that are not replaced, =NULL= and empty inputs, the enum.
+- =tests/test-check-glsl.sh= (=make -C tests check-glsl-script=, part of =make test=) - the script's headers equal the C ones, usage errors, a missing =glslangValidator= is exit 2; with =glslangValidator= installed also good and bad sample shaders: a legacy =#version 330= file after comments, a =sampler2DArray= that needs the ES precision, a name without a stage, an include piece, =--define=, =--skip=, =--stage-from-name=, and an implicit int-to-float conversion that passes desktop and fails ES.
+- =make test-shaders= / =make ANDROID=1 test-shaders= - every built-in shader in both dialects.

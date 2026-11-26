@@ -1949,7 +1949,7 @@ static gboolean
 pass_shader_load (const gchar *fs,
                   Shader      *out)
 {
-	*out = LoadShaderFromMemory (GLSL_FULLSCREEN_VS, fs);
+	*out = lrg_glsl_load_shader (GLSL_FULLSCREEN_VS, fs);
 	if (out->id == 0 || out->id == rlGetShaderIdDefault ())
 	{
 		g_warning ("environment: a GPU pass shader did not compile (GLSL 330 needed)");
@@ -2677,7 +2677,7 @@ lrg_environment_draw_sky (LrgEnvironment   *self,
 
 	if (!self->sky_shader_ok)
 	{
-		self->sky_shader = LoadShaderFromMemory (sky_vs, sky_fs);
+		self->sky_shader = lrg_glsl_load_shader (sky_vs, sky_fs);
 		if (self->sky_shader.id == 0 || self->sky_shader.id == rlGetShaderIdDefault ())
 		{
 			g_warning ("environment: the sky shader did not compile");

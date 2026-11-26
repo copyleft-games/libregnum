@@ -513,7 +513,7 @@ ensure_gpu (LrgGrassField *self)
         return FALSE;
     self->gpu_tried = TRUE;
 
-    self->shader = LoadShaderFromMemory (grass_vs, grass_fs);
+    self->shader = lrg_glsl_load_shader (grass_vs, grass_fs);
     if (self->shader.id == 0 || self->shader.id == rlGetShaderIdDefault ())
     {
         g_warning ("grass field: the shader did not compile (GLSL 330 needed)");

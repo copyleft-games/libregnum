@@ -219,6 +219,8 @@ TEST_SOURCES := \
 	test-asset-model-cache.c \
 	test-gltf-info.c \
 	test-dds-image.c \
+	test-glsl.c \
+	test-texture-decode.c \
 	test-gltf-animation-roots.c \
 	test-gltf-geometry.c \
 	test-gltf-rig.c \
@@ -523,7 +525,7 @@ LRG_TEST_ARGS := $(foreach path,$(LRG_TEST_SKIP_PATHS) $(LRG_TEST_KNOWN_FAILURES
 # Targets
 # =============================================================================
 
-.PHONY: all run run-sanitize run-valgrind check-build-config check-build-system check-version-lockstep check-sanitize-exit clean
+.PHONY: all run run-sanitize run-valgrind check-build-config check-build-system check-glsl-script check-version-lockstep check-sanitize-exit clean
 
 all: $(TEST_BINARIES)
 
@@ -547,6 +549,8 @@ BUILD_SYSTEM_SCRIPTS := \
 	$(CURDIR)/test-apk-device.sh \
 	$(CURDIR)/test-emulator-args.sh \
 	$(CURDIR)/test-shader-glsl.sh \
+	$(CURDIR)/test-check-glsl.sh \
+	$(PROJECT_ROOT)/build-aux/check-glsl.sh \
 	$(PROJECT_ROOT)/build-aux/android/mkapk.sh \
 	$(PROJECT_ROOT)/build-aux/android/emulator-test.sh \
 	$(wildcard $(PROJECT_ROOT)/build-aux/android/emulator/*.sh) \
@@ -562,6 +566,11 @@ check-build-system:
 	@bash $(CURDIR)/test-build-dispatch.sh
 	@bash $(CURDIR)/test-mkapk.sh
 	@bash $(CURDIR)/test-emulator-args.sh
+
+# build-aux/check-glsl.sh, the shader checker consumers run on their own
+# shader files; its compile cases skip without glslangValidator
+check-glsl-script:
+	@bash $(CURDIR)/test-check-glsl.sh $(CURDIR)/..
 
 # libregnum and the bundled graylib share MAJOR.MINOR (AGENTS.md, Versioning)
 check-version-lockstep:
@@ -587,7 +596,7 @@ endif
 
 # The build-system checks describe the host's make, not the target, so a
 # cross test run (in its container) leaves them to the native one
-run: check-build-config check-version-lockstep $(if $(filter 1,$(LRG_IS_CROSS)),,check-build-system) all
+run: check-build-config check-version-lockstep check-glsl-script $(if $(filter 1,$(LRG_IS_CROSS)),,check-build-system) all
 	$(call print_status,"Running tests...")
 	@failed=0; \
 	$(if $(LRG_TEST_SETUP),$(LRG_TEST_SETUP) || exit 1;) \

@@ -2595,15 +2595,15 @@ build_stage (LrgShaderAsset *self,
 
 		if (out_preamble != NULL)
 			*out_preamble = 0;
+		/* both get the run-time dialect's header in place of their own
+		 * (lrg_glsl_prepare_source(), the one source of the header) */
 		if (lit_vertex != NULL && lit_vertex[0] != '\0')
 		{
-			if (strstr (lit_vertex, "#version") != NULL)
-				return g_strdup (lit_vertex);
 			if (out_preamble != NULL)
-				*out_preamble = LRG_GLSL_HEADER_LINES;
-			return g_strconcat (LRG_GLSL_HEADER, lit_vertex, NULL);
+				*out_preamble = strstr (lit_vertex, "#version") != NULL ? 0 : lrg_glsl_get_header_lines ();
+			return lrg_glsl_prepare_source (lit_vertex, NULL);
 		}
-		return g_strdup (default_vertex_source);
+		return lrg_glsl_prepare_source (default_vertex_source, NULL);
 	}
 
 	user = strip_version (desc->source[stage] != NULL ? desc->source[stage] : "");
@@ -2614,7 +2614,7 @@ build_stage (LrgShaderAsset *self,
 	collect_declarations (user, declared);
 	collect_declarations (library, declared);
 
-	g_string_append (text, LRG_GLSL_HEADER);
+	g_string_append (text, lrg_glsl_get_header ());
 	g_string_append (text, "#define LRG_SHADER_ASSET 1\n");
 	g_string_append (text, stage == LRG_SHADER_STAGE_VERTEX ? "#define LRG_VERTEX_STAGE 1\n"
 	                                                         : "#define LRG_FRAGMENT_STAGE 1\n");

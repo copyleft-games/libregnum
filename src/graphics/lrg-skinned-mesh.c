@@ -175,7 +175,7 @@ builtin_shader_acquire (void)
 {
     if (builtin_users == 0)
     {
-        builtin_shader = LoadShaderFromMemory (skin_vertex_source, skin_fragment_source);
+        builtin_shader = lrg_glsl_load_shader (skin_vertex_source, skin_fragment_source);
         if (builtin_shader.id == 0 || builtin_shader.id == rlGetShaderIdDefault ())
         {
             memset (&builtin_shader, 0, sizeof builtin_shader);

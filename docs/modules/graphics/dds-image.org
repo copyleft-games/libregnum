@@ -37,6 +37,8 @@ GBytes       *lrg_dds_decode_bc7           (const guint8 *blocks, gsize length,
                                             guint width, guint height, GError **error);
 #+end_src
 
+The BC1 .. BC3 block decoder is shared with =lrg_texture_decode()= ([[file:textures.org][Compressed textures and the CPU fallback]]), which decodes bare S3TC mip chains and backs the upload fallback for GPUs without S3TC.
+
 ** Supported files
 :PROPERTIES:
 :CUSTOM_ID: supported-files

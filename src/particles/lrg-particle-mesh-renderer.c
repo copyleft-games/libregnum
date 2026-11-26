@@ -331,7 +331,7 @@ ensure_shader (LrgParticleMeshRenderer *self)
 	if (self->shader_loaded)
 		return self->shader.id != 0;
 	self->shader_loaded = TRUE;
-	self->shader = LoadShaderFromMemory (VERTEX_SHADER, FRAGMENT_SHADER);
+	self->shader = lrg_glsl_load_shader (VERTEX_SHADER, FRAGMENT_SHADER);
 	if (self->shader.id == 0 || self->shader.id == rlGetShaderIdDefault ())
 	{
 		g_warning ("LrgParticleMeshRenderer: the instancing shader did not compile");

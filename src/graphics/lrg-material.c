@@ -24,6 +24,7 @@
 
 #include "lrg-material.h"
 #include "../core/lrg-asset-manager.h"
+#include "lrg-texture-upload.h"
 
 /* ==========================================================================
  * Enumerations
@@ -595,6 +596,7 @@ load_texture_ref (LrgMaterial  *owner,
                   GError      **error)
 {
 	g_autofree gchar *path = NULL;
+	g_autoptr(GError) load_error = NULL;
 	GrlTexture       *texture;
 
 	if (!IsWindowReady ())
@@ -616,12 +618,12 @@ load_texture_ref (LrgMaterial  *owner,
 		             "Material texture not found: %s", ref);
 		return NULL;
 	}
-	texture = grl_texture_new_from_file (path);
-	if (texture == NULL || !grl_texture_is_valid (texture))
+	/* a .dds the GPU cannot sample is decoded to the fallback format */
+	texture = lrg_texture_new_from_file (path, LRG_TEXTURE_FALLBACK_DEFAULT, &load_error);
+	if (texture == NULL)
 	{
-		g_clear_object (&texture);
 		g_set_error (error, LRG_MATERIAL_ERROR, LRG_MATERIAL_ERROR_NOT_FOUND,
-		             "Material texture could not be loaded: %s", path);
+		             "Material texture could not be loaded: %s (%s)", path, load_error->message);
 		return NULL;
 	}
 	return texture;

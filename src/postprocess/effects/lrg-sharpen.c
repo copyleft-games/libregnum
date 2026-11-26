@@ -128,7 +128,7 @@ sharpen_get_shader (LrgSharpen *self)
         return NULL;
     self->shader_tried = TRUE;
 
-    self->shader = grl_shader_new_from_memory (NULL, sharpen_fs, &error);
+    self->shader = lrg_glsl_shader_new_from_memory (NULL, sharpen_fs, &error);
     if (self->shader == NULL)
     {
         g_warning ("sharpen: %s", error != NULL ? error->message : "no shader");

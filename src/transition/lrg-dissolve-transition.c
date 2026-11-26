@@ -145,7 +145,7 @@ lrg_dissolve_transition_initialize (LrgTransition  *transition,
     (void) height;
 
     /* Compile the built-in dissolve shader */
-    self->shader = grl_shader_new_from_memory (NULL, dissolve_fragment_shader, error);
+    self->shader = lrg_glsl_shader_new_from_memory (NULL, dissolve_fragment_shader, error);
     if (self->shader == NULL)
     {
         lrg_warning (LRG_LOG_DOMAIN_TRANSITION, "Failed to compile dissolve shader");

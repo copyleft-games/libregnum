@@ -10,6 +10,7 @@
 #include "lrg-shader-transition.h"
 #include "../tween/lrg-easing.h"
 #include "../lrg-log.h"
+#include "../graphics/lrg-glsl.h"
 
 #include <graylib.h>
 
@@ -159,7 +160,7 @@ lrg_shader_transition_initialize (LrgTransition  *transition,
     (void) height;
 
     /* Compile shader from stored fragment source */
-    self->shader = grl_shader_new_from_memory (NULL, self->fragment_source, error);
+    self->shader = lrg_glsl_shader_new_from_memory (NULL, self->fragment_source, error);
     if (self->shader == NULL)
     {
         lrg_warning (LRG_LOG_DOMAIN_TRANSITION, "Failed to compile custom shader");

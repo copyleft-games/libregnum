@@ -11,6 +11,7 @@
 #include <rlgl.h>
 #include <string.h>
 #include <gio/gio.h>
+#include "graphics/lrg-glsl.h"
 
 /**
  * SECTION:lrg-post-effect
@@ -673,7 +674,7 @@ lrg_post_effect_compile_shader (const gchar  *fragment_source,
     }
 
     /* NULL vertex source: raylib's default vertex shader */
-    shader = grl_shader_new_from_memory (NULL, fragment_source, error);
+    shader = lrg_glsl_shader_new_from_memory (NULL, fragment_source, error);
     if (shader == NULL)
         return NULL;
 

@@ -787,7 +787,7 @@ load_shader (const gchar *vs,
              const gchar *fs,
              Shader      *out)
 {
-	*out = LoadShaderFromMemory (vs, fs);
+	*out = lrg_glsl_load_shader (vs, fs);
 	if (IsShaderValid (*out) && out->id != rlGetShaderIdDefault ())
 		return TRUE;
 	memset (out, 0, sizeof *out);
@@ -3447,7 +3447,7 @@ debug_lit_shader (LrgWorld3DRenderer *self,
 	self->dbg_tried[which] = TRUE;
 
 	fs = g_strconcat (shader_dbg_head, lrg_light_set_get_glsl_library (), mains[which], NULL);
-	self->dbg_lit[which] = grl_shader_new_from_memory (lrg_light_set_get_vertex_source (), fs, &error);
+	self->dbg_lit[which] = lrg_glsl_shader_new_from_memory (lrg_light_set_get_vertex_source (), fs, &error);
 	if (self->dbg_lit[which] == NULL)
 	{
 		g_log (RENDER_LOG_DOMAIN, G_LOG_LEVEL_MESSAGE, "Debug view shader %u: %s", which,

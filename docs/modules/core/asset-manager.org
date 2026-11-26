@@ -201,6 +201,8 @@ music, and typed YAML definitions. =.pep= is raylib 6.2's pixel-art palette form
 or to load an OGG file as a sound effect. Graphics loads require a window;
 YAML definitions run without a window or audio device.
 
+Textures load through =lrg_texture_new_from_file()=: a =.dds= file whose S3TC (DXT) blocks the GPU cannot sample, as on most Android GPUs, is decoded on the CPU to the process fallback format (=lrg_texture_set_default_fallback()=, =LRG_TEXTURE_FALLBACK=) with its mip chain kept; see [[file:../graphics/textures.org][Compressed textures and the CPU fallback]].
+
 The engine connects its registered =LrgDataLoader= automatically. For a
 standalone manager, configure a loader explicitly:
 
