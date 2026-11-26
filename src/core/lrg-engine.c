@@ -586,6 +586,8 @@ lrg_engine_update (LrgEngine *self,
         return;
     }
 
+    /* platform hooks (Android lifecycle, soft-keyboard text) first */
+    lrg_platform_poll ();
     lrg_input_manager_poll (lrg_input_manager_get_default ());
 
     /* Pre-update signal */

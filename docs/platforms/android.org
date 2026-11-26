@@ -112,6 +112,77 @@ Who calls it:
 
 Only the first call does the work; a failure is reported to every caller.
 
+** Storage
+:PROPERTIES:
+:CUSTOM_ID: storage
+:END:
+An Android app has two places of its own:
+
+| Where                    | Path                                             | Who sees it                                  | libregnum                                    |
+|--------------------------+--------------------------------------------------+----------------------------------------------+----------------------------------------------|
+| internal storage         | =/data/data/<package>/files=                     | only the app                                 | =HOME= and the XDG directories (above)       |
+| external app storage     | =/sdcard/Android/data/<package>/files=           | the app, and the player over USB or a file manager | =lrg_platform_get_external_data_dir()=  |
+
+=lrg_platform_get_external_data_dir()= returns the second (the activity's =externalDataPath=), creating it when missing. It needs no storage permission, holds large files the player copies in by hand (a game's own data, mods, a client's data files) and is deleted with the app. It is =NULL= when the device has no shared storage mounted.
+
+On every other platform it returns =g_get_user_data_dir()/<prgname>= (=~/.local/share/<game>=, the last component of =g_get_prgname()=; =libregnum= when no program name is set), also created when missing, so a game asks one function for "where the player puts big files" everywhere. The string lives as long as the process.
+
+=lrg_platform_get_dp_scale()= is the display density in pixels per dp (=AConfiguration_getDensity()= / 160; 1.0 off Android). Touch layouts are written in dp and multiplied by it.
+
+** Soft keyboard
+:PROPERTIES:
+:CUSTOM_ID: soft-keyboard
+:END:
+=lrg_platform_show_soft_keyboard()= and =lrg_platform_hide_soft_keyboard()= call =ANativeActivity_showSoftInput()= (with =ANATIVEACTIVITY_SHOW_SOFT_INPUT_FORCED=) and =ANativeActivity_hideSoftInput()=; they do nothing elsewhere. Show it when a text field gains focus and hide it when the field loses it; =lrg_platform_is_soft_keyboard_requested()= remembers which was asked last (the player can still close the keyboard with the back key; the NDK does not report that).
+
+*How typed text reaches the game.* raylib's Android layer turns key events into key codes (=IsKeyPressed()=, =GetKeyPressed()=) but never fills its character queue: =GetCharPressed()= is always 0 there. libregnum adds the characters without changing raylib:
+
+1. =lrg_platform_poll()= (called by =lrg_engine_update()= and every =LrgGameTemplate= frame; a game with its own loop calls it once per frame) chains a handler in front of raylib's =android_app->onInputEvent=. raylib's handler still runs first, unchanged, and its return value is kept.
+2. For every key-down event (and repeated keys, =AKEY_EVENT_ACTION_MULTIPLE= with a real key code) the handler builds a Java =android.view.KeyEvent= with the event's key code, meta state, device and source, and asks =getUnicodeChar(metaState)= through JNI, so the device's key character map applies Shift, Caps Lock and the keyboard layout. Dead keys (combining accents) and control characters are dropped.
+3. The characters go into a queue that =lrg_platform_get_char_pressed()= reads, oldest first (at most 64 between reads). =LrgCanvasInput= (the retained UI's text input) and the immediate-mode GUI read characters through it, so text fields work with a hardware keyboard and with the soft keyboard. Off Android the function returns raylib's =GetCharPressed()=.
+
+*Limitations.* A =NativeActivity= has no Java =InputConnection=, so the input method talks to it in key events only:
+
+- Characters that a key event can carry work: letters, digits and punctuation from the soft keyboard (most IMEs send these as key events to a =NativeActivity=), and everything a hardware keyboard layout types, including accented letters.
+- Text an IME commits as a string (composed text: CJK input, emoji, gesture typing, autocorrect, voice input) arrives as =AKEY_EVENT_ACTION_MULTIPLE= with =AKEYCODE_UNKNOWN=; the NDK cannot read its characters (=KeyEvent.getCharacters()= has no NDK equivalent and the event's Java object is not reachable), so it is lost. Fixing that needs a Java =InputConnection= (a =GameActivity= or a small Java view), which the no-Java APK does not have.
+- Backspace, Enter and arrows are keys, not characters: read them with =IsKeyPressed()= / =LrgCanvasInput= key events, as on the desktop.
+- Some devices ignore =ANativeActivity_showSoftInput()= unless the activity has focus; call it in response to a tap, not at start-up.
+
+** Lifecycle
+:PROPERTIES:
+:CUSTOM_ID: lifecycle
+:END:
+=LrgPlatform= (=lrg_platform_get_default()=) reports the app's lifecycle as two signals and a =running= property:
+
+| Signal                          | When                                                                          |
+|---------------------------------+-------------------------------------------------------------------------------|
+| =paused=                        | the app lost focus, its window, or the activity was paused (home, app switch, screen off) |
+| =resumed (gboolean gl_context_lost)= | focused again, with a window, the activity resumed                       |
+
+#+begin_src c
+static void
+on_paused (LrgPlatform *platform, gpointer user_data)
+{
+	my_game_save (user_data);      /* Android may end a paused app without warning */
+}
+
+static void
+on_resumed (LrgPlatform *platform, gboolean gl_context_lost, gpointer user_data)
+{
+	if (gl_context_lost)
+		my_game_reload_gpu_resources (user_data);
+}
+
+g_signal_connect (lrg_platform_get_default (), "paused", G_CALLBACK (on_paused), game);
+g_signal_connect (lrg_platform_get_default (), "resumed", G_CALLBACK (on_resumed), game);
+#+end_src
+
+*Where the events come from.* raylib handles the activity's commands in its own =onAppCmd= callback and offers no hook. =lrg_platform_poll()= chains a handler in front of it (as for input, above): raylib's handler runs first, unchanged, then libregnum updates its state from =APP_CMD_GAINED_FOCUS= / =LOST_FOCUS=, =PAUSE= / =RESUME= and =INIT_WINDOW= / =TERM_WINDOW=, and emits when "running" (focused, with a window, not paused) changes. Polling once per frame would not work: while the app is unfocused raylib blocks inside =EndDrawing()= (=ALooper_pollOnce()= with no timeout) until it is focused again, so the game's loop never sees the paused state. The signals are therefore emitted from inside =EndDrawing()= / =PollInputEvents()=, on the game's thread, while the app is going away: save and stop sounds there, do not draw. The hooks are installed by the first =lrg_platform_poll()= after =InitWindow()=; nothing is emitted before that.
+
+*Context loss.* On =APP_CMD_TERM_WINDOW= raylib detaches the EGL context and destroys only the surface; on the next =APP_CMD_INIT_WINDOW= it creates a surface and makes the same context current again, so textures, meshes and shaders normally survive. The system may still destroy the context (memory pressure, a driver reset). libregnum remembers the current context before =TERM_WINDOW= and, after raylib's =INIT_WINDOW= handling, checks =eglGetError()= (=EGL_CONTEXT_LOST= from raylib's =eglMakeCurrent()=) and =eglGetCurrentContext()= (no context, or a different one): any of those makes the next =resumed= report =gl_context_lost= = =TRUE=. raylib itself does not recover from a lost context (its default shader and font texture are gone too); a game that sees =TRUE= should reload its GPU resources or restart, and in practice this is rare.
+
+*On the desktop* nothing is emitted on its own (a minimised window keeps running). =lrg_platform_simulate_pause()= and =lrg_platform_simulate_resume()= emit the same signals, for tests and for a desktop game that wants to pause on minimise through the same handlers.
+
 ** The APK
 :PROPERTIES:
 :CUSTOM_ID: the-apk
