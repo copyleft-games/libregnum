@@ -117,6 +117,7 @@ PUBLIC_HEADERS := \
 	src/input/lrg-controller-rumble.h \
 	src/input/lrg-input-mock.h \
 	src/input/lrg-input-software.h \
+	src/input/lrg-input-merge.h \
 	src/input/lrg-input-binding.h \
 	src/input/lrg-input-action.h \
 	src/input/lrg-input-map.h \
@@ -948,6 +949,7 @@ SOURCES := \
 	src/input/lrg-controller-rumble.c \
 	src/input/lrg-input-mock.c \
 	src/input/lrg-input-software.c \
+	src/input/lrg-input-merge.c \
 	src/input/lrg-input-binding.c \
 	src/input/lrg-input-action.c \
 	src/input/lrg-input-map.c \
@@ -3431,6 +3433,11 @@ $(OBJDIR)/src/input/lrg-input-mock.o: src/input/lrg-input-mock.c src/input/lrg-i
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
 $(OBJDIR)/src/input/lrg-input-software.o: src/input/lrg-input-software.c src/input/lrg-input-software.h src/input/lrg-input.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/input/lrg-input-merge.o: src/input/lrg-input-merge.c src/input/lrg-input-merge.h src/input/lrg-input.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<

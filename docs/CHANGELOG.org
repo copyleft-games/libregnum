@@ -20,6 +20,7 @@ The annotated git tag is the release. This page is the human notes. =ROADMAP.md=
 :PROPERTIES:
 :CUSTOM_ID: changelog-unreleased
 :END:
+- Input: =LrgInputMerge= (=input/lrg-input-merge.h=): several inputs read as one (buttons from any part, the largest axis, mouse deltas added), so a game's controller layer reads a real gamepad and a virtual one (touch controls, VR) together ([[file:modules/input/input-merge.org][Input Merge]]).
 - Tests: =make ANDROID=1 test-emulator APK_GAME=...= builds the APK, boots a pinned Android 15 emulator (x86_64, runs arm64-v8a apps through translation) headless in a container with =/dev/kvm= and runs =tests/test-apk-device.sh= on it, keeping the screenshot next to the APK (=build-aux/android/emulator-test.sh=, [[file:platforms/android.org::#emulator][Android, On an emulator]]).
 
 ** 0.12.0

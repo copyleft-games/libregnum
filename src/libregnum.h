@@ -151,6 +151,7 @@
 #include "input/lrg-controller-rumble.h"
 #include "input/lrg-input-mock.h"
 #include "input/lrg-input-software.h"
+#include "input/lrg-input-merge.h"
 #include "input/lrg-input-binding.h"
 #include "input/lrg-input-action.h"
 #include "input/lrg-input-map.h"
