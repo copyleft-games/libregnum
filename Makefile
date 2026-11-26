@@ -2559,6 +2559,9 @@ APK_GAME ?=
 APK_NAME ?= $(basename $(notdir $(APK_GAME)))
 APK_ASSETS ?=
 APK_FORBID_GLOBS ?=
+# Android permissions the game needs (mkapk.sh --permission; INTERNET for
+# any socket, loopback included)
+APK_PERMISSIONS ?=
 APK_KEYSTORE ?=
 APK_KEY_ALIAS ?=
 APK_PACKAGE ?= org.libregnum.$(subst -,_,$(APK_NAME))
@@ -2598,6 +2601,7 @@ else
 	@bash $(LRG_MKAPK) --lib $(APK_LIB) --out $(APK_FILE) \
 		$(foreach a,$(APK_ASSETS),--assets $(a)) \
 		$(foreach g,$(APK_FORBID_GLOBS),--forbid '$(g)') \
+		$(foreach p,$(APK_PERMISSIONS),--permission $(p)) \
 		$(if $(APK_KEYSTORE),--keystore $(APK_KEYSTORE) --ks-pass-env APK_KEYSTORE_PASSWORD) \
 		$(if $(APK_KEYSTORE),$(if $(APK_KEY_PASSWORD),--key-pass-env APK_KEY_PASSWORD)) \
 		$(if $(APK_KEY_ALIAS),--ks-key-alias $(APK_KEY_ALIAS)) \

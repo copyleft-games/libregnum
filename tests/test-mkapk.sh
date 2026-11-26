@@ -216,6 +216,28 @@ else
 	bs_failed "no match: packages: ${out}"
 fi
 
+echo '== permissions (stubs)'
+mkapk_stub --out "${SCRATCH}/out/perms.apk" --assets "${SCRATCH}/a" \
+	--permission INTERNET --permission com.example.game.SAVE > /dev/null
+manifest="$(unzip -p "${SCRATCH}/out/perms.apk" AndroidManifest.xml)"
+bs_contains 'bare name is Android'\''s' '<uses-permission android:name="android.permission.INTERNET" />' "${manifest}"
+bs_contains 'dotted name as given' '<uses-permission android:name="com.example.game.SAVE" />' "${manifest}"
+bs_not_contains 'placeholder filled' '@PERMISSIONS@' "${manifest}"
+# the manifest is well-formed XML (aapt2 refuses anything else; the stub
+# does not parse it, so check here)
+if python3 -I -c 'import sys, xml.dom.minidom; xml.dom.minidom.parseString(sys.stdin.read())' <<< "${manifest}" 2> /dev/null
+then
+	bs_pass 'the manifest is well-formed XML'
+else
+	bs_failed 'the manifest is well-formed XML' "$(python3 -I -c 'import sys, xml.dom.minidom; xml.dom.minidom.parseString(sys.stdin.read())' <<< "${manifest}" 2>&1 | tail -n 1)"
+fi
+mkapk_stub --out "${SCRATCH}/out/noperms.apk" --assets "${SCRATCH}/a" > /dev/null
+manifest="$(unzip -p "${SCRATCH}/out/noperms.apk" AndroidManifest.xml)"
+bs_not_contains 'no permission asked, none declared' 'uses-permission' "${manifest}"
+out="$(mkapk_stub --out "${SCRATCH}/out/badperm.apk" --assets "${SCRATCH}/a" \
+	--permission 'INTERNET" evil="1' 2>&1 || echo FAILED)"
+bs_contains 'a malformed permission fails' 'not a permission name' "${out}"
+
 echo '== release signing (stubs)'
 ks="${SCRATCH}/keys/release.jks"
 mkdir -p -- "${SCRATCH}/keys"

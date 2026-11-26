@@ -58,6 +58,10 @@ Options:
   --forbid GLOB       fail when a staged asset's path (relative to assets/,
                       `*' also matches `/') matches GLOB; repeatable, e.g.
                       --forbid '*.MPQ' --forbid 'secret/*'
+  --permission NAME   a <uses-permission> in the manifest; a bare name is
+                      Android's (INTERNET = android.permission.INTERNET);
+                      repeatable.  Any socket, even on loopback, needs
+                      INTERNET
   --package ID        application id (default: org.libregnum.<basename of --out>)
   --label TEXT        launcher label (default: basename of --out)
   --version-code N    integer version (default: 1)
@@ -108,6 +112,7 @@ lib=''
 out=''
 assets=()
 forbid=()
+permissions=()
 package=''
 label=''
 version_code=1
@@ -129,6 +134,7 @@ do
 		--out) out="${2:?--out needs a file}"; shift 2 ;;
 		--assets) assets+=("${2:?--assets needs a directory}"); shift 2 ;;
 		--forbid) forbid+=("${2:?--forbid needs a glob}"); shift 2 ;;
+		--permission) permissions+=("${2:?--permission needs a name}"); shift 2 ;;
 		--package) package="${2:?--package needs an id}"; shift 2 ;;
 		--label) label="${2:?--label needs text}"; shift 2 ;;
 		--version-code) version_code="${2:?--version-code needs a number}"; shift 2 ;;
@@ -276,13 +282,28 @@ fi
 
 # --- 2. manifest ---------------------------------------------------------------
 
+# One <uses-permission> per --permission; a bare name is Android's
+# (INTERNET -> android.permission.INTERNET).  Names are Java identifiers
+# joined by dots, so nothing can escape the attribute.
+perm_xml="${work}/permissions.xml"
+: > "${perm_xml}"
+for perm in "${permissions[@]}"
+do
+	[[ "${perm}" =~ ^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$ ]] \
+		|| die "--permission ${perm}: not a permission name"
+	[[ "${perm}" == *.* ]] || perm="android.permission.${perm}"
+	printf '    <uses-permission android:name="%s" />\n' "${perm}" >> "${perm_xml}"
+done
+
 sed -e "s|@PACKAGE@|${package}|g" \
     -e "s|@VERSION_CODE@|${version_code}|g" \
     -e "s|@VERSION_NAME@|${version_name}|g" \
     -e "s|@LABEL@|${label}|g" \
     -e "s|@ORIENTATION@|${orientation}|g" \
     -e "s|@LIB_NAME@|${lib_name}|g" \
-    "${here}/AndroidManifest.xml.in" > "${work}/AndroidManifest.xml"
+    "${here}/AndroidManifest.xml.in" |
+	awk -v file="${perm_xml}" '/@PERMISSIONS@/ { while ((getline line < file) > 0) print line; next } { print }' \
+	> "${work}/AndroidManifest.xml"
 
 # --- 3. base APK ----------------------------------------------------------------
 

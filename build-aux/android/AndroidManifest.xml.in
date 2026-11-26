@@ -16,6 +16,12 @@
           android:versionCode="@VERSION_CODE@"
           android:versionName="@VERSION_NAME@">
 
+    <!-- the permissions the game asked for (the permission option of
+         mkapk.sh); a socket, even on loopback, needs
+         android.permission.INTERNET.  No double hyphen may appear in an
+         XML comment, so options are not spelled out here. -->
+    @PERMISSIONS@
+
     <!-- GLES 3.2: the engine's shaders are GLSL ES 3.00; 3.2 is what every
          arm64 device of API 29+ ships, and terrain uses base-vertex draws
          when available -->

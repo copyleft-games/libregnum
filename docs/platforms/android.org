@@ -253,6 +253,12 @@ How the passwords travel: =APK_KEYSTORE_PASSWORD= (and =APK_KEY_PASSWORD=, neede
 
 =apksigner verify --print-certs <apk>= (in =make ANDROID=1 container-shell=) shows the certificate an APK carries.
 
+*** Permissions
+:PROPERTIES:
+:CUSTOM_ID: permissions
+:END:
+The manifest declares no permission unless the game asks: =APK_PERMISSIONS= (=make ANDROID=1 apk=) or =mkapk.sh --permission NAME= (repeatable; a bare name is Android's, =INTERNET= is =android.permission.INTERNET=; a name is checked to be a dotted identifier). *Any socket needs =INTERNET=*, a loopback one too: without it =socket()= fails with "Operation not permitted", so a game with networking, or with a server inside the process talking to itself over 127.0.0.1, must ask for it. =tests/test-mkapk.sh= checks the manifest it produces.
+
 *** Forbidden files
 :PROPERTIES:
 :CUSTOM_ID: forbidden-files
