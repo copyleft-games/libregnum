@@ -82,7 +82,9 @@ write_file (Fixture     *fixture,
 	gchar *path;
 	g_autofree gchar *dir = NULL;
 
-	path = g_build_filename (fixture->dir, name, NULL);
+	/* canonical, as the document reports paths (one separator kind on
+	 * Windows) */
+	path = g_canonicalize_filename (name, fixture->dir);
 	dir = g_path_get_dirname (path);
 	g_mkdir_with_parents (dir, 0700);
 	g_file_set_contents (path, text, -1, &error);

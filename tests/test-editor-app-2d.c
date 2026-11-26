@@ -55,7 +55,7 @@ project_file (EditorAppFixture *f,
 		g_assert_true (lrg_editor_app_new_project (f->app, f->project, "Demo", &error));
 		g_assert_no_error (error);
 	}
-	path = g_build_filename (f->project, rel, NULL);
+	path = g_canonicalize_filename (rel, f->project);  /* canonical, as the editor reports paths */
 	dir = g_path_get_dirname (path);
 	g_mkdir_with_parents (dir, 0755);
 	if (text != NULL)

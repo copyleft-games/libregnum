@@ -2056,6 +2056,26 @@ test_gpu_chrome (void)
  * main
  * ========================================================================== */
 
+/* The notification tests run a private bus (GTestDBus), which starts
+ * dbus-daemon: without one (Windows, a bare container) they skip, saying
+ * why, instead of the whole binary bailing out. */
+static gboolean have_dbus_daemon;
+
+static void
+skip_no_dbus (gconstpointer data)
+{
+	(void) data;
+	g_test_skip ("no dbus-daemon on PATH for the private test bus");
+}
+
+#define NOTIFY_ADD(path, fn) \
+	G_STMT_START { \
+		if (have_dbus_daemon) \
+			g_test_add ((path), NotifyFixture, NULL, notify_set_up, (fn), notify_tear_down); \
+		else \
+			g_test_add_data_func ((path), NULL, skip_no_dbus); \
+	} G_STMT_END
+
 int
 main (int   argc,
       char *argv[])
@@ -2079,6 +2099,12 @@ main (int   argc,
 	 * watcher forked after that inherits Mesa's atexit handler, and when
 	 * it exits with the test it deadlocks joining threads that do not
 	 * exist in it, leaving one stuck process behind per run. */
+	{
+		g_autofree gchar *daemon = g_find_program_in_path ("dbus-daemon");
+
+		have_dbus_daemon = (daemon != NULL);
+	}
+	if (have_dbus_daemon)
 	{
 		static const gchar *keep[] = { "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR" };
 		g_autoptr(GTestDBus) warm = g_test_dbus_new (G_TEST_DBUS_NONE);
@@ -2123,21 +2149,15 @@ main (int   argc,
 	g_test_add_func ("/ui/header-bar/paint-presets", test_header_bar_paint_presets);
 
 	g_test_add_func ("/ui/notification/properties", test_notify_properties);
-	g_test_add ("/ui/notification/args", NotifyFixture, NULL, notify_set_up, test_notify_args, notify_tear_down);
-	g_test_add ("/ui/notification/replace", NotifyFixture, NULL, notify_set_up, test_notify_replace,
-	            notify_tear_down);
-	g_test_add ("/ui/notification/actions", NotifyFixture, NULL, notify_set_up, test_notify_actions,
-	            notify_tear_down);
-	g_test_add ("/ui/notification/closed-reasons", NotifyFixture, NULL, notify_set_up, test_notify_closed_reasons,
-	            notify_tear_down);
-	g_test_add ("/ui/notification/fallback-toast", NotifyFixture, NULL, notify_set_up, test_notify_fallback_toast,
-	            notify_tear_down);
-	g_test_add ("/ui/notification/fallback-buttons", NotifyFixture, NULL, notify_set_up, test_notify_fallback_buttons,
-	            notify_tear_down);
+	NOTIFY_ADD ("/ui/notification/args", test_notify_args);
+	NOTIFY_ADD ("/ui/notification/replace", test_notify_replace);
+	NOTIFY_ADD ("/ui/notification/actions", test_notify_actions);
+	NOTIFY_ADD ("/ui/notification/closed-reasons", test_notify_closed_reasons);
+	NOTIFY_ADD ("/ui/notification/fallback-toast", test_notify_fallback_toast);
+	NOTIFY_ADD ("/ui/notification/fallback-buttons", test_notify_fallback_buttons);
 	g_test_add_func ("/ui/toast/buttons", test_toast_buttons);
 	g_test_add_func ("/ui/header-bar/title-breadcrumb", test_header_title_breadcrumb);
-	g_test_add ("/ui/notification/in-app", NotifyFixture, NULL, notify_set_up, test_notify_in_app,
-	            notify_tear_down);
+	NOTIFY_ADD ("/ui/notification/in-app", test_notify_in_app);
 
 	g_test_add_func ("/ui/chrome/gpu", test_gpu_chrome);
 

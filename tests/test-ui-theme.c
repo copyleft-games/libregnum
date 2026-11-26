@@ -346,8 +346,16 @@ test_yaml_file_and_font_path (void)
 
 	theme = lrg_theme_new_from_file (path, &error);
 	g_assert_no_error (error);
+	/* The theme joins the file's directory with "fonts/ui.ttf" as written;
+	 * compare with '/' throughout, since Windows accepts both separators */
 	expect = g_build_filename (dir, "fonts", "ui.ttf", NULL);
-	g_assert_cmpstr (lrg_theme_get_font_path (theme), ==, expect);
+	g_strdelimit (expect, "\\", '/');
+	{
+		g_autofree gchar *got = g_strdup (lrg_theme_get_font_path (theme));
+
+		g_strdelimit (got, "\\", '/');
+		g_assert_cmpstr (got, ==, expect);
+	}
 	g_assert_false (lrg_theme_get_dark (theme));
 
 	/* Save and reload */

@@ -45,7 +45,8 @@ write_project_file (EditorAppFixture *f,
 		g_assert_true (lrg_editor_app_new_project (f->app, f->project, "Demo", &error));
 		g_assert_no_error (error);
 	}
-	path = g_build_filename (f->project, rel, NULL);
+	/* canonical, as the editor reports paths (one separator kind on Windows) */
+	path = g_canonicalize_filename (rel, f->project);
 	dir = g_path_get_dirname (path);
 	g_mkdir_with_parents (dir, 0755);
 	g_assert_true (g_file_set_contents (path, text, -1, &error));

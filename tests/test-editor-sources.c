@@ -814,7 +814,7 @@ test_import_place_export (EditorAppFixture *f,
 	rel = lrg_editor_sources_panel_import_selected (panel, &error);
 	g_assert_no_error (error);
 	g_assert_cmpstr (rel, ==, "assets/test/Props/crate.obj");
-	abs = g_build_filename (f->project, rel, NULL);
+	abs = g_canonicalize_filename (rel, f->project);  /* canonical, as the editor reports paths */
 	g_assert_true (g_file_test (abs, G_FILE_TEST_IS_REGULAR));
 	mtl = g_build_filename (f->project, "assets", "test", "Props", "crate.mtl", NULL);
 	g_assert_true (g_file_test (mtl, G_FILE_TEST_IS_REGULAR));

@@ -56,7 +56,7 @@ static gchar *
 project_file (EditorAppFixture *f,
               const gchar      *rel)
 {
-	return g_build_filename (f->project, rel, NULL);
+	return g_canonicalize_filename (rel, f->project);  /* canonical, as the editor reports paths */
 }
 
 /* ==========================================================================

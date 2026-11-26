@@ -400,7 +400,13 @@ test_instantiate_look (void)
 	g_assert_cmpfloat (v[1], ==, 0.5f);
 	g_assert_cmpfloat (v[2], ==, 3.0f);
 	g_assert_true (g_path_is_absolute (lrg_decal_component_get_albedo_path (decal)));
-	g_assert_true (g_str_has_suffix (lrg_decal_component_get_albedo_path (decal), "textures/splat.png"));
+	{
+		/* either separator: Windows joins with '\\' */
+		g_autofree gchar *albedo = g_strdup (lrg_decal_component_get_albedo_path (decal));
+
+		g_strdelimit (albedo, "\\", '/');
+		g_assert_true (g_str_has_suffix (albedo, "textures/splat.png"));
+	}
 	g_object_get (decal, "normal-path", &normal, "opacity", &f, NULL);
 	g_assert_cmpstr (normal, ==, "textures/missing_normal.png");   /* unresolved: kept */
 	g_assert_cmpfloat_with_epsilon (f, 0.6f, 1e-5f);

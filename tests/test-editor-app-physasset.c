@@ -260,7 +260,7 @@ project_path (EditorAppFixture *f,
 		g_assert_no_error (error);
 		efx_frames (f, 2);
 	}
-	path = g_build_filename (f->project, rel, NULL);
+	path = g_canonicalize_filename (rel, f->project);  /* canonical, as the editor reports paths */
 	dir = g_path_get_dirname (path);
 	g_mkdir_with_parents (dir, 0755);
 	return path;
@@ -400,7 +400,12 @@ test_open_generate (EditorAppFixture *f,
 	g_assert_nonnull (asset);
 	g_assert_null (lrg_editor_physics_asset_editor_get_load_error (ed));
 	g_assert_nonnull (lrg_editor_physics_asset_editor_get_skeleton (ed));
-	g_assert_true (g_str_has_suffix (lrg_editor_physics_asset_editor_get_model (ed), "chars/hero.glb"));
+	{
+		/* either separator: Windows paths use '\\' */
+		g_autofree gchar *model = g_strdelimit (g_strdup (lrg_editor_physics_asset_editor_get_model (ed)), "\\", '/');
+
+		g_assert_true (g_str_has_suffix (model, "chars/hero.glb"));
+	}
 	g_assert_cmpstr (lrg_physics_asset_get_name (asset), ==, "hero");
 	g_assert_cmpint (lrg_editor_physics_asset_editor_get_selected_part (ed), ==, 0);
 	/* the model is remembered in the sidecar, not in the strict format */
@@ -740,7 +745,12 @@ test_ipc (EditorAppFixture *f,
 
 	o = ipc_object (f, "{'id':1,'method':'physasset.create','params':{'path':'chars/hero.rphysasset',"
 	                   "'model':'chars/hero.glb','total_mass':80}}", &r);
-	g_assert_true (g_str_has_suffix (json_object_get_string_member (o, "path"), "chars/hero.rphysasset"));
+	{
+		/* either separator: Windows paths use '\\' */
+		g_autofree gchar *saved = g_strdelimit (g_strdup (json_object_get_string_member (o, "path")), "\\", '/');
+
+		g_assert_true (g_str_has_suffix (saved, "chars/hero.rphysasset"));
+	}
 	n = (guint) json_object_get_int_member (o, "parts");
 	g_assert_cmpuint (n, >=, 10);
 	g_clear_pointer (&r, json_node_unref);

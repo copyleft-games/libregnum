@@ -63,7 +63,12 @@ test_map_header (gconstpointer data)
 	/* file properties are resolved against the map's directory */
 	music = lrg_tiled_properties_get_string (props, "music");
 	g_assert_true (g_path_is_absolute (music));
-	g_assert_true (g_str_has_suffix (music, "/tiled/sounds/hum.ogg"));
+	{
+		/* either separator: Windows paths use '\\' */
+		g_autofree gchar *norm = g_strdelimit (g_strdup (music), "\\", '/');
+
+		g_assert_true (g_str_has_suffix (norm, "/tiled/sounds/hum.ogg"));
+	}
 	g_assert_cmpint (lrg_tiled_properties_get_value_type (props, "music"), ==, LRG_TILED_PROPERTY_FILE);
 
 	/* class properties are flattened */
@@ -187,7 +192,12 @@ test_tile_layers (gconstpointer data)
 
 	layer = lrg_tiled_map_get_layer_by_name (map, "backdrop");
 	g_assert_cmpint (lrg_tiled_layer_get_kind (layer), ==, LRG_TILED_LAYER_IMAGE);
-	g_assert_true (g_str_has_suffix (lrg_tiled_layer_get_image_path (layer), "/office-tiles.png"));
+	{
+		/* either separator: Windows paths use '\\' */
+		g_autofree gchar *image = g_strdelimit (g_strdup (lrg_tiled_layer_get_image_path (layer)), "\\", '/');
+
+		g_assert_true (g_str_has_suffix (image, "/office-tiles.png"));
+	}
 	g_assert_null (lrg_tiled_layer_get_gids (layer, &n));
 	g_assert_cmpuint (n, ==, 0);
 }

@@ -1149,6 +1149,8 @@ test_m10_ipc (void)
 	g_autofree gchar *dir = NULL;
 	g_autofree gchar *path_a = NULL;
 	g_autofree gchar *path_b = NULL;
+	g_autofree gchar *json_a = NULL;
+	g_autofree gchar *json_b = NULL;
 	g_autofree gchar *req = NULL;
 	g_autoptr(JsonNode) result = NULL;
 	JsonObject *obj;
@@ -1236,11 +1238,14 @@ test_m10_ipc (void)
 		save_level (la, path_a);
 		save_level (lb, path_b);
 	}
-	req = g_strdup_printf ("{\"id\":1,\"method\":\"scenes.open\",\"params\":{\"path\":\"%s\"}}", path_a);
+	/* paths go into JSON escaped: Windows paths hold backslashes */
+	json_a = g_strescape (path_a, NULL);
+	json_b = g_strescape (path_b, NULL);
+	req = g_strdup_printf ("{\"id\":1,\"method\":\"scenes.open\",\"params\":{\"path\":\"%s\"}}", json_a);
 	result = ipc_ok (server, req);
 	g_clear_pointer (&result, json_node_unref);
 	g_clear_pointer (&req, g_free);
-	req = g_strdup_printf ("{\"id\":1,\"method\":\"scenes.open\",\"params\":{\"path\":\"%s\"}}", path_b);
+	req = g_strdup_printf ("{\"id\":1,\"method\":\"scenes.open\",\"params\":{\"path\":\"%s\"}}", json_b);
 	result = ipc_ok (server, req);
 	g_clear_pointer (&result, json_node_unref);
 	g_assert_nonnull (find_guid (lrg_editor_get_level (editor), "guid-b"));

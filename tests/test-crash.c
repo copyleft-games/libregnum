@@ -275,10 +275,17 @@ test_crash_reporter_install (CrashFixture  *fixture,
     g_assert_false (lrg_crash_reporter_is_installed (fixture->reporter));
 
     result = lrg_crash_reporter_install (fixture->reporter, &error);
+#ifdef G_OS_WIN32
+    /* No crash handler on Windows yet: install() says so, documented */
+    g_assert_error (error, LRG_CRASH_REPORTER_ERROR, LRG_CRASH_REPORTER_ERROR_SIGNAL_FAILED);
+    g_assert_false (result);
+    g_assert_false (lrg_crash_reporter_is_installed (fixture->reporter));
+#else
     g_assert_no_error (error);
     g_assert_true (result);
 
     g_assert_true (lrg_crash_reporter_is_installed (fixture->reporter));
+#endif
 }
 
 static void
@@ -287,6 +294,10 @@ test_crash_reporter_uninstall (CrashFixture  *fixture,
 {
     g_autoptr(GError) error = NULL;
 
+#ifdef G_OS_WIN32
+    g_test_skip ("no crash handler on Windows (install() fails, see /crash/reporter/install)");
+    return;
+#endif
     lrg_crash_reporter_install (fixture->reporter, &error);
     g_assert_no_error (error);
     g_assert_true (lrg_crash_reporter_is_installed (fixture->reporter));
@@ -302,6 +313,11 @@ test_crash_reporter_install_twice (CrashFixture  *fixture,
 {
     g_autoptr(GError) error = NULL;
     gboolean          result;
+
+#ifdef G_OS_WIN32
+    g_test_skip ("no crash handler on Windows (install() fails, see /crash/reporter/install)");
+    return;
+#endif
 
     result = lrg_crash_reporter_install (fixture->reporter, &error);
     g_assert_no_error (error);

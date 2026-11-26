@@ -2506,7 +2506,9 @@ test_wave3_errors (void)
 
 	/* --- editor languages ------------------------------------------------- */
 	g_free (load_err (loader, "type: text-editor\nlanguage-file: /nonexistent/lang.yaml\n",
-	                  LRG_UI_LOADER_ERROR_IO, "(root): cannot read '/nonexistent/lang.yaml'"));
+	                  LRG_UI_LOADER_ERROR_IO,
+	                  /* the loader reports the path with the OS's separators */
+	                  "(root): cannot read '" G_DIR_SEPARATOR_S "nonexistent" G_DIR_SEPARATOR_S "lang.yaml'"));
 	g_free (load_err (loader, "languages: [{base: code}]\ntype: label\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
 	                  "languages[0]: invalid language definition:"));
 	g_free (load_err (loader, "languages: [{file: a.yaml, name: x}]\ntype: label\n", LRG_UI_LOADER_ERROR_STRUCTURE,
@@ -2523,7 +2525,8 @@ test_wave3_errors (void)
 	g_free (load_err (loader, "type: node-graph\ngraph: 12\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
 	                  "(root): 'graph' must be a graph document (a mapping), got a scalar"));
 	g_free (load_err (loader, "type: node-graph\ngraph-file: /nonexistent/g.yaml\n", LRG_UI_LOADER_ERROR_IO,
-	                  "(root): cannot read '/nonexistent/g.yaml'"));
+	                  /* the loader reports the path with the OS's separators */
+	                  "(root): cannot read '" G_DIR_SEPARATOR_S "nonexistent" G_DIR_SEPARATOR_S "g.yaml'"));
 
 	/* --- timeline --------------------------------------------------------- */
 	g_free (load_err (loader, "type: timeline-view\ntracks: {name: a}\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,

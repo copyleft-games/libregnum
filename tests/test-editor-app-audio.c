@@ -40,7 +40,12 @@ audio_project (EditorAppFixture *f)
 	                  4);
 	path = lrg_editor_mixer_editor_project_mixer_path (f->app);
 	g_assert_nonnull (path);
-	g_assert_true (g_str_has_suffix (path, "audio/main.rmixer"));
+	{
+		/* either separator: Windows paths use '\\' */
+		g_autofree gchar *norm = g_strdelimit (g_strdup (path), "\\", '/');
+
+		g_assert_true (g_str_has_suffix (norm, "audio/main.rmixer"));
+	}
 	ed = lrg_editor_mixer_editor_find_for_path (f->app, path, FALSE, NULL);
 	g_assert_nonnull (ed);
 	efx_frames (f, 2);
@@ -691,7 +696,12 @@ test_panel (EditorAppFixture *f,
 	efx_click_widget (f, efx_find (f, "mixer-panel-empty-new"));
 	lrg_editor_mixer_panel_reload (panel);
 	g_assert_nonnull (lrg_editor_mixer_panel_get_path (panel));
-	g_assert_true (g_str_has_suffix (lrg_editor_mixer_panel_get_path (panel), "audio/main.rmixer"));
+	{
+		/* either separator: Windows paths use '\\' */
+		g_autofree gchar *norm = g_strdelimit (g_strdup (lrg_editor_mixer_panel_get_path (panel)), "\\", '/');
+
+		g_assert_true (g_str_has_suffix (norm, "audio/main.rmixer"));
+	}
 	path = g_strdup (lrg_editor_mixer_panel_get_path (panel));
 	ed = lrg_editor_mixer_editor_find_for_path (f->app, path, FALSE, NULL);
 	g_assert_nonnull (ed);
@@ -816,6 +826,9 @@ test_gizmo (EditorAppFixture *f,
 	undo = lrg_editor_get_undo_count (f->editor);
 	vp_to_canvas (f, u, v, &x, &y);
 	efx_drag (f, GRL_MOUSE_BUTTON_LEFT, x, y, x, y - 40.0f, 4);
+	/* the drag is committed as a node state, so the visual may be a new
+	 * object: reading the old one read freed memory (it crashed on Windows) */
+	visual = lrg_node_get_visual (emitter);
 	g_assert_cmpfloat (lrg_node_visual_get_param_double (visual, "radius", 0.0), >, 8.5);
 	g_assert_cmpuint (lrg_editor_get_undo_count (f->editor), ==, undo + 1);
 	lrg_editor_undo (f->editor);
@@ -862,7 +875,6 @@ test_inspector (EditorAppFixture *f,
 {
 	LrgEditorMixerEditor *ed = audio_project (f);
 	LrgNode              *emitter;
-	LrgNodeVisual        *visual;
 	LrgWidget            *section;
 	LrgPropertyGrid      *grid;
 	LrgPropertySource    *src;
@@ -875,7 +887,6 @@ test_inspector (EditorAppFixture *f,
 	(void) ed;
 	lrg_editor_new_level (f->editor, "audio");
 	emitter = create_node (f, "{'name':'Radio','kind':'audio-emitter'}");
-	visual = lrg_node_get_visual (emitter);
 	lrg_editor_select (f->editor, emitter, FALSE);
 	efx_frames (f, 3);
 
@@ -897,12 +908,14 @@ test_inspector (EditorAppFixture *f,
 	lrg_property_info_unref (info);
 	g_assert_cmpint (lrg_property_source_get_state (src, "min-distance"), ==, LRG_PROPERTY_STATE_DEFAULT);
 
-	/* a write is a visual param and one undo step; max is "radius" */
+	/* a write is a visual param and one undo step; max is "radius".  An
+	 * undo step may replace the node's visual, so it is fetched anew for
+	 * every read below */
 	undo = lrg_editor_get_undo_count (f->editor);
 	g_value_init (&v, G_TYPE_FLOAT);
 	g_value_set_float (&v, 25.0f);
 	g_assert_true (lrg_property_source_set_value (src, "max-distance", &v));
-	g_assert_cmpfloat (lrg_node_visual_get_param_double (visual, "radius", 0.0), ==, 25.0);
+	g_assert_cmpfloat (lrg_node_visual_get_param_double (lrg_node_get_visual (emitter), "radius", 0.0), ==, 25.0);
 	g_assert_cmpuint (lrg_editor_get_undo_count (f->editor), ==, undo + 1);
 	g_assert_cmpint (lrg_property_source_get_state (src, "max-distance"), ==, LRG_PROPERTY_STATE_OVERRIDDEN);
 	g_value_unset (&v);
@@ -911,10 +924,9 @@ test_inspector (EditorAppFixture *f,
 	g_assert_true (lrg_property_source_set_value (src, "bus", &v));
 	g_value_unset (&v);
 	lrg_editor_undo (f->editor);
-	visual = lrg_node_get_visual (emitter);
-	g_assert_null (lrg_node_visual_get_param (visual, "bus"));
+	g_assert_null (lrg_node_visual_get_param (lrg_node_get_visual (emitter), "bus"));
 	g_assert_true (lrg_property_source_reset (src, "max-distance"));
-	g_assert_null (lrg_node_visual_get_param (visual, "radius"));
+	g_assert_null (lrg_node_visual_get_param (lrg_node_get_visual (emitter), "radius"));
 
 	/* the custom rolloff shows the curve editor; editing it writes keys */
 	g_value_init (&v, LRG_TYPE_AUDIO_ROLLOFF);
@@ -936,8 +948,8 @@ test_inspector (EditorAppFixture *f,
 		g_signal_emit_by_name (curve, "curve-changed");
 		g_signal_emit_by_name (curve, "edit-end", TRUE);
 		g_assert_cmpuint (lrg_editor_get_undo_count (f->editor), ==, undo + 1);
-		g_assert_nonnull (lrg_node_visual_get_param (visual, "rolloff_curve_keys"));
-		g_assert_nonnull (strstr (g_value_get_string (lrg_node_visual_get_param (visual, "rolloff_curve_keys")),
+		g_assert_nonnull (lrg_node_visual_get_param (lrg_node_get_visual (emitter), "rolloff_curve_keys"));
+		g_assert_nonnull (strstr (g_value_get_string (lrg_node_visual_get_param (lrg_node_get_visual (emitter), "rolloff_curve_keys")),
 		                          "0.5:0.2"));
 	}
 
@@ -950,7 +962,7 @@ test_inspector (EditorAppFixture *f,
 	g_assert_cmpstr (json_object_get_string_member (params, "rolloff_mode"), ==, "linear");
 	g_assert_cmpstr (json_object_get_string_member (params, "bus"), ==, "dialogue");
 	g_assert_true (json_object_get_boolean_member (params, "occlusion"));
-	g_assert_cmpfloat (lrg_node_visual_get_param_double (visual, "radius", 0.0), ==, 30.0);
+	g_assert_cmpfloat (lrg_node_visual_get_param_double (lrg_node_get_visual (emitter), "radius", 0.0), ==, 30.0);
 	g_clear_pointer (&r, json_node_unref);
 	r = efx_ipc_result (f, "{'id':1,'method':'audio.curve','params':{'node':'Radio','samples':4}}");
 	{
@@ -966,7 +978,7 @@ test_inspector (EditorAppFixture *f,
 	g_assert_cmpuint (json_array_get_length (json_object_get_array_member (json_node_get_object (r), "buses")), ==, 4);
 	g_clear_pointer (&r, json_node_unref);
 	r = efx_ipc_result (f, "{'id':1,'method':'audio.set','params':{'node':'Radio','params':{'bus':null}}}");
-	g_assert_null (lrg_node_visual_get_param (visual, "bus"));
+	g_assert_null (lrg_node_visual_get_param (lrg_node_get_visual (emitter), "bus"));
 	g_clear_pointer (&r, json_node_unref);
 	{
 		g_autofree gchar *err = efx_ipc (f, "{'id':1,'method':'audio.set','params':{'node':'Radio','params':"

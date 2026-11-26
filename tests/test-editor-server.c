@@ -316,6 +316,8 @@ test_edit_and_level_methods (Fixture       *f,
 {
 	g_autoptr(JsonNode) r = NULL;
 	g_autofree gchar   *path = g_build_filename (f->dir, "a.rlevel", NULL);
+	/* the path as a JSON string body: Windows paths hold backslashes */
+	g_autofree gchar   *path_json = g_strescape (path, NULL);
 	g_autofree gchar   *req = NULL;
 	g_autofree gchar   *clip = NULL;
 
@@ -374,12 +376,12 @@ test_edit_and_level_methods (Fixture       *f,
 	g_clear_pointer (&r, json_node_unref);
 
 	/* Opening over unsaved changes needs force. */
-	req = g_strdup_printf ("{\"id\":13,\"method\":\"level.open\",\"params\":{\"path\":\"%s\"}}", path);
+	req = g_strdup_printf ("{\"id\":13,\"method\":\"level.open\",\"params\":{\"path\":\"%s\"}}", path_json);
 	r = call (f, req);
 	g_assert_cmpstr (error_code_of (r), ==, "failed");
 	g_clear_pointer (&r, json_node_unref);
 	g_free (req);
-	req = g_strdup_printf ("{\"id\":14,\"method\":\"level.open\",\"params\":{\"path\":\"%s\",\"force\":true}}", path);
+	req = g_strdup_printf ("{\"id\":14,\"method\":\"level.open\",\"params\":{\"path\":\"%s\",\"force\":true}}", path_json);
 	r = call (f, req);
 	result_of (r);
 	g_clear_pointer (&r, json_node_unref);

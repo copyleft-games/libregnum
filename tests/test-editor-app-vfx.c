@@ -50,7 +50,7 @@ project_path (EditorAppFixture *f,
 		g_assert_no_error (error);
 		efx_frames (f, 2);
 	}
-	path = g_build_filename (f->project, rel, NULL);
+	path = g_canonicalize_filename (rel, f->project);  /* canonical, as the editor reports paths */
 	dir = g_path_get_dirname (path);
 	g_mkdir_with_parents (dir, 0755);
 	return path;

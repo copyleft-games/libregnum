@@ -260,9 +260,24 @@ G_GNUC_UNUSED static gchar *
 efx_ipc (EditorAppFixture *f,
          const gchar      *request)
 {
-	g_autofree gchar *json = g_strdelimit (g_strdup (request), "'", '"');
+	GString          *json = g_string_sized_new (strlen (request) + 16);
+	g_autofree gchar *text = NULL;
+	const gchar      *p;
 
-	return lrg_editor_server_dispatch (lrg_editor_app_get_server (f->app), json);
+	/* ' becomes ", and every backslash is escaped: requests interpolate
+	 * file paths, which hold backslashes on Windows, and no request uses
+	 * a JSON escape of its own */
+	for (p = request; *p != '\0'; p++)
+	{
+		if (*p == '\'')
+			g_string_append_c (json, '"');
+		else if (*p == '\\')
+			g_string_append (json, "\\\\");
+		else
+			g_string_append_c (json, *p);
+	}
+	text = g_string_free (json, FALSE);
+	return lrg_editor_server_dispatch (lrg_editor_app_get_server (f->app), text);
 }
 
 /* The "result" member of a reply (asserting no error); free with
