@@ -22,6 +22,7 @@ The annotated git tag is the release. This page is the human notes. =ROADMAP.md=
 :END:
 - Tests: =make ANDROID=1 test-emulator APK_GAME=...= builds the APK, boots a pinned Android 15 emulator (x86_64, runs arm64-v8a apps through translation) headless in a container with =/dev/kvm= and runs =tests/test-apk-device.sh= on it, keeping the screenshot next to the APK (=build-aux/android/emulator-test.sh=, [[file:platforms/android.org::#emulator][Android, On an emulator]]).
 - Platform: =lrg_platform_get_external_data_dir()= (Android's external app storage; =g_get_user_data_dir()/<prgname>= elsewhere), =lrg_platform_get_dp_scale()=, the soft keyboard (=lrg_platform_show_soft_keyboard()= / =_hide_=) with =lrg_platform_get_char_pressed()= delivering Android key characters to text widgets, and =LrgPlatform= =paused= / =resumed (gl_context_lost)= from handlers chained in front of raylib's (=lrg_platform_poll()=, called by the engine and the template). [[file:platforms/android.org::#storage][Android, Storage]], [[file:platforms/android.org::#soft-keyboard][Soft keyboard]], [[file:platforms/android.org::#lifecycle][Lifecycle]].
+- Input: =LrgTouchTracker= (tap, double tap, long press, drag, pinch, two-finger tap), =LrgTouchControls= with =LrgTouchButton= (floating stick, look region, buttons, finger ownership, output through an =LrgInputSoftware= sink into =LrgInputMap=, YAML layouts, auto show/hide) and =examples/game-touch-demo.c=. [[file:modules/input/touch.org][Touch input]].
 
 ** 0.12.0
 :PROPERTIES:

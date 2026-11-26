@@ -50,6 +50,17 @@ No phone? This builds the APK, boots a pinned Android 15 emulator in a container
 make ANDROID=1 test-emulator APK_GAME=examples/game-chocolate-chip-clicker.c
 #+end_src
 
+** Touch controls
+:PROPERTIES:
+:CUSTOM_ID: touch-demo
+:END:
+[[file:../game-touch-demo.c][game-touch-demo.c]] is the touch-controls example: a cube moved by a floating virtual stick, an orbit camera turned by dragging on the right and zoomed by pinching, and Jump (held) and Color (tapped) buttons, all through an =LrgInputMap= ([[file:../../docs/modules/input/touch.org][Touch input]]). On a desktop the left mouse button is one finger.
+
+#+begin_src sh
+make -j16 ANDROID=1 apk APK_GAME=examples/game-touch-demo.c
+make ANDROID=1 apk-install apk-run APK_GAME=examples/game-touch-demo.c
+#+end_src
+
 ** Your own game
 :PROPERTIES:
 :CUSTOM_ID: your-own-game

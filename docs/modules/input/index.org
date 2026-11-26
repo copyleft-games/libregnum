@@ -252,6 +252,9 @@ actions:
 - =lrg-input-map.h= - Container for actions with persistence
 - =lrg-controller.h= - Controller families, glyph names, preset maps and the family monitor (see [[file:controller.org][Controllers]])
 - =lrg-controller-rumble.h= - Linux force feedback rumble
+- =lrg-touch-tracker.h= - Touch gestures from per-frame touch points (see [[file:touch.org][Touch input]])
+- =lrg-touch-button.h= - One on-screen touch button
+- =lrg-touch-controls.h= - On-screen stick, look region and buttons feeding the input map; YAML layouts
 
 *** Related Types
 :PROPERTIES:
@@ -350,4 +353,5 @@ void game_update(void)
 - See [[file:input-binding.org][Input Bindings]] for binding details
 - See [[file:controller.org][Controllers]] for family detection (Xbox, PlayStation, Steam Deck, Steam Frame), glyphs, presets and rumble
 - See [[file:binding-catalog.org][LrgBindingCatalog]] for a key binding screen's grouped catalogue and conflicts
+- See [[file:touch.org][Touch input]] for gestures and on-screen touch controls (stick, look, buttons) on phones and tablets
 - See [[../examples/input-handling.md][Input Handling Example]] for complete code sample

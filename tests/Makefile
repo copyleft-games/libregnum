@@ -77,6 +77,7 @@ TEST_SOURCES := \
 	test-random-stream.c \
 	test-cpu-affinity.c \
 	test-platform.c \
+	test-touch.c \
 	test-timer-manager.c \
 	test-replay.c \
 	test-rollback.c \

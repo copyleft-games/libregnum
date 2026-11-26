@@ -138,6 +138,7 @@ EXAMPLES += game-creature-collector game-vr-demo
 EXAMPLES += game-deckbuilder-combat game-deckbuilder-poker
 EXAMPLES += game-platformer-demo game-fps-demo
 EXAMPLES += game-third-person-demo game-top-down-demo game-twin-stick-demo game-shmup-demo game-racing-3d-demo
+EXAMPLES += game-touch-demo
 EXAMPLES += mmo-simulation replay-demo
 ifneq ($(TARGET_PLATFORM),windows)
 EXAMPLES += mmo-server mmo-zone-worker
@@ -363,6 +364,10 @@ $(EXAMPLES_BUILDDIR)/game-shmup-demo$(EXE_EXT): game-shmup-demo.c | $(EXAMPLES_B
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/game-racing-3d-demo$(EXE_EXT): game-racing-3d-demo.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/game-touch-demo$(EXE_EXT): game-touch-demo.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 

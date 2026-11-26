@@ -127,7 +127,13 @@ An Android app has two places of its own:
 
 On every other platform it returns =g_get_user_data_dir()/<prgname>= (=~/.local/share/<game>=, the last component of =g_get_prgname()=; =libregnum= when no program name is set), also created when missing, so a game asks one function for "where the player puts big files" everywhere. The string lives as long as the process.
 
-=lrg_platform_get_dp_scale()= is the display density in pixels per dp (=AConfiguration_getDensity()= / 160; 1.0 off Android). Touch layouts are written in dp and multiplied by it.
+=lrg_platform_get_dp_scale()= is the display density in pixels per dp (=AConfiguration_getDensity()= / 160; 1.0 off Android). Touch layouts are written in dp and multiplied by it ([[file:../modules/input/touch.org][Touch input]]).
+
+** Touch controls
+:PROPERTIES:
+:CUSTOM_ID: touch-controls
+:END:
+raylib turns touches into touch points (and the first one into the left mouse button). =LrgTouchTracker= recognises gestures from them and =LrgTouchControls= puts a floating stick, a look region and buttons on the screen that drive the game's =LrgInputMap= actions like a gamepad, with layouts in YAML and an =auto= mode that hides them while a keyboard or pad is used: [[file:../modules/input/touch.org][Touch input]]. =examples/game-touch-demo.c= is a small 3D example (=make ANDROID=1 apk APK_GAME=examples/game-touch-demo.c=).
 
 ** Soft keyboard
 :PROPERTIES:
