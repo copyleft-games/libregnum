@@ -57,6 +57,63 @@ av_fail (GError      **error,
 	return FALSE;
 }
 
+/*
+ * The encoder's supported sample formats and rates.  libavcodec 61.13
+ * (FFmpeg 7.1) added avcodec_get_supported_config() and deprecated the
+ * AVCodec fields; FFmpeg 6.x (Ubuntu 24.04, the base consumers build
+ * their AppImages on) has only the fields, terminated by -1 and 0.
+ * Either way *out is NULL and *n 0 when the codec does not say.
+ */
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT (61, 13, 100)
+#define LRG_LIBAV_SUPPORTED_CONFIG 1
+#endif
+
+static void
+supported_formats (AVCodecContext             *ctx,
+                   const AVCodec              *codec,
+                   const enum AVSampleFormat **out,
+                   gint                       *n)
+{
+	*out = NULL;
+	*n = 0;
+#ifdef LRG_LIBAV_SUPPORTED_CONFIG
+	if (avcodec_get_supported_config (ctx, codec, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0, (const void **) out, n) < 0)
+	{
+		*out = NULL;
+		*n = 0;
+	}
+#else
+	(void) ctx;
+	*out = codec->sample_fmts;
+	if (*out != NULL)
+		while ((*out)[*n] != AV_SAMPLE_FMT_NONE)
+			(*n)++;
+#endif
+}
+
+static void
+supported_rates (AVCodecContext  *ctx,
+                 const AVCodec   *codec,
+                 const gint     **out,
+                 gint            *n)
+{
+	*out = NULL;
+	*n = 0;
+#ifdef LRG_LIBAV_SUPPORTED_CONFIG
+	if (avcodec_get_supported_config (ctx, codec, AV_CODEC_CONFIG_SAMPLE_RATE, 0, (const void **) out, n) < 0)
+	{
+		*out = NULL;
+		*n = 0;
+	}
+#else
+	(void) ctx;
+	*out = codec->supported_samplerates;
+	if (*out != NULL)
+		while ((*out)[*n] != 0)
+			(*n)++;
+#endif
+}
+
 /* the encoder's preferred sample format for @bit_depth (lossless) */
 static enum AVSampleFormat
 pick_format (AVCodecContext *ctx,
@@ -67,8 +124,8 @@ pick_format (AVCodecContext *ctx,
 	gint                       n = 0, i;
 	enum AVSampleFormat        want[4];
 
-	if (avcodec_get_supported_config (ctx, codec, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0, (const void **) &fmts, &n) < 0
-	    || fmts == NULL || n == 0)
+	supported_formats (ctx, codec, &fmts, &n);
+	if (fmts == NULL || n == 0)
 		return AV_SAMPLE_FMT_FLTP;
 	if (bit_depth >= 24)
 	{
@@ -102,8 +159,8 @@ pick_rate (AVCodecContext *ctx,
 	const gint *rates = NULL;
 	gint        n = 0, i, best = 0;
 
-	if (avcodec_get_supported_config (ctx, codec, AV_CODEC_CONFIG_SAMPLE_RATE, 0, (const void **) &rates, &n) < 0
-	    || rates == NULL || n == 0)
+	supported_rates (ctx, codec, &rates, &n);
+	if (rates == NULL || n == 0)
 		return (gint) rate;
 	for (i = 0; i < n; i++)
 	{
