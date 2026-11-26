@@ -153,7 +153,7 @@ Hidden controls claim no fingers, emit nothing, release every held button, centr
 :PROPERTIES:
 :CUSTOM_ID: skin
 :END:
-Pixels per dp are =dp-scale= (=lrg_platform_get_dp_scale()= by default) times =scale= (the player's size preference, 0.25 to 4; offsets scale with sizes, anchors stay on their screen point). =lrg_touch_controls_draw()= draws with graylib's 2D primitives: the stick's base and knob (a faint hint at the region's centre while unused), the buttons as circles or rounded rectangles with their label (or icon name) centred. Colours: =base-color=, =knob-color=, =button-color=, =button-active-color= (held), =text-color=, all multiplied by =opacity= (0.6); labels are =font-size= dp. A game with its own art draws from =lrg_touch_button_get_rect()= and =lrg_touch_button_get_icon()= instead.
+Pixels per dp are =dp-scale= (=lrg_platform_get_dp_scale()= by default) times =scale= (the player's size preference, 0.25 to 4; offsets scale with sizes, anchors stay on their screen point). =lrg_touch_controls_draw()= draws with graylib's 2D primitives, always on top: it turns the depth test off while it draws and puts it back as it found it (a game that draws its 2D layer with the world's depth test still on would otherwise lose every control over anything nearer than the far plane): the stick's base and knob (a faint hint at the region's centre while unused), the buttons as circles or rounded rectangles with their label (or icon name) centred. Colours: =base-color=, =knob-color=, =button-color=, =button-active-color= (held), =text-color=, all multiplied by =opacity= (0.6); labels are =font-size= dp. A game with its own art draws from =lrg_touch_button_get_rect()= and =lrg_touch_button_get_icon()= instead.
 
 ** Layout YAML
 :PROPERTIES:

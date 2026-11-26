@@ -18,6 +18,7 @@
 #include <math.h>
 #include <string.h>
 #include <raylib.h>
+#include <rlgl.h>
 #include <yaml-glib.h>
 
 #include "lrg-touch-controls.h"
@@ -1903,10 +1904,30 @@ faded (LrgTouchControls *self,
 	return out;
 }
 
+/* whether GL's depth test is on now (rlgl keeps no copy of it); off
+ * without the entry point (no context) */
+typedef unsigned char (*IsEnabledFunc) (unsigned int cap);
+
+static gboolean
+depth_test_enabled (void)
+{
+	static IsEnabledFunc is_enabled = NULL;
+	static gboolean loaded = FALSE;
+
+	if (!loaded)
+	{
+		loaded = TRUE;
+		is_enabled = (IsEnabledFunc) (gsize) rlGetProcAddress ("glIsEnabled");
+	}
+	/* GL_DEPTH_TEST */
+	return is_enabled != NULL && is_enabled (0x0B71) != 0;
+}
+
 /* lrg_touch_controls_draw: documented in lrg-touch-controls.h */
 void
 lrg_touch_controls_draw (LrgTouchControls *self)
 {
+	gboolean depth_was_on;
 	gfloat ppd;
 	guint i;
 
@@ -1915,6 +1936,14 @@ lrg_touch_controls_draw (LrgTouchControls *self)
 	if (!self->visible)
 		return;
 	ppd = px_per_dp (self);
+
+	/* An overlay: never depth-tested.  A game that draws its world and
+	 * then its 2D layer without turning the depth test off (raylib's 2D
+	 * mode leaves it alone) would hide every control over anything
+	 * nearer than the far plane; the state is put back afterwards. */
+	depth_was_on = depth_test_enabled ();
+	rlDrawRenderBatchActive ();
+	rlDisableDepthTest ();
 
 	/* the stick: where it is held, or a faint hint where it rests */
 	if (self->stick_enabled)
@@ -1995,6 +2024,11 @@ lrg_touch_controls_draw (LrgTouchControls *self)
 		grl_draw_text (text, (gint) (x + w * 0.5f) - grl_measure_text (text, font) / 2,
 		               (gint) (y + h * 0.5f) - font / 2, font, &ink);
 	}
+
+	/* the depth test as the game had it */
+	rlDrawRenderBatchActive ();
+	if (depth_was_on)
+		rlEnableDepthTest ();
 }
 
 /* ==========================================================================
