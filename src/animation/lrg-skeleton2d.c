@@ -3619,7 +3619,7 @@ read_animation (Reader        *rd,
 	}
 	if ((m = yaml_mapping_get_member (map, "loop")) != NULL)
 	{
-		gboolean loop;
+		gboolean loop = FALSE;
 
 		g_free (p);
 		p = g_strdup_printf ("%s/loop", path);

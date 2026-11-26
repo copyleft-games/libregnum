@@ -594,14 +594,17 @@ lrg_ik_chain_get_joint_positions (LrgIKChain *self,
 gfloat
 lrg_ik_chain_get_total_length (LrgIKChain *self)
 {
-	gfloat  total = 0.0f;
-	gfloat *p;
-	guint   n, i;
+	gfloat            total = 0.0f;
+	g_autofree gfloat *p = NULL;
+	guint             n, i;
 
 	g_return_val_if_fail (LRG_IS_IK_CHAIN (self), 0.0f);
 
+	/* on the heap: the chain's length is the caller's, so a stack
+	 * buffer (g_newa) would be unbounded (and GCC 13's
+	 * -Wstack-protector refuses the variable-length frame) */
 	n = self->bone_names->len + 1;
-	p = g_newa (gfloat, 3 * n);
+	p = g_new (gfloat, 3 * n);
 	if (lrg_ik_chain_get_joint_positions (self, p, n) == n)
 	{
 		for (i = 0; i + 1 < n; i++)
