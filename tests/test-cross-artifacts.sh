@@ -24,7 +24,8 @@
 #   windows-amd64   libregnum.dll, graylib.dll and every .exe are PE32+
 #                   x86-64; libregnum.dll exports lrg_*, graylib.dll exports
 #                   grl_* and raylib's functions; every DLL libregnum.dll
-#                   imports is found next to it, in the MinGW runtime or
+#                   imports is found next to it (or graylib's and yaml-glib's
+#                   directories), in the MinGW runtime or
 #                   among Windows' own DLLs (Wine's copies)
 #   android-arm64   liblibregnum.a's members and the shared libraries are
 #                   AArch64, and every shared library's LOAD segments are
@@ -112,14 +113,17 @@ check_16k () {
 	fi
 }
 
+# Every pipeline below reads its input to the end: under pipefail a reader
+# that stops early (head, grep -q, awk exit) kills the writer with SIGPIPE.
+
 # A Windows file's object format, from objdump -f ("pei-x86-64" for PE32+)
 pe_format () {
-	"${objdump}" -f "${1}" 2>/dev/null | sed -n 's/.*file format *//p' | head -n 1
+	"${objdump}" -f "${1}" 2>/dev/null | sed -n 's/.*file format *//p' | sed -n '1p'
 }
 
 # The names in a DLL's export table
 pe_exports () {
-	"${objdump}" -p "${1}" | gawk '/^\[Ordinal\/Name Pointer\] Table/ { on = 1; next } on && NF == 0 { exit } on { print $NF }'
+	"${objdump}" -p "${1}" | gawk '/^\[Ordinal\/Name Pointer\] Table/ { on = 1; next } on && NF == 0 { on = 0; done = 1 } on && !done { print $NF }'
 }
 
 # A DLL name found (case-insensitively, as Windows looks) in any of the
@@ -133,7 +137,7 @@ dll_found () {
 	for dir in "${dirs[@]}"
 	do
 		[[ -d "${dir}" ]] || continue
-		if find "${dir}" -maxdepth 1 -iname "${name}" -print -quit | grep -q .
+		if [[ -n "$(find "${dir}" -maxdepth 1 -iname "${name}" -print -quit)" ]]
 		then
 			return 0
 		fi
@@ -177,8 +181,8 @@ case "${target}" in
 
 		# Every import resolves: the project's DLLs, the MinGW runtime,
 		# or Windows itself (Wine's builtin DLLs stand in for it)
-		search="${builddir}/lib:${builddir}/deps/graylib/lib:${dll_path}"
-		wine_dlls="$(find /usr/lib64/wine-wow64/wine /usr/lib64/wine /usr/lib/wine -maxdepth 1 -type d -name 'x86_64-windows' 2>/dev/null | head -n 1)"
+		search="${builddir}/lib:${builddir}/deps/graylib/lib:${builddir}/deps/yaml-glib/release:${builddir}/deps/yaml-glib/debug:${dll_path}"
+		wine_dlls="$(find /usr/lib64/wine-wow64/wine /usr/lib64/wine /usr/lib/wine -maxdepth 1 -type d -name 'x86_64-windows' 2>/dev/null | sed -n '1p' || true)"
 		missing=''
 		while read -r name
 		do

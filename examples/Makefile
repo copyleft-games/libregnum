@@ -402,10 +402,17 @@ $(EXAMPLES_BUILDDIR)/game-chair-simulator$(EXE_EXT): game-chair-simulator.c | $(
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
-# Creature Collector needs --export-dynamic so native mods can call game functions
+# Creature Collector needs --export-dynamic so native mods can call game
+# functions.  A Windows .exe has no dynamic symbol table to export into (the
+# linker warns and ignores it): its mods cannot call back into the game.
+ifeq ($(TARGET_PLATFORM),windows)
+CREATURE_EXPORT_DYNAMIC :=
+else
+CREATURE_EXPORT_DYNAMIC := -Wl,--export-dynamic
+endif
 $(EXAMPLES_BUILDDIR)/game-creature-collector$(EXE_EXT): game-creature-collector.c creature-registry.h | $(EXAMPLES_BUILDDIR) mods
 	$(call print_compile,$<)
-	@$(CC) $(EXAMPLE_CFLAGS) -Wl,--export-dynamic -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+	@$(CC) $(EXAMPLE_CFLAGS) $(CREATURE_EXPORT_DYNAMIC) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/scripted-lua-game$(EXE_EXT): scripted-lua-game.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
