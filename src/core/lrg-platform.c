@@ -32,6 +32,7 @@
 #include <gio/gio.h>
 
 #include <graylib.h>
+#include <raylib.h>
 
 #include "lrg-platform.h"
 #include "lrg-platform-private.h"
@@ -486,6 +487,7 @@ enum
 {
 	SIGNAL_PAUSED,
 	SIGNAL_RESUMED,
+	SIGNAL_WINDOW_RESIZED,
 	N_SIGNALS
 };
 
@@ -562,6 +564,25 @@ lrg_platform_class_init (LrgPlatformClass *klass)
 	signals[SIGNAL_RESUMED] =
 		g_signal_new ("resumed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
 		              0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_BOOLEAN);
+
+	/**
+	 * LrgPlatform::window-resized:
+	 * @self: the #LrgPlatform
+	 * @width: the new screen width, in pixels
+	 * @height: the new screen height, in pixels
+	 *
+	 * The window's size changed and raylib already reports it
+	 * (`GetScreenWidth()`, `GetScreenHeight()`; `IsWindowResized()` is
+	 * %TRUE this frame): a desktop window resized, or on Android a
+	 * foldable opened or closed, split screen, a freeform window.
+	 * Emitted from lrg_platform_poll(), between frames; render targets
+	 * sized to the screen are remade here.
+	 *
+	 * Since: 0.13.3
+	 */
+	signals[SIGNAL_WINDOW_RESIZED] =
+		g_signal_new ("window-resized", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+		              0, NULL, NULL, NULL, G_TYPE_NONE, 2, G_TYPE_INT, G_TYPE_INT);
 }
 
 static void
@@ -630,6 +651,25 @@ lrg_platform_simulate_resume (LrgPlatform *self,
 	set_running (self, TRUE, gl_context_lost);
 }
 
+/* lrg_platform_apply_window_size: documented in lrg-platform.h */
+gboolean
+lrg_platform_apply_window_size (LrgPlatform *self,
+                                gint         width,
+                                gint         height)
+{
+	g_return_val_if_fail (LRG_IS_PLATFORM (self), FALSE);
+
+	if (width <= 0 || height <= 0)
+		return FALSE;
+	if (width == GetScreenWidth () && height == GetScreenHeight ())
+		return FALSE;
+	if (!grl_native_window_resize (width, height))
+		return FALSE;
+	g_message ("The window is now %dx%d", width, height);
+	g_signal_emit (self, signals[SIGNAL_WINDOW_RESIZED], 0, width, height);
+	return TRUE;
+}
+
 /* ==========================================================================
  * Character queue (filled on Android by the input hook below)
  * ========================================================================== */
@@ -690,6 +730,11 @@ static gboolean app_activity_paused = FALSE;
 static gboolean window_was_terminated = FALSE;
 static gboolean context_lost_pending = FALSE;
 static EGLContext context_before_term = EGL_NO_CONTEXT;
+
+/* the native window may have a new size: raylib sizes its buffers once
+ * (and again, to the old size, when it re-attaches a new window), so
+ * the next lrg_platform_poll() looks (follow_window_size()) */
+static gboolean window_size_check = TRUE;
 
 /* KeyEvent's class and methods, looked up once (a global reference) */
 static jclass key_event_class = NULL;
@@ -829,6 +874,11 @@ on_app_cmd (struct android_app *app,
 
 	switch (cmd)
 	{
+	case APP_CMD_WINDOW_RESIZED:
+	case APP_CMD_CONFIG_CHANGED:
+	case APP_CMD_CONTENT_RECT_CHANGED:
+		window_size_check = TRUE;
+		break;
 	case APP_CMD_GAINED_FOCUS:
 		app_focused = TRUE;
 		break;
@@ -847,6 +897,7 @@ on_app_cmd (struct android_app *app,
 		break;
 	case APP_CMD_INIT_WINDOW:
 		app_has_window = app->window != NULL;
+		window_size_check = TRUE;
 		if (app_has_window && window_was_terminated)
 		{
 			/* raylib's eglMakeCurrent() was the last EGL call: its error
@@ -887,6 +938,32 @@ install_hooks (void)
 	}
 }
 
+/* follow_window_size: after a window, configuration or content-rect
+ * change, the native buffers go back to the window's own size (raylib
+ * fixed them at the size it first saw, which the compositor then
+ * stretches to the window), and raylib takes the window's size.  The size
+ * is read every frame: a resize can arrive before or after the command
+ * that flagged it, and reading it costs nothing. */
+static void
+follow_window_size (void)
+{
+	struct android_app *app = GetAndroidApp ();
+	int32_t width;
+	int32_t height;
+
+	if (app == NULL || app->window == NULL || !app_has_window || !IsWindowReady ())
+		return;
+	if (window_size_check)
+	{
+		/* 0, 0, 0: the window's base size and its current format */
+		ANativeWindow_setBuffersGeometry (app->window, 0, 0, 0);
+		window_size_check = FALSE;
+	}
+	width = ANativeWindow_getWidth (app->window);
+	height = ANativeWindow_getHeight (app->window);
+	(void) lrg_platform_apply_window_size (lrg_platform_get_default (), (gint) width, (gint) height);
+}
+
 #endif /* LRG_PLATFORM_ANDROID */
 
 /* lrg_platform_poll: documented in lrg-platform.h */
@@ -895,6 +972,15 @@ lrg_platform_poll (void)
 {
 #ifdef LRG_PLATFORM_ANDROID
 	install_hooks ();
+	follow_window_size ();
+#else
+	/* raylib follows the desktop window itself: report its resizes */
+	unsigned char ready = IsWindowReady ();
+	unsigned char resized = ready ? IsWindowResized () : 0;
+
+	if (resized)
+		g_signal_emit (lrg_platform_get_default (), signals[SIGNAL_WINDOW_RESIZED], 0,
+		               (gint) GetScreenWidth (), (gint) GetScreenHeight ());
 #endif
 }
 

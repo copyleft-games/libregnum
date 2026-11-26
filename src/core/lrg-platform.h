@@ -328,12 +328,42 @@ LrgPlatform *lrg_platform_get_default       (void);
  * chains libregnum's handlers in front of raylib's app-command and
  * input-event callbacks (raylib's own handling still runs first and
  * unchanged), which is what emits the lifecycle signals and feeds
- * lrg_platform_get_char_pressed().  Elsewhere it does nothing.
+ * lrg_platform_get_char_pressed().  On Android it also follows the
+ * native window's size (a foldable opened or closed, split screen, a
+ * freeform window: lrg_platform_apply_window_size()), which raylib does
+ * not; on the desktop it emits #LrgPlatform::window-resized for the
+ * resizes raylib follows itself.
  *
  * Since: 0.13.0
  */
 LRG_AVAILABLE_IN_ALL
 void         lrg_platform_poll              (void);
+
+/**
+ * lrg_platform_apply_window_size:
+ * @self: an #LrgPlatform
+ * @width: the native window's width, in pixels
+ * @height: its height, in pixels
+ *
+ * Makes raylib draw to a native window that is now @width x @height
+ * (graylib's grl_native_window_resize(): the screen, render and
+ * framebuffer sizes, the viewport and the 2D projection; no stretching)
+ * and emits #LrgPlatform::window-resized.  lrg_platform_poll() calls it
+ * on Android, after resizing the native buffers; it is public for
+ * embedders that learn of native resizes some other way, and for tests.
+ * Not for a desktop GLFW window: raylib follows those itself.  Call it
+ * between frames.
+ *
+ * Returns: %TRUE when the size changed; %FALSE when it is the size raylib
+ *   already has, not positive, no window is open, or graylib cannot
+ *   update this raylib (grl_native_window_can_resize())
+ *
+ * Since: 0.13.3
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean     lrg_platform_apply_window_size (LrgPlatform *self,
+                                             gint         width,
+                                             gint         height);
 
 /**
  * lrg_platform_is_running:

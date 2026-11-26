@@ -13,10 +13,12 @@
  */
 
 #include <errno.h>
+#include <string.h>
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <gio/gio.h>
 #include <libregnum.h>
+#include <raylib.h>
 #include "core/lrg-platform-private.h"
 
 /* ==========================================================================
@@ -571,10 +573,122 @@ test_display_size_desktop (void)
 	g_assert_false (lrg_platform_get_display_size (NULL, NULL));
 }
 
+/* the session's runtime directory (the Wayland socket's), saved before
+ * G_TEST_OPTION_ISOLATE_DIRS points XDG_RUNTIME_DIR at a scratch one */
+static gchar *session_runtime_dir = NULL;
+
+/* no display to open a window on is a skip, not a fatal warning */
+static gboolean
+ignore_no_display (const gchar    *log_domain,
+                   GLogLevelFlags  log_level,
+                   const gchar    *message,
+                   gpointer        user_data)
+{
+	return message == NULL || strstr (message, "could not initialize") == NULL;
+}
+
+/* window-resized: what it carries, how often it comes */
+typedef struct
+{
+	guint count;
+	gint  width;
+	gint  height;
+} ResizeLog;
+
+static void
+on_window_resized (LrgPlatform *platform,
+                   gint         width,
+                   gint         height,
+                   gpointer     user_data)
+{
+	ResizeLog *log = user_data;
+
+	/* raylib already reports the new size when the signal runs */
+	g_assert_cmpint (GetScreenWidth (), ==, width);
+	g_assert_cmpint (GetScreenHeight (), ==, height);
+	log->count++;
+	log->width = width;
+	log->height = height;
+}
+
+/* no window: nothing to resize, nothing emitted; bad sizes refused */
+static void
+test_window_size_no_window (void)
+{
+	LrgPlatform *platform = lrg_platform_get_default ();
+	ResizeLog log = { 0, 0, 0 };
+	gulong id;
+
+	if (IsWindowReady ())
+	{
+		g_test_skip ("A window is open");
+		return;
+	}
+	id = g_signal_connect (platform, "window-resized", G_CALLBACK (on_window_resized), &log);
+	g_assert_false (lrg_platform_apply_window_size (platform, 1280, 720));
+	g_assert_false (lrg_platform_apply_window_size (platform, 0, 720));
+	g_assert_false (lrg_platform_apply_window_size (platform, 1280, -1));
+	lrg_platform_poll ();
+	g_assert_cmpuint (log.count, ==, 0);
+	g_signal_handler_disconnect (platform, id);
+}
+
+/* a window (hidden; skips without a display): a new size reaches raylib
+ * and is emitted once, the same size again is no change, and a frame
+ * later raylib no longer reports a resize */
+static void
+test_window_size_apply (void)
+{
+	g_autoptr(GrlWindow) window = NULL;
+	LrgPlatform *platform = lrg_platform_get_default ();
+	ResizeLog log = { 0, 0, 0 };
+	const gchar *display = g_getenv ("DISPLAY");
+	const gchar *wayland = g_getenv ("WAYLAND_DISPLAY");
+	gulong id;
+
+	if ((display == NULL || display[0] == '\0') &&
+	    (wayland == NULL || wayland[0] == '\0'))
+	{
+		g_test_skip ("No display / GL context available");
+		return;
+	}
+	if (session_runtime_dir != NULL)
+		g_setenv ("XDG_RUNTIME_DIR", session_runtime_dir, TRUE);
+	g_test_log_set_fatal_handler (ignore_no_display, NULL);
+	SetTraceLogLevel (LOG_WARNING);
+	SetConfigFlags (FLAG_WINDOW_HIDDEN);
+	window = grl_window_new (64, 48, "lrg-platform-test");
+	g_test_log_set_fatal_handler (NULL, NULL);
+	if (window == NULL || !grl_window_is_ready (window))
+	{
+		g_test_skip ("No display / GL context available");
+		return;
+	}
+
+	id = g_signal_connect (platform, "window-resized", G_CALLBACK (on_window_resized), &log);
+	g_assert_false (lrg_platform_apply_window_size (platform, 64, 48));
+	g_assert_cmpuint (log.count, ==, 0);
+
+	/* a phone unfolded: landscape cover screen to the inner screen */
+	g_test_expect_message (NULL, G_LOG_LEVEL_MESSAGE, "The window is now 220x200");
+	g_assert_true (lrg_platform_apply_window_size (platform, 220, 200));
+	g_test_assert_expected_messages ();
+	g_assert_cmpuint (log.count, ==, 1);
+	g_assert_cmpint (log.width, ==, 220);
+	g_assert_cmpint (log.height, ==, 200);
+	g_assert_cmpint (GetRenderWidth (), ==, 220);
+	g_assert_true (IsWindowResized ());
+	g_assert_false (lrg_platform_apply_window_size (platform, 220, 200));
+	g_assert_cmpuint (log.count, ==, 1);
+
+	g_signal_handler_disconnect (platform, id);
+}
+
 int
 main (int    argc,
       char **argv)
 {
+	session_runtime_dir = g_strdup (g_getenv ("XDG_RUNTIME_DIR"));
 	g_test_init (&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, NULL);
 
 	g_test_add ("/platform/extract/first", Fixture, NULL, fixture_set_up, test_extract_first, fixture_tear_down);
@@ -596,6 +710,8 @@ main (int    argc,
 	g_test_add_func ("/platform/soft-keyboard/desktop", test_soft_keyboard_desktop);
 	g_test_add_func ("/platform/char-pressed/desktop", test_char_pressed_desktop);
 	g_test_add_func ("/platform/lifecycle/simulated", test_lifecycle_simulated);
+	g_test_add_func ("/platform/window-size/no-window", test_window_size_no_window);
+	g_test_add_func ("/platform/window-size/apply", test_window_size_apply);
 
 	return g_test_run ();
 }
