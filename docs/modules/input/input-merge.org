@@ -1,0 +1,58 @@
+* Input Merge
+:PROPERTIES:
+:CUSTOM_ID: input-merge
+:END:
+=LrgInputMerge= (=src/input/lrg-input-merge.h=, since 0.13.0) is an =LrgInput= made of several others. Code that reads one input, such as a game's controller layer that takes an =LrgInput= for "the gamepad", can be handed a merge and read the system's pads and a virtual pad at the same time: a real controller and the touch controls' sink (=LrgTouchControls:sink=, [[file:touch.org][Touch]]) on a phone, a real controller and a VR controller's virtual pad in a headset.
+
+** Rules
+:PROPERTIES:
+:CUSTOM_ID: input-merge-rules
+:END:
+Every query asks each *enabled* part, in the order the parts were added:
+
+| Query | Answer |
+|-------+--------|
+| key, mouse button, gamepad button: pressed / down / released | =TRUE= when any part says so |
+| gamepad available | =TRUE= when any part has it |
+| gamepad name, gamepad ids | the first part that has the gamepad |
+| gamepad axis | the value with the largest magnitude across the parts that have the gamepad; a tie keeps the earlier part's |
+| mouse position | the first part whose position is not (0, 0), else (0, 0) |
+| mouse delta | the sum of the parts' deltas |
+
+The largest-magnitude rule is what makes a merge of a pad and a virtual pad work: a stick at rest on one part never hides a stick pushed on another, and the two cannot add up to more than one stick can give.
+
+** Polling
+:PROPERTIES:
+:CUSTOM_ID: input-merge-polling
+:END:
+=lrg_input_poll()= on the merge polls every enabled part once. Sources with frame edges (pressed and released are true for one poll) must be polled once per frame, so a part belongs either to the merge or to an =LrgInputManager=, not to both.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: input-merge-example
+:END:
+#+begin_src c
+g_autoptr(LrgInputMerge) pad = lrg_input_merge_new ();
+g_autoptr(LrgInputGamepad) system_pads = lrg_input_gamepad_new ();
+
+lrg_input_merge_add (pad, LRG_INPUT (system_pads));
+lrg_input_merge_add (pad, LRG_INPUT (lrg_touch_controls_get_sink (controls)));
+
+/* each frame */
+lrg_input_poll (LRG_INPUT (pad));
+move_x = lrg_input_get_gamepad_axis (LRG_INPUT (pad), 0, GRL_GAMEPAD_AXIS_LEFT_X);
+jump = lrg_input_is_gamepad_button_pressed (LRG_INPUT (pad), 0, GRL_GAMEPAD_BUTTON_RIGHT_FACE_DOWN);
+#+end_src
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: input-merge-api
+:END:
+| Function | |
+|----------+-|
+| =lrg_input_merge_new()= | an empty merge (reports nothing until a part is added) |
+| =lrg_input_merge_add (merge, part)= | add a part after the others (a reference is taken; a duplicate or the merge itself is ignored) |
+| =lrg_input_merge_remove (merge, part)= | remove a part; =FALSE= when it was not one |
+| =lrg_input_merge_get_n_parts (merge)=, =lrg_input_merge_get_part (merge, i)= | the parts, in order |
+
+Tests: =tests/test-input-merge.c= (any-part booleans, frame edges through the merge's poll, the largest axis and ties, mouse deltas, disabled parts, the part list).

@@ -78,6 +78,7 @@ TEST_SOURCES := \
 	test-cpu-affinity.c \
 	test-platform.c \
 	test-args-file.c \
+	test-input-merge.c \
 	test-timer-manager.c \
 	test-replay.c \
 	test-rollback.c \

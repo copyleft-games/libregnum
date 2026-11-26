@@ -350,4 +350,5 @@ void game_update(void)
 - See [[file:input-binding.org][Input Bindings]] for binding details
 - See [[file:controller.org][Controllers]] for family detection (Xbox, PlayStation, Steam Deck, Steam Frame), glyphs, presets and rumble
 - See [[file:binding-catalog.org][LrgBindingCatalog]] for a key binding screen's grouped catalogue and conflicts
+- See [[file:input-merge.org][Input Merge]] for reading several inputs (a gamepad and a virtual pad) as one
 - See [[../examples/input-handling.md][Input Handling Example]] for complete code sample
