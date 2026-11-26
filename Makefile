@@ -2590,6 +2590,19 @@ apk-run: apk-check-game
 test-device: apk-check-game
 	@bash tests/test-apk-device.sh --apk $(APK_FILE) --package $(APK_PACKAGE)
 
+# The same test on an Android emulator, from the host: downloads the pinned
+# emulator and system image (build-aux/android/emulator/versions.sh) into
+# EMULATOR_CACHE, boots it in a container with /dev/kvm and runs
+# tests/test-apk-device.sh; the screenshot lands next to the APK
+# (<name>-emulator.png).  The APK is built first, in the android-arm64
+# build container (a sub-make, as test-cross does).
+EMULATOR_CACHE ?= build/android-emulator
+.PHONY: test-emulator
+test-emulator: apk-check-game
+	@$(MAKE) --no-print-directory apk
+	@bash build-aux/android/emulator-test.sh --apk $(APK_FILE) --package $(APK_PACKAGE) \
+		--cache $(EMULATOR_CACHE)
+
 # The APK's structure (in the android-arm64 container: aapt2, zipalign,
 # apksigner, llvm-readelf)
 .PHONY: test-apk

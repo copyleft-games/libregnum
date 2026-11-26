@@ -1,0 +1,22 @@
+# Containerfile - the runtime the Android emulator needs (test-emulator)
+# Copyright (C) 2026  Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Only the libraries the emulator binaries load (it ships its own Qt,
+# glib and libc++ in emulator/lib64) and the tools tests/test-apk-device.sh
+# uses.  The emulator, adb and the system image are not in the image: they
+# are mounted from test-emulator's cache (build-aux/android/emulator/
+# versions.sh).  Tagged with a hash of this directory by emulator-test.sh.
+
+ARG BASE_IMAGE=registry.fedoraproject.org/fedora:45
+FROM ${BASE_IMAGE}
+
+RUN dnf -y install --setopt=install_weak_deps=False \
+        libX11 libX11-xcb libxcb libXext libXrender libXfixes libXi \
+        libXcomposite libXdamage libXcursor libXrandr libXtst libxkbfile \
+        libxkbcommon libxkbcommon-x11 xcb-util-wm xcb-util-image \
+        xcb-util-keysyms xcb-util-renderutil nss nspr pulseaudio-libs \
+        alsa-lib libdrm mesa-libgbm mesa-libEGL mesa-libGL libbsd expat \
+        fontconfig freetype zlib libpng libuuid libtiff libstdc++ \
+        bash coreutils findutils gawk grep sed python3 unzip \
+    && dnf clean all

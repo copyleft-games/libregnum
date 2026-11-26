@@ -16,6 +16,12 @@
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
 
+** Unreleased
+:PROPERTIES:
+:CUSTOM_ID: changelog-unreleased
+:END:
+- Tests: =make ANDROID=1 test-emulator APK_GAME=...= builds the APK, boots a pinned Android 15 emulator (x86_64, runs arm64-v8a apps through translation) headless in a container with =/dev/kvm= and runs =tests/test-apk-device.sh= on it, keeping the screenshot next to the APK (=build-aux/android/emulator-test.sh=, [[file:platforms/android.org::#emulator][Android, On an emulator]]).
+
 ** 0.12.0
 :PROPERTIES:
 :CUSTOM_ID: changelog-0-12-0

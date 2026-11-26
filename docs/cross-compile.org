@@ -343,6 +343,8 @@ A full =make test-cross= takes a while (the arm64 unit tests under qemu alone ru
 :END:
 =make ANDROID=1 test-device APK_GAME=examples/game-chocolate-chip-clicker.c= runs on the host, where =adb= (Fedora: =android-tools=) sees the device (=ANDROID_SERIAL= picks one of several). =tests/test-apk-device.sh= installs the APK, starts its NativeActivity, waits (=--wait=, 8 s), then checks that the process is still alive, that logcat has no warning, error or fatal line from the app's GLib log domains (the platform layer sends GLib's log to logcat with the domain as tag) and that a screenshot is not one flat colour, and stops the app. With no =adb= or no device it prints why and passes, so it is safe in a script; the APK's structure is still checked without a device by =test-apk=.
 
+Without a phone, =make ANDROID=1 test-emulator APK_GAME=...= builds the APK, boots a pinned Android 15 emulator in a container with =/dev/kvm= and runs the same test there, keeping the screenshot next to the APK ([[file:platforms/android.org::#emulator][Android, On an emulator]]).
+
 *** Optional features, natively
 :PROPERTIES:
 :CUSTOM_ID: minimal-features
@@ -451,4 +453,5 @@ Cross builds start from the top-level directory, where =GNUmakefile= decides abo
 | =ARM64_SYSROOT=    | =/opt/sysroot/aarch64= | the aarch64 sysroot (linux-arm64)                            |
 | =ANDROID_NDK=, =ANDROID_SDK=, =ANDROID_SYSROOT=, =ANDROID_MIN_API= | =/opt/android/...=, 29 | the Android toolchain (android-arm64) |
 | =APK_GAME=, =APK_ASSETS=, =APK_PACKAGE=, ... | | the APK ([[file:platforms/android.org::#the-apk][Android, The APK]])            |
+| =EMULATOR_CACHE= | =build/android-emulator= | downloads, SDK and AVD of =make ANDROID=1 test-emulator= |
 | =BASE=, =EXCLUDE_ADDED= | merge-base, 0 | =make test-native-unchanged=, =make update-native-golden=        |

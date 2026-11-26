@@ -167,14 +167,36 @@ adb logcat -s libregnum Libregnum-Core
 | =make ANDROID=1 test-apk=     | container     | =tests/test-apk-layout.sh=: signature, manifest (package, minSdk, NativeActivity, no code, libraries not extracted, GLES 3.2), =libmain.so= stored, 16 KB aligned in the zip and in its LOAD segments, AArch64, =ANativeActivity_onCreate= exported, only system libraries needed, every listed asset present (and equal to =APK_ASSETS=) |
 | =make ANDROID=1 test-shaders= | container     | every built-in shader compiles as GLSL ES 3.00 (and GLSL 3.30)      |
 | =make test= (native)          | host          | =tests/test-platform.c=: data root, extraction (first run, same stamp, new stamp, interrupted run, unsafe paths, bad and missing manifests), the logcat priority mapping |
+| =make ANDROID=1 test-device APK_GAME=...= | host, adb | =tests/test-apk-device.sh= on a phone or emulator adb sees: installs, starts, still running, no GLib warning in logcat, screenshot not blank |
+| =make ANDROID=1 test-emulator APK_GAME=...= | host, container with =/dev/kvm= | the same test on an Android 15 emulator it boots itself ([[#emulator][On an emulator]]) |
 
-The unit tests themselves do not run on Android: there is nothing in the build container to run arm64 Android binaries, and a device run is manual (=apk-install=, =apk-run=, logcat).
+The unit tests themselves do not run on Android: there is nothing in the build container to run arm64 Android binaries. The game itself runs on a device or the emulator.
+
+*** On an emulator
+:PROPERTIES:
+:CUSTOM_ID: emulator
+:END:
+=make ANDROID=1 test-emulator APK_GAME=examples/game-chocolate-chip-clicker.c= needs nothing on the host but podman, =curl=, =sha1sum= and a =/dev/kvm= you can open (the =kvm= group). It:
+
+1. builds the APK (=make ANDROID=1 apk=, in the build container);
+2. downloads the emulator, =platform-tools= (=adb=) and the =system-images;android-35;google_apis;x86_64= image pinned in =build-aux/android/emulator/versions.sh= into =EMULATOR_CACHE= (default =build/android-emulator=), checking each archive's SHA-1, and unpacks them once;
+3. builds =localhost/libregnum-android-emulator:<hash>= from =build-aux/android/emulator/Containerfile= (Fedora with the X and GL libraries the emulator loads; the tag is a hash of that directory and =BUILD_CONTAINER_BASE=);
+4. runs =build-aux/android/emulator/run-emulator.sh= in it with =--device /dev/kvm=: a fresh AVD, a headless boot (about 20 s), then =tests/test-apk-device.sh= with a 15 s wait;
+5. leaves the screenshot next to the APK, =build/release-android-arm64/apk/<game>-emulator.png=, and the emulator's log in =EMULATOR_CACHE/work/emulator.log=.
+
+The image is x86_64 so KVM runs it at native speed; Google API images from Android 11 on run =arm64-v8a= apps through a translation layer, so the APK is the one a phone gets. Rendering is =-gpu guest= (SwiftShader inside Android, GLES 3): the host-side renderers need a GPU stack the container does not have, and emulator 37 crashes with =swiftshader_indirect= there. On an aarch64 host, pin the =arm64-v8a= system image of the same release in =versions.sh=.
+
+#+begin_src sh
+make ANDROID=1 test-emulator APK_GAME=examples/game-chocolate-chip-clicker.c
+make ANDROID=1 test-emulator APK_GAME=... EMULATOR_CACHE=~/.cache/lrg-emulator   # share the 2 GB of downloads between checkouts
+build-aux/android/emulator-test.sh --help
+#+end_src
 
 ** Licensing
 :PROPERTIES:
 :CUSTOM_ID: licensing
 :END:
-The NDK, build-tools and platform archives are Google's, distributed under the Android Software Development Kit License Agreement, which is not a free software licence; using them means accepting it. Nothing from them ends up in libregnum's sources; the APK contains only the game, libregnum, its free dependencies and Android's system libraries by reference. They are pinned and confined to the build container (=versions.sh=). Fedora packages no usable free replacement (=android-tools= has =adb= only).
+The NDK, build-tools and platform archives are Google's, distributed under the Android Software Development Kit License Agreement, which is not a free software licence; using them means accepting it. Nothing from them ends up in libregnum's sources; the APK contains only the game, libregnum, its free dependencies and Android's system libraries by reference. They are pinned and confined to the build container (=versions.sh=). The emulator, =platform-tools= and system image that =test-emulator= uses are under the same agreement; they are downloaded only when that goal runs, into its cache, and never enter a build image. Fedora packages no usable free replacement (=android-tools= has =adb= only).
 
 ** Troubleshooting
 :PROPERTIES:

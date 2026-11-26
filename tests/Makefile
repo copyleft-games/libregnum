@@ -544,6 +544,8 @@ BUILD_SYSTEM_SCRIPTS := \
 	$(CURDIR)/test-apk-device.sh \
 	$(CURDIR)/test-shader-glsl.sh \
 	$(PROJECT_ROOT)/build-aux/android/mkapk.sh \
+	$(PROJECT_ROOT)/build-aux/android/emulator-test.sh \
+	$(wildcard $(PROJECT_ROOT)/build-aux/android/emulator/*.sh) \
 	$(wildcard $(PROJECT_ROOT)/build-aux/cross/lrg-*) \
 	$(wildcard $(PROJECT_ROOT)/build-aux/containers/*/*.sh)
 

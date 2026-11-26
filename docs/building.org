@@ -129,6 +129,7 @@ Enables debug symbols (=-g3=) and disables optimization (=-O0=).
 | =make test-cross-arm64= / =-windows= / =-android= | One cross target's whole gate: build, tests, examples, binary checks |
 | =make test-cross= | The three =test-cross-*= gates, one after another |
 | =make ANDROID=1 test-device APK_GAME=...= | Run the game's APK on an adb device or emulator (skips without one) |
+| =make ANDROID=1 test-emulator APK_GAME=...= | Build the APK and run that test on an Android emulator in a container (needs =/dev/kvm=) |
 | =make test-native-unchanged= | Prove =make -Bn= output matches =BASE= (default: merge-base with master) and the stored baseline (on its host) |
 | =make update-native-golden= | Record =BASE='s native commands in =tests/golden/native-make-n/= for this host |
 | =make print-target= | Show the target, build directory and toolchain these switches select |

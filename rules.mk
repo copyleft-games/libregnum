@@ -143,6 +143,7 @@ help:
 	@echo "  test-cross         All three test-cross-* gates, one after another"
 	@echo "  test-cross-artifacts  Check a cross build's binaries (e.g. make ARM64=1 test-cross-artifacts)"
 	@echo "  test-device        Run APK_GAME's APK on an adb device (make ANDROID=1 test-device APK_GAME=...)"
+	@echo "  test-emulator      The same on an Android emulator in a container (needs /dev/kvm)"
 	@echo "  container-image    Build a cross target's build container (e.g. make WINDOWS=1 container-image)"
 	@echo "  container-shell    Shell in a cross target's build container"
 	@echo "  container-prune    Remove a cross target's outdated container images"

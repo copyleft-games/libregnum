@@ -11,6 +11,7 @@ make -j16 ARM64=1 DEBUG=1        # build/debug-arm64 (gcc + Fedora aarch64 sysro
 make -j16 ANDROID=1              # build/release-android-arm64 (NDK clang)
 make -j16 ANDROID=1 apk APK_GAME=examples/game-chocolate-chip-clicker.c
 make ANDROID=1 apk-install apk-run APK_GAME=...   # host adb + device
+make ANDROID=1 test-emulator APK_GAME=...         # APK on an Android 15 emulator (podman + /dev/kvm)
 make WINDOWS=1 test              # under Wine;  make ARM64=1 test: under qemu (slow: hours)
 make ANDROID=1 test-apk test-shaders
 make targets                     # list; make <switch> print-target | print-container
@@ -45,7 +46,7 @@ make test-build-system           # build-system tests + native no-regression gat
 
 - linux-arm64: `LRG_TEST_SKIP_PATHS` (emulation limits, with reasons) and `LRG_TEST_KNOWN_FAILURES` (real aarch64 bugs: three determinism breaks) in the profile; both `-s`'d, both listed at the end of the run.
 - windows-amd64: POSIX-only suites are left out (`LRG_WINDOWS_UNPORTED_TESTS` in `tests/Makefile`); the rest run under Wine (`WINEPATH`, `WINEPREFIX` in the build dir).
-- android-arm64: no runner; `test-apk` (structure, alignment, signature, manifest) and `test-shaders`; the game on a device by hand.
+- android-arm64: no unit-test runner; `test-apk` (structure, alignment, signature, manifest) and `test-shaders`; the game itself with `test-device` (adb) or `test-emulator` (pinned emulator in a container, `-gpu guest`; screenshot next to the APK).
 
 ## Traps
 

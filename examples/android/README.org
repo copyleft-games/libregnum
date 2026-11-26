@@ -44,6 +44,12 @@ make ANDROID=1 apk-install apk-run APK_GAME=examples/game-chocolate-chip-clicker
 adb logcat -s libregnum Libregnum-Core Libregnum-Template
 #+end_src
 
+No phone? This builds the APK, boots a pinned Android 15 emulator in a container (it needs =/dev/kvm=) and checks the game runs and draws; the screenshot is =build/release-android-arm64/apk/game-chocolate-chip-clicker-emulator.png= ([[file:../../docs/platforms/android.org::#emulator][Android, On an emulator]]):
+
+#+begin_src sh
+make ANDROID=1 test-emulator APK_GAME=examples/game-chocolate-chip-clicker.c
+#+end_src
+
 ** Your own game
 :PROPERTIES:
 :CUSTOM_ID: your-own-game

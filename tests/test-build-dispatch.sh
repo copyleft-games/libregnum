@@ -194,7 +194,7 @@ else
 fi
 
 echo '== nothing is dispatched'
-for goals in clean print-target targets help print-container test-device
+for goals in clean print-target targets help print-container test-device test-emulator
 do
 	# clean only as a dry run: really running it would delete the
 	# checkout's own windows build
