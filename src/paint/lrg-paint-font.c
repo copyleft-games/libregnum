@@ -76,10 +76,28 @@
 #define TAG(a, b, c, d) ((guint32) (((guint32) (a) << 24) | ((guint32) (b) << 16) | \
                                     ((guint32) (c) << 8) | (guint32) (d)))
 
-/* GLFW is linked into libregnum through raylib's desktop platform; the
- * current context identifies the GL context atlas textures belong to */
+/* The current GL context identifies the context atlas textures belong
+ * to.  On the desktop GLFW is linked into libregnum through raylib's
+ * desktop platform; on Android raylib drives EGL directly (there is no
+ * GLFW), and EGL's current context plays the same part. */
+#ifdef LRG_PLATFORM_ANDROID
+#include <EGL/egl.h>
+
+static gpointer
+current_gl_context (void)
+{
+	return (gpointer) eglGetCurrentContext ();
+}
+#else
 typedef struct GLFWwindow GLFWwindow;
 GLFWwindow * glfwGetCurrentContext (void);
+
+static gpointer
+current_gl_context (void)
+{
+	return (gpointer) glfwGetCurrentContext ();
+}
+#endif
 
 /* ==========================================================================
  * LrgPaintTextStyle
@@ -1153,7 +1171,7 @@ atlas_page_texture (guint page_index)
 		return 0;
 
 	page = g_ptr_array_index (atlas_pages, page_index);
-	ctx = glfwGetCurrentContext ();
+	ctx = current_gl_context ();
 
 	if (page->tex != 0 && page->ctx != ctx)
 		page->tex = 0;

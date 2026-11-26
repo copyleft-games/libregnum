@@ -346,8 +346,16 @@ lrg_canvas_input_apply_latch (LrgCanvasInput *self)
  * chained in front of raylib's, which keep running unchanged. GLFW
  * numbers the mouse buttons left / right / middle 0 / 1 / 2 like
  * GrlMouseButton, and raylib's key codes are GLFW's.
+ *
+ * Android has no GLFW: raylib reads the NativeActivity's input queue
+ * itself, once per frame, so there is nothing to chain in front of.
+ * The latch is then never attached and lrg_canvas_input_poll() works
+ * from raylib's per-frame state alone (what the latch adds is a press
+ * and release inside one frame, which a touch screen does not produce
+ * faster than a frame anyway).  docs/platforms/android.org, "Input".
  * -------------------------------------------------------------------------- */
 
+#ifndef LRG_PLATFORM_ANDROID
 typedef struct GLFWwindow GLFWwindow;
 typedef void (*GLFWmousebuttonfun) (GLFWwindow *window, int button, int action, int mods);
 typedef void (*GLFWkeyfun) (GLFWwindow *window, int key, int scancode, int action, int mods);
@@ -440,6 +448,22 @@ lrg_canvas_input_detach_latch (void)
 	latch_key_chain = NULL;
 	lrg_canvas_input_clear_latch ();
 }
+#else /* LRG_PLATFORM_ANDROID */
+/* never attached, so the poll never applies a latch */
+static gpointer latch_window = NULL;
+
+/* no GLFW to chain into: nothing to attach */
+static void
+latch_attach (void)
+{
+}
+
+void
+lrg_canvas_input_detach_latch (void)
+{
+	lrg_canvas_input_clear_latch ();
+}
+#endif /* LRG_PLATFORM_ANDROID */
 
 void
 lrg_canvas_input_set_latch_enabled (gboolean enabled)
