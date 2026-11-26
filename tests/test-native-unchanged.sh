@@ -43,7 +43,8 @@
 # host: the commands embed pkg-config output and probe results, so on any
 # other machine the stored file is reported as skipped and the live
 # comparison above is the gate.  Files added since the recorded base are
-# left out of both sides (as with --exclude-added).
+# left out of both sides (as with --exclude-added), and version numbers
+# are masked (a release changes them on purpose).
 
 set -euo pipefail
 
@@ -244,6 +245,24 @@ host_signature () {
 	printf 'base=%s\n' "$(git -C "${root}" rev-parse "${commit}")"
 }
 
+# mask_versions <log>
+#
+# Replace version numbers in <log> (x.y.z anywhere, and the values of the
+# @*VERSION*@ substitutions the .pc and header rules print) with @V@, then
+# reduce it to sorted distinct lines again.
+mask_versions () {
+	if [[ $# -ne 1 ]]
+	then
+		die 'mask_versions() requires 1 positional argument'
+	fi
+
+	local log="${1}"
+
+	sed -E -e 's/\b[0-9]+\.[0-9]+\.[0-9]+\b/@V@/g' \
+		-e 's/(@[A-Z_]*VERSION[A-Z_]*@[|/])[0-9.]+/\1@V@/g' "${log}" | LC_ALL=C sort -u > "${log}.m"
+	mv -- "${log}.m" "${log}"
+}
+
 # dry_run <tree> <log>
 #
 # Print the native build's commands for the root, tests and examples.
@@ -394,6 +413,10 @@ main () {
 			cp -- "${scratch}/current.log" "${scratch}/current-golden.log"
 			exclude_added_files "${root}" "${golden_base}" "${scratch}/golden.log"
 			exclude_added_files "${root}" "${golden_base}" "${scratch}/current-golden.log"
+			# a release changes every version string on purpose; mask them
+			# so the stored file outlives the release that recorded it
+			mask_versions "${scratch}/golden.log"
+			mask_versions "${scratch}/current-golden.log"
 			if ! diff -u --label 'stored baseline' --label 'current' "${scratch}/golden.log" "${scratch}/current-golden.log"
 			then
 				printf '\nFAIL: native build commands differ from the stored baseline (%s)\n' "${golden_dir}" >&2
