@@ -2520,15 +2520,29 @@ endif
 #
 #   make ANDROID=1 apk APK_GAME=examples/game-chocolate-chip-clicker.c
 #   make ANDROID=1 apk-install apk-run APK_GAME=...   (host: adb + a device)
+#   make keystore                                     (host: a release key)
+#   make ANDROID=1 apk-push APK_GAME=... PUSH_FILES=...  (host: data to the device)
 #
 # One shared object per game, libmain.so: the game's source, the static
 # liblibregnum.a (graylib and raylib, with its NativeActivity glue, inside)
 # and the static GLib stack.  build-aux/android/mkapk.sh packages it with
-# APK_ASSETS (extracted on the device by lrg_platform_prepare()).
+# APK_ASSETS (one or more directories, extracted on the device by
+# lrg_platform_prepare()), refusing any asset that matches APK_FORBID_GLOBS.
+#
+# Release signing ("Signing a release" in docs/platforms/android.org):
+# APK_KEYSTORE names the keystore (container.mk mounts it read-only),
+# APK_KEY_ALIAS its key; the passwords are read from the environment
+# variables APK_KEYSTORE_PASSWORD and APK_KEY_PASSWORD (the latter
+# defaulting to the former), forwarded into the container by name and
+# handed to apksigner by name: no command line ever holds them.  Never
+# put them on make's command line.
 
 APK_GAME ?=
 APK_NAME ?= $(basename $(notdir $(APK_GAME)))
 APK_ASSETS ?=
+APK_FORBID_GLOBS ?=
+APK_KEYSTORE ?=
+APK_KEY_ALIAS ?=
 APK_PACKAGE ?= org.libregnum.$(subst -,_,$(APK_NAME))
 APK_LABEL ?= $(APK_NAME)
 APK_VERSION_CODE ?= 1
@@ -2543,12 +2557,9 @@ APK_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS) $(PIC_CFLAGS) \
               -I$(CURDIR)/src -isystem $(GRAYLIB_DIR)/src -isystem $(GRAYLIB_DIR)/deps/raylib/src \
               -isystem $(YAMLGLIB_DIR)/src $(subst -I,-isystem ,$(DEP_CFLAGS)) $(LRG_TARGET_CFLAGS)
 
-# -u ANativeActivity_onCreate: keep the glue's entry point Android calls;
-# --wrap=fopen: raylib's Android layer reads files from the APK's assets
-# first (rcore_android.c); --no-undefined: every symbol resolved now, not
-# at load time on a phone; 16 KB pages for Android 15+
-APK_LDFLAGS := -shared -Wl,--no-undefined -Wl,-z,max-page-size=16384 \
-               -u ANativeActivity_onCreate -Wl,--wrap=fopen
+# The android-arm64 profile's LRG_APK_LDFLAGS (shared with projects that
+# link their own libmain.so)
+APK_LDFLAGS := $(LRG_APK_LDFLAGS)
 
 .PHONY: apk apk-install apk-run apk-check-game
 apk-check-game:
@@ -2566,12 +2577,53 @@ else
 	@$(MKDIR_P) $(dir $(APK_LIB))
 	@$(CC) $(APK_CFLAGS) $(APK_LDFLAGS) -o $(APK_LIB) $(APK_GAME) \
 		$(LIBOUTDIR)/$(LIB_STATIC) $(DEP_LIBS) $(PLATFORM_LIBS)
-	@bash build-aux/android/mkapk.sh --lib $(APK_LIB) --out $(APK_FILE) \
-		$(if $(APK_ASSETS),--assets $(APK_ASSETS)) \
+	@bash $(LRG_MKAPK) --lib $(APK_LIB) --out $(APK_FILE) \
+		$(foreach a,$(APK_ASSETS),--assets $(a)) \
+		$(foreach g,$(APK_FORBID_GLOBS),--forbid '$(g)') \
+		$(if $(APK_KEYSTORE),--keystore $(APK_KEYSTORE) --ks-pass-env APK_KEYSTORE_PASSWORD) \
+		$(if $(APK_KEYSTORE),$(if $(APK_KEY_PASSWORD),--key-pass-env APK_KEY_PASSWORD)) \
+		$(if $(APK_KEY_ALIAS),--ks-key-alias $(APK_KEY_ALIAS)) \
 		--package $(APK_PACKAGE) --label "$(APK_LABEL)" \
 		--version-code $(APK_VERSION_CODE) --version-name $(APK_VERSION_NAME) \
 		--orientation $(APK_ORIENTATION) --min-sdk $(ANDROID_MIN_API)
 endif
+
+# A release keystore, on the host (keytool from a JDK: Fedora
+# java-21-openjdk-headless or newer).  keytool asks for the password (and
+# the certificate's name unless KEYSTORE_DNAME is set); it is never on a
+# command line.  An existing file is never overwritten.
+KEYSTORE_OUT ?= $(HOME)/.local/share/libregnum-android/release.jks
+KEYSTORE_ALIAS ?= release
+KEYSTORE_DNAME ?=
+
+.PHONY: keystore
+keystore:
+	@command -v keytool > /dev/null || { echo "keytool not found (a JDK, Fedora: java-21-openjdk-headless)" >&2; exit 1; }
+	@if [ -e '$(KEYSTORE_OUT)' ]; then \
+		echo "$(KEYSTORE_OUT) exists; not overwriting it (set KEYSTORE_OUT= for another file)" >&2; exit 1; \
+	fi
+	@mkdir -p -m 700 '$(dir $(KEYSTORE_OUT))'
+	@umask 077 && keytool -genkeypair -keystore '$(KEYSTORE_OUT)' -storetype PKCS12 \
+		-alias '$(KEYSTORE_ALIAS)' -keyalg RSA -keysize 4096 -validity 10000 \
+		$(if $(KEYSTORE_DNAME),-dname '$(KEYSTORE_DNAME)')
+	@echo "Release keystore: $(KEYSTORE_OUT) (alias $(KEYSTORE_ALIAS)); back it up, never commit it."
+	@echo "Sign with: APK_KEYSTORE_PASSWORD=... make ANDROID=1 apk APK_KEYSTORE=$(KEYSTORE_OUT) APK_KEY_ALIAS=$(KEYSTORE_ALIAS)"
+
+# Files into the app's external files directory on the device (what
+# Android's getExternalFilesDir() returns; the app reads it without a
+# permission), on the host with adb: PUSH_FILES (files or directories)
+# into PUSH_DEST below it
+PUSH_FILES ?=
+PUSH_DEST ?=
+APK_DEVICE_FILES = /sdcard/Android/data/$(APK_PACKAGE)/files$(if $(PUSH_DEST),/$(PUSH_DEST))
+
+.PHONY: apk-push
+apk-push:
+	@command -v adb > /dev/null || { echo "adb not found (Fedora: android-tools)" >&2; exit 1; }
+	@case '$(APK_PACKAGE)' in *.) echo "Set APK_GAME=<game.c> or APK_PACKAGE=<id>" >&2; exit 1 ;; esac
+	@if [ -z '$(strip $(PUSH_FILES))' ]; then echo "Set PUSH_FILES=<files or directories>" >&2; exit 1; fi
+	adb shell mkdir -p '$(APK_DEVICE_FILES)'
+	adb push $(PUSH_FILES) '$(APK_DEVICE_FILES)/'
 
 # On the host, with a device connected (adb from Fedora's android-tools)
 apk-install: apk-check-game
@@ -2608,7 +2660,14 @@ test-emulator: apk-check-game
 .PHONY: test-apk
 test-apk: apk
 	@bash tests/test-apk-layout.sh --apk $(APK_FILE) --package $(APK_PACKAGE) \
-		--min-sdk $(ANDROID_MIN_API) $(if $(APK_ASSETS),--assets $(APK_ASSETS))
+		--min-sdk $(ANDROID_MIN_API) $(foreach a,$(APK_ASSETS),--assets $(a))
+
+# build-aux/android/mkapk.sh's asset roots, forbidden files and signing,
+# with stub build tools (any host) and, in the android-arm64 container
+# (make ANDROID=1 test-mkapk), with the real ones
+.PHONY: test-mkapk
+test-mkapk:
+	@bash tests/test-mkapk.sh
 
 # Cross-target checks (docs/cross-compile.org, "Testing cross builds").
 #
@@ -2650,6 +2709,7 @@ test-cross-android:
 	$(MAKE) ANDROID=1 test-cross-artifacts
 	$(MAKE) ANDROID=1 test-shaders
 	$(MAKE) ANDROID=1 test-apk APK_GAME=$(TEST_CROSS_APK_GAME)
+	$(MAKE) ANDROID=1 test-mkapk
 
 test-cross:
 	$(MAKE) test-cross-arm64

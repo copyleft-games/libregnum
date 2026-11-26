@@ -168,7 +168,7 @@ LRG_CROSS_BUILD_DIRS := $(strip $(foreach t,$(filter-out $(LRG_HOST_TARGET),$(LR
 # target, without its toolchain or build container
 LRG_HOST_SAFE_GOALS := clean clean-targets distclean print-target targets help \
     container-image container-shell container-prune print-container \
-    apk-install apk-run test-device test-emulator \
+    apk-install apk-run apk-push keystore test-device test-emulator \
     test-cross test-cross-arm64 test-cross-windows test-cross-android
 
 # lrg_default VAR,VALUE -- a profile's default for VAR: applied unless the

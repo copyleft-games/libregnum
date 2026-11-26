@@ -39,6 +39,9 @@
 #                         more host directories, each mounted read-write at
 #                         its own path; LRG_ROOT is added when it is outside
 #                         the mount root
+#   LRG_CONTAINER_RO_MOUNTS
+#                         host files or directories mounted read-only at
+#                         their own path (a release keystore)
 #   LRG_CONTAINER_ENV     names of host environment variables passed into
 #                         the container (`-e NAME': the value is copied by
 #                         the engine and never appears on a command line)
@@ -50,7 +53,16 @@ BUILD_CONTAINER_ARGS ?=
 LRG_ROOT ?= $(PROJECT_ROOT)
 LRG_CONTAINER_MOUNT_ROOT ?= $(PROJECT_ROOT)
 LRG_CONTAINER_EXTRA_MOUNTS ?=
+LRG_CONTAINER_RO_MOUNTS ?=
 LRG_CONTAINER_ENV ?=
+
+# A release-signed APK (make ANDROID=1 apk APK_KEYSTORE=...): the keystore
+# is readable in the container, and the two password variables reach the
+# inner make by name (docs/platforms/android.org, "Signing a release")
+ifneq ($(strip $(APK_KEYSTORE)),)
+    LRG_CONTAINER_RO_MOUNTS += $(abspath $(APK_KEYSTORE))
+    LRG_CONTAINER_ENV += APK_KEYSTORE_PASSWORD APK_KEY_PASSWORD
+endif
 
 # The target's profile sets LRG_CONTAINER_PLATFORM, which the image and
 # its tag depend on.  libregnum has read it already (GNUmakefile or
@@ -119,6 +131,7 @@ LRG_CONTAINER_RUN = $(CONTAINER_ENGINE) run --rm \
     --security-opt label=disable \
     -v $(LRG_CONTAINER_MOUNT_ROOT):$(LRG_CONTAINER_MOUNT_ROOT) \
     $(foreach m,$(LRG_CONTAINER_MORE_MOUNTS),-v $(m):$(m)) \
+    $(foreach m,$(abspath $(LRG_CONTAINER_RO_MOUNTS)),-v $(m):$(m):ro) \
     $(LRG_CONTAINER_GIT_MOUNT) \
     -w $(CURDIR) \
     -e HOME=/tmp \

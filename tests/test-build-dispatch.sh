@@ -183,6 +183,19 @@ dispatch ARM64=1 lib > /dev/null
 bs_not_contains 'arm64 image uses the host arch' '--platform' "$(run_args)"
 bs_contains 'arm64 suffix' 'LRG_BUILD_SUFFIX=-arm64' "$(run_args)"
 
+echo '== a release keystore'
+ks_dir="${SCRATCH}/keys"
+mkdir -p -- "${ks_dir}"
+: > "${ks_dir}/release.jks"
+APK_KEYSTORE_PASSWORD='s3cr3t-keystore-pw' dispatch ANDROID=1 "APK_KEYSTORE=${ks_dir}/release.jks" \
+	APK_KEY_ALIAS=release apk APK_GAME=examples/game-chocolate-chip-clicker.c > /dev/null
+args="$(run_args)"
+bs_contains 'keystore mounted read-only' "$(printf -- '-v\n%s:%s:ro' "${ks_dir}/release.jks" "${ks_dir}/release.jks")" "${args}"
+bs_contains 'passwords forwarded by name' "$(printf -- '-e\nAPK_KEYSTORE_PASSWORD\n-e\nAPK_KEY_PASSWORD')" "${args}"
+bs_not_contains 'password not on the command line' 's3cr3t-keystore-pw' "$(logged)"
+dispatch ANDROID=1 apk APK_GAME=examples/game-chocolate-chip-clicker.c > /dev/null
+bs_not_contains 'no keystore: no password variables' 'APK_KEYSTORE_PASSWORD' "$(run_args)"
+
 echo '== the git directory of a worktree'
 common="$(cd "${BS_ROOT}" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
 dispatch WINDOWS=1 lib > /dev/null
@@ -194,13 +207,14 @@ else
 fi
 
 echo '== nothing is dispatched'
-for goals in clean print-target targets help print-container test-device test-emulator
+for goals in clean print-target targets help print-container test-device test-emulator keystore apk-push
 do
-	# clean only as a dry run: really running it would delete the
-	# checkout's own windows build
-	if [[ "${goals}" == 'clean' ]]
+	# clean, keystore and apk-push only as dry runs: they would delete
+	# the checkout's own windows build, ask for a password, or talk to
+	# a device
+	if [[ "${goals}" == 'clean' || "${goals}" == 'keystore' || "${goals}" == 'apk-push' ]]
 	then
-		dispatch -n WINDOWS=1 clean > /dev/null || true
+		dispatch -n WINDOWS=1 "${goals}" > /dev/null || true
 	else
 		dispatch WINDOWS=1 "${goals}" > /dev/null || true
 	fi

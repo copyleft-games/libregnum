@@ -159,7 +159,7 @@ GNU make reads =GNUmakefile= before =Makefile=, so every =make= in the checkout 
 | cross target, every goal is host-only (see below)            | =Makefile= on the host; nothing compiles                      |
 | cross target, anything else                                  | =build-aux/mk/container.mk=: the goals run in the container   |
 
-Host-only goals: =clean=, =clean-targets=, =distclean=, =print-target=, =targets=, =help=, =container-image=, =container-shell=, =container-prune=, =print-container= (and the adb goals of the Android APK flow). A cross build cannot skip the root makefile: =make -C tests WINDOWS=1= or =make -f Makefile WINDOWS=1 lib= stops and names =make WINDOWS=1 ...= from the top level, or =NO_BUILD_CONTAINER=1=.
+Host-only goals: =clean=, =clean-targets=, =distclean=, =print-target=, =targets=, =help=, =container-image=, =container-shell=, =container-prune=, =print-container= (and the Android goals that run on the host: =apk-install=, =apk-run=, =apk-push=, =keystore=, =test-device=, =test-emulator=). A cross build cannot skip the root makefile: =make -C tests WINDOWS=1= or =make -f Makefile WINDOWS=1 lib= stops and names =make WINDOWS=1 ...= from the top level, or =NO_BUILD_CONTAINER=1=.
 
 *** The container run
 :PROPERTIES:
@@ -321,7 +321,7 @@ libregnum:
 	$(MAKE) -C deps/libregnum LRG_TARGET=$(LRG_TARGET) lib
 #+end_src
 
-(=ANDROID=1= and the other switches are in =MAKEFLAGS= already, so =$(MAKE) -C deps/libregnum lib= is enough.) The target's toolchain is the profile's: after =include $(LRG_TARGET_PROFILE)= (the parent's =Makefile= may include it too when =LRG_IS_CROSS= is =1=) =CC=, =AR=, =PKG_CONFIG= and =LRG_PLATFORM_LIBS= are set, and the profile's paths into libregnum (the cross wrappers) go through =LRG_ROOT=, not =PROJECT_ROOT=.
+(=ANDROID=1= and the other switches are in =MAKEFLAGS= already, so =$(MAKE) -C deps/libregnum lib= is enough.) An Android parent links its own =libmain.so= with the profile's =LRG_APK_LDFLAGS= and packages it with =$(LRG_MKAPK)= (=build-aux/android/mkapk.sh=); see [[file:platforms/android.org::#consumer-apk][Another project's APK]]. The target's toolchain is the profile's: after =include $(LRG_TARGET_PROFILE)= (the parent's =Makefile= may include it too when =LRG_IS_CROSS= is =1=) =CC=, =AR=, =PKG_CONFIG= and =LRG_PLATFORM_LIBS= are set, and the profile's paths into libregnum (the cross wrappers) go through =LRG_ROOT=, not =PROJECT_ROOT=.
 
 *** Variables for a parent
 :PROPERTIES:
@@ -332,6 +332,7 @@ libregnum:
 | =LRG_ROOT=                   | libregnum's directory (=target.mk='s =../..=) | where the profiles, the container recipes (the build context) and the cross wrappers are                          |
 | =LRG_CONTAINER_MOUNT_ROOT=   | =PROJECT_ROOT=                  | the tree mounted at its own path; its git directory is checked as libregnum's is                               |
 | =LRG_CONTAINER_EXTRA_MOUNTS= | (empty)                         | more host directories, each mounted read-write at its own path; =LRG_ROOT= is added when outside the mount root |
+| =LRG_CONTAINER_RO_MOUNTS=    | (empty; =APK_KEYSTORE= when set) | host files or directories mounted read-only at their own path                                                  |
 | =LRG_CONTAINER_ENV=          | (empty)                         | names of environment variables passed in with =-e NAME=: the engine copies the value, no command line shows it   |
 | =LRG_EXTRA_HOST_SAFE_GOALS=  | (empty)                         | the parent's goals that never compile (set before =dispatch.mk=)                                               |
 
@@ -409,7 +410,7 @@ One goal per target runs everything above in order, each step its own make (so =
 |------+------|
 | =make test-cross-arm64= | =ARM64=1 all=, =test= (qemu), =examples=, =test-cross-artifacts= |
 | =make test-cross-windows= | =WINDOWS=1 all=, =test= (Wine), =examples=, =test-cross-artifacts= |
-| =make test-cross-android= | =ANDROID=1 all=, =test-cross-artifacts=, =test-shaders=, =test-apk= with =TEST_CROSS_APK_GAME= (default the clicker example) |
+| =make test-cross-android= | =ANDROID=1 all=, =test-cross-artifacts=, =test-shaders=, =test-apk= with =TEST_CROSS_APK_GAME= (default the clicker example), =test-mkapk= (=mkapk.sh= with the real build tools) |
 | =make test-cross= | the three, one after another |
 
 A full =make test-cross= takes a while (the arm64 unit tests under qemu alone run for most of an hour); run the one target a change touches.

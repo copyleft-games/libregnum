@@ -79,6 +79,17 @@ $(call lrg_default,LIBPQ,0)
 LRG_PLATFORM_LIBS := -lEGL -lGLESv3 -landroid -llog -lm -ldl
 LRG_PLATFORM_LDFLAGS := -Wl,-z,max-page-size=16384
 
+# How a game's libmain.so links (the apk goal, and a parent project that
+# links its own; docs/platforms/android.org, "Another project's APK"):
+# -shared; --no-undefined: every symbol resolved now, not at load time on
+# a phone; 16 KB pages for Android 15+; -u ANativeActivity_onCreate: keep
+# the glue's entry point Android calls; --wrap=fopen: raylib's Android
+# layer reads files from the APK's assets first (rcore_android.c)
+LRG_APK_LDFLAGS := -shared -Wl,--no-undefined -Wl,-z,max-page-size=16384 \
+    -u ANativeActivity_onCreate -Wl,--wrap=fopen
+# The packager: build-aux/android/mkapk.sh --help
+LRG_MKAPK := $(LRG_ROOT)/build-aux/android/mkapk.sh
+
 # The NativeActivity glue raylib is built with (src/core/lrg-platform.c
 # reads the app's internal storage path and asset manager through it)
 LRG_TARGET_CFLAGS := -isystem $(ANDROID_NDK)/sources/android/native_app_glue
