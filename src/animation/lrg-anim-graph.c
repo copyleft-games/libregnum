@@ -1657,7 +1657,7 @@ parse_transition (Ctx                      *ctx,
 			}
 			else
 			{
-				gint64 v;
+				gint64 v = 0;
 
 				if (!parse_int_text (ctx, vtext, cp, &v))
 					return NULL;
@@ -2026,7 +2026,7 @@ parse_graph (Ctx         *ctx,
 				}
 				case LRG_ANIM_PARAMETER_INT:
 				{
-					gint64 v;
+					gint64 v = 0;
 
 					if (!parse_int_text (ctx, dtext, dp, &v))
 						return FALSE;
@@ -2035,7 +2035,7 @@ parse_graph (Ctx         *ctx,
 				}
 				default:
 				{
-					gboolean b;
+					gboolean b = FALSE;
 
 					if (!parse_bool_text (ctx, dtext, dp, &b))
 						return FALSE;
