@@ -3,7 +3,7 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum changelog
 #+created: 2026-11-07T12:00:00-05:00
-#+updated: 2026-11-25T12:00:00-05:00
+#+updated: 2026-11-26T18:00:00-05:00
 #+version: 0.1
 
 * Changelog
@@ -16,10 +16,15 @@
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
 
-** Unreleased
+** 0.13.0
 :PROPERTIES:
-:CUSTOM_ID: changelog-unreleased
+:CUSTOM_ID: changelog-0-13-0
 :END:
+Android for games built on libregnum: a parent project builds itself in libregnum's containers and ships a signed APK; touch controls; textures and shaders that work on phone GPUs. librewow v0.25.0 is the first user. graylib moves to 0.13.0 in lockstep, with one fix: a second =GrlWindow= adopts the open window instead of initializing another (on Android the second =InitWindow()= never got a display).
+
+- Android: =lrg_platform_get_display_size()=: the display's size before any window opens, so a game opens its window at it ([[file:platforms/android.org::#window-size][Android, Window size]]).
+- Android: =mkapk.sh --permission= and =APK_PERMISSIONS= put =<uses-permission>= entries in the manifest; any socket, loopback included, needs =INTERNET= ([[file:platforms/android.org::#permissions][Android, Permissions]]).
+
 - Android: =lrg_platform_prepare()= also sends =g_print()= and =g_printerr()= to logcat (tag: the program name), so a program's reports no longer vanish with stdout and stderr.
 - Core: =lrg_args_file_parse()= and =lrg_args_file_merge()= (=core/lrg-args-file.h=): command-line arguments from a text file, for Android, where the NativeActivity glue passes none ([[file:platforms/android.org::#args-file][Android, Command-line arguments]]).
 - Tests: =emulator-test.sh= runs a game's own device script (=--device-script=, =--shot-dir=), mounts host data read-only for it (=--mount=), sizes the data partition (=--data-size=) and prints its container command without running it (=--dry-run=); =tests/test-apk-device.sh= also checks that the game's activity has the window focus, so a game that exits at once no longer passes on its cached process and the launcher's screenshot ([[file:platforms/android.org::#emulator-device-script][Android, A game's own checks on the emulator]]).

@@ -736,6 +736,17 @@ Generic pieces an application uses to put its own actors into a world and show i
 - **`lrg_screenshot_after_frames()`** opens (and closes) a hidden window when none exists, so its GPU test runs under `build-aux/xrun.sh`; without a display it refuses with `LRG_PHOTO_MODE_ERROR_CAPTURE`.
 - GIR warnings are fatal in this build: a callback's user data is annotated `(closure user_data)` on the callback parameter, not `(closure)` on the data.
 
+### Android Consumers, Touch, Portable Graphics (0.13.0)
+
+What a game built on libregnum needs to ship on Android, all generic (librewow is the first user):
+
+- **Cross builds from a parent project**: `build-aux/mk/dispatch.mk` holds the container decision; a parent's `GNUmakefile` includes `target.mk`, `dispatch.mk` and `container.mk` with `LRG_ROOT` (libregnum), `LRG_CONTAINER_MOUNT_ROOT`, `LRG_CONTAINER_EXTRA_MOUNTS`, `LRG_CONTAINER_RO_MOUNTS`, `LRG_CONTAINER_ENV` (names only) and `LRG_EXTRA_HOST_SAFE_GOALS`; same image, same tag. The profile exports `LRG_APK_LDFLAGS` and `LRG_MKAPK` (`docs/cross-compile.org`, "Consuming the cross builds").
+- **APKs**: `mkapk.sh` signs releases with `--ks-pass-env`/`--key-pass-env` (never a password on argv), takes several `--assets` roots and `--forbid GLOB`; `make keystore`, `apk-push`. The Android sysroot has LuaJIT, bzip2 and libjpeg-turbo.
+- **Platform** (`core/lrg-platform.h`): `lrg_platform_get_external_data_dir()`, `get_dp_scale()`, `show/hide_soft_keyboard()`, the lifecycle signals; `g_print`/`g_printerr` reach logcat. `core/lrg-args-file.h`: arguments from a file (NativeActivity passes none).
+- **Touch** (`input/lrg-touch-*`): `LrgTouchTracker` gestures and `LrgTouchControls` (stick, look region, buttons, YAML layouts, auto show/hide) writing an `LrgInputSoftware` sink; `LrgInputMerge` reads a real pad and the sink as one.
+- **Graphics**: `lrg_glsl_prepare_source()` (one GLSL source, 330 or 300 es) and `build-aux/check-glsl.sh`; `lrg_texture_upload_compressed()` decodes BC1-3 on the CPU where the GPU has no S3TC (`LRG_TEXTURE_FALLBACK`), `lrg_gpu_caps_*`.
+- **Android pitfalls**: never call GLFW unguarded (no GLFW on Android: `#ifndef LRG_PLATFORM_ANDROID`, EGL for the current context); the emulator test needs the app's activity to hold the focus (`test-apk-device.sh`), and a game's own checks run through `emulator-test.sh --device-script`.
+
 ### Editor Application (`editor/ui/`, `gui/`, `launcher/lrgeditor.c`)
 
 - `lrgeditor` is built by default (`BUILD_EDITOR_UI=1`); the app is `LrgEditorApp`, split across `src/editor/ui/lrg-editor-*.c` with shared state in `lrg-editor-app-private.h` (internal functions are `G_GNUC_INTERNAL`, prefixed `editor_`).
