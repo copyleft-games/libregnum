@@ -26,7 +26,9 @@
 #        /opt/android/sdk/build-tools/<version>   aapt2, zipalign, apksigner
 #        /opt/android/sdk/platforms/android-<api> android.jar
 #   3. build-sysroot.sh: the static GLib stack in /opt/android/arm64-v8a
-#   4. a smoke test: a GLib + json-glib program linked for arm64-v8a
+#   4. smoke tests: a GLib + json-glib program, and LuaJIT + bzip2 +
+#      libjpeg-turbo (smoke-extras.c) as a program and a shared object,
+#      linked for arm64-v8a
 #      (an Android binary cannot run here; its ELF headers are checked)
 
 set -euo pipefail
@@ -112,4 +114,21 @@ then
 	lrg_die 'smoke binary has a LOAD segment not aligned to 16 KB'
 fi
 rm -f -- /tmp/smoke-android
+
+# Smoke test: LuaJIT, bzip2 and libjpeg-turbo through their .pc files, as
+# an executable and as a shared object like libmain.so (a non-PIC archive
+# fails the second link)
+extras="/usr/local/share/lrg-build/target/smoke-extras.c"
+flags="$(lrg-sysroot-pkg-config --cflags --libs luajit bzip2 libjpeg)" \
+	|| lrg_die 'lrg-sysroot-pkg-config does not find luajit, bzip2 and libjpeg'
+lrg_log "smoke test: ${extras}"
+# shellcheck disable=SC2086 # pkg-config output is a word list
+"${clang}" -std=gnu89 -Wall -Wextra -Werror -o /tmp/smoke-extras "${extras}" ${flags} \
+	|| lrg_die 'cannot link a program against luajit, bzip2 and libjpeg'
+# shellcheck disable=SC2086 # pkg-config output is a word list
+"${clang}" -std=gnu89 -Wall -Wextra -Werror -DSMOKE_SHARED -shared -fPIC \
+	-Wl,--no-undefined -o /tmp/smoke-extras.so "${extras}" ${flags} \
+	|| lrg_die 'cannot link a shared object against luajit, bzip2 and libjpeg'
+"${readelf}" -h /tmp/smoke-extras | grep -q 'AArch64' || lrg_die 'smoke-extras is not AArch64'
+rm -f -- /tmp/smoke-extras /tmp/smoke-extras.so
 lrg_log 'android-arm64 toolchain ready'

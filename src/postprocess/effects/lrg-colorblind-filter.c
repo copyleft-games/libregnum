@@ -293,7 +293,7 @@ lrg_colorblind_filter_get_shader (LrgColorblindFilter *self)
     self->shader_tried = TRUE;
 
     /* on a compile failure raylib hands back its default shader */
-    self->shader = grl_shader_new_from_memory (NULL, colorblind_fs, &error);
+    self->shader = lrg_glsl_shader_new_from_memory (NULL, colorblind_fs, &error);
     if (self->shader == NULL)
     {
         g_warning ("colorblind filter: %s", error != NULL ? error->message : "no shader");

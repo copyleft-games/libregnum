@@ -356,7 +356,7 @@ static gboolean
 load_pass_shader (const gchar *fs,
                   Shader      *out)
 {
-	*out = LoadShaderFromMemory (NULL, fs);
+	*out = lrg_glsl_load_shader (NULL, fs);
 	if (out->id == 0 || out->id == rlGetShaderIdDefault ())
 	{
 		memset (out, 0, sizeof *out);

@@ -1708,7 +1708,7 @@ ensure_shader (LrgFoliage *self)
 	if (!IsWindowReady ())
 		return FALSE;
 	self->gpu_tried = TRUE;
-	self->shader = LoadShaderFromMemory (foliage_vs, foliage_fs);
+	self->shader = lrg_glsl_load_shader (foliage_vs, foliage_fs);
 	if (self->shader.id == 0 || self->shader.id == rlGetShaderIdDefault ())
 	{
 		g_warning ("LrgFoliage: the foliage shader did not compile (GLSL 330 needed)");

@@ -468,8 +468,8 @@ ensure_shaders (LrgVolumetricFog  *self,
 	if (self->shaders_ok)
 		return TRUE;
 	march_fs = g_strconcat (march_fs_head, LRG_SHADOW_GLSL, march_fs_body, NULL);
-	self->march = LoadShaderFromMemory (fullscreen_vs, march_fs);
-	self->composite = LoadShaderFromMemory (fullscreen_vs, composite_fs);
+	self->march = lrg_glsl_load_shader (fullscreen_vs, march_fs);
+	self->composite = lrg_glsl_load_shader (fullscreen_vs, composite_fs);
 	if (self->march.id == 0 || self->march.id == rlGetShaderIdDefault () ||
 	    self->composite.id == 0 || self->composite.id == rlGetShaderIdDefault ())
 	{

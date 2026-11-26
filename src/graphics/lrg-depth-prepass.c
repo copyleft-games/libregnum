@@ -499,7 +499,7 @@ lrg_depth_prepass_get_shader (LrgDepthPrepass *self)
 	{
 		g_autofree gchar *fs = prepass_fs_with_lod (prepass_fs);
 
-		self->shader = grl_shader_new_from_memory (prepass_vs, fs, &error);
+		self->shader = lrg_glsl_shader_new_from_memory (prepass_vs, fs, &error);
 	}
 	if (self->shader == NULL)
 	{

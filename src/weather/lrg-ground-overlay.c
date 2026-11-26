@@ -303,7 +303,7 @@ ensure_shader (LrgGroundOverlay *self)
     if (self->shader_failed)
         return FALSE;
 
-    self->shader = grl_shader_new_from_memory (overlay_vs, overlay_fs_head, NULL);
+    self->shader = lrg_glsl_shader_new_from_memory (overlay_vs, overlay_fs_head, NULL);
     if (self->shader == NULL || !grl_shader_is_valid (self->shader))
     {
         lrg_warning (LRG_LOG_DOMAIN_WEATHER, "ground overlay: the shader did not compile; no "

@@ -191,7 +191,7 @@ static const gchar my_fs[] =
 	"void main () { finalColor = texture (texture0, fragTexCoord); }\n";
 #+end_src
 
-=LRG_GLSL_HEADER_LINES= is how many lines the header takes (1 or 8); code that maps compile errors back to a source line counts it, as =LrgShaderAsset= does.
+=LRG_GLSL_HEADER_LINES= is how many lines the header takes (1 or 8). Built-ins are loaded through =lrg_glsl_load_shader()= (private) or =lrg_glsl_shader_new_from_memory()=, which pass each stage through the public =lrg_glsl_prepare_source()=: the literal's =#version= line is replaced by the run-time header (=lrg_glsl_get_header()=, the same two texts), so =lrg_glsl_set_dialect()= reaches the built-ins too. Code that maps compile errors back to a source line counts =lrg_glsl_get_header_lines()=, as =LrgShaderAsset= does. The public API and the consumer-facing checker are on [[file:../modules/graphics/shaders.org][Shaders on desktop GL and OpenGL ES]].
 
 Write shaders in the common subset of GLSL 3.30 and GLSL ES 3.00:
 
@@ -202,7 +202,7 @@ Write shaders in the common subset of GLSL 3.30 and GLSL ES 3.00:
 - *Precision:* the header sets =highp= defaults; a shader that needs a different precision for a variable says so on the declaration.
 - *Differences that cannot be avoided* go behind =#ifdef GL_ES=, the macro every ES compiler predefines.
 
-=make test-shaders= (needs =glslangValidator=, Fedora package =glslang=) or =make ANDROID=1 test-shaders= (the Android build container has it) runs =tests/test-shader-glsl.sh=: it preprocesses every source that uses =LRG_GLSL_HEADER= with the library's own flags, extracts each complete shader, and compiles it as GLSL 3.30 and as GLSL ES 3.00. The stage comes from the C array's name (=*_vs=/=*vert*= vertex, =*_fs=/=*frag*= fragment), so name new shader arrays that way. User shaders loaded at run time (=LrgShaderAsset=, =.rshader= files) get the header from the asset, so they follow the same rules when they should run on Android.
+=make test-shaders= (needs =glslangValidator=, Fedora package =glslang=) or =make ANDROID=1 test-shaders= (the Android build container has it) runs =tests/test-shader-glsl.sh=: it preprocesses every source that uses =LRG_GLSL_HEADER= with the library's own flags (once as is, once with =-DLRG_GLSL_ES=1=), extracts each complete shader, and hands each dialect's files to =build-aux/check-glsl.sh=, which replaces the =#version= line with that dialect's header and compiles it with =glslangValidator=. The stage comes from the C array's name (=*_vs=/=*vert*= vertex, =*_fs=/=*frag*= fragment), so name new shader arrays that way. User shaders loaded at run time (=LrgShaderAsset=, =.rshader= files, =LrgPostEffect= and =LrgShaderTransition= sources) get the header from the engine, so they follow the same rules when they should run on Android; a game checks its own shader files with =build-aux/check-glsl.sh=.
 
 ** See also
 :PROPERTIES:

@@ -535,7 +535,7 @@ ensure_shader (LrgCloudLayer *self)
     if (self->shader_failed)
         return FALSE;
 
-    self->shader = grl_shader_new_from_memory (cloud_vs, cloud_fs, NULL);
+    self->shader = lrg_glsl_shader_new_from_memory (cloud_vs, cloud_fs, NULL);
     if (self->shader == NULL || !grl_shader_is_valid (self->shader))
     {
         lrg_warning (LRG_LOG_DOMAIN_WEATHER, "cloud layer: the cloud shader did not compile; "
@@ -563,7 +563,7 @@ ensure_volume_shader (LrgCloudLayer *self)
     if (self->vshader_failed)
         return FALSE;
 
-    self->vshader = grl_shader_new_from_memory (cloud_vs, volume_fs, NULL);
+    self->vshader = lrg_glsl_shader_new_from_memory (cloud_vs, volume_fs, NULL);
     if (self->vshader == NULL || !grl_shader_is_valid (self->vshader))
     {
         lrg_warning (LRG_LOG_DOMAIN_WEATHER, "cloud layer: the volume shader did not compile; "

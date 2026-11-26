@@ -39,6 +39,7 @@ run-emulator.sh - boot an Android emulator and run tests/test-apk-device.sh.
 Usage: run-emulator.sh --sdk DIR --work DIR --sysimg PATH --root DIR
                        --apk FILE --package ID [--shot FILE]
                        [--wait SECONDS] [--boot-timeout SECONDS]
+                       [--data-size SIZE] [--device-script FILE --shot-dir DIR]
 
 Options:
   --sdk DIR             SDK root holding emulator/, platform-tools/, system-images/
@@ -51,6 +52,10 @@ Options:
   --shot FILE           keep the test's screenshot here
   --wait SECONDS        how long the game runs before the checks (default 15)
   --boot-timeout SECS   give up booting after this long (default 300)
+  --data-size SIZE      the data partition (default 6G)
+  --device-script FILE  run FILE instead of tests/test-apk-device.sh, with
+                        --apk, --package, --wait and --shot-dir
+  --shot-dir DIR        the device script's screenshot directory
   -h, --help            show this help
   --license             show the license
 
@@ -70,6 +75,9 @@ package=''
 shot=''
 wait_seconds=15
 boot_timeout=300
+data_size='6G'
+device_script=''
+shot_dir=''
 while [[ $# -gt 0 ]]
 do
 	case "${1}" in
@@ -82,6 +90,9 @@ do
 		--shot) shot="${2:?}"; shift 2 ;;
 		--wait) wait_seconds="${2:?}"; shift 2 ;;
 		--boot-timeout) boot_timeout="${2:?}"; shift 2 ;;
+		--data-size) data_size="${2:?}"; shift 2 ;;
+		--device-script) device_script="${2:?}"; shift 2 ;;
+		--shot-dir) shot_dir="${2:?}"; shift 2 ;;
 		-h|--help) usage; exit 0 ;;
 		--license) sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
 		*) usage >&2; exit 2 ;;
@@ -125,7 +136,7 @@ hw.lcd.width=1080
 hw.lcd.height=1920
 hw.lcd.density=420
 hw.keyboard=yes
-disk.dataPartition.size=6G
+disk.dataPartition.size=${data_size}
 EOF
 
 # 2. boot
@@ -160,6 +171,13 @@ echo "run-emulator: booted in ${waited}s (Android $(adb shell getprop ro.build.v
 
 # 4. the device test
 rc=0
-bash "${root}/tests/test-apk-device.sh" --apk "${apk}" --package "${package}" \
-	--wait "${wait_seconds}" ${shot:+--keep-shot "${shot}"} || rc=$?
+if [[ -n "${device_script}" ]]
+then
+	# the game's own checks: adb is on PATH and connected
+	bash "${device_script}" --apk "${apk}" --package "${package}" \
+		--wait "${wait_seconds}" --shot-dir "${shot_dir:?--device-script needs --shot-dir}" || rc=$?
+else
+	bash "${root}/tests/test-apk-device.sh" --apk "${apk}" --package "${package}" \
+		--wait "${wait_seconds}" ${shot:+--keep-shot "${shot}"} || rc=$?
+fi
 exit "${rc}"

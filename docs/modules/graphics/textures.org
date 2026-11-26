@@ -1,0 +1,161 @@
+#+title: Compressed textures and the CPU fallback
+#+description: GPU texture capabilities (lrg-gpu-caps.h), S3TC decoding and 16-bit repacking (lrg-texture-codec.h), uploads with a fallback (lrg-texture-upload.h)
+#+created: 2026-11-26
+
+* Compressed textures and the CPU fallback
+:PROPERTIES:
+:CUSTOM_ID: textures
+:END:
+Texture data authored for desktop GPUs is usually S3TC (DXT1, DXT3, DXT5, also called BC1 .. BC3). Desktop GPUs sample it directly; most OpenGL ES 3 GPUs (Android) do not: they take ETC2 always and ASTC often, S3TC seldom. raylib's =rlLoadTexture()= then logs a warning and returns no texture. libregnum closes the gap in three layers:
+
+1. *Capabilities* (=graphics/lrg-gpu-caps.h=): which compressed families the current context samples, with overrides for tests and desktop trials.
+2. *CPU codecs* (=graphics/lrg-texture-codec.h=): S3TC mip chains to RGBA8, and RGBA8 to RGB565 / RGBA4444 / RGBA5551 to halve the memory; pure functions, no GL.
+3. *Uploads* (=graphics/lrg-texture-upload.h=): upload the blocks when the GPU takes them, else decode and upload the fallback format, every mip level kept. libregnum's own loads (=LrgAssetManager=, =LrgMaterial=) use it; a game that uploads raw blocks itself calls it in place of =rlLoadTexture()=.
+
+- *Headers* - =graphics/lrg-gpu-caps.h=, =graphics/lrg-texture-codec.h=, =graphics/lrg-texture-upload.h= (all in =<libregnum.h>=); private =graphics/lrg-texture-codec-private.h= (the block decoder shared with =LrgDdsImage=)
+- *Enums* (=lrg-enums.h=) - =LrgTextureCompression= (=s3tc=, =etc2=, =astc=), =LrgGpuCapOverride= (=auto=, =supported=, =unsupported=), =LrgTextureFallbackFormat= (=default=, =rgba8=, =rgb565=, =rgba4444=, =rgba5551=), =LrgTextureError= in the =LRG_TEXTURE_ERROR= domain (=invalid=, =truncated=, =unsupported=, =upload=)
+- *Tests* - =tests/test-texture-decode.c=
+- *Sources* - the =EXT_texture_compression_s3tc= specification (Khronos registry) and the Direct3D block compression description; no third-party decoder code
+
+** Capabilities
+:PROPERTIES:
+:CUSTOM_ID: caps
+:END:
+#+begin_src c
+gboolean          lrg_gpu_caps_has_texture_compression        (LrgTextureCompression family);
+gboolean          lrg_gpu_caps_supports_pixel_format          (GrlPixelFormat format);
+gboolean          lrg_gpu_caps_get_texture_compression_family (GrlPixelFormat format,
+                                                               LrgTextureCompression *out_family);
+void              lrg_gpu_caps_set_override                   (LrgTextureCompression family,
+                                                               LrgGpuCapOverride value);
+LrgGpuCapOverride lrg_gpu_caps_get_override                   (LrgTextureCompression family);
+void              lrg_gpu_caps_reset_overrides                (void);
+#+end_src
+
+The context is asked through rlgl, which parses the extension strings when the window opens (=GL_EXT_texture_compression_s3tc= and its WebGL variants for S3TC, =GL_ARB_ES3_compatibility= or ES 3 core for ETC2, =GL_KHR_texture_compression_astc_*= for ASTC). rlgl keeps its flags private, so =lrg-gpu-caps.c= asks =rlGetGlTextureFormats()= for one format of the family: it reports a GL internal format of 0 for a family the context lacks. No GL call is made.
+
+| Family | Formats                        | Typical support                          |
+|--------+--------------------------------+------------------------------------------|
+| =s3tc= | DXT1 RGB/RGBA, DXT3, DXT5      | desktop GL; rare on GLES (Nvidia Tegra)  |
+| =etc2= | ETC2 RGB, ETC2 EAC RGBA        | every GLES 3 device; desktop via ES3 compatibility |
+| =astc= | ASTC 4x4, ASTC 8x8             | most recent GLES devices; few desktops   |
+
+- Without a window (headless, before =InitWindow()=) nothing is known and every family answers =FALSE=.
+- =lrg_gpu_caps_supports_pixel_format()= maps a format to its family; ETC1 and PVRTC are asked of the context directly; 8-bit and 16-bit uncompressed formats are always =TRUE=.
+- *Overrides* answer before the context: =lrg_gpu_caps_set_override()= (process wide, atomic) or, read once on the first query, the environment variable =LRG_GPU_DISABLE_TEXTURE_COMPRESSION= with a comma-separated list of =s3tc= (or =dxt=), =etc2=, =astc=, =all=. The code override wins over the environment. =LRG_GPU_DISABLE_TEXTURE_COMPRESSION=s3tc ./game= runs a desktop build down the Android fallback path.
+
+** CPU codecs
+:PROPERTIES:
+:CUSTOM_ID: codecs
+:END:
+#+begin_src c
+#define LRG_TEXTURE_MAX_SIZE (16384)
+
+gboolean lrg_texture_format_is_s3tc       (GrlPixelFormat format);
+gboolean lrg_texture_format_is_compressed (GrlPixelFormat format);
+guint    lrg_texture_get_max_mipmaps      (guint width, guint height);
+gsize    lrg_texture_get_data_size        (GrlPixelFormat format, guint width, guint height,
+                                           guint mipmaps);
+GBytes  *lrg_texture_decode               (const guint8 *data, gsize size, guint width,
+                                           guint height, GrlPixelFormat format, guint mipmaps,
+                                           GError **error);
+GBytes  *lrg_texture_convert_rgba8        (const guint8 *rgba, gsize size, guint width,
+                                           guint height, guint mipmaps, GrlPixelFormat target,
+                                           GError **error);
+#+end_src
+
+*Mip chains* are laid out as raylib and graylib lay them out: levels back to back, largest first, each dimension halved and clamped to 1 (8x2 is followed by 4x1, 2x1, 1x1). =lrg_texture_get_max_mipmaps()= is the length of a full chain; more levels are rejected.
+
+*Sizes* (=lrg_texture_get_data_size()=): whole 4x4 blocks per level, so a 5x3 DXT1 level is 2 x 1 blocks = 16 bytes and a 1x1 level one block; 8 bytes per block for DXT1, ETC1 and ETC2 RGB, 16 for DXT3, DXT5, ETC2 EAC and ASTC 4x4, 16 per 8x8 block for ASTC 8x8; width x height x bytes per pixel for the 8-bit and 16-bit uncompressed formats. 0 means impossible: a zero or oversized dimension, too many levels, or a format without a known size (PVRTC, floating point).
+
+*Decoding* (=lrg_texture_decode()=, S3TC only):
+
+| Format    | Block                                                                                                               |
+|-----------+---------------------------------------------------------------------------------------------------------------------|
+| DXT1 RGB  | two 5:6:5 endpoints, 2-bit indices; c0 > c1: four colours (thirds); c0 <= c1: three colours (midpoint) and *opaque* black |
+| DXT1 RGBA | the same, but the fourth colour of a three-colour block is *transparent* black (1-bit alpha)                         |
+| DXT3      | 64 bits of explicit 4-bit alpha (=n * 17=), then a colour block always read in four-colour mode                      |
+| DXT5      | two 8-bit alpha endpoints and 3-bit indices: a0 > a1 interpolates six values, else four plus 0 and 255; then a four-colour colour block |
+
+Endpoints widen by bit replication (=r << 3 | r >> 2=); interpolated values truncate (=(2 * c0 + c1) / 3=, =(c0 + c1) / 2=), as =LrgDdsImage= always did: it now decodes BC1 .. BC3 with the same code (DDS DXT1 reads as DXT1 RGBA). Blocks overhanging a non-multiple-of-4 edge keep only their visible texels.
+
+*Repacking* (=lrg_texture_convert_rgba8()=): every level to 16-bit pixels in host byte order, the layout of =GL_UNSIGNED_SHORT_5_6_5=, =_4_4_4_4= and =_5_5_5_1= (raylib's =R5G6B5=, =R4G4B4A4=, =R5G5B5A1=); each channel rounds to the nearest level, =(v * max + 127) / 255=; RGB565 drops alpha; RGBA5551 keeps alpha 128 and up as opaque. =R8G8B8A8= as the target is a copy.
+
+*Bounds:* each function validates the dimensions and level count, computes the chain's byte count (no overflow: dimensions are capped) and fails with =truncated= on a shorter buffer before reading it; extra bytes are ignored. Nothing reads outside the given buffer (the tests check exact-size heap buffers under ASAN).
+
+** Uploads
+:PROPERTIES:
+:CUSTOM_ID: upload
+:END:
+#+begin_src c
+LrgTextureFallbackFormat lrg_texture_get_default_fallback      (void);
+void                     lrg_texture_set_default_fallback      (LrgTextureFallbackFormat fallback);
+GrlPixelFormat           lrg_texture_fallback_get_pixel_format (LrgTextureFallbackFormat fallback);
+GrlPixelFormat           lrg_texture_choose_upload_format      (GrlPixelFormat format,
+                                                                LrgTextureFallbackFormat fallback);
+gboolean                 lrg_texture_prepare_upload            (const guint8 *data, gsize size,
+                                                                guint width, guint height,
+                                                                GrlPixelFormat format, guint mipmaps,
+                                                                LrgTextureFallbackFormat fallback,
+                                                                GBytes **out_data,
+                                                                GrlPixelFormat *out_format,
+                                                                GError **error);
+guint                    lrg_texture_upload_compressed         (const guint8 *data, gsize size,
+                                                                guint width, guint height,
+                                                                GrlPixelFormat format, guint mipmaps,
+                                                                LrgTextureFallbackFormat fallback,
+                                                                GrlPixelFormat *out_format,
+                                                                GError **error);
+GrlTexture              *lrg_texture_new_compressed            (const guint8 *data, gsize size,
+                                                                guint width, guint height,
+                                                                GrlPixelFormat format, guint mipmaps,
+                                                                LrgTextureFallbackFormat fallback,
+                                                                GError **error);
+GrlTexture              *lrg_texture_new_from_file             (const gchar *path,
+                                                                LrgTextureFallbackFormat fallback,
+                                                                GError **error);
+#+end_src
+
+*The decision* (=lrg_texture_choose_upload_format()=): the data's own format when the GPU samples it; the fallback's pixel format when it does not and the data is S3TC; otherwise the data's format again, and the upload fails with =unsupported= (ETC2 and ASTC have no CPU decoder: a device without them is a desktop, which has S3TC, so ship those formats only where they are known to work).
+
+*The fallback format* is the caller's =LrgTextureFallbackFormat=, or with =LRG_TEXTURE_FALLBACK_DEFAULT= the process default: =lrg_texture_set_default_fallback()=, else the environment variable =LRG_TEXTURE_FALLBACK= (=rgba8=, =rgb565=, =rgba4444=, =rgba5551=, read once), else =rgba8=. Which to pick:
+
+| Fallback   | Bytes/pixel | Good for                                              |
+|------------+-------------+-------------------------------------------------------|
+| =rgba8=    | 4           | exact colours; the default                            |
+| =rgb565=   | 2           | opaque DXT1 data (terrain, walls)                     |
+| =rgba4444= | 2           | DXT3/DXT5 data with soft alpha (foliage, particles)   |
+| =rgba5551= | 2           | DXT1 with cut-out alpha                               |
+
+A 4 bpp DXT1 texture decoded to =rgba8= takes 8 times its compressed memory, to a 16-bit format 4 times; a game short on memory sets the default from its settings at start-up.
+
+*The functions:*
+
+- =lrg_texture_prepare_upload()= - the CPU half: validates the chain, decides, decodes and converts. No GL; =out_data= is a copy of the chain when nothing was converted. The tests drive the whole decision through it with the capability overrides.
+- =lrg_texture_upload_compressed()= - the drop-in for =rlLoadTexture()= on data that may be S3TC: returns the GL texture id (free it with =rlUnloadTexture()=) and, optionally, the format that went up. Every mip level is uploaded.
+- =lrg_texture_new_compressed()= - the same as a =GrlTexture= that owns the GPU texture (=grl_texture_get_format()= tells what went up). graylib has no constructor for raw levels in any format, so the chain goes up through a =GrlImage= whose raylib =Image= is filled with it.
+- =lrg_texture_new_from_file()= - =grl_texture_new_from_file()= with the fallback: a =.dds= file is read with its mip chain (=grl_image_new_from_file()=) and, when it is S3TC and the GPU lacks it, decoded before the upload; other files load exactly as before. =LrgAssetManager= (=load_texture()=, with or without importer settings) and =LrgMaterial= texture references load through it with the default fallback.
+
+All of them need a current window for the GPU half and fail with =upload= without one, after the data has been validated. Errors: =invalid= (dimensions, level count, unknown fallback), =truncated=, =unsupported= (no size, no decoder), =upload=.
+
+#+begin_src c
+/* a game that used to call rlLoadTexture() on DXT blocks itself */
+g_autoptr(GError) error = NULL;
+GrlPixelFormat used;
+guint id;
+
+id = lrg_texture_upload_compressed (blocks, blocks_size, width, height,
+                                    GRL_PIXELFORMAT_COMPRESSED_DXT5_RGBA, mip_count,
+                                    LRG_TEXTURE_FALLBACK_DEFAULT, &used, &error);
+if (id == 0)
+	g_warning ("texture: %s", error->message);
+
+/* at start-up, from a "low memory" setting */
+lrg_texture_set_default_fallback (LRG_TEXTURE_FALLBACK_RGBA4444);
+#+end_src
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-texture-decode.c= (headless, synthetic blocks, no files) - hand-built blocks with the expected pixels worked out from the specification: DXT1 four-colour, three-colour with and without alpha, equal endpoints; DXT3 explicit alpha with a c0 < c1 colour block (always four colours); DXT5 in both endpoint orders; a 5x3 texture, 1x1 and 2x1 levels; square (8x8, 4 levels) and rectangular (8x2, 4 levels) chains; truncated input (one byte short, NULL), zero and oversized dimensions, too many or no levels, formats without a decoder; an exact-size heap buffer for ASAN; RGB565 / RGBA4444 / RGBA5551 with their rounding and a chain; the size table; the capability overrides, the default fallback and its enum nicks, the upload decision for every case, =lrg_texture_prepare_upload()= native and through each fallback with mips kept, and the GPU half failing cleanly without a window. =tests/test-dds-image.c= keeps checking the DDS reader on the shared decoder.

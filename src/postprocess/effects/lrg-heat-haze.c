@@ -109,7 +109,7 @@ get_shader (LrgHeatHaze *self)
     if (!IsWindowReady ())
         return NULL;
     self->shader_tried = TRUE;
-    self->shader = grl_shader_new_from_memory (NULL, haze_fs, &error);
+    self->shader = lrg_glsl_shader_new_from_memory (NULL, haze_fs, &error);
     if (self->shader == NULL)
     {
         g_warning ("heat haze: %s", error != NULL ? error->message : "no shader");

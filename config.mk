@@ -27,7 +27,7 @@ include $(PROJECT_ROOT)/build-aux/mk/target.mk
 # .pc file and the shared library name. Bump rules and tagging: AGENTS.md,
 # "Versioning". API_VERSION and SO_VERSION below are separate.
 VERSION_MAJOR := 0
-VERSION_MINOR := 12
+VERSION_MINOR := 13
 VERSION_MICRO := 0
 VERSION := $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_MICRO)
 

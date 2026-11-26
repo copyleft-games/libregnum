@@ -45,10 +45,10 @@ The image (=build-aux/containers/android-arm64/=, pins in =versions.sh=) holds:
 |--------------------------+----------------------------------------------------------------------|
 | =/opt/android/ndk=       | Android NDK r30: clang, the bionic sysroot, =llvm-ar=, =llvm-readelf= |
 | =/opt/android/sdk=       | build-tools 37.0.0 (=aapt2=, =zipalign=, =apksigner=), =platforms/android-36= |
-| =/opt/android/arm64-v8a= | the GLib stack, cross-built static: GLib 2.90 (with libffi, pcre2, proxy-libintl), json-glib, libyaml, fribidi, sqlite, OpenSSL 4.0 |
+| =/opt/android/arm64-v8a= | the GLib stack, cross-built static: GLib 2.90 (with libffi, pcre2, proxy-libintl), json-glib, libyaml, fribidi, sqlite, OpenSSL 4.0; and LuaJIT 2.1 (pkg-config =luajit=), bzip2 1.0.8 (=bzip2=, a Fedora-style =.pc= written by the image) and libjpeg-turbo 3.1 (=libjpeg=) |
 | =/opt/android/versions.env= | the paths above, for scripts                                     |
 
-Every download is pinned to a version and checked: SDK archives against the SHA-1 in Google's repository manifest (what sdkmanager checks), sources against SHA-256 sums. Changing a pin changes the image's tag, so the next build makes a new image. The image ends with a smoke test: a GLib + json-glib program linked against the static stack, checked to be AArch64 with every LOAD segment 16 KB aligned.
+Every download is pinned to a version and checked: SDK archives against the SHA-1 in Google's repository manifest (what sdkmanager checks), sources against SHA-256 sums. Changing a pin changes the image's tag, so the next build makes a new image. The image ends with smoke tests: a GLib + json-glib program linked against the static stack, checked to be AArch64 with every LOAD segment 16 KB aligned; and =smoke-extras.c=, which calls LuaJIT, bzip2 and libjpeg (=luaL_newstate()=, =BZ2_bzlibVersion()=, =jpeg_std_error()=) and is linked through their =.pc= files both as a program and as a shared object like =libmain.so=, so an archive that is missing, wrongly described or not position-independent fails the image build. LuaJIT, bzip2 and libjpeg-turbo are built unmodified with their own build systems (LuaJIT's Makefile cross from x86_64 with 64-bit host tools, bzip2's Makefile for =libbz2.a= only, libjpeg-turbo's CMake with the NDK toolchain file); each archive is compiled with =-fPIC=. With LuaJIT in the sysroot, =config.mk='s pkg-config probe turns Lua scripting on for Android (=LRG_HAS_LUAJIT=: =LrgScriptingLua=, =LrgScriptTaskLua=); bzip2 and libjpeg are there for games that read those formats themselves.
 
 *** Not in the stack
 :PROPERTIES:
@@ -92,7 +92,7 @@ raylib runs on OpenGL ES 3 (=GRAPHICS_API_OPENGL_ES3=); the APK requires GLES 3.
 :END:
 An Android app has a private directory in internal storage, its files sit compressed in the APK, and stderr goes nowhere. =lrg_platform_prepare()= (=src/core/lrg-platform.h=) makes that look like a desktop before the game runs; it does nothing on other platforms.
 
-1. *Logging first.* GLib's log writer sends every message to logcat, the log domain as the tag and the level mapped to a priority (error → fatal, critical → error, warning → warn, message and info → info, debug → debug). =adb logcat -s Libregnum-Core= shows one domain.
+1. *Logging first.* GLib's log writer sends every message to logcat, the log domain as the tag and the level mapped to a priority (error → fatal, critical → error, warning → warn, message and info → info, debug → debug). =adb logcat -s Libregnum-Core= shows one domain. Plain =g_print()= and =g_printerr()= output (a program's usage errors and reports, which on a desktop go to stdout and stderr, nowhere on Android) goes to logcat too, at info and warn priority, tagged with the program name (=g_get_prgname()=, read at print time).
 2. *Data directories.* =lrg_platform_set_data_root()= points =HOME= at the internal storage path and =XDG_DATA_HOME=, =XDG_CONFIG_HOME=, =XDG_CACHE_HOME=, =TMPDIR= at =data=, =config=, =cache=, =tmp= below it, creating them. Saves, settings and anything else that asks GLib for those directories lands there.
 3. *Assets.* =lrg_platform_extract_assets()= copies the APK's =assets/= into =<internal>/assets= and the process changes into that directory, so a game's relative paths (=data/levels/one.yaml=) open as on the desktop. The NDK cannot list subdirectories of APK assets, so the packager writes =assets/lrg-assets.list=: a stamp line (=# lrg-assets <hash>=, a hash of every path and file) and the file list. Extraction:
    - does nothing when =<internal>/assets/.lrg-assets-stamp= already holds the stamp (every launch after the first, until the APK changes),
@@ -112,6 +112,89 @@ Who calls it:
 
 Only the first call does the work; a failure is reported to every caller.
 
+** Storage
+:PROPERTIES:
+:CUSTOM_ID: storage
+:END:
+An Android app has two places of its own:
+
+| Where                    | Path                                             | Who sees it                                  | libregnum                                    |
+|--------------------------+--------------------------------------------------+----------------------------------------------+----------------------------------------------|
+| internal storage         | =/data/data/<package>/files=                     | only the app                                 | =HOME= and the XDG directories (above)       |
+| external app storage     | =/sdcard/Android/data/<package>/files=           | the app, and the player over USB or a file manager | =lrg_platform_get_external_data_dir()=  |
+
+=lrg_platform_get_external_data_dir()= returns the second (the activity's =externalDataPath=), creating it when missing. It needs no storage permission, holds large files the player copies in by hand (a game's own data, mods, a client's data files) and is deleted with the app. It is =NULL= when the device has no shared storage mounted.
+
+On every other platform it returns =g_get_user_data_dir()/<prgname>= (=~/.local/share/<game>=, the last component of =g_get_prgname()=; =libregnum= when no program name is set), also created when missing, so a game asks one function for "where the player puts big files" everywhere. The string lives as long as the process.
+
+=lrg_platform_get_dp_scale()= is the display density in pixels per dp (=AConfiguration_getDensity()= / 160; 1.0 off Android). Touch layouts are written in dp and multiplied by it ([[file:../modules/input/touch.org][Touch input]]).
+
+** Window size
+:PROPERTIES:
+:CUSTOM_ID: window-size
+:END:
+Open the window at the display's size: raylib renders a smaller window small and upscales it to the display, so everything placed in screen pixels (touch controls sized in dp, text) comes out too large, and its Android layer learns the display's size only once its window exists (asked for 0 x 0 it falls back to 800 x 600). =lrg_platform_get_display_size (&w, &h)= gives the size from the activity's configuration (dp size times the dp scale) before any window opens; it may still be in the launcher's orientation, so a landscape game takes the larger value as its width. Off Android it returns =FALSE=.
+
+** Touch controls
+:PROPERTIES:
+:CUSTOM_ID: touch-controls
+:END:
+raylib turns touches into touch points (and the first one into the left mouse button). =LrgTouchTracker= recognises gestures from them and =LrgTouchControls= puts a floating stick, a look region and buttons on the screen that drive the game's =LrgInputMap= actions like a gamepad, with layouts in YAML and an =auto= mode that hides them while a keyboard or pad is used: [[file:../modules/input/touch.org][Touch input]]. =examples/game-touch-demo.c= is a small 3D example (=make ANDROID=1 apk APK_GAME=examples/game-touch-demo.c=).
+
+** Soft keyboard
+:PROPERTIES:
+:CUSTOM_ID: soft-keyboard
+:END:
+=lrg_platform_show_soft_keyboard()= and =lrg_platform_hide_soft_keyboard()= call =ANativeActivity_showSoftInput()= (with =ANATIVEACTIVITY_SHOW_SOFT_INPUT_FORCED=) and =ANativeActivity_hideSoftInput()=; they do nothing elsewhere. Show it when a text field gains focus and hide it when the field loses it; =lrg_platform_is_soft_keyboard_requested()= remembers which was asked last (the player can still close the keyboard with the back key; the NDK does not report that).
+
+*How typed text reaches the game.* raylib's Android layer turns key events into key codes (=IsKeyPressed()=, =GetKeyPressed()=) but never fills its character queue: =GetCharPressed()= is always 0 there. libregnum adds the characters without changing raylib:
+
+1. =lrg_platform_poll()= (called by =lrg_engine_update()= and every =LrgGameTemplate= frame; a game with its own loop calls it once per frame) chains a handler in front of raylib's =android_app->onInputEvent=. raylib's handler still runs first, unchanged, and its return value is kept.
+2. For every key-down event (and repeated keys, =AKEY_EVENT_ACTION_MULTIPLE= with a real key code) the handler builds a Java =android.view.KeyEvent= with the event's key code, meta state, device and source, and asks =getUnicodeChar(metaState)= through JNI, so the device's key character map applies Shift, Caps Lock and the keyboard layout. Dead keys (combining accents) and control characters are dropped.
+3. The characters go into a queue that =lrg_platform_get_char_pressed()= reads, oldest first (at most 64 between reads). =LrgCanvasInput= (the retained UI's text input) and the immediate-mode GUI read characters through it, so text fields work with a hardware keyboard and with the soft keyboard. Off Android the function returns raylib's =GetCharPressed()=.
+
+*Limitations.* A =NativeActivity= has no Java =InputConnection=, so the input method talks to it in key events only:
+
+- Characters that a key event can carry work: letters, digits and punctuation from the soft keyboard (most IMEs send these as key events to a =NativeActivity=), and everything a hardware keyboard layout types, including accented letters.
+- Text an IME commits as a string (composed text: CJK input, emoji, gesture typing, autocorrect, voice input) arrives as =AKEY_EVENT_ACTION_MULTIPLE= with =AKEYCODE_UNKNOWN=; the NDK cannot read its characters (=KeyEvent.getCharacters()= has no NDK equivalent and the event's Java object is not reachable), so it is lost. Fixing that needs a Java =InputConnection= (a =GameActivity= or a small Java view), which the no-Java APK does not have.
+- Backspace, Enter and arrows are keys, not characters: read them with =IsKeyPressed()= / =LrgCanvasInput= key events, as on the desktop.
+- Some devices ignore =ANativeActivity_showSoftInput()= unless the activity has focus; call it in response to a tap, not at start-up.
+
+** Lifecycle
+:PROPERTIES:
+:CUSTOM_ID: lifecycle
+:END:
+=LrgPlatform= (=lrg_platform_get_default()=) reports the app's lifecycle as two signals and a =running= property:
+
+| Signal                          | When                                                                          |
+|---------------------------------+-------------------------------------------------------------------------------|
+| =paused=                        | the app lost focus, its window, or the activity was paused (home, app switch, screen off) |
+| =resumed (gboolean gl_context_lost)= | focused again, with a window, the activity resumed                       |
+
+#+begin_src c
+static void
+on_paused (LrgPlatform *platform, gpointer user_data)
+{
+	my_game_save (user_data);      /* Android may end a paused app without warning */
+}
+
+static void
+on_resumed (LrgPlatform *platform, gboolean gl_context_lost, gpointer user_data)
+{
+	if (gl_context_lost)
+		my_game_reload_gpu_resources (user_data);
+}
+
+g_signal_connect (lrg_platform_get_default (), "paused", G_CALLBACK (on_paused), game);
+g_signal_connect (lrg_platform_get_default (), "resumed", G_CALLBACK (on_resumed), game);
+#+end_src
+
+*Where the events come from.* raylib handles the activity's commands in its own =onAppCmd= callback and offers no hook. =lrg_platform_poll()= chains a handler in front of it (as for input, above): raylib's handler runs first, unchanged, then libregnum updates its state from =APP_CMD_GAINED_FOCUS= / =LOST_FOCUS=, =PAUSE= / =RESUME= and =INIT_WINDOW= / =TERM_WINDOW=, and emits when "running" (focused, with a window, not paused) changes. Polling once per frame would not work: while the app is unfocused raylib blocks inside =EndDrawing()= (=ALooper_pollOnce()= with no timeout) until it is focused again, so the game's loop never sees the paused state. The signals are therefore emitted from inside =EndDrawing()= / =PollInputEvents()=, on the game's thread, while the app is going away: save and stop sounds there, do not draw. The hooks are installed by the first =lrg_platform_poll()= after =InitWindow()=; nothing is emitted before that.
+
+*Context loss.* On =APP_CMD_TERM_WINDOW= raylib detaches the EGL context and destroys only the surface; on the next =APP_CMD_INIT_WINDOW= it creates a surface and makes the same context current again, so textures, meshes and shaders normally survive. The system may still destroy the context (memory pressure, a driver reset). libregnum remembers the current context before =TERM_WINDOW= and, after raylib's =INIT_WINDOW= handling, checks =eglGetError()= (=EGL_CONTEXT_LOST= from raylib's =eglMakeCurrent()=) and =eglGetCurrentContext()= (no context, or a different one): any of those makes the next =resumed= report =gl_context_lost= = =TRUE=. raylib itself does not recover from a lost context (its default shader and font texture are gone too); a game that sees =TRUE= should reload its GPU resources or restart, and in practice this is rare.
+
+*On the desktop* nothing is emitted on its own (a minimised window keeps running). =lrg_platform_simulate_pause()= and =lrg_platform_simulate_resume()= emit the same signals, for tests and for a desktop game that wants to pause on minimise through the same handlers.
+
 ** The APK
 :PROPERTIES:
 :CUSTOM_ID: the-apk
@@ -127,7 +210,10 @@ Output: =build/release-android-arm64/apk/<name>.apk= (=build/debug-android-arm64
 |--------------------+-----------------------------------------+---------------------------------------------|
 | =APK_GAME=         | (required)                              | the game's source file                      |
 | =APK_NAME=         | its basename                            | APK and directory name                      |
-| =APK_ASSETS=       | none                                    | directory packed as =assets/=               |
+| =APK_ASSETS=       | none                                    | directories packed as =assets/= (merged; one path in two of them is an error) |
+| =APK_FORBID_GLOBS= | none                                    | globs no asset path may match (=*.MPQ secret/*=); the build fails naming each match |
+| =APK_KEYSTORE=     | none (debug key)                        | release keystore ([[#signing-release][Signing a release]])  |
+| =APK_KEY_ALIAS=    | none                                    | the key's alias in =APK_KEYSTORE=           |
 | =APK_PACKAGE=      | =org.libregnum.<name>= (=-= → =_=)       | application id                              |
 | =APK_LABEL=        | =APK_NAME=                              | launcher label                              |
 | =APK_VERSION_CODE= | 1                                       | integer version (raise it for each release)  |
@@ -138,7 +224,84 @@ Output: =build/release-android-arm64/apk/<name>.apk= (=build/debug-android-arm64
 :PROPERTIES:
 :CUSTOM_ID: signing
 :END:
-Without =--keystore=, =mkapk.sh= signs with a debug key it creates on first use (=build/<type>-android-arm64/apk/debug.keystore=, password =android=); keep that file, or every rebuild has a new key and =adb install -r= refuses the update. A release is signed with your own keystore: call =mkapk.sh= with =--keystore= and =--ks-pass=, or sign the aligned APK with =apksigner= yourself. Never commit a release keystore.
+Without =--keystore=, =mkapk.sh= signs with a debug key it creates on first use (=build/<type>-android-arm64/apk/debug.keystore=, password =android=); keep that file, or every rebuild has a new key and =adb install -r= refuses the update. A release is signed with your own key ([[#signing-release][Signing a release]]). Never commit a keystore.
+
+*** Signing a release
+:PROPERTIES:
+:CUSTOM_ID: signing-release
+:END:
+Android accepts an update only when it is signed with the same key as the installed app, for the app's whole life: make the key once, back it up outside the checkout, never commit it.
+
+#+begin_src sh
+# once, on the host (keytool from a JDK; Fedora: java-21-openjdk-headless):
+# PKCS12, RSA 4096, valid 10000 days; keytool asks for the password and the
+# certificate's name (or KEYSTORE_DNAME='CN=...,O=...'); refuses to overwrite
+make keystore                       # ~/.local/share/libregnum-android/release.jks, alias "release"
+make keystore KEYSTORE_OUT=~/keys/game.jks KEYSTORE_ALIAS=game
+
+# every release build: the passwords come from the environment, by name
+read -rs APK_KEYSTORE_PASSWORD && export APK_KEYSTORE_PASSWORD
+make ANDROID=1 apk APK_GAME=game.c APK_VERSION_CODE=7 \
+    APK_KEYSTORE=~/.local/share/libregnum-android/release.jks APK_KEY_ALIAS=release
+#+end_src
+
+How the passwords travel: =APK_KEYSTORE_PASSWORD= (and =APK_KEY_PASSWORD=, needed only when the key's password differs; a PKCS12 keystore made by =make keystore= has one password) are environment variables. The container run forwards them as =-e APK_KEYSTORE_PASSWORD= (the name only; podman copies the value), mounts =APK_KEYSTORE= read-only at its own path, and =mkapk.sh= passes =--ks-pass env:APK_KEYSTORE_PASSWORD= to =apksigner=, which reads the variable itself. No command line (=ps=, the make log, the shell history) holds a password, so never put one on make's command line (=APK_KEYSTORE_PASSWORD=x make ...= in the environment is fine; =make ... APK_KEYSTORE_PASSWORD=x= is not: it would land in =MAKEFLAGS= and the container's argv).
+
+=mkapk.sh= directly:
+
+| Option               | Meaning                                                                            |
+|----------------------+------------------------------------------------------------------------------------|
+| =--keystore FILE=    | the keystore; with =--ks-pass-env= it must exist (a release key is never created) |
+| =--ks-key-alias A=   | the key's alias (needed when the keystore holds several keys)                      |
+| =--ks-pass-env VAR=  | keystore password from =VAR= (=apksigner --ks-pass env:VAR=)                       |
+| =--key-pass-env VAR= | key password from =VAR= (default: the keystore's variable)                         |
+| =--ks-pass PASS=     | kept for compatibility and the debug key; on the command line, so not for a release |
+
+=apksigner verify --print-certs <apk>= (in =make ANDROID=1 container-shell=) shows the certificate an APK carries.
+
+*** Permissions
+:PROPERTIES:
+:CUSTOM_ID: permissions
+:END:
+The manifest declares no permission unless the game asks: =APK_PERMISSIONS= (=make ANDROID=1 apk=) or =mkapk.sh --permission NAME= (repeatable; a bare name is Android's, =INTERNET= is =android.permission.INTERNET=; a name is checked to be a dotted identifier). *Any socket needs =INTERNET=*, a loopback one too: without it =socket()= fails with "Operation not permitted", so a game with networking, or with a server inside the process talking to itself over 127.0.0.1, must ask for it. =tests/test-mkapk.sh= checks the manifest it produces.
+
+*** Forbidden files
+:PROPERTIES:
+:CUSTOM_ID: forbidden-files
+:END:
+=APK_FORBID_GLOBS= (=mkapk.sh --forbid GLOB=, repeatable) names files that must never ship, such as a game's licensed data the player provides at run time or key material; each glob is matched against every staged path relative to =assets/= (=*= also matches =/=, so =*.MPQ= matches at any depth). Any match fails the build and lists every offending path. Several =APK_ASSETS= roots are merged; the same path in two roots is an error naming both, never a silent override.
+
+*** Another project's APK
+:PROPERTIES:
+:CUSTOM_ID: consumer-apk
+:END:
+A project that embeds libregnum builds for =android-arm64= in libregnum's build container through its own =GNUmakefile= (see [[file:../cross-compile.org::#consumers][Consuming the cross builds from another project]]); inside it, its =Makefile= builds libregnum with =$(MAKE) -C deps/libregnum lib=, links its own =libmain.so= and packages it. The profile exports what that needs:
+
+| Variable             | Value                                                                                               |
+|----------------------+-----------------------------------------------------------------------------------------------------|
+| =LRG_APK_LDFLAGS=    | =-shared -Wl,--no-undefined -Wl,-z,max-page-size=16384 -u ANativeActivity_onCreate -Wl,--wrap=fopen= |
+| =LRG_MKAPK=          | =$(LRG_ROOT)/build-aux/android/mkapk.sh= (=--help= lists every option)                              |
+| =LRG_PLATFORM_LIBS=  | =-lEGL -lGLESv3 -landroid -llog -lm -ldl=                                                           |
+| =LRG_TARGET_CFLAGS=  | the NativeActivity glue's include directory                                                         |
+| =CC=, =ANDROID_MIN_API= | the NDK's clang for API 29                                                                       |
+
+#+begin_src makefile
+# in the parent's Makefile, inside the container (LRG_TARGET_OS = android)
+GAME_APK_LIB := build/android/libmain.so
+
+game-apk: libregnum $(GAME_OBJS)
+	$(CC) $(LRG_APK_LDFLAGS) -o $(GAME_APK_LIB) $(GAME_OBJS) \
+		deps/libregnum/build/release-android-arm64/lib/liblibregnum.a \
+		$(GAME_DEP_LIBS) $(LRG_PLATFORM_LIBS)
+	bash $(LRG_MKAPK) --lib $(GAME_APK_LIB) \
+		--out build/android/game.apk --package org.example.game --label Game \
+		--assets data --assets build/android/generated --forbid '*.MPQ' \
+		$(if $(APK_KEYSTORE),--keystore $(APK_KEYSTORE) --ks-pass-env APK_KEYSTORE_PASSWORD) \
+		$(if $(APK_KEY_ALIAS),--ks-key-alias $(APK_KEY_ALIAS)) \
+		--min-sdk $(ANDROID_MIN_API)
+#+end_src
+
+=$(GAME_DEP_LIBS)= is the static GLib stack the game needs (=$(PKG_CONFIG) --libs --static ...= with the profile's =PKG_CONFIG=). For the release key, set =APK_KEYSTORE= in the parent's =GNUmakefile= before including =container.mk= (or add the keystore to =LRG_CONTAINER_RO_MOUNTS= and the password names to =LRG_CONTAINER_ENV=): =container.mk= then mounts it and forwards the password variables, as for libregnum's own =apk=.
 
 *** Manifest
 :PROPERTIES:
@@ -158,6 +321,21 @@ make ANDROID=1 apk-run APK_GAME=examples/game-chocolate-chip-clicker.c      # am
 adb logcat -s libregnum Libregnum-Core
 #+end_src
 
+*** Pushing data to the device
+:PROPERTIES:
+:CUSTOM_ID: apk-push
+:END:
+Data too large for the APK, or that must not ship in it (=APK_FORBID_GLOBS=), goes to the app's external files directory, =/sdcard/Android/data/<package>/files/= (what =getExternalFilesDir()= returns; the app reads and writes it without any permission, and it is removed with the app). =apk-push= runs on the host with =adb=:
+
+#+begin_src sh
+make ANDROID=1 apk-push APK_GAME=game.c PUSH_FILES='~/games/data/Data' PUSH_DEST=client
+# adb shell mkdir -p /sdcard/Android/data/org.libregnum.game/files/client
+# adb push ~/games/data/Data /sdcard/Android/data/org.libregnum.game/files/client/
+make apk-push APK_PACKAGE=org.example.game PUSH_FILES='a.cfg b.cfg'   # a parent's package
+#+end_src
+
+=PUSH_FILES= is one or more files or directories (=adb push= copies directories recursively); =PUSH_DEST= is a directory below =files/= (empty: =files/= itself). The package is =APK_PACKAGE= (derived from =APK_GAME= unless set).
+
 ** Testing
 :PROPERTIES:
 :CUSTOM_ID: testing
@@ -165,6 +343,7 @@ adb logcat -s libregnum Libregnum-Core
 | Goal                          | Where         | Checks                                                              |
 |-------------------------------+---------------+---------------------------------------------------------------------|
 | =make ANDROID=1 test-apk=     | container     | =tests/test-apk-layout.sh=: signature, manifest (package, minSdk, NativeActivity, no code, libraries not extracted, GLES 3.2), =libmain.so= stored, 16 KB aligned in the zip and in its LOAD segments, AArch64, =ANativeActivity_onCreate= exported, only system libraries needed, every listed asset present (and equal to =APK_ASSETS=) |
+| =make test-mkapk= / =make ANDROID=1 test-mkapk= | host / container | =tests/test-mkapk.sh=: merged asset roots, a duplicate path and a forbidden file fail, a release key's password reaches =apksigner= as =env:VAR= and is in no argv (stub build tools, any host); in the container also a real PKCS12 release key with an alias, verified by =apksigner= |
 | =make ANDROID=1 test-shaders= | container     | every built-in shader compiles as GLSL ES 3.00 (and GLSL 3.30)      |
 | =make test= (native)          | host          | =tests/test-platform.c=: data root, extraction (first run, same stamp, new stamp, interrupted run, unsafe paths, bad and missing manifests), the logcat priority mapping |
 | =make ANDROID=1 test-device APK_GAME=...= | host, adb | =tests/test-apk-device.sh= on a phone or emulator adb sees: installs, starts, still running, no GLib warning in logcat, screenshot not blank |
@@ -191,6 +370,56 @@ make ANDROID=1 test-emulator APK_GAME=examples/game-chocolate-chip-clicker.c
 make ANDROID=1 test-emulator APK_GAME=... EMULATOR_CACHE=~/.cache/lrg-emulator   # share the 2 GB of downloads between checkouts
 build-aux/android/emulator-test.sh --help
 #+end_src
+
+*** A game's own checks on the emulator
+:PROPERTIES:
+:CUSTOM_ID: emulator-device-script
+:END:
+=tests/test-apk-device.sh= asks four things of any game: it installs, it is still running with its activity in front (=mCurrentFocus= names the package; a finished activity leaves a cached process behind and the launcher on screen, which the other checks alone would pass), logcat holds no GLib warning, and the screen is not one colour. A game with more to check (data copied onto the device first, input sent, several screenshots) passes its own script to =emulator-test.sh=:
+
+| Option | Meaning |
+|--------+---------|
+| =--device-script FILE= | runs in place of =tests/test-apk-device.sh= on the booted emulator, with =adb= on =PATH= and connected; it gets =--apk=, =--package=, =--wait= and =--shot-dir= and its exit status is the run's |
+| =--shot-dir DIR= | the directory the script writes its screenshots (and logs) to; mounted read-write (default =<apk>-emulator/= next to the APK) |
+| =--mount DIR= | a host directory the script reads, mounted read-only at the same path (repeatable): the game's own data to =adb push=, which never belongs in the APK |
+| =--data-size SIZE= | the emulator's data partition (default =6G=); data pushed into the app's storage needs room |
+| =--dry-run= | checks the arguments and prints the container command, without downloading, building or booting anything (no =/dev/kvm= needed); =tests/test-emulator-args.sh= runs it |
+
+#+begin_src sh
+build-aux/android/emulator-test.sh --apk build/release-android-arm64/apk/game.apk \
+    --package org.example.game --device-script tests/android/emulator-run.sh \
+    --mount ~/game-data --data-size 24G --shot-dir build/emulator-shots
+#+end_src
+
+The input a script sends goes through =adb shell input= (=tap X Y=, =swipe X1 Y1 X2 Y2 MS=, =keyevent=, =text=); the emulator's screen is 1080x1920 at 420 dpi, and a landscape game sees it as 1920x1080.
+
+** Command-line arguments: lrg_args_file_merge()
+:PROPERTIES:
+:CUSTOM_ID: args-file
+:END:
+The NativeActivity glue calls the game's =main()= with =argv[0]= alone, so a game that takes options on the desktop gets none on Android. =lrg_args_file_merge()= (=core/lrg-args-file.h=) reads them from a text file and splices them in after =argv[0]=; a natural place is the app's external files directory, which needs no permission and which =adb push= (and =make ANDROID=1 apk-push=) and file managers reach:
+
+#+begin_src c
+int
+main (int argc, char **argv)
+{
+	g_autoptr(GError) error = NULL;
+	g_autofree gchar *args_path = NULL;
+	const gchar *files;
+
+	lrg_platform_prepare (NULL);
+	files = lrg_platform_get_external_data_dir ();
+	if (files != NULL)
+	{
+		args_path = g_build_filename (files, "game.args", NULL);
+		if (!lrg_args_file_merge (args_path, &argc, &argv, &error))
+			g_warning ("%s", error->message);    /* the game still starts */
+	}
+	return game_main (argc, argv);
+}
+#+end_src
+
+The file holds one or more arguments per line, split with shell quoting (=--name "two words"=); blank lines and =#= comments are skipped. A missing file adds nothing; a malformed one (an unterminated quote) is an error naming the line, and the arguments stay as they were. The file's arguments come before the real command line's, so on a desktop the command line wins over the file for an option given in both.
 
 ** Licensing
 :PROPERTIES:

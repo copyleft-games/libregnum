@@ -7,7 +7,9 @@
  * Platform preparation (lrg-platform.h) on any host: the data root,
  * asset extraction from a manifest (against a directory-backed reader
  * standing in for an APK), path safety, the logcat priority mapping, and
- * lrg_platform_prepare() being a no-op off Android.
+ * lrg_platform_prepare() being a no-op off Android; the desktop side of
+ * the external data directory, density, soft keyboard and character
+ * queue, and the lifecycle signals through the simulation hook.
  */
 
 #include <errno.h>
@@ -392,11 +394,188 @@ test_prepare_off_android (void)
 	g_assert_cmpstr (after, ==, cwd);
 }
 
+/* ==========================================================================
+ * External storage, density, soft keyboard, characters (desktop)
+ * ========================================================================== */
+
+static void
+test_external_dir_desktop (void)
+{
+	const gchar *dir;
+	g_autofree gchar *name = g_path_get_basename (g_get_prgname ());
+	g_autofree gchar *expected = NULL;
+
+	/* the user data dir is isolated per test (G_TEST_OPTION_ISOLATE_DIRS);
+	 * the program name is argv[0], a path here: its last component */
+	g_assert_cmpstr (name, ==, "test-platform");
+	expected = g_build_filename (g_get_user_data_dir (), name, NULL);
+	g_assert_false (g_file_test (expected, G_FILE_TEST_IS_DIR));
+
+	dir = lrg_platform_get_external_data_dir ();
+	g_assert_nonnull (dir);
+	g_assert_cmpstr (dir, ==, expected);
+	g_assert_true (g_file_test (dir, G_FILE_TEST_IS_DIR));
+
+	/* the same answer is the same (interned) string */
+	g_assert_true (lrg_platform_get_external_data_dir () == dir);
+}
+
+static void
+test_external_dir_unwritable (void)
+{
+	g_autofree gchar *name = g_path_get_basename (g_get_prgname ());
+	g_autofree gchar *blocker = NULL;
+
+	/* a file where the program's directory would go: no directory, NULL */
+	blocker = g_build_filename (g_get_user_data_dir (), name, NULL);
+	g_assert_cmpint (g_mkdir_with_parents (g_get_user_data_dir (), 0700), ==, 0);
+	g_assert_true (g_file_set_contents (blocker, "not a directory", -1, NULL));
+
+	g_assert_null (lrg_platform_get_external_data_dir ());
+}
+
+static void
+test_dp_scale_desktop (void)
+{
+	g_assert_cmpfloat (lrg_platform_get_dp_scale (), ==, 1.0f);
+}
+
+static void
+test_soft_keyboard_desktop (void)
+{
+	/* no keyboard to show; the request is still remembered */
+	lrg_platform_hide_soft_keyboard ();
+	g_assert_false (lrg_platform_is_soft_keyboard_requested ());
+	lrg_platform_show_soft_keyboard ();
+	g_assert_true (lrg_platform_is_soft_keyboard_requested ());
+	lrg_platform_show_soft_keyboard ();
+	g_assert_true (lrg_platform_is_soft_keyboard_requested ());
+	lrg_platform_hide_soft_keyboard ();
+	g_assert_false (lrg_platform_is_soft_keyboard_requested ());
+}
+
+static void
+test_char_pressed_desktop (void)
+{
+	/* no window, no typed characters: raylib's empty queue */
+	g_assert_cmpuint (lrg_platform_get_char_pressed (), ==, 0);
+	g_assert_cmpuint (lrg_platform_get_char_pressed (), ==, 0);
+}
+
+/* ==========================================================================
+ * Lifecycle
+ * ========================================================================== */
+
+typedef struct
+{
+	guint    paused;
+	guint    resumed;
+	guint    notified;
+	gboolean last_lost;
+} LifecycleLog;
+
+static void
+on_paused (LrgPlatform *platform,
+           gpointer     user_data)
+{
+	LifecycleLog *log = user_data;
+
+	/* the state is already the new one when the signal runs */
+	g_assert_false (lrg_platform_is_running (platform));
+	log->paused++;
+}
+
+static void
+on_resumed (LrgPlatform *platform,
+            gboolean     gl_context_lost,
+            gpointer     user_data)
+{
+	LifecycleLog *log = user_data;
+
+	g_assert_true (lrg_platform_is_running (platform));
+	log->resumed++;
+	log->last_lost = gl_context_lost;
+}
+
+static void
+on_running_notify (GObject    *object,
+                   GParamSpec *pspec,
+                   gpointer    user_data)
+{
+	LifecycleLog *log = user_data;
+
+	log->notified++;
+}
+
+static void
+test_lifecycle_simulated (void)
+{
+	LrgPlatform *platform = lrg_platform_get_default ();
+	LifecycleLog log = { 0, 0, 0, FALSE };
+	gulong id_paused, id_resumed, id_notify;
+	gboolean running = FALSE;
+
+	g_assert_true (LRG_IS_PLATFORM (platform));
+	g_assert_true (lrg_platform_get_default () == platform);
+	g_assert_true (lrg_platform_is_running (platform));
+
+	/* the per-frame poll does nothing here and emits nothing */
+	id_paused = g_signal_connect (platform, "paused", G_CALLBACK (on_paused), &log);
+	id_resumed = g_signal_connect (platform, "resumed", G_CALLBACK (on_resumed), &log);
+	id_notify = g_signal_connect (platform, "notify::running", G_CALLBACK (on_running_notify), &log);
+	lrg_platform_poll ();
+	g_assert_cmpuint (log.paused + log.resumed + log.notified, ==, 0);
+
+	/* resuming a running app emits nothing */
+	lrg_platform_simulate_resume (platform, TRUE);
+	g_assert_cmpuint (log.resumed, ==, 0);
+
+	/* pause once; a second pause is no change */
+	lrg_platform_simulate_pause (platform);
+	lrg_platform_simulate_pause (platform);
+	g_assert_cmpuint (log.paused, ==, 1);
+	g_assert_cmpuint (log.notified, ==, 1);
+	g_object_get (platform, "running", &running, NULL);
+	g_assert_false (running);
+
+	/* back, the context kept */
+	lrg_platform_simulate_resume (platform, FALSE);
+	g_assert_cmpuint (log.resumed, ==, 1);
+	g_assert_false (log.last_lost);
+
+	/* again, the context lost this time */
+	lrg_platform_simulate_pause (platform);
+	lrg_platform_simulate_resume (platform, TRUE);
+	g_assert_cmpuint (log.paused, ==, 2);
+	g_assert_cmpuint (log.resumed, ==, 2);
+	g_assert_true (log.last_lost);
+	g_assert_cmpuint (log.notified, ==, 4);
+	g_assert_true (lrg_platform_is_running (platform));
+
+	g_signal_handler_disconnect (platform, id_paused);
+	g_signal_handler_disconnect (platform, id_resumed);
+	g_signal_handler_disconnect (platform, id_notify);
+}
+
+/* the display's size is Android's to give: off Android, FALSE and the
+ * outputs untouched (NULL outputs allowed) */
+static void
+test_display_size_desktop (void)
+{
+	gint width = -7;
+	gint height = -9;
+
+	g_assert_false (lrg_platform_get_display_size (&width, &height));
+	g_assert_cmpint (width, ==, -7);
+	g_assert_cmpint (height, ==, -9);
+	g_assert_false (lrg_platform_get_display_size (NULL, NULL));
+}
+
 int
 main (int    argc,
       char **argv)
 {
-	g_test_init (&argc, &argv, NULL);
+	g_test_init (&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, NULL);
 
 	g_test_add ("/platform/extract/first", Fixture, NULL, fixture_set_up, test_extract_first, fixture_tear_down);
 	g_test_add ("/platform/extract/same-stamp", Fixture, NULL, fixture_set_up, test_extract_same_stamp, fixture_tear_down);
@@ -410,6 +589,13 @@ main (int    argc,
 	g_test_add_func ("/platform/asset-path-safety", test_path_safety);
 	g_test_add_func ("/platform/android-log-priority", test_log_priorities);
 	g_test_add_func ("/platform/prepare/off-android", test_prepare_off_android);
+	g_test_add_func ("/platform/external-dir/desktop", test_external_dir_desktop);
+	g_test_add_func ("/platform/external-dir/unwritable", test_external_dir_unwritable);
+	g_test_add_func ("/platform/dp-scale/desktop", test_dp_scale_desktop);
+	g_test_add_func ("/platform/display-size/desktop", test_display_size_desktop);
+	g_test_add_func ("/platform/soft-keyboard/desktop", test_soft_keyboard_desktop);
+	g_test_add_func ("/platform/char-pressed/desktop", test_char_pressed_desktop);
+	g_test_add_func ("/platform/lifecycle/simulated", test_lifecycle_simulated);
 
 	return g_test_run ();
 }

@@ -3,6 +3,8 @@
 - [[file:index.org][Graphics module guide]]
 - [[file:material.org][Material assets (.rmat) and instances]]
 - [[file:shader-asset.org][Shader assets (.rshader)]]
+- [[file:shaders.org][Shaders on desktop GL and OpenGL ES]] - lrg-glsl.h (the platform GLSL dialect) and build-aux/check-glsl.sh
+- [[file:textures.org][Compressed textures and the CPU fallback]] - GPU texture capabilities, S3TC decoding, 16-bit repacking, uploads with a fallback
 - [[file:shader-graph.org][Shader graphs (.rshadergraph)]]
 - [[file:static-batch.org][Static batching API]]
 - [[file:aux-uv-contract.org][Auxiliary UV integration and verification contract]]

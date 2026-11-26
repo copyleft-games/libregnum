@@ -38,7 +38,7 @@ LRG_NDK_BIN := $(ANDROID_NDK)/toolchains/llvm/prebuilt/linux-x86_64/bin
 CC := $(LRG_NDK_BIN)/aarch64-linux-android$(ANDROID_MIN_API)-clang
 AR := $(LRG_NDK_BIN)/llvm-ar
 RANLIB := $(LRG_NDK_BIN)/llvm-ranlib
-PKG_CONFIG := $(PROJECT_ROOT)/build-aux/cross/lrg-sysroot-pkg-config
+PKG_CONFIG := $(LRG_ROOT)/build-aux/cross/lrg-sysroot-pkg-config
 LRG_CC_IS_GCC := 0
 
 # The one gcc/clang dialect gap the code meets.  Types are forward-declared
@@ -78,6 +78,17 @@ $(call lrg_default,LIBPQ,0)
 # LOAD segment loadable on 16 KB-page devices (Android 15+)
 LRG_PLATFORM_LIBS := -lEGL -lGLESv3 -landroid -llog -lm -ldl
 LRG_PLATFORM_LDFLAGS := -Wl,-z,max-page-size=16384
+
+# How a game's libmain.so links (the apk goal, and a parent project that
+# links its own; docs/platforms/android.org, "Another project's APK"):
+# -shared; --no-undefined: every symbol resolved now, not at load time on
+# a phone; 16 KB pages for Android 15+; -u ANativeActivity_onCreate: keep
+# the glue's entry point Android calls; --wrap=fopen: raylib's Android
+# layer reads files from the APK's assets first (rcore_android.c)
+LRG_APK_LDFLAGS := -shared -Wl,--no-undefined -Wl,-z,max-page-size=16384 \
+    -u ANativeActivity_onCreate -Wl,--wrap=fopen
+# The packager: build-aux/android/mkapk.sh --help
+LRG_MKAPK := $(LRG_ROOT)/build-aux/android/mkapk.sh
 
 # The NativeActivity glue raylib is built with (src/core/lrg-platform.c
 # reads the app's internal storage path and asset manager through it)

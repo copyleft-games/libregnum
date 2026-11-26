@@ -14,7 +14,7 @@
 #error "Only <libregnum.h> can be included directly."
 #endif
 
-#include <glib.h>
+#include <glib-object.h>
 #include "../lrg-version.h"
 
 G_BEGIN_DECLS
@@ -147,5 +147,230 @@ gboolean     lrg_platform_extract_assets    (LrgPlatformAssetReadFunc    read,
                                              gpointer                    user_data,
                                              const gchar                *dest,
                                              GError                    **error);
+
+/* ==========================================================================
+ * Storage
+ * ========================================================================== */
+
+/**
+ * lrg_platform_get_external_data_dir:
+ *
+ * The directory where the player can put large files for the game by
+ * hand (a USB file transfer, a file manager), as opposed to the private
+ * internal storage lrg_platform_prepare() points `HOME` at.
+ *
+ * On Android this is the activity's `externalDataPath`
+ * (`/sdcard/Android/data/<package>/files`): visible over USB, needs no
+ * storage permission, and is removed with the app.  On every other
+ * platform it is `g_get_user_data_dir()/<prgname>` (the last component
+ * of `g_get_prgname()`, or `libregnum` when no program name is set), so a
+ * game can look in one
+ * place on every platform.  The directory is created when missing.
+ *
+ * Returns: (nullable) (type filename): the directory, or %NULL when there
+ *   is none (Android without shared storage mounted) or it cannot be
+ *   created; the string lives as long as the process
+ *
+ * Since: 0.13.0
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *lrg_platform_get_external_data_dir (void);
+
+/**
+ * lrg_platform_get_dp_scale:
+ *
+ * The number of pixels in one density-independent pixel (dp, 1/160 inch)
+ * on the current display: Android's screen density divided by 160
+ * (`AConfiguration_getDensity()`), 1.0 everywhere else.  Touch layouts
+ * are written in dp and multiplied by this.
+ *
+ * Returns: pixels per dp, at least 0.5
+ *
+ * Since: 0.13.0
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat       lrg_platform_get_dp_scale      (void);
+
+/**
+ * lrg_platform_get_display_size:
+ * @width: (out) (optional): the display's width in pixels
+ * @height: (out) (optional): the display's height in pixels
+ *
+ * The size of the screen area an app's window gets, in pixels, known
+ * before any window opens: on Android, the configuration's screen size
+ * in dp (`AConfiguration_getScreenWidthDp()`, `..._HeightDp()`) times
+ * the dp scale, in the orientation the configuration reports (which may
+ * still be the launcher's until the activity's own orientation applies:
+ * a landscape game takes the larger as its width).  Open a game's window
+ * at this size on Android: raylib renders a smaller window small and
+ * upscales it, so everything placed in screen pixels (touch controls in
+ * dp, text) comes out too large, and it cannot learn the display's size
+ * itself before its window exists.  Everywhere else there is no such
+ * answer (a desktop window is whatever size the game asks for).
+ *
+ * Returns: %TRUE with the size, %FALSE (outputs untouched) where the
+ *   platform does not say
+ *
+ * Since: 0.13.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean     lrg_platform_get_display_size  (gint *width,
+                                             gint *height);
+
+/* ==========================================================================
+ * Soft keyboard and text input
+ * ========================================================================== */
+
+/**
+ * lrg_platform_show_soft_keyboard:
+ *
+ * Asks the system to show its on-screen keyboard (Android:
+ * `ANativeActivity_showSoftInput()` with
+ * `ANATIVEACTIVITY_SHOW_SOFT_INPUT_FORCED`).  Call it when a text field
+ * gains focus.  Does nothing on platforms without one.
+ *
+ * Since: 0.13.0
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_platform_show_soft_keyboard (void);
+
+/**
+ * lrg_platform_hide_soft_keyboard:
+ *
+ * Hides the on-screen keyboard again (Android:
+ * `ANativeActivity_hideSoftInput()`).  Does nothing on platforms without
+ * one.
+ *
+ * Since: 0.13.0
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_platform_hide_soft_keyboard (void);
+
+/**
+ * lrg_platform_is_soft_keyboard_requested:
+ *
+ * Whether the last call was lrg_platform_show_soft_keyboard() rather than
+ * lrg_platform_hide_soft_keyboard().  The system may still hide the
+ * keyboard on its own (the back key); this only reports what the game
+ * asked for.
+ *
+ * Returns: %TRUE after a show request
+ *
+ * Since: 0.13.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean     lrg_platform_is_soft_keyboard_requested (void);
+
+/**
+ * lrg_platform_get_char_pressed:
+ *
+ * The next typed character, like raylib's `GetCharPressed()`, but one
+ * that also works on Android: raylib's Android layer never fills its
+ * character queue, so libregnum translates key-down events from the
+ * hardware or soft keyboard into characters itself (with the key's meta
+ * state, through `KeyEvent.getUnicodeChar()`), once lrg_platform_poll()
+ * has run.  Text widgets read characters through this function.
+ *
+ * Elsewhere it returns raylib's `GetCharPressed()`.  Call it in a loop
+ * until it returns 0.  See docs/platforms/android.org, "Soft keyboard",
+ * for what an Android IME can and cannot deliver.
+ *
+ * Returns: a Unicode code point, or 0 when the queue is empty
+ *
+ * Since: 0.13.0
+ */
+LRG_AVAILABLE_IN_ALL
+gunichar     lrg_platform_get_char_pressed  (void);
+
+/* ==========================================================================
+ * Lifecycle
+ * ========================================================================== */
+
+#define LRG_TYPE_PLATFORM (lrg_platform_get_type ())
+
+/**
+ * LrgPlatform:
+ *
+ * The platform's application lifecycle as signals.  There is one, from
+ * lrg_platform_get_default().
+ *
+ * #LrgPlatform::paused is emitted when the app stops being shown and
+ * interactive (Android: it lost focus or its window), and
+ * #LrgPlatform::resumed when it is back, saying whether the GL context
+ * survived.  On Android they are emitted from inside raylib's event
+ * processing (`EndDrawing()` / `PollInputEvents()`), as the events
+ * arrive, so a handler runs while the app is going away: save there, do
+ * not draw.  The desktop never emits them on its own;
+ * lrg_platform_simulate_pause() and lrg_platform_simulate_resume() emit
+ * them for tests and for games that want one code path.
+ *
+ * Since: 0.13.0
+ */
+LRG_AVAILABLE_IN_ALL
+G_DECLARE_FINAL_TYPE (LrgPlatform, lrg_platform, LRG, PLATFORM, GObject)
+
+/**
+ * lrg_platform_get_default:
+ *
+ * Returns: (transfer none): the process's #LrgPlatform
+ *
+ * Since: 0.13.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPlatform *lrg_platform_get_default       (void);
+
+/**
+ * lrg_platform_poll:
+ *
+ * Per-frame platform work; #LrgEngine's update and #LrgGameTemplate's
+ * frame call it, a game with its own loop calls it once per frame after
+ * the window is open.  On Android the first call after `InitWindow()`
+ * chains libregnum's handlers in front of raylib's app-command and
+ * input-event callbacks (raylib's own handling still runs first and
+ * unchanged), which is what emits the lifecycle signals and feeds
+ * lrg_platform_get_char_pressed().  Elsewhere it does nothing.
+ *
+ * Since: 0.13.0
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_platform_poll              (void);
+
+/**
+ * lrg_platform_is_running:
+ * @self: an #LrgPlatform
+ *
+ * Returns: %FALSE between #LrgPlatform::paused and #LrgPlatform::resumed
+ *
+ * Since: 0.13.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean     lrg_platform_is_running        (LrgPlatform *self);
+
+/**
+ * lrg_platform_simulate_pause:
+ * @self: an #LrgPlatform
+ *
+ * Emits #LrgPlatform::paused as Android would when the app goes to the
+ * background (nothing when already paused).  For tests, and for desktop
+ * games that pause on minimise with the same handlers.
+ *
+ * Since: 0.13.0
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_platform_simulate_pause    (LrgPlatform *self);
+
+/**
+ * lrg_platform_simulate_resume:
+ * @self: an #LrgPlatform
+ * @gl_context_lost: the value #LrgPlatform::resumed reports
+ *
+ * Emits #LrgPlatform::resumed as Android would when the app comes back
+ * (nothing when not paused).
+ *
+ * Since: 0.13.0
+ */
+LRG_AVAILABLE_IN_ALL
+void         lrg_platform_simulate_resume   (LrgPlatform *self,
+                                             gboolean     gl_context_lost);
 
 G_END_DECLS

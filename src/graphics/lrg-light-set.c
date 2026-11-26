@@ -1490,7 +1490,7 @@ lrg_light_set_get_shader (LrgLightSet *self)
     {
         g_autofree gchar *fs = light_fs_with_lod (light_fs);
 
-        self->shader = grl_shader_new_from_memory (light_vs, fs, &error);
+        self->shader = lrg_glsl_shader_new_from_memory (light_vs, fs, &error);
     }
     if (self->shader == NULL)
         return NULL;

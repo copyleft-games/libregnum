@@ -45,6 +45,7 @@ PUBLIC_HEADERS := \
 	src/core/lrg-random-stream.h \
 	src/core/lrg-cpu-affinity.h \
 	src/core/lrg-platform.h \
+	src/core/lrg-args-file.h \
 	src/core/lrg-prewarmable.h \
 	src/core/lrg-prewarm.h \
 	src/core/lrg-timer-manager.h \
@@ -67,6 +68,10 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-vector-image.h \
 	src/graphics/lrg-gltf-info.h \
 	src/graphics/lrg-dds-image.h \
+	src/graphics/lrg-glsl.h \
+	src/graphics/lrg-texture-codec.h \
+	src/graphics/lrg-gpu-caps.h \
+	src/graphics/lrg-texture-upload.h \
 	src/graphics/lrg-gltf-geometry.h \
 	src/graphics/lrg-meshopt.h \
 	src/graphics/lrg-model-animator.h \
@@ -117,10 +122,14 @@ PUBLIC_HEADERS := \
 	src/input/lrg-controller-rumble.h \
 	src/input/lrg-input-mock.h \
 	src/input/lrg-input-software.h \
+	src/input/lrg-input-merge.h \
 	src/input/lrg-input-binding.h \
 	src/input/lrg-input-action.h \
 	src/input/lrg-input-map.h \
 	src/input/lrg-binding-catalog.h \
+	src/input/lrg-touch-tracker.h \
+	src/input/lrg-touch-button.h \
+	src/input/lrg-touch-controls.h \
 	src/actionbar/lrg-action-slot.h \
 	src/actionbar/lrg-action-slot-provider.h \
 	src/actionbar/lrg-action-bar.h \
@@ -876,6 +885,7 @@ SOURCES := \
 	src/core/lrg-random-stream.c \
 	src/core/lrg-cpu-affinity.c \
 	src/core/lrg-platform.c \
+	src/core/lrg-args-file.c \
 	src/core/lrg-prewarmable.c \
 	src/core/lrg-prewarm.c \
 	src/core/lrg-timer-manager.c \
@@ -898,6 +908,10 @@ SOURCES := \
 	src/graphics/lrg-vector-image.c \
 	src/graphics/lrg-gltf-info.c \
 	src/graphics/lrg-dds-image.c \
+	src/graphics/lrg-glsl.c \
+	src/graphics/lrg-texture-codec.c \
+	src/graphics/lrg-gpu-caps.c \
+	src/graphics/lrg-texture-upload.c \
 	src/graphics/lrg-gltf-geometry.c \
 	src/graphics/lrg-meshopt.c \
 	src/graphics/lrg-model-animator.c \
@@ -948,6 +962,10 @@ SOURCES := \
 	src/input/lrg-controller-rumble.c \
 	src/input/lrg-input-mock.c \
 	src/input/lrg-input-software.c \
+	src/input/lrg-input-merge.c \
+	src/input/lrg-touch-tracker.c \
+	src/input/lrg-touch-button.c \
+	src/input/lrg-touch-controls.c \
 	src/input/lrg-input-binding.c \
 	src/input/lrg-input-action.c \
 	src/input/lrg-input-map.c \
@@ -2520,15 +2538,32 @@ endif
 #
 #   make ANDROID=1 apk APK_GAME=examples/game-chocolate-chip-clicker.c
 #   make ANDROID=1 apk-install apk-run APK_GAME=...   (host: adb + a device)
+#   make keystore                                     (host: a release key)
+#   make ANDROID=1 apk-push APK_GAME=... PUSH_FILES=...  (host: data to the device)
 #
 # One shared object per game, libmain.so: the game's source, the static
 # liblibregnum.a (graylib and raylib, with its NativeActivity glue, inside)
 # and the static GLib stack.  build-aux/android/mkapk.sh packages it with
-# APK_ASSETS (extracted on the device by lrg_platform_prepare()).
+# APK_ASSETS (one or more directories, extracted on the device by
+# lrg_platform_prepare()), refusing any asset that matches APK_FORBID_GLOBS.
+#
+# Release signing ("Signing a release" in docs/platforms/android.org):
+# APK_KEYSTORE names the keystore (container.mk mounts it read-only),
+# APK_KEY_ALIAS its key; the passwords are read from the environment
+# variables APK_KEYSTORE_PASSWORD and APK_KEY_PASSWORD (the latter
+# defaulting to the former), forwarded into the container by name and
+# handed to apksigner by name: no command line ever holds them.  Never
+# put them on make's command line.
 
 APK_GAME ?=
 APK_NAME ?= $(basename $(notdir $(APK_GAME)))
 APK_ASSETS ?=
+APK_FORBID_GLOBS ?=
+# Android permissions the game needs (mkapk.sh --permission; INTERNET for
+# any socket, loopback included)
+APK_PERMISSIONS ?=
+APK_KEYSTORE ?=
+APK_KEY_ALIAS ?=
 APK_PACKAGE ?= org.libregnum.$(subst -,_,$(APK_NAME))
 APK_LABEL ?= $(APK_NAME)
 APK_VERSION_CODE ?= 1
@@ -2543,12 +2578,9 @@ APK_CFLAGS := $(BASE_CFLAGS) $(OPT_CFLAGS) $(PIC_CFLAGS) \
               -I$(CURDIR)/src -isystem $(GRAYLIB_DIR)/src -isystem $(GRAYLIB_DIR)/deps/raylib/src \
               -isystem $(YAMLGLIB_DIR)/src $(subst -I,-isystem ,$(DEP_CFLAGS)) $(LRG_TARGET_CFLAGS)
 
-# -u ANativeActivity_onCreate: keep the glue's entry point Android calls;
-# --wrap=fopen: raylib's Android layer reads files from the APK's assets
-# first (rcore_android.c); --no-undefined: every symbol resolved now, not
-# at load time on a phone; 16 KB pages for Android 15+
-APK_LDFLAGS := -shared -Wl,--no-undefined -Wl,-z,max-page-size=16384 \
-               -u ANativeActivity_onCreate -Wl,--wrap=fopen
+# The android-arm64 profile's LRG_APK_LDFLAGS (shared with projects that
+# link their own libmain.so)
+APK_LDFLAGS := $(LRG_APK_LDFLAGS)
 
 .PHONY: apk apk-install apk-run apk-check-game
 apk-check-game:
@@ -2566,12 +2598,54 @@ else
 	@$(MKDIR_P) $(dir $(APK_LIB))
 	@$(CC) $(APK_CFLAGS) $(APK_LDFLAGS) -o $(APK_LIB) $(APK_GAME) \
 		$(LIBOUTDIR)/$(LIB_STATIC) $(DEP_LIBS) $(PLATFORM_LIBS)
-	@bash build-aux/android/mkapk.sh --lib $(APK_LIB) --out $(APK_FILE) \
-		$(if $(APK_ASSETS),--assets $(APK_ASSETS)) \
+	@bash $(LRG_MKAPK) --lib $(APK_LIB) --out $(APK_FILE) \
+		$(foreach a,$(APK_ASSETS),--assets $(a)) \
+		$(foreach g,$(APK_FORBID_GLOBS),--forbid '$(g)') \
+		$(foreach p,$(APK_PERMISSIONS),--permission $(p)) \
+		$(if $(APK_KEYSTORE),--keystore $(APK_KEYSTORE) --ks-pass-env APK_KEYSTORE_PASSWORD) \
+		$(if $(APK_KEYSTORE),$(if $(APK_KEY_PASSWORD),--key-pass-env APK_KEY_PASSWORD)) \
+		$(if $(APK_KEY_ALIAS),--ks-key-alias $(APK_KEY_ALIAS)) \
 		--package $(APK_PACKAGE) --label "$(APK_LABEL)" \
 		--version-code $(APK_VERSION_CODE) --version-name $(APK_VERSION_NAME) \
 		--orientation $(APK_ORIENTATION) --min-sdk $(ANDROID_MIN_API)
 endif
+
+# A release keystore, on the host (keytool from a JDK: Fedora
+# java-21-openjdk-headless or newer).  keytool asks for the password (and
+# the certificate's name unless KEYSTORE_DNAME is set); it is never on a
+# command line.  An existing file is never overwritten.
+KEYSTORE_OUT ?= $(HOME)/.local/share/libregnum-android/release.jks
+KEYSTORE_ALIAS ?= release
+KEYSTORE_DNAME ?=
+
+.PHONY: keystore
+keystore:
+	@command -v keytool > /dev/null || { echo "keytool not found (a JDK, Fedora: java-21-openjdk-headless)" >&2; exit 1; }
+	@if [ -e '$(KEYSTORE_OUT)' ]; then \
+		echo "$(KEYSTORE_OUT) exists; not overwriting it (set KEYSTORE_OUT= for another file)" >&2; exit 1; \
+	fi
+	@mkdir -p -m 700 '$(dir $(KEYSTORE_OUT))'
+	@umask 077 && keytool -genkeypair -keystore '$(KEYSTORE_OUT)' -storetype PKCS12 \
+		-alias '$(KEYSTORE_ALIAS)' -keyalg RSA -keysize 4096 -validity 10000 \
+		$(if $(KEYSTORE_DNAME),-dname '$(KEYSTORE_DNAME)')
+	@echo "Release keystore: $(KEYSTORE_OUT) (alias $(KEYSTORE_ALIAS)); back it up, never commit it."
+	@echo "Sign with: APK_KEYSTORE_PASSWORD=... make ANDROID=1 apk APK_KEYSTORE=$(KEYSTORE_OUT) APK_KEY_ALIAS=$(KEYSTORE_ALIAS)"
+
+# Files into the app's external files directory on the device (what
+# Android's getExternalFilesDir() returns; the app reads it without a
+# permission), on the host with adb: PUSH_FILES (files or directories)
+# into PUSH_DEST below it
+PUSH_FILES ?=
+PUSH_DEST ?=
+APK_DEVICE_FILES = /sdcard/Android/data/$(APK_PACKAGE)/files$(if $(PUSH_DEST),/$(PUSH_DEST))
+
+.PHONY: apk-push
+apk-push:
+	@command -v adb > /dev/null || { echo "adb not found (Fedora: android-tools)" >&2; exit 1; }
+	@case '$(APK_PACKAGE)' in *.) echo "Set APK_GAME=<game.c> or APK_PACKAGE=<id>" >&2; exit 1 ;; esac
+	@if [ -z '$(strip $(PUSH_FILES))' ]; then echo "Set PUSH_FILES=<files or directories>" >&2; exit 1; fi
+	adb shell mkdir -p '$(APK_DEVICE_FILES)'
+	adb push $(PUSH_FILES) '$(APK_DEVICE_FILES)/'
 
 # On the host, with a device connected (adb from Fedora's android-tools)
 apk-install: apk-check-game
@@ -2608,7 +2682,14 @@ test-emulator: apk-check-game
 .PHONY: test-apk
 test-apk: apk
 	@bash tests/test-apk-layout.sh --apk $(APK_FILE) --package $(APK_PACKAGE) \
-		--min-sdk $(ANDROID_MIN_API) $(if $(APK_ASSETS),--assets $(APK_ASSETS))
+		--min-sdk $(ANDROID_MIN_API) $(foreach a,$(APK_ASSETS),--assets $(a))
+
+# build-aux/android/mkapk.sh's asset roots, forbidden files and signing,
+# with stub build tools (any host) and, in the android-arm64 container
+# (make ANDROID=1 test-mkapk), with the real ones
+.PHONY: test-mkapk
+test-mkapk:
+	@bash tests/test-mkapk.sh
 
 # Cross-target checks (docs/cross-compile.org, "Testing cross builds").
 #
@@ -2650,6 +2731,7 @@ test-cross-android:
 	$(MAKE) ANDROID=1 test-cross-artifacts
 	$(MAKE) ANDROID=1 test-shaders
 	$(MAKE) ANDROID=1 test-apk APK_GAME=$(TEST_CROSS_APK_GAME)
+	$(MAKE) ANDROID=1 test-mkapk
 
 test-cross:
 	$(MAKE) test-cross-arm64
@@ -3004,7 +3086,7 @@ $(REEL_CLI_BIN): src/reel-cli/lrg-reel-cli.c $(LIBOUTDIR)/$(LIB_SHARED)
 # Every public symbol of the paint, spring and retained UI modules must
 # be mentioned somewhere under docs/ (org pages)
 DOCS_CHECK_HEADERS := src/scripting/lrg-script-debugger.h src/scripting/lrg-script-reloader.h src/scripting/lrg-dap-server.h src/scripting/lrg-scripting-graph.h src/scripting/lrg-vscript-program.h src/debug/lrg-gpu-timer.h src/debug/lrg-frame-capture.h src/debug/lrg-memory-profiler.h src/net/lrg-net-stats.h $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween/lrg-spring.h src/i18n/lrg-po.h \
-	$(filter-out %-private.h,$(wildcard src/level/*.h)) src/core/lrg-math3d.h \
+	$(filter-out %-private.h,$(wildcard src/level/*.h)) src/core/lrg-math3d.h src/graphics/lrg-glsl.h src/graphics/lrg-texture-codec.h src/graphics/lrg-gpu-caps.h src/graphics/lrg-texture-upload.h \
 	$(wildcard src/editor/*.h) $(wildcard src/editor/ui/*.h) $(wildcard src/editor/ui/data/*.h) \
 	src/debug/lrg-debug-draw.h src/graphics/lrg-camera.h src/graphics/lrg-static-batch.h src/graphics/lrg-billboard-batch.h src/graphics/lrg-terrain.h src/lighting/lrg-shadow-renderer.h src/particles/lrg-particle-system.h src/particles/lrg-particle-billboard-renderer.h \
 	src/world3d/lrg-entity3d.h src/world3d/lrg-world3d.h src/ecs/lrg-component.h \
@@ -3431,6 +3513,11 @@ $(OBJDIR)/src/input/lrg-input-mock.o: src/input/lrg-input-mock.c src/input/lrg-i
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
 $(OBJDIR)/src/input/lrg-input-software.o: src/input/lrg-input-software.c src/input/lrg-input-software.h src/input/lrg-input.h
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/src/input/lrg-input-merge.o: src/input/lrg-input-merge.c src/input/lrg-input-merge.h src/input/lrg-input.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<

@@ -25,7 +25,8 @@
 #                   segment 16 KB aligned, ANativeActivity_onCreate exported,
 #                   only system libraries NEEDED
 #   assets          assets/lrg-assets.list well formed, every listed file
-#                   present, and (with --assets) exactly the source tree
+#                   present, and (with --assets) exactly the source trees,
+#                   merged
 #
 # Runs in the android-arm64 build container (make ANDROID=1 test-apk).
 
@@ -35,13 +36,14 @@ usage () {
 	cat <<'USAGE'
 test-apk-layout.sh - check an APK built by build-aux/android/mkapk.sh.
 
-Usage: test-apk-layout.sh --apk FILE --package ID [--min-sdk N] [--assets DIR]
+Usage: test-apk-layout.sh --apk FILE --package ID [--min-sdk N] [--assets DIR]...
 
 Options:
   --apk FILE      the APK
   --package ID    the expected application id
   --min-sdk N     the expected minimum API (default 29)
-  --assets DIR    the directory the assets came from (compared file by file)
+  --assets DIR    a directory the assets came from (repeatable; the merged
+                  trees are compared file by file)
   -h, --help      show this help
   --license       show the license
 
@@ -53,14 +55,14 @@ USAGE
 apk=''
 package=''
 min_sdk=29
-assets=''
+assets=()
 while [[ $# -gt 0 ]]
 do
 	case "${1}" in
 		--apk) apk="${2:?}"; shift 2 ;;
 		--package) package="${2:?}"; shift 2 ;;
 		--min-sdk) min_sdk="${2:?}"; shift 2 ;;
-		--assets) assets="${2:?}"; shift 2 ;;
+		--assets) assets+=("${2:?}"); shift 2 ;;
 		-h|--help) usage; exit 0 ;;
 		--license) sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
 		*) usage >&2; exit 2 ;;
@@ -143,10 +145,11 @@ then
 		[[ -f "${work}/a/assets/${path}" ]] || missing+="${path} "
 	done < "${list}"
 	bs_eq 'every listed asset is in the APK' '' "${missing}"
-	if [[ -n "${assets}" ]]
+	if [[ ${#assets[@]} -gt 0 ]]
 	then
-		bs_eq 'assets match the source tree' \
-			"$(cd "${assets}" && find . -type f -printf '%P\n' | grep -vx 'lrg-assets.list' | LC_ALL=C sort)" \
+		bs_eq 'assets match the source trees' \
+			"$(for root in "${assets[@]}"; do (cd "${root}" && find . -type f -printf '%P\n'); done \
+				| grep -vx 'lrg-assets.list' | LC_ALL=C sort)" \
 			"$(tail -n +2 "${list}" | grep -v '^#' | grep . | LC_ALL=C sort || true)"
 	fi
 else

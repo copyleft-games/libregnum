@@ -596,7 +596,9 @@ lrg_game_template_update (LrgGameTemplate *self,
      * process-wide, so the running template (re)asserts it every frame */
     grl_interpolation_set_enabled (priv->use_fixed_timestep && priv->interpolate);
 
-    /* Sample once per host frame, before consumers and outside fixed steps. */
+    /* Sample once per host frame, before consumers and outside fixed steps;
+     * the platform's hooks (Android lifecycle, soft-keyboard text) first. */
+    lrg_platform_poll ();
     lrg_input_manager_poll (lrg_input_manager_get_default ());
     template_check_focus_state (self);
     template_check_gamepad_state (self);
