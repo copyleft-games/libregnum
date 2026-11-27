@@ -1012,7 +1012,7 @@ static void
 fake_ffmpeg_free (FakeFfmpeg *f)
 {
     const gchar *names[] = { "ffmpeg", "encoders.txt", "works", "probes.log",
-                             "trials.log", "argv.txt", NULL };
+                             "trials.log", "argv.txt", "stdin.bytes", NULL };
     guint i;
 
     for (i = 0; names[i] != NULL; i++)
@@ -1178,7 +1178,9 @@ test_video_encoder_hardware (void)
     ASSERT_ARGS (argv, "-vaapi_device\n/dev/dri/renderD128");
     ASSERT_ARGS (argv, "-vf\nformat=nv12,hwupload");
     ASSERT_ARGS (argv, "-rc_mode\nCQP\n-qp\n23");
-    ASSERT_NO_ARGS (argv, "-pix_fmt");
+    /* No output -pix_fmt (the input's is rgba): hwupload sets the format. */
+    ASSERT_NO_ARGS (argv, "-pix_fmt\nyuv420p");
+    ASSERT_NO_ARGS (argv, "-pix_fmt\nnv12");
 
     g_object_unref (vid);
     fake_ffmpeg_free (f);
@@ -1348,6 +1350,216 @@ test_video_encoder_probe_cache (void)
     g_assert_cmpstr (trials, ==, "h264_nvenc\nh264_vaapi\n");
 
     fake_ffmpeg_free (f);
+}
+
+/* ==========================================================================
+ * Export speed (issue #5)
+ * ========================================================================== */
+
+/* Frames go to ffmpeg as raw RGBA: rawvideo/rgba/WxH input arguments and
+ * exactly w*h*4 bytes per frame on stdin, no PNG. */
+static void
+test_video_raw_input (void)
+{
+    const gchar *have[] = { "libx264", NULL };
+    FakeFfmpeg *f = fake_ffmpeg_new (have, have);
+    LrgReelVideoExporter *vid = lrg_reel_video_exporter_new ("/tmp/x.mp4",
+                                                             LRG_REEL_VIDEO_CODEC_H264);
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *argv = NULL;
+    g_autofree gchar *bytes = NULL;
+
+    argv = fake_export (f, vid, &error);
+    g_assert_no_error (error);
+    ASSERT_ARGS (argv, "-f\nrawvideo\n-pix_fmt\nrgba\n-s\n64x36\n-framerate\n24\n-i\npipe:0");
+    ASSERT_NO_ARGS (argv, "image2pipe");
+    ASSERT_NO_ARGS (argv, "png");
+    bytes = fake_ffmpeg_read (f, "stdin.bytes");
+    g_assert_cmpint (g_ascii_strtoll (bytes, NULL, 10), ==, 2 * 64 * 36 * 4);
+
+    g_object_unref (vid);
+    fake_ffmpeg_free (f);
+}
+
+/* A frame of another size than begin() was given is an error, not a
+ * corrupt stream. */
+static void
+test_video_raw_size_mismatch (void)
+{
+    const gchar *have[] = { "libx264", NULL };
+    FakeFfmpeg *f = fake_ffmpeg_new (have, have);
+    LrgReelVideoExporter *vid = lrg_reel_video_exporter_new ("/tmp/x.mp4",
+                                                             LRG_REEL_VIDEO_CODEC_H264);
+    GrlColor grey = { 90, 90, 90, 255 };
+    g_autoptr(GrlImage) wrong = grl_image_new_color (32, 36, &grey);
+    g_autoptr(GError) error = NULL;
+
+    lrg_reel_video_exporter_set_ffmpeg_path (vid, f->ffmpeg);
+    g_assert_true (lrg_reel_exporter_begin (LRG_REEL_EXPORTER (vid), 64, 36, 24.0, &error));
+    g_assert_false (lrg_reel_exporter_add_frame (LRG_REEL_EXPORTER (vid), wrong, &error));
+    g_assert_error (error, LRG_REEL_EXPORTER_ERROR, LRG_REEL_EXPORTER_ERROR_WRITE);
+    g_assert_nonnull (strstr (error->message, "32x36"));
+    g_clear_error (&error);
+    g_assert_true (lrg_reel_exporter_finish (LRG_REEL_EXPORTER (vid), &error));
+
+    /* A non-positive size is refused at begin(). */
+    g_assert_false (lrg_reel_exporter_begin (LRG_REEL_EXPORTER (vid), 0, 36, 24.0, &error));
+    g_assert_error (error, LRG_REEL_EXPORTER_ERROR, LRG_REEL_EXPORTER_ERROR_FAILED);
+
+    g_object_unref (vid);
+    fake_ffmpeg_free (f);
+}
+
+/* VP9 gets row-mt, threads, tile columns, the good deadline and a
+ * cpu-used speed; with a bitrate too. */
+static void
+test_video_vp9_speed (void)
+{
+    const gchar *have[] = { "libvpx-vp9", NULL };
+    FakeFfmpeg *f = fake_ffmpeg_new (have, have);
+    LrgReelVideoExporter *vid = lrg_reel_video_exporter_new ("/tmp/x.webm",
+                                                             LRG_REEL_VIDEO_CODEC_VP9);
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *argv = NULL;
+    g_autofree gchar *argv2 = NULL;
+    g_autofree gchar *auto_threads = NULL;
+
+    g_assert_cmpint (lrg_reel_video_exporter_get_threads (vid), ==, 0);
+    argv = fake_export (f, vid, &error);
+    g_assert_no_error (error);
+    auto_threads = g_strdup_printf ("\n-threads\n%d\n",
+                                    CLAMP ((gint) g_get_num_processors (), 1, 16));
+    g_assert_nonnull (strstr (argv, auto_threads));
+    ASSERT_ARGS (argv, "-b:v\n0\n-crf\n23");
+    ASSERT_ARGS (argv, "-row-mt\n1");
+    ASSERT_ARGS (argv, "-tile-columns\n0");          /* 64 px wide */
+    ASSERT_ARGS (argv, "-deadline\ngood\n-cpu-used\n5");
+
+    lrg_reel_video_exporter_set_threads (vid, 6);
+    lrg_reel_video_exporter_set_bitrate (vid, 2000);
+    lrg_reel_video_exporter_set_preset (vid, "slow");
+    g_assert_cmpint (lrg_reel_video_exporter_get_threads (vid), ==, 6);
+    argv2 = fake_export (f, vid, &error);
+    g_assert_no_error (error);
+    ASSERT_ARGS (argv2, "-b:v\n2000k");
+    ASSERT_ARGS (argv2, "-threads\n6");
+    ASSERT_ARGS (argv2, "-cpu-used\n2");
+
+    g_object_unref (vid);
+    fake_ffmpeg_free (f);
+}
+
+/* The preset word maps for VP9 and SVT-AV1, numeric presets, and an
+ * unknown word (a warning; the default speed). */
+static void
+test_video_preset_speeds (void)
+{
+    const gchar *have[] = { "libvpx-vp9", "libsvtav1", NULL };
+    const struct { LrgReelVideoCodec codec; const gchar *preset; const gchar *want; } cases[] = {
+        { LRG_REEL_VIDEO_CODEC_VP9, "ultrafast", "-cpu-used\n8" },
+        { LRG_REEL_VIDEO_CODEC_VP9, "veryslow",  "-cpu-used\n0" },
+        { LRG_REEL_VIDEO_CODEC_VP9, "3",         "-cpu-used\n3" },
+        { LRG_REEL_VIDEO_CODEC_AV1, NULL,        "-preset\n8" },
+        { LRG_REEL_VIDEO_CODEC_AV1, "veryfast",  "-preset\n10" },
+        { LRG_REEL_VIDEO_CODEC_AV1, "12",        "-preset\n12" },
+    };
+    guint i;
+
+    for (i = 0; i < G_N_ELEMENTS (cases); i++)
+    {
+        FakeFfmpeg *f = fake_ffmpeg_new (have, have);
+        LrgReelVideoExporter *vid = lrg_reel_video_exporter_new ("/tmp/x.mkv", cases[i].codec);
+        g_autoptr(GError) error = NULL;
+        g_autofree gchar *argv = NULL;
+        g_autofree gchar *want = g_strconcat ("\n", cases[i].want, "\n", NULL);
+
+        lrg_reel_video_exporter_set_preset (vid, cases[i].preset);
+        argv = fake_export (f, vid, &error);
+        g_assert_no_error (error);
+        if (strstr (argv, want) == NULL)
+            g_error ("case %u: missing %s in%s", i, cases[i].want, argv);
+        g_object_unref (vid);
+        fake_ffmpeg_free (f);
+    }
+
+    if (g_test_subprocess ())
+    {
+        FakeFfmpeg *f = fake_ffmpeg_new (have, have);
+        LrgReelVideoExporter *vid = lrg_reel_video_exporter_new ("/tmp/x.webm",
+                                                                 LRG_REEL_VIDEO_CODEC_VP9);
+        g_autofree gchar *argv = NULL;
+
+        lrg_reel_video_exporter_set_preset (vid, "ludicrous");
+        argv = fake_export (f, vid, NULL);
+        g_assert_nonnull (strstr (argv, "\n-cpu-used\n5\n"));
+        g_object_unref (vid);
+        fake_ffmpeg_free (f);
+        return;
+    }
+    g_test_trap_subprocess (NULL, 0, G_TEST_SUBPROCESS_DEFAULT);
+    g_test_trap_assert_stderr ("*unknown preset 'ludicrous'*");
+}
+
+/* A real round trip with whatever encoders this ffmpeg has: 24 frames of
+ * one colour, at a size whose rows are not a multiple of 16, through
+ * H.264 and VP9; the decoded middle frame keeps the colour. */
+static void
+test_video_raw_roundtrip (void)
+{
+    const LrgReelVideoCodec codecs[] = { LRG_REEL_VIDEO_CODEC_H264, LRG_REEL_VIDEO_CODEC_VP9 };
+    const gchar *names[] = { "out.mp4", "out.webm" };
+    Rgba teal = { 40, 160, 150, 255 };
+    guint i;
+
+    if (!lrg_reel_video_exporter_is_ffmpeg_available ()
+        || !lrg_reel_video_source_is_ffmpeg_available ())
+    {
+        g_test_skip ("ffmpeg not available");
+        return;
+    }
+
+    for (i = 0; i < G_N_ELEMENTS (codecs); i++)
+    {
+        g_autoptr(GError) error = NULL;
+        g_autofree gchar *dir = g_dir_make_tmp ("reel-raw-XXXXXX", &error);
+        g_autofree gchar *path = g_build_filename (dir, names[i], NULL);
+        g_autoptr(LrgReel) reel = lrg_reel_new ("t", 98, 54, 24.0, 24);
+        g_autoptr(LrgReelRenderer) renderer = NULL;
+        LrgReelClip *clip = lrg_reel_clip_new_with_func (fill_render, &teal, NULL);
+        LrgReelVideoExporter *vid;
+        LrgReelVideoSource *src;
+        GrlImage *frame;
+        gboolean ok;
+        Rgba px;
+
+        lrg_reel_add_clip (reel, clip);
+        g_object_unref (clip);
+        renderer = lrg_reel_renderer_new (reel);
+        vid = lrg_reel_video_exporter_new (path, codecs[i]);
+        ok = lrg_reel_renderer_render_parallel (renderer, 4, LRG_REEL_EXPORTER (vid), &error);
+        g_object_unref (vid);
+        if (!ok)
+        {
+            g_assert_error (error, LRG_REEL_EXPORTER_ERROR,
+                            LRG_REEL_EXPORTER_ERROR_ENCODER_NOT_FOUND);
+            g_rmdir (dir);
+            continue;
+        }
+
+        src = lrg_reel_video_source_new_from_file (path, &error);
+        g_assert_no_error (error);
+        g_assert_cmpint (lrg_reel_video_source_get_width (src), ==, 98);
+        frame = lrg_reel_video_source_get_frame (src, 12, &error);
+        g_assert_no_error (error);
+        g_assert_nonnull (frame);
+        read_px (frame, 49, 27, &px);
+        g_assert_cmpint (ABS (px.r - teal.r), <=, 6);
+        g_assert_cmpint (ABS (px.g - teal.g), <=, 6);
+        g_assert_cmpint (ABS (px.b - teal.b), <=, 6);
+        g_object_unref (src);
+        g_unlink (path);
+        g_rmdir (dir);
+    }
 }
 
 /* A real H.264 export through automatic encoder choice, on whatever ffmpeg
@@ -3548,6 +3760,11 @@ main (int   argc,
     g_test_add_func ("/reel/video-encoder/probe-fails", test_video_encoder_probe_fails);
     g_test_add_func ("/reel/video-encoder/probe-cache", test_video_encoder_probe_cache);
     g_test_add_func ("/reel/video-encoder/h264-real", test_video_encoder_h264_real);
+    g_test_add_func ("/reel/video-export/raw-input", test_video_raw_input);
+    g_test_add_func ("/reel/video-export/raw-size-mismatch", test_video_raw_size_mismatch);
+    g_test_add_func ("/reel/video-export/vp9-speed", test_video_vp9_speed);
+    g_test_add_func ("/reel/video-export/preset-speeds", test_video_preset_speeds);
+    g_test_add_func ("/reel/video-export/raw-roundtrip", test_video_raw_roundtrip);
 
     g_test_add_func ("/reel/transition/fade", test_transition_fade);
     g_test_add_func ("/reel/transition/wipe", test_transition_wipe);

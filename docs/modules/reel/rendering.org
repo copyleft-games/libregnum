@@ -199,6 +199,10 @@ with side effects), those will race.  Use =lrg_reel_random()= and
 
 The rule that makes this hold: a clip, effect or transition keeps no mutable render state on its object. Every worker shares the same clip objects but has its own =LrgReelContext=, so scratch buffers come from the context (the renderer's private scratch pool) or from locals inside =render=, never from a field of the clip. Before 0.13.5 =LrgReelTransitionSeries= broke this rule: it kept the outgoing and incoming canvases of a transition on the series, and parallel renders showed black bands and pieces of other scenes inside every overlap window. It now takes both buffers from the context's pool, and =tests/test-reel.c= (=/reel/parallel/transition-series=, =/reel/parallel/nested-series=, =/reel/parallel/series-in-sequence=) renders each case sequentially and three times on 16 threads and requires every frame to match byte for byte. Write your own clips the same way ([[file:clips.org::#pitfalls][Clips, Pitfalls]]).
 
+Parallel rendering only shortens the export if the encoder keeps up. The video exporter pipes raw frames and runs VP9 multithreaded since 0.13.9 ([[file:exporters.org::#video-frame-pipe][How frames reach ffmpeg]], [[file:exporters.org::#video-encoder-speed][Encoder speed and threads]]); with the PNG pipe and a single-threaded VP9 before it, a 64-core render of a 2:30 film took about 20 minutes.
+
+Effects cost a composite: a clip with an effect, opacity, blend mode or transform is drawn into a frame-sized scratch layer and composited back. Since graylib 0.13.2 that composite reads and writes the pixel buffers directly; before, an effect on one top-level clip took about two thirds of a 720p frame's drawing time.
+
 The exception is a clip that shares a cache across threads by design and locks it: =LrgReelVideoSource= guards its decoded-frame cache with a mutex, so it is safe but serializes the workers that read it; reels built mostly from video sources gain little from parallel rendering.
 
 ** Motion blur

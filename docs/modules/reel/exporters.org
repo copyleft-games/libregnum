@@ -170,8 +170,8 @@ Each encoder family gets its own quality flags. =set_crf()= is translated as fol
 | h264_nvenc              | =-preset p4 -rc vbr -cq N -b:v 0=                      | yuv420p                         |
 | h264_qsv                | =-global_quality N=                                    | nv12                            |
 | h264_vaapi              | =-rc_mode CQP -qp N=; device =/dev/dri/renderD128=     | nv12 uploaded (=hwupload=)      |
-| libvpx-vp9              | =-b:v 0 -crf N=                                        | yuv420p / yuva420p              |
-| libsvtav1               | =-preset 8 -crf N=                                     | yuv420p                         |
+| libvpx-vp9              | =-b:v 0 -crf N= (plus the speed flags below)           | yuv420p / yuva420p              |
+| libsvtav1               | =-crf N= (plus =-preset=, below)                       | yuv420p                         |
 | prores_ks               | =-profile:v= 3 or 4 (CRF ignored)                      | yuv422p10le / yuva444p10le      |
 | anything else (by name) | none: the encoder's own defaults                       | the codec's                     |
 
@@ -188,6 +188,44 @@ lrg_reel_video_exporter_set_audio (vid, mixed_wave);
 #+end_src
 
 See [[file:audio.org][audio.org]] for how to produce =mixed_wave=.
+
+*** How frames reach ffmpeg
+:PROPERTIES:
+:CUSTOM_ID: video-frame-pipe
+:END:
+Frames go to ffmpeg's stdin as raw RGBA: =-f rawvideo -pix_fmt rgba -s WxH -framerate FPS -i pipe:0=, one =W x H x 4= byte frame after another, taken straight from the image's pixel buffer (=grl_image_get_pixels()=). Every frame must have the size =begin()= was given; another size fails =add_frame()= with =LRG_REEL_EXPORTER_ERROR_WRITE=. An image in another pixel format is converted to RGBA8 in place.
+
+Before 0.13.9 each frame was PNG-encoded and piped through =image2pipe=. zlib-compressing a 720p frame cost about 14 times as much as drawing it (93% of the per-frame time in a profile), all on the thread feeding the encoder, so a parallel render ended up waiting on PNG. Raw frames cost a copy into the pipe.
+
+*** Encoder speed and threads
+:PROPERTIES:
+:CUSTOM_ID: video-encoder-speed
+:END:
+libx264, libx265, NVENC, QSV and VA-API thread themselves. Two encoders need telling:
+
+- *libvpx-vp9* (VP9, VP9 with alpha) gets =-row-mt 1 -threads T -tile-columns C -deadline good -cpu-used S=. Without them libvpx runs at its slowest setting on about one core: before 0.13.9 a 2:30 720p VP9 export kept ffmpeg at ~130% CPU on a 64-core machine. =T= is =lrg_reel_video_exporter_set_threads()= or, by default, the CPU count capped at 16. =C= is log2 of one tile column per 256 px of width (2 at 1280 or 1920 px, 3 at 3840 px), which bounds how many threads a frame can use. =S= comes from =set_preset()=.
+- *libsvtav1* (AV1) gets =-preset S= from =set_preset()= and threads itself.
+
+| =set_preset()=   | libx264 / libx265 | libvpx-vp9 =-cpu-used= | libsvtav1 =-preset= |
+|------------------+-------------------+------------------------+---------------------|
+| unset (default)  | veryfast          | 5                      | 8                   |
+| =ultrafast=      | ultrafast         | 8                      | 12                  |
+| =superfast=      | superfast         | 7                      | 11                  |
+| =veryfast=       | veryfast          | 6                      | 10                  |
+| =faster=         | faster            | 5                      | 9                   |
+| =fast=           | fast              | 4                      | 8                   |
+| =medium=         | medium            | 3                      | 6                   |
+| =slow=           | slow              | 2                      | 4                   |
+| =slower=         | slower            | 1                      | 2                   |
+| =veryslow=       | veryslow          | 0                      | 0                   |
+| a number, e.g. ="3"= | passed as is  | passed as is (0–8)     | passed as is (0–13) |
+
+An unknown word logs a warning and uses the default. Lower speeds compress better and encode slower; the defaults favour export time at a quality that is hard to tell apart at the default CRF.
+
+#+begin_src c
+lrg_reel_video_exporter_set_preset  (vid, "fast");  /* VP9 -cpu-used 4 */
+lrg_reel_video_exporter_set_threads (vid, 8);
+#+end_src
 
 *** Custom ffmpeg path
 

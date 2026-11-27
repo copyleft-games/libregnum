@@ -87,8 +87,10 @@ lrg_reel_video_exporter_set_bitrate (LrgReelVideoExporter *self,
  * lrg_reel_video_exporter_set_preset:
  * @self: a #LrgReelVideoExporter
  * @preset: an x264/x265 -preset word ("ultrafast".."veryslow"), or %NULL for
- *   the default ("veryfast").  Used by libx264 and libx265; ignored by the
- *   other encoders.
+ *   the default.  libx264 and libx265 take it as is (default "veryfast").
+ *   libvpx-vp9 maps it onto -cpu-used (ultrafast 8 .. veryslow 0, default
+ *   5) and SVT-AV1 onto -preset (ultrafast 12 .. veryslow 0, default 8); a
+ *   plain number is passed to those two as is.  Other encoders ignore it.
  *
  * Sets the encoder speed/quality preset.
  *
@@ -107,6 +109,15 @@ lrg_reel_video_exporter_set_encoder (LrgReelVideoExporter *self,
 LRG_AVAILABLE_IN_ALL
 const gchar *
 lrg_reel_video_exporter_get_encoder (LrgReelVideoExporter *self);
+
+LRG_AVAILABLE_IN_ALL
+void
+lrg_reel_video_exporter_set_threads (LrgReelVideoExporter *self,
+                                     gint                  threads);
+
+LRG_AVAILABLE_IN_ALL
+gint
+lrg_reel_video_exporter_get_threads (LrgReelVideoExporter *self);
 
 /**
  * lrg_reel_video_exporter_set_show_progress:
