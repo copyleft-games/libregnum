@@ -16,6 +16,17 @@
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
 
+** 0.13.9
+:PROPERTIES:
+:CUSTOM_ID: changelog-0-13-9
+:END:
+Video export keeps up with parallel rendering (issue #5). Every frame used to be PNG-encoded on its way to ffmpeg, which cost about 14 times as much as drawing it, and VP9 ran on about one core at its slowest setting. A 1280x720, 240-frame VP9 export with =render_parallel= on 16 threads now takes 3.2 s instead of 10.4 s.
+
+- Reel: frames go to ffmpeg as raw RGBA (=-f rawvideo -pix_fmt rgba=). A frame whose size differs from =begin()='s fails =add_frame()=; a non-positive size fails =begin()= ([[file:modules/reel/exporters.org::#video-frame-pipe][How frames reach ffmpeg]]).
+- Reel: libvpx-vp9 gets =-row-mt 1=, =-threads= (new =lrg_reel_video_exporter_set_threads()=, default the CPU count capped at 16), =-tile-columns= from the width, =-deadline good= and =-cpu-used= from =set_preset()=; SVT-AV1's =-preset= follows =set_preset()= too ([[file:modules/reel/exporters.org::#video-encoder-speed][Encoder speed and threads]]).
+- graylib 0.13.2 (in 0.13.8) already made the composite every clip with an effect goes through read and write the pixel buffers directly.
+- Tests: the fake ffmpeg checks the raw input arguments and the exact bytes on stdin, the size checks, the VP9 flags and every preset mapping; a real round trip encodes through H.264 and VP9 with =render_parallel= and decodes the colour back.
+
 ** 0.13.8
 :PROPERTIES:
 :CUSTOM_ID: changelog-0-13-8
