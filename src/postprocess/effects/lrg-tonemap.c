@@ -178,6 +178,33 @@ lrg_tonemap_get_fragment_shader (void)
 }
 
 /* ==========================================================================
+ * CPU path
+ * ========================================================================== */
+
+/* lrg_tonemap_real_apply_cpu: the shader per pixel (lrg_tonemap_apply_rgb()
+ * is its arithmetic, base intensity included); alpha passes through */
+static gboolean
+lrg_tonemap_real_apply_cpu (LrgPostEffect *effect,
+                            gfloat        *rgba,
+                            guint          width,
+                            guint          height,
+                            gfloat         time)
+{
+	LrgTonemap *self = LRG_TONEMAP (effect);
+	gsize       i, n;
+
+	(void) time;
+
+	/* the GPU path draws the source unchanged at intensity 0 */
+	if (lrg_post_effect_get_intensity (effect) <= 0.0f)
+		return TRUE;
+	n = (gsize) width * height;
+	for (i = 0; i < n; i++)
+		lrg_tonemap_apply_rgb (self, rgba + i * 4, rgba + i * 4);
+	return TRUE;
+}
+
+/* ==========================================================================
  * GPU
  * ========================================================================== */
 
@@ -328,6 +355,7 @@ lrg_tonemap_class_init (LrgTonemapClass *klass)
 	object_class->set_property = lrg_tonemap_set_property;
 	effect_class->shutdown = lrg_tonemap_real_shutdown;
 	effect_class->apply = lrg_tonemap_real_apply;
+	effect_class->apply_cpu = lrg_tonemap_real_apply_cpu;
 	effect_class->get_name = lrg_tonemap_real_get_name;
 
 	/**

@@ -111,6 +111,7 @@ TEST_SOURCES := \
 	test-mesh-simplify.c \
 	test-lod.c \
 	test-post-stack.c \
+	test-post-cpu.c \
 	test-render-pipeline.c \
 	test-level-look.c \
 	test-shape.c \

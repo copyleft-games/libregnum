@@ -842,6 +842,7 @@ typedef struct _LrgScreenShake      LrgScreenShake;
 typedef struct _LrgColorblindFilter LrgColorblindFilter;
 typedef struct _LrgFXAA             LrgFXAA;
 typedef struct _LrgFilmGrain        LrgFilmGrain;
+typedef struct _LrgBlur             LrgBlur;
 
 /* ==========================================================================
  * Animation Module (Phase 3)

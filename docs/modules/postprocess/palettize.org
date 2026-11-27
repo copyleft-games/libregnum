@@ -49,6 +49,8 @@ lrg_palettize_draw_texture (fx, texture, &source, &dest);
 :END:
 =lrg_palettize_apply_rgb(self, x, y, in, out)= runs the shader's steps on the CPU (the dither for cell x, y, clamp, rounding to 31 levels, the table's colour, mixed with the original by the effect's intensity).  The GLSL 330 source is =lrg_palettize_get_fragment_shader()= (uniforms =lut=, =dither=, =ditherStrength=, =ditherScale=, =intensity=); the shader and the table texture are made on first draw, need a window, and are released by the effect's =shutdown= and on finalize.  The shader counts rows from the bottom (=gl_FragCoord=), so its pattern is the CPU's mirrored vertically: the same thresholds.
 
+CPU path: as a post effect it also runs on an image in memory (=lrg_post_effect_apply_cpu()=, [[file:cpu.org][cpu.org]]), calling =lrg_palettize_apply_rgb()= per pixel with the dither cell taken from =gl_FragCoord= (rows from the bottom), so the pattern lands on the same pixels as on the GPU.
+
 Tests: =tests/test-accessibility-filters.c= (the nearest colour against a brute force over a random 256-colour palette, palette colours mapping to themselves, ties, every table cell, the apply with and without a palette and at half intensity, the Bayer matrix, the dither's share of white, the error paths).
 
 * LrgCamera3D's aspect override

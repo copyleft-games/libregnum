@@ -11,6 +11,7 @@
 #include <rlgl.h>
 #include "core/lrg-prewarm.h"
 #include "graphics/lrg-glsl-private.h"
+#include "postprocess/lrg-post-cpu-private.h"
 
 /*
  * FXAA in one pass (the "console" variant plus a sub-pixel term):
@@ -231,6 +232,131 @@ lrg_fxaa_prewarmable_init (LrgPrewarmableInterface *iface)
     iface->prewarm = lrg_fxaa_prewarm;
 }
 
+/*
+ * lrg_fxaa_real_apply_cpu: the fragment shader per pixel, reading a copy
+ * of the input. Neighbours one texel away land on texel centres (exact
+ * fetches); the taps along the edge direction fall between texels and
+ * are bilinear, as the GL sampler filters them. The shader's
+ * uv-space y runs against the CPU rows; flipping y negates dir.x, and
+ * since every tap along dir comes in a +/- pair, the result is the same.
+ */
+static gboolean
+lrg_fxaa_real_apply_cpu (LrgPostEffect *effect,
+                         gfloat        *rgba,
+                         guint          width,
+                         guint          height,
+                         gfloat         time)
+{
+    LrgFxaa *self = LRG_FXAA (effect);
+    g_autofree gfloat *src = NULL;
+    gfloat intensity;
+    gfloat span_max;
+    gfloat edge;
+    gfloat edge_min;
+    gfloat subpixel;
+    guint x;
+    guint y;
+
+    (void)time;
+
+    intensity = lrg_post_effect_get_intensity (effect);
+    if (intensity <= 0.0f)
+        return TRUE;
+
+    /* the uniforms: params = (edge, edgeMin, spanMax, subpixel) */
+    edge = self->edge_threshold;
+    edge_min = self->edge_threshold_min;
+    span_max = fxaa_span_max (self->quality);
+    subpixel = self->subpixel_quality;
+    src = lrg_post_cpu_dup (rgba, width, height);
+
+    for (y = 0; y < height; y++)
+    {
+        for (x = 0; x < width; x++)
+        {
+            gint ix = (gint)x;
+            gint iy = (gint)y;
+            const gfloat *rgb_m = lrg_post_cpu_texel (src, 4, width, height, ix, iy);
+            const gfloat *rgb_nw = lrg_post_cpu_texel (src, 4, width, height, ix - 1, iy - 1);
+            const gfloat *rgb_ne = lrg_post_cpu_texel (src, 4, width, height, ix + 1, iy - 1);
+            const gfloat *rgb_sw = lrg_post_cpu_texel (src, 4, width, height, ix - 1, iy + 1);
+            const gfloat *rgb_se = lrg_post_cpu_texel (src, 4, width, height, ix + 1, iy + 1);
+            gfloat *p = rgba + ((gsize)y * width + x) * 4;
+            gfloat l_nw = lrg_post_cpu_luma601 (rgb_nw);
+            gfloat l_ne = lrg_post_cpu_luma601 (rgb_ne);
+            gfloat l_sw = lrg_post_cpu_luma601 (rgb_sw);
+            gfloat l_se = lrg_post_cpu_luma601 (rgb_se);
+            gfloat l_m = lrg_post_cpu_luma601 (rgb_m);
+            gfloat l_min = MIN (l_m, MIN (MIN (l_nw, l_ne), MIN (l_sw, l_se)));
+            gfloat l_max = MAX (l_m, MAX (MAX (l_nw, l_ne), MAX (l_sw, l_se)));
+            gfloat range = l_max - l_min;
+            gfloat dir_x;
+            gfloat dir_y;
+            gfloat reduce;
+            gfloat rcp;
+            gfloat t1[3];
+            gfloat t2[3];
+            gfloat a[3];
+            gfloat b[3];
+            gfloat avg[3];
+            gfloat aa[3];
+            gfloat l_b;
+            gfloat sub;
+            guint k;
+
+            /* 1. local contrast below the threshold: left alone */
+            if (range < MAX (edge_min, l_max * edge))
+                continue;
+
+            /* 2. the edge direction (in pixels), clamped to spanMax */
+            dir_x = -((l_nw + l_ne) - (l_sw + l_se));
+            dir_y = ((l_nw + l_sw) - (l_ne + l_se));
+            reduce = MAX ((l_nw + l_ne + l_sw + l_se) * 0.03125f, 1.0f / 128.0f);
+            rcp = 1.0f / (MIN (fabsf (dir_x), fabsf (dir_y)) + reduce);
+            dir_x = CLAMP (dir_x * rcp, -span_max, span_max);
+            dir_y = CLAMP (dir_y * rcp, -span_max, span_max);
+
+            /* 3. the two-tap blend at +/- 1/6 and the four-tap one that
+             * adds +/- 1/2 along the direction */
+            lrg_post_cpu_bilinear (src, 4, width, height,
+                                   (gfloat)x + dir_x * (1.0f / 3.0f - 0.5f),
+                                   (gfloat)y + dir_y * (1.0f / 3.0f - 0.5f), t1);
+            lrg_post_cpu_bilinear (src, 4, width, height,
+                                   (gfloat)x + dir_x * (2.0f / 3.0f - 0.5f),
+                                   (gfloat)y + dir_y * (2.0f / 3.0f - 0.5f), t2);
+            for (k = 0; k < 3; k++)
+                a[k] = 0.5f * (t1[k] + t2[k]);
+            lrg_post_cpu_bilinear (src, 4, width, height,
+                                   (gfloat)x - dir_x * 0.5f, (gfloat)y - dir_y * 0.5f, t1);
+            lrg_post_cpu_bilinear (src, 4, width, height,
+                                   (gfloat)x + dir_x * 0.5f, (gfloat)y + dir_y * 0.5f, t2);
+            for (k = 0; k < 3; k++)
+                b[k] = a[k] * 0.5f + 0.25f * (t1[k] + t2[k]);
+
+            /* the four-tap result unless it leaves the local luma range */
+            l_b = lrg_post_cpu_luma601 (b);
+            for (k = 0; k < 3; k++)
+                aa[k] = (l_b < l_min || l_b > l_max) ? a[k] : b[k];
+
+            /* 4. sub-pixel aliasing: towards the local average */
+            for (k = 0; k < 3; k++)
+                avg[k] = (rgb_nw[k] + rgb_ne[k] + rgb_sw[k] + rgb_se[k] + rgb_m[k] * 4.0f) * 0.125f;
+            sub = CLAMP (fabsf (lrg_post_cpu_luma601 (avg) - l_m) / MAX (range, 1e-4f), 0.0f, 1.0f);
+            sub = sub * sub * (3.0f - 2.0f * sub);
+            sub = sub * sub * subpixel * 0.75f;
+
+            /* 5. mixed with the input by the base intensity; alpha kept */
+            for (k = 0; k < 3; k++)
+            {
+                gfloat v = aa[k] + (avg[k] - aa[k]) * sub;
+
+                p[k] = rgb_m[k] + (v - rgb_m[k]) * intensity;
+            }
+        }
+    }
+    return TRUE;
+}
+
 static const gchar *
 lrg_fxaa_real_get_name (LrgPostEffect *effect)
 {
@@ -314,6 +440,7 @@ lrg_fxaa_class_init (LrgFxaaClass *klass)
     effect_class->initialize = lrg_fxaa_real_initialize;
     effect_class->shutdown = lrg_fxaa_real_shutdown;
     effect_class->apply = lrg_fxaa_real_apply;
+    effect_class->apply_cpu = lrg_fxaa_real_apply_cpu;
     effect_class->resize = lrg_fxaa_real_resize;
     effect_class->get_name = lrg_fxaa_real_get_name;
 

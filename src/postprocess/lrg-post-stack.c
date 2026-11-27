@@ -32,6 +32,7 @@
 #include "config.h"
 #include "lrg-post-stack.h"
 #include "effects/lrg-bloom.h"
+#include "effects/lrg-blur.h"
 #include "effects/lrg-color-grade.h"
 #include "effects/lrg-colorblind-filter.h"
 #include "effects/lrg-film-grain.h"
@@ -225,6 +226,7 @@ ensure_registry_locked (void)
 	registry = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 #define REG(n, t) g_hash_table_insert (registry, g_strdup (n), GSIZE_TO_POINTER ((gsize) (t)))
 	REG ("bloom", LRG_TYPE_BLOOM);
+	REG ("blur", LRG_TYPE_BLUR);
 	REG ("color-grade", LRG_TYPE_COLOR_GRADE);
 	REG ("colorblind-filter", LRG_TYPE_COLORBLIND_FILTER);
 	REG ("film-grain", LRG_TYPE_FILM_GRAIN);

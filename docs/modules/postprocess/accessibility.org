@@ -72,6 +72,8 @@ gboolean lrg_colorblind_filter_draw_texture (LrgColorblindFilter *self, GrlTextu
 :END:
 The filter is a single 3x3 matrix applied in linear light: the colour is raised to the power 2.2, multiplied, clamped to 0 .. 1 and taken back with the power 1 / 2.2, then mixed with the original by the effect's intensity (=lrg_post_effect_set_intensity()=).  The GLSL 330 shader (uniforms =row0=, =row1=, =row2=, =intensity=) and =lrg_colorblind_filter_apply_rgb()= run the same steps, so tests check the CPU reference and games may filter colours they draw themselves (UI fills and text).
 
+CPU path: as a post effect it also runs on an image in memory (=lrg_post_effect_apply_cpu()=, [[file:cpu.org][cpu.org]]), calling =lrg_colorblind_filter_apply_rgb()= per pixel.
+
 - Simulation uses the full-severity matrices of Machado, Oliveira and Fernandes, "A Physiologically-based Model for Simulation of Color Vision Deficiency" (2009) for protanopia, deuteranopia and tritanopia; achromatopsia puts the Rec. 709 luminance on every channel.
 - Correction is daltonization: the error a viewer cannot see, =I - S=, is shifted into channels they still tell apart, =M = I + D (I - S)=.  For protanopia and deuteranopia =D= moves the error into green and blue (rows =0 0 0=, =0.7 1 0=, =0.7 0 1=), for tritanopia into red and green (=1 0 0.7=, =0 1 0.7=, =0 0 0=).  Achromatopsia has no channel left: its correction is the identity.
 - The strength mixes the matrix with the identity, =I + strength (M - I)=.

@@ -12,6 +12,7 @@
 #include <rlgl.h>
 #include "core/lrg-prewarm.h"
 #include "graphics/lrg-glsl-private.h"
+#include "postprocess/lrg-post-cpu-private.h"
 
 /**
  * SECTION:lrg-colorblind-filter
@@ -433,6 +434,33 @@ lrg_colorblind_filter_real_apply (LrgPostEffect *effect,
         grl_shader_end (shader);
 }
 
+/*
+ * lrg_colorblind_filter_real_apply_cpu: the fragment shader per pixel;
+ * lrg_colorblind_filter_apply_rgb() is its arithmetic (decode with gamma
+ * 2.2, the matrix, encode, mix by the intensity). Skipped when the
+ * filter is the identity, as the GPU path skips the shader.
+ */
+static gboolean
+lrg_colorblind_filter_real_apply_cpu (LrgPostEffect *effect,
+                                      gfloat        *rgba,
+                                      guint          width,
+                                      guint          height,
+                                      gfloat         time)
+{
+    LrgColorblindFilter *self = LRG_COLORBLIND_FILTER (effect);
+    gsize i;
+    gsize n;
+
+    (void)time;
+
+    if (lrg_colorblind_filter_is_identity (self))
+        return TRUE;
+    n = (gsize)width * height;
+    for (i = 0; i < n; i++)
+        lrg_colorblind_filter_apply_rgb (self, rgba + i * 4, rgba + i * 4);
+    return TRUE;
+}
+
 static const gchar *
 lrg_colorblind_filter_real_get_name (LrgPostEffect *effect)
 {
@@ -521,6 +549,7 @@ lrg_colorblind_filter_class_init (LrgColorblindFilterClass *klass)
     effect_class->initialize = lrg_colorblind_filter_real_initialize;
     effect_class->shutdown = lrg_colorblind_filter_real_shutdown;
     effect_class->apply = lrg_colorblind_filter_real_apply;
+    effect_class->apply_cpu = lrg_colorblind_filter_real_apply_cpu;
     effect_class->resize = lrg_colorblind_filter_real_resize;
     effect_class->get_name = lrg_colorblind_filter_real_get_name;
 
