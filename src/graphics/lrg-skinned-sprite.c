@@ -18,6 +18,9 @@
 #include <rlgl.h>
 
 #include "graphics/lrg-skinned-sprite.h"
+#include "graphics/lrg-skinned-sprite-private.h"
+#include "graphics/lrg-image-canvas.h"
+#include "graphics/lrg-image-raster.h"
 
 /* One vertex: bind position, region UV and its influences, heaviest
  * first.  Unused influence slots hold bone -1 and weight 0. */
@@ -47,6 +50,15 @@ struct _LrgSkinnedSprite
 	GrlTexture  *texture;
 	gchar       *image;
 	gfloat       region[4];  /* x, y, width, height in pixels */
+
+	/* CPU drawing (lrg_skinned_sprite_draw_to_canvas()): the RGBA8
+	 * source image, the region cut out of it (a cropped copy, or a
+	 * second reference to source_image when no region is set; never
+	 * modified once made, so threads may share it) and whether loading
+	 * #LrgSkinnedSprite:image into it was already tried */
+	GrlImage    *source_image;
+	GrlImage    *source_region;
+	gboolean     source_tried;
 };
 
 G_DEFINE_FINAL_TYPE (LrgSkinnedSprite, lrg_skinned_sprite, G_TYPE_OBJECT)
@@ -61,6 +73,8 @@ enum
 
 static GParamSpec *properties[N_PROPS];
 
+static void update_source_region (LrgSkinnedSprite *self);
+
 /* ------------------------------------------------------------------ */
 /* GObject                                                             */
 /* ------------------------------------------------------------------ */
@@ -71,6 +85,8 @@ lrg_skinned_sprite_dispose (GObject *object)
 	LrgSkinnedSprite *self = LRG_SKINNED_SPRITE (object);
 
 	g_clear_object (&self->texture);
+	g_clear_object (&self->source_image);
+	g_clear_object (&self->source_region);
 
 	G_OBJECT_CLASS (lrg_skinned_sprite_parent_class)->dispose (object);
 }
@@ -261,6 +277,10 @@ lrg_skinned_sprite_copy (LrgSkinnedSprite *self)
 	copy->image = g_strdup (self->image);
 	memcpy (copy->region, self->region, sizeof copy->region);
 	g_set_object (&copy->texture, self->texture);
+	/* the CPU source and its region crop are immutable: share them */
+	g_set_object (&copy->source_image, self->source_image);
+	g_set_object (&copy->source_region, self->source_region);
+	copy->source_tried = self->source_tried;
 	return copy;
 }
 
@@ -593,6 +613,7 @@ lrg_skinned_sprite_set_image (LrgSkinnedSprite *self,
 		return;
 	g_free (self->image);
 	self->image = g_strdup (image);
+	self->source_tried = FALSE;   /* a new path may load */
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_IMAGE]);
 }
 
@@ -657,6 +678,7 @@ lrg_skinned_sprite_set_region (LrgSkinnedSprite *self,
 	self->region[1] = y;
 	self->region[2] = MAX (width, 0.0f);
 	self->region[3] = MAX (height, 0.0f);
+	update_source_region (self);
 }
 
 gboolean
@@ -928,6 +950,243 @@ lrg_skinned_sprite_draw_wireframe (LrgSkinnedSprite *self,
 		}
 	}
 	rlEnd ();
+}
+
+/* ------------------------------------------------------------------ */
+/* CPU drawing                                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Rebuilds source_region, the part of source_image the vertices' UVs
+ * span: a cropped copy when a region is set (rounded to whole pixels and
+ * clamped to the image), otherwise another reference to the whole image.
+ * Cropping once here, instead of remapping UVs into the full image at
+ * draw time, makes bilinear sampling clamp at the region's own border,
+ * so neighbouring atlas cells never bleed in.  It runs when the image or
+ * the region changes, never while drawing, so drawing reads only
+ * immutable images.
+ */
+static void
+update_source_region (LrgSkinnedSprite *self)
+{
+	gint w;
+	gint h;
+	gint x0;
+	gint y0;
+	gint x1;
+	gint y1;
+
+	g_clear_object (&self->source_region);
+	if (self->source_image == NULL)
+		return;
+
+	w = grl_image_get_width (self->source_image);
+	h = grl_image_get_height (self->source_image);
+	if (self->region[2] > 0.0f && self->region[3] > 0.0f)
+	{
+		x0 = (gint)floorf (self->region[0] + 0.5f);
+		y0 = (gint)floorf (self->region[1] + 0.5f);
+		x1 = (gint)floorf (self->region[0] + self->region[2] + 0.5f);
+		y1 = (gint)floorf (self->region[1] + self->region[3] + 0.5f);
+		x0 = CLAMP (x0, 0, w);
+		x1 = CLAMP (x1, 0, w);
+		y0 = CLAMP (y0, 0, h);
+		y1 = CLAMP (y1, 0, h);
+		if (x1 > x0 && y1 > y0 && (x0 != 0 || y0 != 0 || x1 != w || y1 != h))
+		{
+			GrlRectangle rect;
+			GrlImage    *crop = grl_image_copy (self->source_image);
+
+			rect.x = (gfloat)x0;
+			rect.y = (gfloat)y0;
+			rect.width = (gfloat)(x1 - x0);
+			rect.height = (gfloat)(y1 - y0);
+			grl_image_crop (crop, &rect);
+			self->source_region = crop;
+			return;
+		}
+	}
+	self->source_region = g_object_ref (self->source_image);
+}
+
+void
+lrg_skinned_sprite_set_source_image (LrgSkinnedSprite *self,
+                                     GrlImage         *image)
+{
+	g_return_if_fail (LRG_IS_SKINNED_SPRITE (self));
+	g_return_if_fail (image == NULL || GRL_IS_IMAGE (image));
+
+	/* the rasteriser reads RGBA8; converting a private copy keeps the
+	 * caller's image untouched and the stored one immutable */
+	if (image != NULL && grl_image_get_format (image) != GRL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8)
+	{
+		g_autoptr(GrlImage) rgba = grl_image_copy (image);
+
+		grl_image_get_pixels (rgba, NULL);   /* converts in place */
+		g_set_object (&self->source_image, rgba);
+	}
+	else
+	{
+		g_set_object (&self->source_image, image);
+	}
+	if (image == NULL)
+		self->source_tried = FALSE;
+	update_source_region (self);
+}
+
+gboolean
+lrg_skinned_sprite_load_source_image (LrgSkinnedSprite  *self,
+                                      const gchar       *base_dir,
+                                      GError           **error)
+{
+	g_autofree gchar    *path = NULL;
+	g_autoptr(GrlImage)  image = NULL;
+
+	g_return_val_if_fail (LRG_IS_SKINNED_SPRITE (self), FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	if (self->image == NULL || self->source_image != NULL)
+		return TRUE;
+
+	/* the same resolution as lrg_skinned_sprite_load_texture() */
+	if (g_path_is_absolute (self->image) || base_dir == NULL)
+		path = g_strdup (self->image);
+	else
+		path = g_build_filename (base_dir, self->image, NULL);
+
+	self->source_tried = TRUE;
+	if (!g_file_test (path, G_FILE_TEST_IS_REGULAR))
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "%s: no such image", path);
+		return FALSE;
+	}
+	image = grl_image_new_from_file (path);
+	if (image == NULL || !grl_image_is_valid (image))
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "%s: could not load the image", path);
+		return FALSE;
+	}
+	lrg_skinned_sprite_set_source_image (self, image);
+	return TRUE;
+}
+
+GrlImage *
+_lrg_skinned_sprite_ensure_source (LrgSkinnedSprite *self,
+                                   const gchar      *base_dir)
+{
+	if (self->source_image == NULL && self->image != NULL && !self->source_tried)
+	{
+		g_autoptr(GError) error = NULL;
+
+		if (!lrg_skinned_sprite_load_source_image (self, base_dir, &error))
+			g_warning ("skinned sprite: %s", error->message);
+	}
+	return self->source_image;
+}
+
+GrlImage *
+_lrg_skinned_sprite_peek_source_image (LrgSkinnedSprite *self)
+{
+	return self->source_image;
+}
+
+GrlImage *
+lrg_skinned_sprite_get_source_image (LrgSkinnedSprite *self)
+{
+	g_return_val_if_fail (LRG_IS_SKINNED_SPRITE (self), NULL);
+
+	return _lrg_skinned_sprite_ensure_source (self, NULL);
+}
+
+/* Draws the deformed mesh after the lazy load; @base_dir is where a
+ * relative image path is looked for. */
+static void
+draw_to_canvas_from (LrgSkinnedSprite *self,
+                     LrgImageCanvas   *canvas,
+                     const GrlColor   *tint,
+                     const gchar      *base_dir)
+{
+	const SpriteVertex   *verts;
+	const guint16        *idx;
+	const gfloat         *pos;
+	GrlImage             *dst;
+	GrlImage             *src = NULL;
+	g_autoptr(GrlMatrix)  ctm = NULL;
+	g_autofree gfloat    *screen = NULL;
+	GrlColor              white = { 255, 255, 255, 255 };
+	guint                 n_idx;
+	guint                 n_verts;
+	guint                 i;
+
+	n_idx = self->indices->len - self->indices->len % 3;
+	if (n_idx == 0)
+		return;
+	sync_deformed (self);
+	dst = lrg_image_canvas_get_image (canvas);
+	if (dst == NULL)
+		return;
+
+	/* the sampled image: the region of the source, loaded on first use */
+	if (_lrg_skinned_sprite_ensure_source (self, base_dir) != NULL)
+		src = self->source_region;
+
+	/* deformed positions through the canvas transform (only its 2D
+	 * affine part, as every canvas primitive uses it), once per vertex
+	 * rather than once per triangle corner */
+	verts = (const SpriteVertex *)(gconstpointer)self->vertices->data;
+	idx = (const guint16 *)(gconstpointer)self->indices->data;
+	pos = (const gfloat *)(gconstpointer)self->deformed->data;
+	n_verts = self->vertices->len;
+	ctm = grl_image_get_matrix (dst);
+	screen = g_new (gfloat, (gsize)n_verts * 2);
+	for (i = 0; i < n_verts; i++)
+	{
+		gfloat x = pos[i * 2];
+		gfloat y = pos[i * 2 + 1];
+
+		screen[i * 2] = ctm->m0 * x + ctm->m4 * y + ctm->m12;
+		screen[i * 2 + 1] = ctm->m1 * x + ctm->m5 * y + ctm->m13;
+	}
+
+	/* one textured triangle per mesh triangle; the rasteriser's top-left
+	 * rule keeps shared edges single, and winding does not matter */
+	for (i = 0; i < n_idx; i += 3)
+	{
+		gfloat xy[6];
+		gfloat uv[6];
+		guint  e;
+
+		for (e = 0; e < 3; e++)
+		{
+			guint v = idx[i + e];
+
+			xy[e * 2] = screen[v * 2];
+			xy[e * 2 + 1] = screen[v * 2 + 1];
+			uv[e * 2] = verts[v].u;
+			uv[e * 2 + 1] = verts[v].v;
+		}
+		lrg_image_draw_triangle_textured (dst, src, xy, uv, tint != NULL ? tint : &white);
+	}
+}
+
+void
+lrg_skinned_sprite_draw_to_canvas (LrgSkinnedSprite *self,
+                                   LrgImageCanvas   *canvas,
+                                   const GrlColor   *tint)
+{
+	g_return_if_fail (LRG_IS_SKINNED_SPRITE (self));
+	g_return_if_fail (LRG_IS_IMAGE_CANVAS (canvas));
+
+	draw_to_canvas_from (self, canvas, tint, NULL);
+}
+
+void
+_lrg_skinned_sprite_draw_to_canvas_from (LrgSkinnedSprite *self,
+                                         LrgImageCanvas   *canvas,
+                                         const GrlColor   *tint,
+                                         const gchar      *base_dir)
+{
+	draw_to_canvas_from (self, canvas, tint, base_dir);
 }
 
 /* ------------------------------------------------------------------ */

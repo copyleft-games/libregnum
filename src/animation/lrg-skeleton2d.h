@@ -22,6 +22,7 @@
 #include <glib-object.h>
 #include <graylib.h>
 #include "../lrg-version.h"
+#include "../lrg-types.h"
 #include "../graphics/lrg-skinned-sprite.h"
 
 G_BEGIN_DECLS
@@ -1492,5 +1493,67 @@ void lrg_skeleton2d_draw (LrgSkeleton2D  *self,
 LRG_AVAILABLE_IN_ALL
 void lrg_skeleton2d_draw_bones (LrgSkeleton2D  *self,
                                 const GrlColor *color);
+
+/* ------------------------------------------------------------------ */
+/* CPU drawing                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * lrg_skeleton2d_draw_to_canvas:
+ * @self: an #LrgSkeleton2D
+ * @canvas: the canvas drawn into
+ * @tint: (nullable): colour multiplied into every slot, or %NULL for
+ *   white
+ *
+ * The CPU counterpart of lrg_skeleton2d_draw(), for headless rendering
+ * (reels, thumbnails, tests in CI): deforms and draws the attachments the
+ * slots show, in the current draw order, each tinted by its slot colour
+ * times @tint, with lrg_skinned_sprite_draw_to_canvas().  No window is
+ * needed.
+ *
+ * Placement works as on the GPU: the root transform
+ * (lrg_skeleton2d_set_root_transform(), applied by
+ * lrg_skeleton2d_update_world()) places the skeleton in canvas pixels,
+ * and the canvas's current transform (lrg_image_canvas_translate(),
+ * lrg_image_canvas_scale(), lrg_image_canvas_rotate()) plays the part of
+ * the 2D camera of BeginMode2D().  Call lrg_skeleton2d_update_world()
+ * after posing and before drawing, as for lrg_skeleton2d_draw().
+ *
+ * Attachments without a CPU source image load their image path on first
+ * use, relative to #LrgSkeleton2D:base-dir
+ * (lrg_skeleton2d_load_source_images() does it up front and reports
+ * errors); a mesh with no image is filled with its slot colour, as on
+ * the GPU.
+ *
+ * The skeleton's pose and its sprites' deformed buffers are mutable
+ * state: one skeleton must not be posed or drawn from two threads at
+ * once (#LrgReelSkeleton2DClip serialises its renders for that reason).
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_skeleton2d_draw_to_canvas (LrgSkeleton2D  *self,
+                                    LrgImageCanvas *canvas,
+                                    const GrlColor *tint);
+
+/**
+ * lrg_skeleton2d_load_source_images:
+ * @self: an #LrgSkeleton2D
+ * @error: return location for a #GError
+ *
+ * The CPU counterpart of lrg_skeleton2d_load_textures(): loads the image
+ * of every attachment that has an image path and no CPU source image
+ * (lrg_skinned_sprite_set_source_image()), relative to
+ * #LrgSkeleton2D:base-dir, decoding each distinct path once.  No window
+ * is needed.
+ *
+ * Returns: %TRUE on success; on failure the attachments loaded so far
+ *   keep their images
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_skeleton2d_load_source_images (LrgSkeleton2D  *self,
+                                            GError        **error);
 
 G_END_DECLS

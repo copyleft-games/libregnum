@@ -25,6 +25,7 @@
 #include <glib-object.h>
 #include <graylib.h>
 #include "../lrg-version.h"
+#include "../lrg-types.h"
 
 G_BEGIN_DECLS
 
@@ -120,7 +121,8 @@ LrgSkinnedSprite * lrg_skinned_sprite_new_grid (gfloat x,
  * @self: an #LrgSkinnedSprite
  *
  * Copies the mesh (vertices, weights, triangles), the image path, the
- * region and a reference to the texture.  The deformed positions are
+ * region and a reference to the texture and to the CPU source image
+ * (lrg_skinned_sprite_set_source_image()).  The deformed positions are
  * not copied.
  *
  * Returns: (transfer full): a new #LrgSkinnedSprite
@@ -522,6 +524,106 @@ void lrg_skinned_sprite_draw (LrgSkinnedSprite *self,
 LRG_AVAILABLE_IN_ALL
 void lrg_skinned_sprite_draw_wireframe (LrgSkinnedSprite *self,
                                         const GrlColor   *color);
+
+/* ------------------------------------------------------------------ */
+/* CPU drawing                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * lrg_skinned_sprite_set_source_image:
+ * @self: an #LrgSkinnedSprite
+ * @image: (nullable): the image CPU drawing samples, or %NULL
+ *
+ * Sets the image lrg_skinned_sprite_draw_to_canvas() samples: the CPU
+ * counterpart of #LrgSkinnedSprite:texture, laid out the same way (the
+ * region of lrg_skinned_sprite_set_region() selects the part of it the
+ * vertices' U, V coordinates span, rounded to whole pixels and clamped
+ * to the image).  The sprite keeps a reference and never modifies
+ * @image; an image that is not RGBA8 is copied and converted first, so
+ * any number of threads can sample it at once.  The GPU texture is not
+ * touched.  %NULL drops the image, and the next
+ * lrg_skinned_sprite_get_source_image() tries #LrgSkinnedSprite:image
+ * again.
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_skinned_sprite_set_source_image (LrgSkinnedSprite *self,
+                                          GrlImage         *image);
+
+/**
+ * lrg_skinned_sprite_get_source_image:
+ * @self: an #LrgSkinnedSprite
+ *
+ * The image CPU drawing samples.  When none is set and the sprite has an
+ * #LrgSkinnedSprite:image path, the first call loads that file with
+ * grl_image_new_from_file(), relative to the current directory (the
+ * sprite does not know the `.rskel2d` file it came from;
+ * lrg_skinned_sprite_load_source_image() takes the directory, and
+ * lrg_skeleton2d_draw_to_canvas() and lrg_skeleton2d_load_source_images()
+ * pass the skeleton's #LrgSkeleton2D:base-dir, as
+ * lrg_skeleton2d_load_textures() does for the GPU).  A failed lazy load
+ * logs one warning and is not retried until the path changes.
+ *
+ * Returns: (transfer none) (nullable): the source image
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+GrlImage * lrg_skinned_sprite_get_source_image (LrgSkinnedSprite *self);
+
+/**
+ * lrg_skinned_sprite_load_source_image:
+ * @self: an #LrgSkinnedSprite
+ * @base_dir: (nullable): directory a relative image path is resolved
+ *   against, or %NULL for the current directory
+ * @error: return location for a #GError
+ *
+ * Loads #LrgSkinnedSprite:image into the CPU source image, resolving a
+ * relative path exactly as lrg_skinned_sprite_load_texture() does.  No
+ * window is needed.  Does nothing and succeeds when there is no image
+ * path or a source image is already set.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_skinned_sprite_load_source_image (LrgSkinnedSprite  *self,
+                                               const gchar       *base_dir,
+                                               GError           **error);
+
+/**
+ * lrg_skinned_sprite_draw_to_canvas:
+ * @self: an #LrgSkinnedSprite
+ * @canvas: the canvas drawn into
+ * @tint: (nullable): colour multiplied into the texture, or %NULL for
+ *   white
+ *
+ * Draws the deformed mesh (the positions of the last
+ * lrg_skinned_sprite_deform(), the same ones lrg_skinned_sprite_draw()
+ * uses) into @canvas on the CPU, one lrg_image_draw_triangle_textured()
+ * per triangle, so no window or GL context is needed.  The positions
+ * pass through the canvas's current transform
+ * (lrg_image_canvas_translate() and friends), the CPU counterpart of a
+ * 2D camera, and the canvas clip rectangle is honoured.  Triangles always
+ * blend source-over, whatever the canvas blend mode.
+ *
+ * The source image (lrg_skinned_sprite_get_source_image(), which may
+ * load it) is sampled bilinearly inside the region; without one the mesh
+ * is filled with @tint, like an untextured lrg_skinned_sprite_draw().
+ * Shared mesh edges are drawn exactly once, so a translucent tint shows
+ * no seams.
+ *
+ * Like the GPU draw this reads the sprite's deformed buffer, so one
+ * sprite must not be deformed and drawn from two threads at once.
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_skinned_sprite_draw_to_canvas (LrgSkinnedSprite *self,
+                                        LrgImageCanvas   *canvas,
+                                        const GrlColor   *tint);
 
 /* ------------------------------------------------------------------ */
 /* Automatic weights                                                   */

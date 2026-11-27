@@ -26,6 +26,8 @@
 #include <rlgl.h>
 
 #include "animation/lrg-skeleton2d.h"
+#include "graphics/lrg-image-canvas.h"
+#include "graphics/lrg-skinned-sprite-private.h"
 #include "core/lrg-data-loader.h"
 
 #define DEG2RAD_F (0.017453292519943295f)
@@ -2825,6 +2827,91 @@ lrg_skeleton2d_load_textures (LrgSkeleton2D  *self,
 			if (!lrg_skinned_sprite_load_texture (e->sprite, self->base_dir, error))
 				return FALSE;
 			g_hash_table_insert (cache, (gpointer)image, lrg_skinned_sprite_get_texture (e->sprite));
+		}
+	}
+	return TRUE;
+}
+
+/* ------------------------------------------------------------------ */
+/* CPU drawing                                                         */
+/* ------------------------------------------------------------------ */
+
+void
+lrg_skeleton2d_draw_to_canvas (LrgSkeleton2D  *self,
+                               LrgImageCanvas *canvas,
+                               const GrlColor *tint)
+{
+	const gfloat *pal;
+	guint         n_pal;
+	guint         i;
+	GrlColor      t;
+
+	g_return_if_fail (LRG_IS_SKELETON2D (self));
+	g_return_if_fail (LRG_IS_IMAGE_CANVAS (canvas));
+
+	if (tint != NULL)
+		t = *tint;
+	else
+		t.r = t.g = t.b = t.a = 255;
+
+	/* the same walk as lrg_skeleton2d_draw(): draw order, the attachment
+	 * the slot shows (active skin, then default), slot colour times the
+	 * tint, deform with the palette of the last update, then draw; only
+	 * the last step runs on the CPU instead of through rlgl */
+	pal = lrg_skeleton2d_get_palette (self, &n_pal);
+	for (i = 0; i < self->draw_order->len; i++)
+	{
+		gint              si = g_array_index (self->draw_order, gint, i);
+		Slot             *s = &g_array_index (self->slots, Slot, si);
+		LrgSkinnedSprite *sprite = resolve_attachment (self, si, s->attachment);
+		GrlColor          c;
+
+		if (sprite == NULL || s->color[3] <= 0.0f)
+			continue;
+		c.r = mul_channel (s->color[0], t.r);
+		c.g = mul_channel (s->color[1], t.g);
+		c.b = mul_channel (s->color[2], t.b);
+		c.a = mul_channel (s->color[3], t.a);
+		lrg_skinned_sprite_deform (sprite, pal, n_pal, s->bone);
+		_lrg_skinned_sprite_draw_to_canvas_from (sprite, canvas, &c, self->base_dir);
+	}
+}
+
+gboolean
+lrg_skeleton2d_load_source_images (LrgSkeleton2D  *self,
+                                   GError        **error)
+{
+	g_autoptr(GHashTable) cache = NULL;
+	guint                 i;
+	guint                 j;
+
+	g_return_val_if_fail (LRG_IS_SKELETON2D (self), FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	/* one decoded image per distinct path, shared by every attachment
+	 * that names it (source images are immutable, so sharing is safe) */
+	cache = g_hash_table_new (g_str_hash, g_str_equal);
+	for (i = 0; i < self->skins->len; i++)
+	{
+		Skin *s = g_ptr_array_index (self->skins, i);
+
+		for (j = 0; j < s->entries->len; j++)
+		{
+			SkinEntry   *e = g_ptr_array_index (s->entries, j);
+			const gchar *image = lrg_skinned_sprite_get_image (e->sprite);
+			GrlImage    *img;
+
+			if (image == NULL || _lrg_skinned_sprite_peek_source_image (e->sprite) != NULL)
+				continue;
+			img = g_hash_table_lookup (cache, image);
+			if (img != NULL)
+			{
+				lrg_skinned_sprite_set_source_image (e->sprite, img);
+				continue;
+			}
+			if (!lrg_skinned_sprite_load_source_image (e->sprite, self->base_dir, error))
+				return FALSE;
+			g_hash_table_insert (cache, (gpointer)image, _lrg_skinned_sprite_peek_source_image (e->sprite));
 		}
 	}
 	return TRUE;
