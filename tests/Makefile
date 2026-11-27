@@ -148,6 +148,7 @@ TEST_SOURCES := \
 	test-sequence.c \
 	test-skeleton2d.c \
 	test-lip-sync.c \
+	test-skeleton2d-character.c \
 	test-runtime-prefab.c \
 	test-runtime-import-settings.c \
 	test-asset-dependencies.c \
@@ -713,6 +714,13 @@ $(TEST_BUILDDIR)/test-%$(EXE_EXT): test-%.c $(GENERATED_HEADERS) | $(TEST_BUILDD
 	@$(CC) $(TEST_CFLAGS) -MMD -MP -MF $@.d -o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
 
 -include $(wildcard $(TEST_BUILDDIR)/*.d)
+
+# The talking-character test builds the demo character shared with the
+# skeleton2d examples (examples/skeleton2d/) into the test binary.
+DEMO_CHARACTER_DIR := ../examples/skeleton2d
+$(TEST_BUILDDIR)/test-skeleton2d-character$(EXE_EXT): test-skeleton2d-character.c $(DEMO_CHARACTER_DIR)/lrg-demo-character.c $(DEMO_CHARACTER_DIR)/lrg-demo-character.h $(GENERATED_HEADERS) | $(TEST_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(TEST_CFLAGS) -I$(DEMO_CHARACTER_DIR) -MMD -MP -MF $@.d -o $@ $< $(DEMO_CHARACTER_DIR)/lrg-demo-character.c $(TEST_LDFLAGS) $(TEST_LIBS)
 
 # The desktop guard every test binary links (see TEST_GUARD_OBJ).
 $(TEST_GUARD_OBJ): lrg-test-guard.c | $(TEST_BUILDDIR)
