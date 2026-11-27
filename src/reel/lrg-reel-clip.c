@@ -402,6 +402,30 @@ reel_clip_needs_composite (LrgReelClipPrivate *priv)
            (priv->effects != NULL && priv->effects->len > 0);
 }
 
+/*
+ * reel_clip_render_over:
+ *
+ * Runs the clip's render vfunc with @canvas in GRL_IMAGE_BLEND_OVER, the
+ * source-over compositing the reel documents for every clip, and puts the
+ * canvas's previous mode back afterwards.  So a translucent shape, caption
+ * box or callback draw blends over what is below it instead of replacing
+ * those pixels (issue #2), and a callback that switches the canvas to
+ * another mode (REPLACE to punch a hole, ADD for a glow) changes only its
+ * own drawing, never a sibling clip's.
+ */
+static void
+reel_clip_render_over (LrgReelClip    *self,
+                       LrgReelContext *ctx,
+                       LrgImageCanvas *canvas)
+{
+    GrlImage          *image = lrg_image_canvas_get_image (canvas);
+    GrlImageBlendMode  saved = grl_image_get_blend_mode (image);
+
+    grl_image_set_blend_mode (image, GRL_IMAGE_BLEND_OVER);
+    LRG_REEL_CLIP_GET_CLASS (self)->render (self, ctx, canvas);
+    grl_image_set_blend_mode (image, saved);
+}
+
 void
 lrg_reel_clip_render (LrgReelClip    *self,
                       LrgReelContext *ctx,
@@ -422,7 +446,7 @@ lrg_reel_clip_render (LrgReelClip    *self,
      * onto the canvas (byte-identical to the v1 behaviour). */
     if (!reel_clip_needs_composite (priv))
     {
-        LRG_REEL_CLIP_GET_CLASS (self)->render (self, ctx, canvas);
+        reel_clip_render_over (self, ctx, canvas);
         return;
     }
 
@@ -431,7 +455,7 @@ lrg_reel_clip_render (LrgReelClip    *self,
     {
         /* No compositor available (e.g. called without a renderer) -> draw
          * straight; transform/opacity/blend are ignored in that degenerate case. */
-        LRG_REEL_CLIP_GET_CLASS (self)->render (self, ctx, canvas);
+        reel_clip_render_over (self, ctx, canvas);
         return;
     }
 
@@ -450,7 +474,7 @@ lrg_reel_clip_render (LrgReelClip    *self,
                             (gfloat) priv->scale_y);
     lrg_image_canvas_translate (scratch->canvas, -pivot_x, -pivot_y);
 
-    LRG_REEL_CLIP_GET_CLASS (self)->render (self, ctx, scratch->canvas);
+    reel_clip_render_over (self, ctx, scratch->canvas);
 
     lrg_image_canvas_restore (scratch->canvas);
 

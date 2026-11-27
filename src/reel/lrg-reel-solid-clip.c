@@ -44,7 +44,27 @@ lrg_reel_solid_clip_render (LrgReelClip    *base,
 
     self = LRG_REEL_SOLID_CLIP (base);
 
-    lrg_image_canvas_clear (canvas, &self->color);
+    /*
+     * An opaque solid replaces the whole frame, which is what clear does
+     * (and fast).  A translucent one must composite over what is below it
+     * like every other clip, so it is drawn as a frame-sized rectangle,
+     * which blends under the canvas's OVER mode; clear would store its
+     * alpha and punch the frame through.
+     */
+    if (self->color.a == 255)
+    {
+        lrg_image_canvas_clear (canvas, &self->color);
+    }
+    else
+    {
+        GrlImage *image = lrg_image_canvas_get_image (canvas);
+        g_autoptr(GrlRectangle) frame =
+            grl_rectangle_new (0.0f, 0.0f,
+                               (gfloat) grl_image_get_width (image),
+                               (gfloat) grl_image_get_height (image));
+
+        grl_image_draw_rectangle (image, frame, &self->color);
+    }
 }
 
 /* --------------------------------------------------------------------------

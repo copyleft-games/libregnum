@@ -46,7 +46,19 @@ lrg_reel_effect_apply (LrgReelEffect  *self,
 
     klass = LRG_REEL_EFFECT_GET_CLASS (self);
     if (klass->apply != NULL)
+    {
+        /*
+         * Effects rewrite the clip's pixels in place and were written for
+         * an image in REPLACE; the scratch layer they get is in OVER since
+         * 0.13.8 (clips draw source-over), so switch for the effect and put
+         * the mode back.
+         */
+        GrlImageBlendMode saved = grl_image_get_blend_mode (image);
+
+        grl_image_set_blend_mode (image, GRL_IMAGE_BLEND_REPLACE);
         klass->apply (self, image, ctx);
+        grl_image_set_blend_mode (image, saved);
+    }
 }
 
 gboolean

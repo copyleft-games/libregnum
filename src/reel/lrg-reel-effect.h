@@ -33,6 +33,8 @@ G_DECLARE_DERIVABLE_TYPE (LrgReelEffect, lrg_reel_effect, LRG, REEL_EFFECT, GObj
  * LrgReelEffectClass:
  * @parent_class: the parent class.
  * @apply: mutate @image (an RGBA8 #GrlImage) in place for the given context.
+ *   The image is in %GRL_IMAGE_BLEND_REPLACE while @apply runs, so its
+ *   grl_image_draw_* calls store pixels as given.
  *
  * Class structure for #LrgReelEffect.
  *

@@ -320,8 +320,11 @@ lrg_reel_context_acquire_scratch (LrgReelContext *self)
     }
 
     scratch->in_use = TRUE;
+    /* clear always overwrites, whatever the blend mode; then hand the
+     * buffer out in OVER, the mode clips draw in. */
     lrg_image_canvas_clear (scratch->canvas, &transparent);
     lrg_image_canvas_reset_transform (scratch->canvas);
+    lrg_image_canvas_set_blend_mode (scratch->canvas, GRL_IMAGE_BLEND_OVER);
 
     return scratch;
 }

@@ -16,6 +16,17 @@
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
 
+** 0.13.8
+:PROPERTIES:
+:CUSTOM_ID: changelog-0-13-8
+:END:
+Translucent clips blend (issue #2). A shape clip with a 45% black fill drawn over white gave a transparent hole (=0,0,0,115=) instead of grey (=140,140,140,255=), and a video encoder turned the hole black: a "45% black caption band" came out solid black. Clips drawing straight onto the frame drew in =REPLACE=, and the plain graylib primitives (=grl_image_draw_circle=, =_rectangle=, =_pixel=, =_line=, ...) ignored the blend mode anyway. graylib 0.13.2 fixes the primitives.
+
+- Reel: every clip's =render= runs on a canvas in =GRL_IMAGE_BLEND_OVER=: shape fills and strokes, captions' boxes, text and anything a render callback draws blend over what is below. A translucent =LrgReelSolidClip= tints the frame instead of replacing it. A callback can still set =REPLACE= for its own drawing; the next clip starts in OVER again. Transitions and effects keep running in =REPLACE=, so their output is unchanged ([[file:modules/reel/clips.org::#translucent-pixels][Translucent pixels inside a clip]], [[file:modules/reel/clips.org::#translucent-pixels-migration][migration]]).
+- Reel: the motion-blur average is stored into the frame instead of drawn over it, and is read and written through the pixel buffer directly.
+- graylib 0.13.2: the raylib-backed =grl_image_draw_*= primitives honour the blend mode, clip rect and blend colour space (=REPLACE= and opaque =OVER= stay byte-identical); =grl_image_composite_layer()= has a direct-memory RGBA8 path (byte-identical, several times faster), which every clip with an effect, opacity, blend mode or transform goes through.
+- Tests: =/reel/blend/*= covers all four rows of the issue's probe, every shape kind, callback circles and rectangles, a translucent solid, a caption box and the =REPLACE= opt-out.
+
 ** 0.13.7
 :PROPERTIES:
 :CUSTOM_ID: changelog-0-13-7

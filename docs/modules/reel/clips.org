@@ -223,6 +223,42 @@ By default clips are composited using standard source-over (=LRG_REEL_BLEND_NORM
 Alternative blend modes let you create glow, colour-burn, and other photographic
 layer effects on individual clips without touching the full composition.
 
+*** Translucent pixels inside a clip
+:PROPERTIES:
+:CUSTOM_ID: translucent-pixels
+:END:
+Source-over holds for the pixels a clip draws, not only for the clip as a whole: every clip's =render= runs on a canvas in =GRL_IMAGE_BLEND_OVER=. A shape clip with fill ={0,0,0,115}= over white gives grey (=140,140,140,255=), and so do a translucent =LrgReelSolidClip=, a caption box and anything a render callback draws with the =grl_image_draw_*= and =lrg_image_canvas_*= calls. The same holds whether the clip draws straight onto the frame or, with an opacity, transform, blend mode or effect, into a scratch layer first.
+
+| Drawn by the clip                                   | Result over the frame below    |
+|-----------------------------------------------------+--------------------------------|
+| opaque colour (alpha 255)                           | replaces the pixel (as always) |
+| translucent colour (alpha 1–254)                    | blends over it                 |
+| fully transparent colour (alpha 0)                  | leaves it as is                |
+| an =LrgReelSolidClip= with alpha 255                | clears the frame to that colour |
+| an =LrgReelSolidClip= with alpha < 255              | tints the whole frame          |
+
+A callback that needs to store pixels as they are (to punch a transparent hole, or to copy pixels across) sets the mode itself; the change lasts for that clip's own drawing only, and the next clip starts in OVER again:
+
+#+begin_src c
+static void
+punch (LrgReelClip *clip, LrgReelContext *ctx, LrgImageCanvas *canvas, gpointer data)
+{
+    GrlColor clear = { 0, 0, 0, 0 };
+    g_autoptr(GrlRectangle) r = grl_rectangle_new (0.0f, 0.0f, 32.0f, 64.0f);
+
+    lrg_image_canvas_set_blend_mode (canvas, GRL_IMAGE_BLEND_REPLACE);
+    grl_image_draw_rectangle (lrg_image_canvas_get_image (canvas), r, &clear);
+}
+#+end_src
+
+Transitions and effects are not clips: they rebuild or rewrite pixels and still run on a canvas in =GRL_IMAGE_BLEND_REPLACE=, so their output is unchanged.
+
+**** Migration from 0.13.7 and earlier
+:PROPERTIES:
+:CUSTOM_ID: translucent-pixels-migration
+:END:
+Before 0.13.8 a clip drawing straight onto the frame (no opacity, transform, blend mode or effect) drew in =REPLACE=: its translucent pixels replaced the frame's, leaving holes that a video encoder turns black. A translucent =LrgReelSolidClip= replaced the whole frame the same way. The old workaround, an opaque fill plus =lrg_reel_clip_set_opacity()=, still gives the same result. Code that relied on a clip punching holes now has to ask for it, as in the example above. A fully transparent =LrgReelSolidClip= used to clear the frame to transparent and is now a no-op; to clear, give the renderer no background and start a clip's callback with =lrg_image_canvas_clear()=, which always stores.
+
 | Enum value                    | Effect                                    |
 |-------------------------------+-------------------------------------------|
 | =LRG_REEL_BLEND_NORMAL=       | Standard source-over (default)            |

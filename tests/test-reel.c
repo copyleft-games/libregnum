@@ -3153,6 +3153,302 @@ test_caption_clip (void)
 }
 
 /* ==========================================================================
+ * Source-over for every clip (issue #2)
+ * ==========================================================================
+ * A clip that draws translucent pixels must blend over what is below it.
+ * The issue's probe: a 200x200 white solid, then a full-frame 45% black
+ * ({0,0,0,115}) shape; source-over gives 140,140,140,255 at (100,100).
+ * Before the fix the fast path drew in REPLACE and left 0,0,0,115.
+ */
+
+#define BAND_GREY (140)
+
+static void
+assert_band_grey (GrlImage *img, gint x, gint y)
+{
+    Rgba px;
+
+    read_px (img, x, y, &px);
+    if (ABS (px.r - BAND_GREY) > 1 || ABS (px.g - BAND_GREY) > 1
+        || ABS (px.b - BAND_GREY) > 1 || px.a != 255)
+        g_error ("pixel (%d,%d) is %d,%d,%d,%d; want ~%d grey, opaque",
+                 x, y, px.r, px.g, px.b, px.a, BAND_GREY);
+}
+
+/* Builds the probe reel: white background (optionally in a sequence with a
+ * vignette) and one full-frame shape clip of @fill, with clip @opacity. */
+static LrgReel *
+make_probe_reel (gboolean        in_sequence,
+                 gboolean        vignette,
+                 const GrlColor *fill,
+                 gdouble         opacity)
+{
+    LrgReel *reel = lrg_reel_new ("probe", 200, 200, 24.0, 2);
+    GrlColor white = { 255, 255, 255, 255 };
+    LrgReelSolidClip *bg = lrg_reel_solid_clip_new (&white);
+    LrgReelShapeClip *box = lrg_reel_shape_clip_new_rect (0, 0, 200, 200);
+
+    lrg_reel_shape_clip_set_fill_color (box, fill);
+    if (opacity < 1.0)
+        lrg_reel_clip_set_opacity (LRG_REEL_CLIP (box), opacity);
+    if (in_sequence)
+    {
+        LrgReelSequence *seq = lrg_reel_sequence_new (0, 2);
+
+        lrg_reel_sequence_add_child (seq, LRG_REEL_CLIP (bg));
+        if (vignette)
+        {
+            LrgReelVignetteEffect *v = lrg_reel_vignette_effect_new ();
+
+            lrg_reel_clip_add_effect (LRG_REEL_CLIP (seq), LRG_REEL_EFFECT (v));
+            g_object_unref (v);
+        }
+        lrg_reel_add_clip (reel, LRG_REEL_CLIP (seq));
+        g_object_unref (seq);
+    }
+    else
+        lrg_reel_add_clip (reel, LRG_REEL_CLIP (bg));
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (box));
+    g_object_unref (bg);
+    g_object_unref (box);
+    return reel;
+}
+
+static GrlImage *
+render_frame0 (LrgReel *reel)
+{
+    g_autoptr(LrgReelRenderer) r = lrg_reel_renderer_new (reel);
+
+    return lrg_reel_renderer_render_frame (r, 0);
+}
+
+/* Rows 1-3 of the issue: translucent fill, top level, in a sequence, and
+ * in a sequence with a vignette (centre pixel, which the vignette leaves
+ * white). */
+static void
+test_blend_translucent_shape (void)
+{
+    GrlColor band = { 0, 0, 0, 115 };
+    guint i;
+
+    for (i = 0; i < 3; i++)
+    {
+        g_autoptr(LrgReel) reel = make_probe_reel (i >= 1, i == 2, &band, 1.0);
+        g_autoptr(GrlImage) f = render_frame0 (reel);
+
+        assert_band_grey (f, 100, 100);
+    }
+}
+
+/* Row 4 of the issue (the old workaround) still gives the same grey. */
+static void
+test_blend_opaque_shape_with_opacity (void)
+{
+    GrlColor black = { 0, 0, 0, 255 };
+    g_autoptr(LrgReel) reel = make_probe_reel (FALSE, FALSE, &black, 115.0 / 255.0);
+    g_autoptr(GrlImage) f = render_frame0 (reel);
+
+    assert_band_grey (f, 100, 100);
+}
+
+/* Every shape kind blends, not only rectangles. */
+static void
+test_blend_translucent_shape_kinds (void)
+{
+    GrlColor white = { 255, 255, 255, 255 };
+    GrlColor band = { 0, 0, 0, 115 };
+    LrgReelShapeClip *shapes[4];
+    LrgReelShapeKind boxed[3] = { LRG_REEL_SHAPE_ELLIPSE, LRG_REEL_SHAPE_TRIANGLE,
+                                  LRG_REEL_SHAPE_ROUNDED_RECT };
+    guint i;
+
+    /* Circle by centre; ellipse, triangle and rounded rect in [40, 160]. */
+    shapes[0] = lrg_reel_shape_clip_new_circle (100, 100, 40);
+    for (i = 0; i < 3; i++)
+    {
+        shapes[i + 1] = lrg_reel_shape_clip_new (boxed[i]);
+        lrg_reel_shape_clip_set_shape_x (shapes[i + 1], 40);
+        lrg_reel_shape_clip_set_shape_y (shapes[i + 1], 40);
+        lrg_reel_shape_clip_set_shape_width (shapes[i + 1], 120);
+        lrg_reel_shape_clip_set_shape_height (shapes[i + 1], 120);
+        lrg_reel_shape_clip_set_corner_radius (shapes[i + 1], 12);
+    }
+    for (i = 0; i < G_N_ELEMENTS (shapes); i++)
+    {
+        g_autoptr(LrgReel) reel = lrg_reel_new ("k", 200, 200, 24.0, 1);
+        LrgReelSolidClip *bg = lrg_reel_solid_clip_new (&white);
+        g_autoptr(GrlImage) f = NULL;
+
+        lrg_reel_add_clip (reel, LRG_REEL_CLIP (bg));
+        lrg_reel_shape_clip_set_fill_color (shapes[i], &band);
+        lrg_reel_add_clip (reel, LRG_REEL_CLIP (shapes[i]));
+        f = render_frame0 (reel);
+        assert_band_grey (f, 100, 100);
+        g_object_unref (bg);
+        g_object_unref (shapes[i]);
+    }
+}
+
+/* The issue's comment: a render callback drawing {0,0,0,115} with
+ * grl_image_draw_circle and grl_image_draw_rectangle. */
+static void
+draw_band_callback (LrgReelClip *clip, LrgReelContext *ctx,
+                    LrgImageCanvas *canvas, gpointer data)
+{
+    GrlColor band = { 0, 0, 0, 115 };
+    GrlImage *img = lrg_image_canvas_get_image (canvas);
+    g_autoptr(GrlRectangle) r = grl_rectangle_new (120.0f, 20.0f, 60.0f, 60.0f);
+
+    grl_image_draw_circle (img, 50, 50, 30, &band);
+    grl_image_draw_rectangle (img, r, &band);
+}
+
+static void
+test_blend_callback_primitives (void)
+{
+    GrlColor white = { 255, 255, 255, 255 };
+    g_autoptr(LrgReel) reel = lrg_reel_new ("cb", 200, 200, 24.0, 1);
+    LrgReelSolidClip *bg = lrg_reel_solid_clip_new (&white);
+    LrgReelClip *cb = lrg_reel_clip_new_with_func (draw_band_callback, NULL, NULL);
+    g_autoptr(GrlImage) f = NULL;
+    Rgba px;
+
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (bg));
+    lrg_reel_add_clip (reel, cb);
+    f = render_frame0 (reel);
+    assert_band_grey (f, 50, 50);
+    assert_band_grey (f, 150, 50);
+    read_px (f, 100, 150, &px);
+    g_assert_cmpint (px.r, ==, 255);
+    g_object_unref (bg);
+    g_object_unref (cb);
+}
+
+/* A translucent solid blends over the clip below instead of replacing the
+ * frame; an opaque one still replaces it. */
+static void
+test_blend_translucent_solid (void)
+{
+    GrlColor white = { 255, 255, 255, 255 };
+    GrlColor band = { 0, 0, 0, 115 };
+    GrlColor red = { 200, 0, 0, 255 };
+    g_autoptr(LrgReel) reel = lrg_reel_new ("s", 64, 64, 24.0, 1);
+    g_autoptr(LrgReel) reel2 = lrg_reel_new ("s2", 64, 64, 24.0, 1);
+    LrgReelSolidClip *a = lrg_reel_solid_clip_new (&white);
+    LrgReelSolidClip *b = lrg_reel_solid_clip_new (&band);
+    LrgReelSolidClip *c = lrg_reel_solid_clip_new (&white);
+    LrgReelSolidClip *d = lrg_reel_solid_clip_new (&red);
+    g_autoptr(GrlImage) f = NULL;
+    g_autoptr(GrlImage) f2 = NULL;
+    Rgba px;
+
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (a));
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (b));
+    f = render_frame0 (reel);
+    assert_band_grey (f, 0, 0);
+    assert_band_grey (f, 63, 63);
+
+    lrg_reel_add_clip (reel2, LRG_REEL_CLIP (c));
+    lrg_reel_add_clip (reel2, LRG_REEL_CLIP (d));
+    f2 = render_frame0 (reel2);
+    read_px (f2, 32, 32, &px);
+    g_assert_cmpint (px.r, ==, 200);
+    g_assert_cmpint (px.g, ==, 0);
+
+    g_object_unref (a);
+    g_object_unref (b);
+    g_object_unref (c);
+    g_object_unref (d);
+}
+
+/* A caption's translucent box (box colour alpha 128) darkens the frame
+ * under it; nothing in the frame is left translucent. */
+static void
+test_blend_caption_box (void)
+{
+    g_autofree gchar *dir = NULL;
+    g_autofree gchar *srt = NULL;
+    g_autoptr(GError) error = NULL;
+    g_autoptr(LrgReel) reel = lrg_reel_new ("c", 160, 64, 30.0, 30);
+    GrlColor white = { 255, 255, 255, 255 };
+    GrlColor box = { 0, 0, 0, 128 };
+    LrgReelSolidClip *bg = lrg_reel_solid_clip_new (&white);
+    LrgReelCaptionClip *cap;
+    g_autoptr(GrlImage) f = NULL;
+    gint x, y, grey = 0;
+
+    dir = g_dir_make_tmp ("reel-capbox-XXXXXX", &error);
+    g_assert_no_error (error);
+    srt = g_build_filename (dir, "c.srt", NULL);
+    g_assert_true (g_file_set_contents (srt, "1\n00:00:00,000 --> 00:00:02,000\nHI\n\n",
+                                        -1, &error));
+    cap = lrg_reel_caption_clip_new_from_srt (srt, &error);
+    g_assert_no_error (error);
+    lrg_reel_caption_clip_set_box (cap, TRUE);
+    lrg_reel_caption_clip_set_box_color (cap, &box);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (bg));
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (cap));
+    f = render_frame0 (reel);
+
+    for (y = 0; y < 64; y++)
+        for (x = 0; x < 160; x++)
+        {
+            Rgba px;
+
+            read_px (f, x, y, &px);
+            g_assert_cmpint (px.a, ==, 255);
+            if (ABS (px.r - 127) <= 1 && px.r == px.g && px.g == px.b)
+                grey++;
+        }
+    g_assert_cmpint (grey, >, 0);
+
+    g_object_unref (bg);
+    g_object_unref (cap);
+    g_unlink (srt);
+    g_rmdir (dir);
+}
+
+/* A callback that sets REPLACE on its canvas punches through on purpose,
+ * and the clip after it is back in OVER. */
+static void
+punch_callback (LrgReelClip *clip, LrgReelContext *ctx,
+                LrgImageCanvas *canvas, gpointer data)
+{
+    GrlColor hole = { 0, 0, 0, 0 };
+    g_autoptr(GrlRectangle) r = grl_rectangle_new (0.0f, 0.0f, 32.0f, 64.0f);
+
+    lrg_image_canvas_set_blend_mode (canvas, GRL_IMAGE_BLEND_REPLACE);
+    grl_image_draw_rectangle (lrg_image_canvas_get_image (canvas), r, &hole);
+}
+
+static void
+test_blend_replace_opt_out (void)
+{
+    GrlColor white = { 255, 255, 255, 255 };
+    GrlColor band = { 0, 0, 0, 115 };
+    g_autoptr(LrgReel) reel = lrg_reel_new ("p", 64, 64, 24.0, 1);
+    LrgReelSolidClip *bg = lrg_reel_solid_clip_new (&white);
+    LrgReelClip *punch = lrg_reel_clip_new_with_func (punch_callback, NULL, NULL);
+    LrgReelShapeClip *right = lrg_reel_shape_clip_new_rect (32, 0, 32, 64);
+    g_autoptr(GrlImage) f = NULL;
+    Rgba px;
+
+    lrg_reel_shape_clip_set_fill_color (right, &band);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (bg));
+    lrg_reel_add_clip (reel, punch);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (right));
+    f = render_frame0 (reel);
+
+    read_px (f, 10, 10, &px);
+    g_assert_cmpint (px.a, ==, 0);
+    assert_band_grey (f, 50, 10);
+
+    g_object_unref (bg);
+    g_object_unref (punch);
+    g_object_unref (right);
+}
+
+/* ==========================================================================
  * Wave H: engine-native GPU capture (display-gated)
  * ========================================================================== */
 
@@ -3315,6 +3611,13 @@ main (int   argc,
     g_test_add_func ("/reel/yaml/load", test_yaml_load);
     g_test_add_func ("/reel/yaml/unknown-type", test_yaml_unknown_type);
     g_test_add_func ("/reel/caption/srt", test_caption_clip);
+    g_test_add_func ("/reel/blend/translucent-shape", test_blend_translucent_shape);
+    g_test_add_func ("/reel/blend/opaque-shape-with-opacity", test_blend_opaque_shape_with_opacity);
+    g_test_add_func ("/reel/blend/translucent-shape-kinds", test_blend_translucent_shape_kinds);
+    g_test_add_func ("/reel/blend/callback-primitives", test_blend_callback_primitives);
+    g_test_add_func ("/reel/blend/translucent-solid", test_blend_translucent_solid);
+    g_test_add_func ("/reel/blend/caption-box", test_blend_caption_box);
+    g_test_add_func ("/reel/blend/replace-opt-out", test_blend_replace_opt_out);
 
     g_test_add_func ("/reel/gpu/capture", test_gpu_capture);
 

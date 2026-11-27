@@ -172,9 +172,24 @@ lrg_reel_transition_composite (LrgReelTransition *self,
     clamped = CLAMP (progress, 0.0, 1.0);
     eased   = lrg_easing_apply (priv->easing, (gfloat) clamped);
 
-    LRG_REEL_TRANSITION_GET_CLASS (self)->composite (self, canvas,
-                                                      from, to,
-                                                      (gdouble) eased);
+    /*
+     * Transitions build the frame from @from and @to: they copy revealed
+     * pixels of @to across with grl_image_draw_pixel() and draw the scenes
+     * with grl_image_draw_image().  They were written for, and are kept
+     * byte-identical to, a canvas in REPLACE, where a copied pixel is the
+     * incoming scene's pixel as is; since 0.13.8 clips render into an OVER
+     * canvas, so the mode is switched for the composite and put back.
+     */
+    {
+        GrlImage          *image = lrg_image_canvas_get_image (canvas);
+        GrlImageBlendMode  saved = grl_image_get_blend_mode (image);
+
+        grl_image_set_blend_mode (image, GRL_IMAGE_BLEND_REPLACE);
+        LRG_REEL_TRANSITION_GET_CLASS (self)->composite (self, canvas,
+                                                          from, to,
+                                                          (gdouble) eased);
+        grl_image_set_blend_mode (image, saved);
+    }
 }
 
 /*
