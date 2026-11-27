@@ -9,7 +9,9 @@
  * A skinned sprite is a small triangle mesh cut out of a texture (or a
  * region of an atlas).  Every vertex has a bind position in skeleton
  * space (the space of the skeleton's setup pose), a texture coordinate
- * inside the region and up to four (bone, weight) influences.  Given a
+ * inside the region and up to four (bone, weight) influences.  Named
+ * blend shapes (per-vertex offsets mixed in by weight) morph the bind
+ * positions before skinning.  Given a
  * palette of 2D affine matrices (one per bone: world(bone) *
  * inverse_bind(bone), as #LrgSkeleton2D computes it) the mesh is
  * deformed on the CPU with linear blend skinning and drawn as textured
@@ -119,9 +121,9 @@ LrgSkinnedSprite * lrg_skinned_sprite_new_grid (gfloat x,
  * lrg_skinned_sprite_copy:
  * @self: an #LrgSkinnedSprite
  *
- * Copies the mesh (vertices, weights, triangles), the image path, the
- * region and a reference to the texture.  The deformed positions are
- * not copied.
+ * Copies the mesh (vertices, weights, triangles), the blend shapes with
+ * their current weights, the image path, the region and a reference to
+ * the texture.  The deformed positions are not copied.
  *
  * Returns: (transfer full): a new #LrgSkinnedSprite
  */
@@ -327,10 +329,149 @@ gboolean lrg_skinned_sprite_get_triangle (LrgSkinnedSprite *self,
  * @self: an #LrgSkinnedSprite
  *
  * Removes every vertex and triangle (the texture, image and region
- * stay).
+ * stay).  Blend shapes are removed too: their offsets are per vertex,
+ * so they mean nothing once the vertices are gone.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_skinned_sprite_clear (LrgSkinnedSprite *self);
+
+/* ------------------------------------------------------------------ */
+/* Blend shapes                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * lrg_skinned_sprite_add_shape:
+ * @self: an #LrgSkinnedSprite
+ * @name: the shape name (not empty), for example one of the standard
+ *   sheet's names (`LRG_SHAPE_BLINK_L`)
+ * @offsets: (array length=n_floats) (nullable): per-vertex offsets in
+ *   skeleton setup space, `(dx, dy)` per vertex, or %NULL for a shape
+ *   that does not move anything yet
+ * @n_floats: length of @offsets: twice the vertex count (ignored when
+ *   @offsets is %NULL)
+ *
+ * Adds a blend shape (a morph target): a named set of per-vertex offsets
+ * mixed into the bind positions by the shape's weight before skinning,
+ * so a shape follows the bones.  A shape with the same name is replaced
+ * in place (its weight and position in the list are kept).  New shapes
+ * start at weight 0.  Vertices added later get a zero offset in every
+ * shape.
+ *
+ * Returns: %TRUE on success, %FALSE if @name is empty, @n_floats is not
+ *   twice the vertex count or an offset is not finite
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_skinned_sprite_add_shape (LrgSkinnedSprite *self,
+                                       const gchar      *name,
+                                       const gfloat     *offsets,
+                                       guint             n_floats);
+
+/**
+ * lrg_skinned_sprite_remove_shape:
+ * @self: an #LrgSkinnedSprite
+ * @name: a shape name
+ *
+ * Removes a blend shape.  Later shapes move down one index.
+ *
+ * Returns: %TRUE if the shape existed
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_skinned_sprite_remove_shape (LrgSkinnedSprite *self,
+                                          const gchar      *name);
+
+/**
+ * lrg_skinned_sprite_get_shape_count:
+ * @self: an #LrgSkinnedSprite
+ *
+ * Returns: the number of blend shapes
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_skinned_sprite_get_shape_count (LrgSkinnedSprite *self);
+
+/**
+ * lrg_skinned_sprite_get_shape_name:
+ * @self: an #LrgSkinnedSprite
+ * @index: a shape index, in the order the shapes were added
+ *
+ * Returns: (nullable): the shape name, or %NULL for an invalid @index
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_skinned_sprite_get_shape_name (LrgSkinnedSprite *self,
+                                                 guint             index);
+
+/**
+ * lrg_skinned_sprite_find_shape:
+ * @self: an #LrgSkinnedSprite
+ * @name: a shape name
+ *
+ * Returns: the index of the shape, or -1 if the sprite has none of that
+ *   name
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gint lrg_skinned_sprite_find_shape (LrgSkinnedSprite *self,
+                                    const gchar      *name);
+
+/**
+ * lrg_skinned_sprite_get_shape_offsets:
+ * @self: an #LrgSkinnedSprite
+ * @name: a shape name
+ * @n_floats: (out) (optional): number of floats returned (2 per vertex)
+ *
+ * The offsets of a shape, `(dx, dy)` per vertex.
+ *
+ * Returns: (array length=n_floats) (transfer none) (nullable): the
+ *   offsets, valid until the mesh or the shape changes, or %NULL if
+ *   there is no such shape
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+const gfloat * lrg_skinned_sprite_get_shape_offsets (LrgSkinnedSprite *self,
+                                                     const gchar      *name,
+                                                     guint            *n_floats);
+
+/**
+ * lrg_skinned_sprite_set_shape_weight:
+ * @self: an #LrgSkinnedSprite
+ * @name: a shape name
+ * @weight: the weight: 0 leaves the mesh alone, 1 applies the full
+ *   offsets; other values scale them (the sprite does not clamp, a
+ *   skeleton clamps slot weights to 0 .. 1)
+ *
+ * Sets how much of a shape lrg_skinned_sprite_deform() mixes in.  A name
+ * the sprite does not have is ignored, so one animation can drive sprites
+ * that implement only part of the shape sheet.  Non-finite weights are
+ * ignored.
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_skinned_sprite_set_shape_weight (LrgSkinnedSprite *self,
+                                          const gchar      *name,
+                                          gfloat            weight);
+
+/**
+ * lrg_skinned_sprite_get_shape_weight:
+ * @self: an #LrgSkinnedSprite
+ * @name: a shape name
+ *
+ * Returns: the shape's weight, or 0 if the sprite has no such shape
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_skinned_sprite_get_shape_weight (LrgSkinnedSprite *self,
+                                            const gchar      *name);
 
 /* ------------------------------------------------------------------ */
 /* Texture                                                             */
@@ -454,6 +595,10 @@ gboolean lrg_skinned_sprite_get_region (LrgSkinnedSprite *self,
  * lrg_skinned_sprite_get_deformed() and drawn by
  * lrg_skinned_sprite_draw().  Influences naming a bone outside the
  * palette are skipped and the rest renormalised.
+ *
+ * Blend shapes come first: every vertex's bind position becomes
+ * `v + sum (weight * offset)` over the shapes with a non-zero weight,
+ * and that morphed position is what the bones then move.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_skinned_sprite_deform (LrgSkinnedSprite *self,

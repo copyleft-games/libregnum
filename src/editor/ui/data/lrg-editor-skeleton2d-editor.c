@@ -1270,6 +1270,28 @@ sprite_rebuild (LrgSkinnedSprite *src,
 		if (nw > 0 && idx >= 0)
 			lrg_skinned_sprite_set_weights (dst, (guint) idx, nw, b, w);
 	}
+	/* blend shapes follow the kept vertices (in order, minus @skip);
+	 * vertices added to the copy later start at a zero offset */
+	for (i = 0; i < lrg_skinned_sprite_get_shape_count (src); i++)
+	{
+		const gchar       *name = lrg_skinned_sprite_get_shape_name (src, i);
+		guint              nf = 0;
+		const gfloat      *off = lrg_skinned_sprite_get_shape_offsets (src, name, &nf);
+		guint              nd = lrg_skinned_sprite_get_vertex_count (dst);
+		g_autofree gfloat *kept = g_new0 (gfloat, (gsize) nd * 2 + 1);
+		guint              j, o = 0;
+
+		for (j = 0; j < n && j * 2 + 1 < nf && o < nd; j++)
+		{
+			if ((gint) j == skip)
+				continue;
+			kept[o * 2] = off[j * 2];
+			kept[o * 2 + 1] = off[j * 2 + 1];
+			o++;
+		}
+		lrg_skinned_sprite_add_shape (dst, name, kept, nd * 2);
+		lrg_skinned_sprite_set_shape_weight (dst, name, lrg_skinned_sprite_get_shape_weight (src, name));
+	}
 	if (tris != NULL)
 	{
 		for (i = 0; i + 2 < tris->len; i += 3)
