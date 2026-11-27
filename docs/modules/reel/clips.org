@@ -176,6 +176,7 @@ or push/pop offsets.
 - =lrg_reel_clip_is_active_at()= accepts parent-relative frames, not absolute
   frames.  When querying from outside a render context, pass an absolute frame
   only if the clip is a direct child of the reel (no intermediate sequence).
+- A clip's =render= must not write to state kept on the clip object, its effects or its transitions. =lrg_reel_renderer_render_parallel()= renders different frames of the same clip objects on several threads at once, so a canvas, cache or counter stored on the object is drawn into by every worker. Keep per-frame buffers in locals (allocate and free them inside =render=), or derive them from the =LrgReelContext= you are given; that context belongs to one renderer, and therefore to one thread. The built-in transition series takes its two overlap buffers from the context for this reason ([[file:rendering.org::#parallel-rendering][Parallel rendering]]).
 
 ** Per-clip transform
 :PROPERTIES:
