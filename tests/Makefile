@@ -549,6 +549,7 @@ BUILD_SYSTEM_SCRIPTS := \
 	$(CURDIR)/test-mkapk.sh \
 	$(CURDIR)/test-apk-device.sh \
 	$(CURDIR)/test-emulator-args.sh \
+	$(CURDIR)/test-pipefail-pipes.sh \
 	$(CURDIR)/test-shader-glsl.sh \
 	$(CURDIR)/test-check-glsl.sh \
 	$(PROJECT_ROOT)/build-aux/check-glsl.sh \
@@ -567,6 +568,7 @@ check-build-system:
 	@bash $(CURDIR)/test-build-dispatch.sh
 	@bash $(CURDIR)/test-mkapk.sh
 	@bash $(CURDIR)/test-emulator-args.sh
+	@bash $(CURDIR)/test-pipefail-pipes.sh $(PROJECT_ROOT)
 
 # build-aux/check-glsl.sh, the shader checker consumers run on their own
 # shader files; its compile cases skip without glslangValidator

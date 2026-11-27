@@ -67,7 +67,9 @@ lrg_dnf_install_optional () {
 
 	for package in "$@"
 	do
-		if dnf -q repoquery --available "${package}" 2>/dev/null | grep -q .
+		# The output is read whole, not piped into grep -q: an early exit
+		# would kill dnf with SIGPIPE and pipefail would call it missing
+		if [[ -n "$(dnf -q repoquery --available "${package}" 2>/dev/null)" ]]
 		then
 			present+=("${package}")
 		else
