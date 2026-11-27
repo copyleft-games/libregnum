@@ -697,10 +697,15 @@ lrg_sdf3_soft_shadow (LrgSdf3Func  func,
 		 * size of the gap, scaled by the hardness.  An occluder placed
 		 * before tmin is the surface the ray starts from (a ray
 		 * leaving a plane triangulates to its own origin): there the
-		 * plain estimate k h / t is used instead.
+		 * plain estimate k h / t is used instead.  So is a step where
+		 * the distance grew by more than twice the previous one
+		 * (y >= h): that cannot happen in an exact field, but it does
+		 * in the estimates most scenes use (ellipsoids, smooth blends,
+		 * displacement, bounding-volume shortcuts), and the
+		 * triangulation would then give d = 0, a false full shadow.
 		 */
 		y = h * h / (2.0f * ph);
-		if (t - y > tmin)
+		if (t - y > tmin && y < h)
 		{
 			d = sqrtf (MAX (h * h - y * y, 0.0f));
 			res = MIN (res, k * d / (t - y));

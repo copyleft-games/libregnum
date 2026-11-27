@@ -176,6 +176,10 @@ See the [[file:quickstart.org][Quickstart Guide]] for more detailed examples.
 - *[[file:modules/music/import.org][Song import]]* - =examples/song-import= turns a recording into an editable =.rsong= (tempo, bars, sections, key, optional transcription)
 - *[[file:examples/physics-sandbox.org][Physics Sandbox]]* - 3D physics from components: stacks, ramps, a ragdoll, a joint chain, a breakable wall, a cloth flag, CCD shots, debug draw toggles
 - *[[file:examples/game-showcase-3d.org][3D Showcase]]* - One program for a 0.9.0 level plus physics, nav, a clip, streaming cells and a UI animation (=--self-test= is headless)
+- *[[file:guides/image-cookbook.org][Image cookbook]]* - Twelve headless reference scenes (=examples/cookbook=): quality canvas, supersampling, HDR shading with SDFs and band-limited noise, the CPU post stack, tone maps and checked layouts
+- *[[file:examples/image-quality-showcase.org][Image Quality Showcase]]* - The same scene with a plain canvas and with the quality preset, 3x supersampling and the CPU post stack, side by side
+- *[[file:examples/sdf-portrait.org][SDF Portrait]]* - A character bust from smooth-blended SDF primitives, raymarched into an HDR canvas with soft shadow, AO, rim light and band-limited fBm textures
+- *[[file:examples/frame-layout-poster.org][Frame Layout Poster]]* - A poster placed with LrgFrameLayout and a safe area, validated before drawing, with a debug-box overlay
 - *[[file:CHANGELOG.org][Changelog]]* - Release notes, including what 0.9.0 ships and what it leaves partial
 - *[[file:examples/ui-studio.org][UI Studio]]* - A docked tool application loaded from YAML: menu bar, 3D viewport, node graph, a timeline whose curves animate the scene, script editor, console, global shortcuts, theme switching and a dock layout saved as YAML
 - *[[file:examples/ui-theme-editor.org][UI Theme Editor]]* - Live theme designer: palette generation from an accent with tint and depth, all 27 colour roles and metrics, a live widget preview, WCAG contrast badges with auto-fix, YAML export
@@ -271,6 +275,7 @@ User shaders are =.rshader= assets ([[file:modules/graphics/shader-asset.org][Lr
 - [[file:guides/template-best-practices.org][Template Best Practices]] - Coordinate spaces, async resize, common pitfalls
 - [[file:guides/2d.org][2D games]] - Tileset assets, rule tiles, isometric/hexagonal maps, .rsprite frame animations, 2D lights with shadows
 - [[file:guides/writing-a-data-format.org][Writing a Data Format]] - Composite YAML formats on LrgDataLoader: types, references, strict validation, writers, tests
+- [[file:guides/image-cookbook.org][Image cookbook]] - Polished still images on the CPU: the two recipes (supersampled canvas; HDR shade, post stack, tone map), checked layouts, twelve reference scenes, pitfalls (moire, thin detail under the tone map) and headless GPU
 
 *** UI Framework
 :PROPERTIES:

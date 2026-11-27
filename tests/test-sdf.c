@@ -777,6 +777,35 @@ test_sdf3_soft_shadow (void)
 	                   ==, 1.0f);
 }
 
+/*
+ * A distance estimate that is not a true distance: 0.1 everywhere
+ * below y = 0.9 and 0.25 above (a jump, as a bounding-volume shortcut
+ * or a non-exact blend produces).  Nothing is ever closer than 0.1.
+ */
+static gfloat
+scene_jump (const gfloat p[3],
+            gpointer     user_data)
+{
+	return p[1] < 0.9f ? 0.1f : 0.25f;
+}
+
+static void
+test_sdf3_soft_shadow_estimate (void)
+{
+	gfloat ro[3] = { 0.0f, 0.0f, 0.0f };
+	gfloat up[3] = { 0.0f, 1.0f, 0.0f };
+	gfloat s;
+
+	/*
+	 * The step at y = 0.9 more than doubles the distance; triangulating
+	 * it gave d = 0, a full shadow.  Now it falls back to k h / t, so
+	 * the result is the plain estimate's minimum, k * 0.1 / 0.9.
+	 */
+	s = lrg_sdf3_soft_shadow (scene_jump, NULL, ro, up, 0.01f, 2.0f, 8.0f);
+	g_assert_cmpfloat (s, >, 0.5f);
+	g_assert_cmpfloat (s, <=, 1.0f);
+}
+
 static void
 test_sdf3_ambient_occlusion (void)
 {
@@ -1089,6 +1118,7 @@ main (int   argc,
 	g_test_add_func ("/sdf/scene/normal", test_sdf3_normal);
 	g_test_add_func ("/sdf/scene/raymarch", test_sdf3_raymarch);
 	g_test_add_func ("/sdf/scene/soft-shadow", test_sdf3_soft_shadow);
+	g_test_add_func ("/sdf/scene/soft-shadow-estimate", test_sdf3_soft_shadow_estimate);
 	g_test_add_func ("/sdf/scene/ambient-occlusion", test_sdf3_ambient_occlusion);
 	g_test_add_func ("/sdf/non-finite", test_sdf_non_finite);
 	g_test_add_func ("/sdf/canvas/fill-coverage", test_fill_sdf_coverage);

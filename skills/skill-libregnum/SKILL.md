@@ -10,8 +10,9 @@ description: >
   or worlds for a libregnum game, authoring engine assets in the editor
   (materials, animation, physics, navigation, AI, VFX, terrain, audio,
   2D, visual scripts), composing songs (.rsong) or sound effects
-  (.rfoley), controlling or scripting the editor, or hacking on the
-  libregnum codebase itself.
+  (.rfoley), generating still images (posters, portraits, thumbnails,
+  reel frames) with the image or HDR canvas, controlling or scripting
+  the editor, or hacking on the libregnum codebase itself.
 ---
 
 # Skill: libregnum
@@ -27,6 +28,7 @@ libregnum is a GObject-based game engine in C (gnu89) built on graylib (a GObjec
 - `references/formats.md`: engine YAML formats (.rmat, .ranim, .rbt, .rnav, .rparticles, .rsong, .rfoley, ...)
 - `references/music.md`: composing songs and sound effects through the editor (song.*, foley.*): discovery, `song.apply` batches, mixing by render numbers, export
 - `references/cross-targets.md`: building and testing for Windows, Linux aarch64 and Android (build containers, profiles, APKs) and the rules that keep the native build unchanged
+- `references/image-quality.md`: generating polished still images on the CPU (quality canvas and supersampling, HDR shading with SDFs and band-limited noise, the CPU post stack and tone maps, `LrgFrameLayout` checks), checklists and snippets; the reference scenes are `examples/cookbook/`
 
 ## When to Use
 
