@@ -145,7 +145,9 @@ EXAMPLES += mmo-server mmo-zone-worker
 endif
 EXAMPLES += example-chart-2d example-chart-3d
 EXAMPLES += game-chair-simulator
-EXAMPLES += reel-hello reel-showcase
+EXAMPLES += reel-hello reel-showcase reel-captions-demo
+EXAMPLES += skeleton2d-talking-head skeleton2d-shape-sheet
+EXAMPLES += cookbook image-quality-showcase sdf-portrait frame-layout-poster
 EXAMPLES += synthwave-song song-render song-import
 EXAMPLES += ui-showcase game-ui-menu ui-theme-editor ui-studio ui-dnd ui-property-grid level-3d-runtime pbr-showcase physics-sandbox game-showcase-3d
 
@@ -387,6 +389,29 @@ $(EXAMPLES_BUILDDIR)/reel-showcase$(EXE_EXT): reel-showcase.c | $(EXAMPLES_BUILD
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
+# Title sequence exercising the 0.13.5-0.13.9 reel fixes (blending, text
+# alignment, parallel transitions, encoder fallback, raw-frame export)
+$(EXAMPLES_BUILDDIR)/reel-captions-demo$(EXE_EXT): reel-captions-demo.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+# Image-quality cookbook (docs/guides/image-cookbook.org): twelve headless
+# reference scenes in one shared source, which tests/test-cookbook.c also
+# compiles, plus the program that writes them as PNGs.
+COOKBOOK_SOURCES := cookbook/cookbook.c cookbook/lrg-cookbook-scenes.c
+$(EXAMPLES_BUILDDIR)/cookbook$(EXE_EXT): $(COOKBOOK_SOURCES) cookbook/lrg-cookbook-scenes.h | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$(COOKBOOK_SOURCES))
+	@$(CC) $(EXAMPLE_CFLAGS) -std=gnu89 -o $@ $(COOKBOOK_SOURCES) $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+# Image-quality standalone examples (headless; docs/examples/*.org)
+$(EXAMPLES_BUILDDIR)/image-quality-showcase$(EXE_EXT): image-quality-showcase.c | $(EXAMPLES_BUILDDIR)
+	@$(CC) $(EXAMPLE_CFLAGS) -std=gnu89 -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/sdf-portrait$(EXE_EXT): sdf-portrait.c | $(EXAMPLES_BUILDDIR)
+	@$(CC) $(EXAMPLE_CFLAGS) -std=gnu89 -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/frame-layout-poster$(EXE_EXT): frame-layout-poster.c | $(EXAMPLES_BUILDDIR)
+	@$(CC) $(EXAMPLE_CFLAGS) -std=gnu89 -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
 # "Neon Drive": a 2:40 synthwave song built with the music module, rendered
 # and exported to every available audio format (no device, no data files)
 $(EXAMPLES_BUILDDIR)/synthwave-song$(EXE_EXT): synthwave-song.c | $(EXAMPLES_BUILDDIR)
@@ -517,6 +542,19 @@ $(EXAMPLES_BUILDDIR)/video-to-gif$(EXE_EXT): video-to-gif.c | $(EXAMPLES_BUILDDI
 $(EXAMPLES_BUILDDIR)/reel-transition-demo$(EXE_EXT): reel-transition-demo.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+# The skeleton2d examples share the demo character (also compiled into
+# tests/test-skeleton2d-character).
+DEMO_CHARACTER_SRC := skeleton2d/lrg-demo-character.c
+DEMO_CHARACTER_DEPS := $(DEMO_CHARACTER_SRC) skeleton2d/lrg-demo-character.h
+
+$(EXAMPLES_BUILDDIR)/skeleton2d-talking-head$(EXE_EXT): skeleton2d-talking-head.c $(DEMO_CHARACTER_DEPS) | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -std=gnu89 -o $@ $< $(DEMO_CHARACTER_SRC) $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/skeleton2d-shape-sheet$(EXE_EXT): skeleton2d-shape-sheet.c $(DEMO_CHARACTER_DEPS) | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -std=gnu89 -o $@ $< $(DEMO_CHARACTER_SRC) $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR):
 	@$(MKDIR_P) $@

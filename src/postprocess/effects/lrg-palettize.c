@@ -14,6 +14,7 @@
 #include <rlgl.h>
 #include "core/lrg-prewarm.h"
 #include "graphics/lrg-glsl-private.h"
+#include "postprocess/lrg-post-cpu-private.h"
 
 /**
  * SECTION:lrg-palettize
@@ -345,6 +346,46 @@ lrg_palettize_real_apply (LrgPostEffect *effect,
         grl_shader_end (shader);
 }
 
+/*
+ * lrg_palettize_real_apply_cpu: the fragment shader per pixel;
+ * lrg_palettize_apply_rgb() is its arithmetic. The dither cell is the
+ * shader's floor(gl_FragCoord.xy / ditherScale): gl_FragCoord counts
+ * rows from the bottom, so pixel (x, y) of the top-down buffer is
+ * fragment (x + 0.5, height - y - 0.5), and the pattern lands on the
+ * same screen pixels as on the GPU.
+ */
+static gboolean
+lrg_palettize_real_apply_cpu (LrgPostEffect *effect,
+                              gfloat        *rgba,
+                              guint          width,
+                              guint          height,
+                              gfloat         time)
+{
+    LrgPalettize *self = LRG_PALETTIZE (effect);
+    gfloat scale;
+    guint x;
+    guint y;
+
+    (void)time;
+
+    if (lrg_palettize_is_identity (self))
+        return TRUE;
+    scale = MAX (self->dither_scale, 1.0f);
+    for (y = 0; y < height; y++)
+    {
+        guint cy = (guint)floorf (((gfloat)height - (gfloat)y - 0.5f) / scale);
+
+        for (x = 0; x < width; x++)
+        {
+            gfloat *p = rgba + ((gsize)y * width + x) * 4;
+            guint cx = (guint)floorf (((gfloat)x + 0.5f) / scale);
+
+            lrg_palettize_apply_rgb (self, cx, cy, p, p);
+        }
+    }
+    return TRUE;
+}
+
 static const gchar *
 lrg_palettize_real_get_name (LrgPostEffect *effect)
 {
@@ -434,6 +475,7 @@ lrg_palettize_class_init (LrgPalettizeClass *klass)
     effect_class->initialize = lrg_palettize_real_initialize;
     effect_class->shutdown = lrg_palettize_real_shutdown;
     effect_class->apply = lrg_palettize_real_apply;
+    effect_class->apply_cpu = lrg_palettize_real_apply_cpu;
     effect_class->resize = lrg_palettize_real_resize;
     effect_class->get_name = lrg_palettize_real_get_name;
 

@@ -94,16 +94,22 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-light-set.h \
 	src/graphics/lrg-uv-unwrap.h \
 	src/graphics/lrg-skinned-sprite.h \
+	src/graphics/lrg-image-raster.h \
 	src/graphics/lrg-material.h \
 	src/graphics/lrg-shader-asset.h \
 	src/graphics/lrg-shader-graph.h \
 	src/graphics/lrg-hdr-image.h \
+	src/graphics/lrg-hdr-canvas.h \
+	src/graphics/lrg-image-resample.h \
+	src/graphics/lrg-frame-layout.h \
 	src/graphics/lrg-depth-prepass.h \
 	src/graphics/lrg-ssao.h \
 	src/graphics/lrg-decal.h \
 	src/graphics/lrg-mesh-simplify.h \
 	src/graphics/lrg-lod-group.h \
 	src/graphics/lrg-texture-sampling.h \
+	src/shading/lrg-sdf.h \
+	src/shading/lrg-noise.h \
 	src/ecs/lrg-component.h \
 	src/ecs/lrg-game-object.h \
 	src/ecs/lrg-world.h \
@@ -590,6 +596,7 @@ PUBLIC_HEADERS := \
 	src/postprocess/effects/lrg-palettize.h \
 	src/postprocess/effects/lrg-fxaa.h \
 	src/postprocess/effects/lrg-tonemap.h \
+	src/postprocess/effects/lrg-blur.h \
 	src/animation/lrg-bone-pose.h \
 	src/animation/lrg-bone.h \
 	src/animation/lrg-skeleton.h \
@@ -599,6 +606,9 @@ PUBLIC_HEADERS := \
 	src/animation/lrg-sequence.h \
 	src/animation/lrg-sequence-player.h \
 	src/animation/lrg-skeleton2d.h \
+	src/animation/lrg-shape-sheet.h \
+	src/animation/lrg-lip-sync.h \
+	src/animation/lrg-skeleton2d-procedural.h \
 	src/animation/lrg-animation-keyframe.h \
 	src/animation/lrg-animation-event.h \
 	src/animation/lrg-animation-clip.h \
@@ -733,6 +743,7 @@ PUBLIC_HEADERS := \
 	src/reel/lrg-reel-audio-analysis.h \
 	src/reel/lrg-reel-video-source.h \
 	src/reel/lrg-reel-video-clip.h \
+	src/reel/lrg-reel-skeleton2d-clip.h \
 	src/reel/lrg-reel-effect.h \
 	src/reel/lrg-reel-blur-effect.h \
 	src/reel/lrg-reel-bloom-effect.h \
@@ -934,16 +945,22 @@ SOURCES := \
 	src/graphics/lrg-light-set.c \
 	src/graphics/lrg-uv-unwrap.c \
 	src/graphics/lrg-skinned-sprite.c \
+	src/graphics/lrg-image-raster.c \
 	src/graphics/lrg-material.c \
 	src/graphics/lrg-shader-asset.c \
 	src/graphics/lrg-shader-graph.c \
 	src/graphics/lrg-hdr-image.c \
+	src/graphics/lrg-hdr-canvas.c \
+	src/graphics/lrg-image-resample.c \
+	src/graphics/lrg-frame-layout.c \
 	src/graphics/lrg-depth-prepass.c \
 	src/graphics/lrg-ssao.c \
 	src/graphics/lrg-decal.c \
 	src/graphics/lrg-mesh-simplify.c \
 	src/graphics/lrg-lod-group.c \
 	src/graphics/lrg-texture-sampling.c \
+	src/shading/lrg-sdf.c \
+	src/shading/lrg-noise.c \
 	src/ecs/lrg-component.c \
 	src/ecs/lrg-game-object.c \
 	src/ecs/lrg-world.c \
@@ -1440,6 +1457,7 @@ SOURCES := \
 	src/postprocess/effects/lrg-palettize.c \
 	src/postprocess/effects/lrg-fxaa.c \
 	src/postprocess/effects/lrg-tonemap.c \
+	src/postprocess/effects/lrg-blur.c \
 	src/animation/lrg-bone-pose.c \
 	src/animation/lrg-bone.c \
 	src/animation/lrg-skeleton.c \
@@ -1449,6 +1467,9 @@ SOURCES := \
 	src/animation/lrg-sequence.c \
 	src/animation/lrg-sequence-player.c \
 	src/animation/lrg-skeleton2d.c \
+	src/animation/lrg-shape-sheet.c \
+	src/animation/lrg-lip-sync.c \
+	src/animation/lrg-skeleton2d-procedural.c \
 	src/animation/lrg-animation-keyframe.c \
 	src/animation/lrg-animation-event.c \
 	src/animation/lrg-animation-clip.c \
@@ -1584,6 +1605,7 @@ SOURCES := \
 	src/reel/lrg-reel-audio-analysis.c \
 	src/reel/lrg-reel-video-source.c \
 	src/reel/lrg-reel-video-clip.c \
+	src/reel/lrg-reel-skeleton2d-clip.c \
 	src/reel/lrg-reel-effect.c \
 	src/reel/lrg-reel-blur-effect.c \
 	src/reel/lrg-reel-bloom-effect.c \
@@ -2855,6 +2877,14 @@ else
 	$(call print_warning,"Examples disabled (BUILD_EXAMPLES=0)")
 endif
 
+# Builds the examples and runs the ones that render without a display at a
+# small size into temp dirs, checking what they write (tests/test-examples-
+# smoke.sh; DISPLAY and WAYLAND_DISPLAY are unset for every run).
+.PHONY: test-examples
+test-examples: examples
+	$(call print_status,"Running example smoke tests...")
+	@tests/test-examples-smoke.sh examples/$(BUILDDIR)/examples
+
 # =============================================================================
 # lrgldr (generic game-module loader/runner)
 # =============================================================================
@@ -3093,12 +3123,13 @@ DOCS_CHECK_HEADERS := src/scripting/lrg-script-debugger.h src/scripting/lrg-scri
 	$(wildcard src/world3d/components/*.h) \
 	src/core/lrg-asset-meta.h src/core/lrg-pack-writer.h src/core/lrg-asset-manager.h \
 	$(wildcard src/ai/*.h) \
-	src/graphics/lrg-light-set.h src/scene/lrg-material3d.h src/postprocess/lrg-post-processor.h src/postprocess/lrg-post-effect.h \
+	src/graphics/lrg-light-set.h src/scene/lrg-material3d.h src/postprocess/lrg-post-processor.h src/postprocess/lrg-post-effect.h src/postprocess/effects/lrg-blur.h \
 	src/pathfinding/lrg-nav-bake.h src/pathfinding/lrg-nav-agent.h src/ai/lrg-bt-asset.h src/ai/lrg-logic-machine.h src/particles/lrg-particle-asset.h src/particles/lrg-particle-ribbon-renderer.h src/particles/lrg-particle-mesh-renderer.h src/particles/lrg-gpu-particles.h src/core/lrg-color-gradient.h src/weather/lrg-weather-asset.h src/graphics/lrg-terrain-asset.h src/graphics/lrg-terrain-brush.h src/graphics/lrg-foliage.h src/graphics/lrg-water-body.h src/audio/lrg-mixer-asset.h src/tilemap/lrg-rule-tile.h src/atlas/lrg-sprite-animation.h src/world3d/components/lrg-nav-agent-component.h src/world3d/components/lrg-ai-component.h src/world3d/components/lrg-particle-component.h src/world3d/components/lrg-terrain-component.h src/world3d/components/lrg-foliage-component.h src/world3d/components/lrg-water-component.h \
 	src/tilemap/lrg-tiled-map.h $(wildcard src/worldui/*.h) src/pathfinding/lrg-actor-mover.h $(wildcard src/stage/*.h) src/graphics/lrg-beam.h $(filter-out %-private.h,$(wildcard src/remote/*.h)) src/atlas/lrg-sprite-sheet-builder.h \
 	src/physics/lrg-dynamics.h src/physics/lrg-physics-shape.h src/physics/lrg-collide.h src/physics/lrg-broadphase.h src/physics/lrg-physics-layers.h src/physics/lrg-contact-solver.h src/physics/lrg-island.h src/physics/lrg-joint.h src/physics/lrg-ragdoll.h src/physics/lrg-cloth.h src/physics/lrg-fracture.h src/world3d/components/lrg-rigid-body-component.h src/world3d/components/lrg-collider-component3d.h src/world3d/components/lrg-joint-component.h src/world3d/components/lrg-cloth-component.h src/world3d/components/lrg-destructible-component.h \
-	src/lighting/lrg-lightmap3d.h src/lighting/lrg-probe-grid.h src/lighting/lrg-lightmap-baker.h src/lighting/lrg-bake-bvh.h src/graphics/lrg-uv-unwrap.h src/graphics/lrg-skinned-sprite.h src/animation/lrg-gltf-animation.h src/animation/lrg-retargeter.h src/animation/lrg-anim-graph.h src/animation/lrg-sequence.h src/animation/lrg-sequence-player.h src/animation/lrg-skeleton2d.h src/world3d/components/lrg-animator-component3d.h src/world3d/components/lrg-sequence-component.h src/ecs/components/lrg-skeleton2d-component.h \
-	src/graphics/lrg-material.h src/graphics/lrg-shader-asset.h src/graphics/lrg-shader-graph.h src/graphics/lrg-hdr-image.h src/graphics/lrg-depth-prepass.h src/graphics/lrg-ssao.h src/graphics/lrg-decal.h src/graphics/lrg-mesh-simplify.h src/graphics/lrg-lod-group.h src/lighting/lrg-environment.h src/lighting/lrg-reflection-probe.h src/lighting/lrg-volumetric-fog.h src/postprocess/lrg-post-stack.h src/world3d/components/lrg-decal-component.h src/world3d/components/lrg-lod-component.h
+	src/lighting/lrg-lightmap3d.h src/lighting/lrg-probe-grid.h src/lighting/lrg-lightmap-baker.h src/lighting/lrg-bake-bvh.h src/graphics/lrg-uv-unwrap.h src/graphics/lrg-skinned-sprite.h src/graphics/lrg-image-raster.h src/reel/lrg-reel-skeleton2d-clip.h src/animation/lrg-gltf-animation.h src/animation/lrg-retargeter.h src/animation/lrg-anim-graph.h src/animation/lrg-sequence.h src/animation/lrg-sequence-player.h src/animation/lrg-skeleton2d.h src/world3d/components/lrg-animator-component3d.h src/world3d/components/lrg-sequence-component.h src/ecs/components/lrg-skeleton2d-component.h \
+	src/graphics/lrg-material.h src/graphics/lrg-shader-asset.h src/graphics/lrg-shader-graph.h src/graphics/lrg-hdr-image.h src/graphics/lrg-hdr-canvas.h src/graphics/lrg-image-resample.h src/graphics/lrg-frame-layout.h src/graphics/lrg-depth-prepass.h src/graphics/lrg-ssao.h src/graphics/lrg-decal.h src/graphics/lrg-mesh-simplify.h src/graphics/lrg-lod-group.h src/lighting/lrg-environment.h src/lighting/lrg-reflection-probe.h src/lighting/lrg-volumetric-fog.h src/postprocess/lrg-post-stack.h src/world3d/components/lrg-decal-component.h src/world3d/components/lrg-lod-component.h \
+	src/shading/lrg-sdf.h src/shading/lrg-noise.h
 
 docs-check:
 	@build-aux/docs-check.sh -d docs $(DOCS_CHECK_HEADERS)

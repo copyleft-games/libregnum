@@ -93,6 +93,7 @@
 #include "graphics/lrg-camera-zoom.h"
 #include "graphics/lrg-renderer.h"
 #include "graphics/lrg-image-canvas.h"
+#include "graphics/lrg-image-raster.h"
 #include "graphics/lrg-vector-image.h"
 #include "graphics/lrg-gltf-info.h"
 #include "graphics/lrg-dds-image.h"
@@ -126,12 +127,19 @@
 #include "graphics/lrg-shader-asset.h"
 #include "graphics/lrg-shader-graph.h"
 #include "graphics/lrg-hdr-image.h"
+#include "graphics/lrg-hdr-canvas.h"
+#include "graphics/lrg-image-resample.h"
+#include "graphics/lrg-frame-layout.h"
 #include "graphics/lrg-depth-prepass.h"
 #include "graphics/lrg-ssao.h"
 #include "graphics/lrg-decal.h"
 #include "graphics/lrg-mesh-simplify.h"
 #include "graphics/lrg-lod-group.h"
 #include "graphics/lrg-texture-sampling.h"
+
+/* CPU shading: signed distance functions and band-limited noise */
+#include "shading/lrg-sdf.h"
+#include "shading/lrg-noise.h"
 #include "imageedit/lrg-image-layer.h"
 #include "imageedit/lrg-image-document.h"
 
@@ -840,6 +848,7 @@
 #include "postprocess/effects/lrg-palettize.h"
 #include "postprocess/effects/lrg-fxaa.h"
 #include "postprocess/effects/lrg-tonemap.h"
+#include "postprocess/effects/lrg-blur.h"
 
 /* Animation module (Phase 3) */
 #include "animation/lrg-bone-pose.h"
@@ -851,6 +860,9 @@
 #include "animation/lrg-sequence.h"
 #include "animation/lrg-sequence-player.h"
 #include "animation/lrg-skeleton2d.h"
+#include "animation/lrg-shape-sheet.h"
+#include "animation/lrg-lip-sync.h"
+#include "animation/lrg-skeleton2d-procedural.h"
 #include "animation/lrg-animation-keyframe.h"
 #include "animation/lrg-animation-event.h"
 #include "animation/lrg-animation-clip.h"
@@ -1010,6 +1022,7 @@
 #include "reel/lrg-reel-audio-analysis.h"
 #include "reel/lrg-reel-video-source.h"
 #include "reel/lrg-reel-video-clip.h"
+#include "reel/lrg-reel-skeleton2d-clip.h"
 #include "reel/lrg-reel-effect.h"
 #include "reel/lrg-reel-blur-effect.h"
 #include "reel/lrg-reel-bloom-effect.h"

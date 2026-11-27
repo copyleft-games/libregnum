@@ -168,11 +168,18 @@ See the [[file:quickstart.org][Quickstart Guide]] for more detailed examples.
 - *[[file:examples/editor-custom-panel.org][Editor Custom Panel]]* - Embedding lrgeditor: a custom dock panel (level stats), a custom action with a shortcut and a Tools menu entry, through the 0.8.1 embedding API
 - *[[file:examples/level-3d-runtime.org][Level 3D Runtime]]* - A standalone game playing an lrgeditor level with LrgWorld3D and LrgWorld3DRenderer
 - *[[file:examples/pbr-showcase.org][PBR Showcase]]* - Every 0.9.0 rendering feature in one level: environment/IBL, .rmat materials, spot/point shadows, decal, reflection probe, LOD, .rpost, with toggles
+- *[[file:examples/reel-captions-demo.org][Reel Captions Demo]]* - A 720p title sequence with translucent caption bands, glass and haze, anchored titles, a dissolve and an iris, rendered on every core and exported to H.264 with whatever encoder ffmpeg can run
+- *[[file:examples/skeleton2d-talking-head.org][Skeleton2D Talking Head]]* - A 2D character built in code lip-syncs a phoneme alignment, blinks, breathes and changes mood, rendered headless on the CPU to PNG frames and an MP4
+- *[[file:examples/skeleton2d-shape-sheet.org][Skeleton2D Shape Sheet]]* - A labelled contact sheet of every shape of the standard 2D shape sheet (visemes, eyes, brows, moods, body) on that character
 - *[[file:examples/synthwave-song.org][Synthwave Song]]* - "Neon Drive", a 2:40 song made in code with the music module: synths, an 808, a Foley impact, sidechained mix, rendered at -14 LUFS and exported to every audio format
 - *[[file:../examples/data/music/00_index.org][Example songs]]* - nine songs as =.rsong= files (synthwave, chillwave, ambient, outrun, heavy metal, hard rock, doom; 2:30 to 6:00), rendered with =examples/song-render=
 - *[[file:modules/music/import.org][Song import]]* - =examples/song-import= turns a recording into an editable =.rsong= (tempo, bars, sections, key, optional transcription)
 - *[[file:examples/physics-sandbox.org][Physics Sandbox]]* - 3D physics from components: stacks, ramps, a ragdoll, a joint chain, a breakable wall, a cloth flag, CCD shots, debug draw toggles
 - *[[file:examples/game-showcase-3d.org][3D Showcase]]* - One program for a 0.9.0 level plus physics, nav, a clip, streaming cells and a UI animation (=--self-test= is headless)
+- *[[file:guides/image-cookbook.org][Image cookbook]]* - Twelve headless reference scenes (=examples/cookbook=): quality canvas, supersampling, HDR shading with SDFs and band-limited noise, the CPU post stack, tone maps and checked layouts
+- *[[file:examples/image-quality-showcase.org][Image Quality Showcase]]* - The same scene with a plain canvas and with the quality preset, 3x supersampling and the CPU post stack, side by side
+- *[[file:examples/sdf-portrait.org][SDF Portrait]]* - A character bust from smooth-blended SDF primitives, raymarched into an HDR canvas with soft shadow, AO, rim light and band-limited fBm textures
+- *[[file:examples/frame-layout-poster.org][Frame Layout Poster]]* - A poster placed with LrgFrameLayout and a safe area, validated before drawing, with a debug-box overlay
 - *[[file:CHANGELOG.org][Changelog]]* - Release notes, including what 0.9.0 ships and what it leaves partial
 - *[[file:examples/ui-studio.org][UI Studio]]* - A docked tool application loaded from YAML: menu bar, 3D viewport, node graph, a timeline whose curves animate the scene, script editor, console, global shortcuts, theme switching and a dock layout saved as YAML
 - *[[file:examples/ui-theme-editor.org][UI Theme Editor]]* - Live theme designer: palette generation from an accent with tint and depth, all 27 colour roles and metrics, a live widget preview, WCAG contrast badges with auto-fix, YAML export
@@ -268,6 +275,7 @@ User shaders are =.rshader= assets ([[file:modules/graphics/shader-asset.org][Lr
 - [[file:guides/template-best-practices.org][Template Best Practices]] - Coordinate spaces, async resize, common pitfalls
 - [[file:guides/2d.org][2D games]] - Tileset assets, rule tiles, isometric/hexagonal maps, .rsprite frame animations, 2D lights with shadows
 - [[file:guides/writing-a-data-format.org][Writing a Data Format]] - Composite YAML formats on LrgDataLoader: types, references, strict validation, writers, tests
+- [[file:guides/image-cookbook.org][Image cookbook]] - Polished still images on the CPU: the two recipes (supersampled canvas; HDR shade, post stack, tone map), checked layouts, twelve reference scenes, pitfalls (moire, thin detail under the tone map) and headless GPU
 
 *** UI Framework
 :PROPERTIES:

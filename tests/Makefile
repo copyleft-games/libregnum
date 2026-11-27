@@ -111,6 +111,7 @@ TEST_SOURCES := \
 	test-mesh-simplify.c \
 	test-lod.c \
 	test-post-stack.c \
+	test-post-cpu.c \
 	test-render-pipeline.c \
 	test-level-look.c \
 	test-shape.c \
@@ -147,6 +148,8 @@ TEST_SOURCES := \
 	test-anim-graph.c \
 	test-sequence.c \
 	test-skeleton2d.c \
+	test-lip-sync.c \
+	test-skeleton2d-character.c \
 	test-runtime-prefab.c \
 	test-runtime-import-settings.c \
 	test-asset-dependencies.c \
@@ -401,6 +404,13 @@ TEST_SOURCES := \
 	test-font-atlas.c \
 	test-csv.c \
 	test-image-canvas.c \
+	test-sdf.c \
+	test-noise.c \
+	test-image-resample.c \
+	test-hdr-canvas.c \
+	test-frame-layout.c \
+	test-image-raster.c \
+	test-cookbook.c \
 	test-image-document.c \
 	test-vector-image.c \
 	test-reel.c \
@@ -712,6 +722,13 @@ $(TEST_BUILDDIR)/test-%$(EXE_EXT): test-%.c $(GENERATED_HEADERS) | $(TEST_BUILDD
 
 -include $(wildcard $(TEST_BUILDDIR)/*.d)
 
+# The talking-character test builds the demo character shared with the
+# skeleton2d examples (examples/skeleton2d/) into the test binary.
+DEMO_CHARACTER_DIR := ../examples/skeleton2d
+$(TEST_BUILDDIR)/test-skeleton2d-character$(EXE_EXT): test-skeleton2d-character.c $(DEMO_CHARACTER_DIR)/lrg-demo-character.c $(DEMO_CHARACTER_DIR)/lrg-demo-character.h $(GENERATED_HEADERS) | $(TEST_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(TEST_CFLAGS) -I$(DEMO_CHARACTER_DIR) -MMD -MP -MF $@.d -o $@ $< $(DEMO_CHARACTER_DIR)/lrg-demo-character.c $(TEST_LDFLAGS) $(TEST_LIBS)
+
 # The desktop guard every test binary links (see TEST_GUARD_OBJ).
 $(TEST_GUARD_OBJ): lrg-test-guard.c | $(TEST_BUILDDIR)
 	$(call print_compile,$<)
@@ -756,6 +773,13 @@ $(TEST_BUILDDIR)/test-editor-sources: test-editor-sources.c editor-app-fixture.h
 		-DTEST_EDITOR_MODULE_PATH='"$(EDITOR_FIXTURE_SO_ABS)"' \
 		-DTEST_ARGS_MODULE_PATH='"$(FIXTURE_SO_ABS)"' \
 		-o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
+
+# test-cookbook renders the image-quality cookbook scenes, so it compiles
+# their shared source from examples/cookbook/ into the binary.
+COOKBOOK_DIR := ../examples/cookbook
+$(TEST_BUILDDIR)/test-cookbook$(EXE_EXT): test-cookbook.c $(COOKBOOK_DIR)/lrg-cookbook-scenes.c $(COOKBOOK_DIR)/lrg-cookbook-scenes.h $(GENERATED_HEADERS) | $(TEST_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(TEST_CFLAGS) -I$(COOKBOOK_DIR) -MMD -MP -MF $@.d -o $@ $< $(COOKBOOK_DIR)/lrg-cookbook-scenes.c $(TEST_LDFLAGS) $(TEST_LIBS)
 
 # Fixture script loaded by test-scripting-native: prebuilt here as a shared
 # object, and compiled from the same source by the Crispy backend at runtime.

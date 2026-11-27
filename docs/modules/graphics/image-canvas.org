@@ -7,6 +7,51 @@ CPU-side dynamic-texture canvas: wraps a =GrlImage= and exposes a clean,
 engine-level drawing / compositing / transform / blur API, then hands back a
 =GrlTexture= via =lrg_image_canvas_to_texture()=.
 
+** Start here: the quality preset and supersampled export
+:PROPERTIES:
+:CUSTOM_ID: image-canvas-quality
+:END:
+For a finished picture (an illustration, an icon, a generated scene) create the canvas with the quality preset, or supersampled, instead of =lrg_image_canvas_new()=. The plain constructor keeps graylib's pixel-exact defaults - =GRL_IMAGE_BLEND_REPLACE= (a translucent shape overwrites the pixels under it, alpha included, leaving see-through holes), blending in gamma space and aliased edges - which suit texture work but not pictures.
+
+| Constructor | What you get |
+|-------------+--------------|
+| =lrg_image_canvas_new_quality (w, h, bg)= | =lrg_image_canvas_new()= + =lrg_image_canvas_set_quality()=: =GRL_IMAGE_BLEND_OVER=, =GRL_IMAGE_COLOR_SPACE_LINEAR=, anti-aliasing on |
+| =lrg_image_canvas_new_supersampled (w, h, factor, bg)= | a quality canvas of =w x factor= by =h x factor= pixels that remembers =factor=; =lrg_image_canvas_resolve()= returns the =w x h= image |
+
+=lrg_image_canvas_set_quality()= applies the same three settings to any existing canvas; each can still be changed afterwards with =set_blend_mode=, =set_blend_color_space= and =set_antialias=. Linear blending means 50% white over black is the grey the eye expects (sRGB 188), not the dark 128 of gamma-space blending.
+
+Supersampling renders at 2x, 3x or 4x and downsamples once at the end: thin lines, small text, polygon slivers and overlapping translucent shapes all come out smooth, far beyond what per-primitive anti-aliasing manages. =lrg_image_canvas_resolve()= uses =lrg_image_downsample()= ([[file:image-resample.org][image resampling]]): gamma-correct, on premultiplied alpha, with the filter you choose (=LRG_RESAMPLE_FILTER_LANCZOS3= for line art and text, =LRG_RESAMPLE_FILTER_MITCHELL= for soft content, =LRG_RESAMPLE_FILTER_BOX= for a plain average). Do not use =grl_image_resize()= for this: it filters the 8-bit sRGB bytes directly and darkens fine detail.
+
+Coordinates on a supersampled canvas are in the large image's pixels: multiply by =lrg_image_canvas_get_supersample()= (or call =lrg_image_canvas_scale (canvas, f, f)= once, which covers the transform-aware primitives listed under [[#transform-stack][Transform stack]] but not gradients and text). Multiply line thickness and radii as well.
+
+#+begin_src C
+#include <libregnum.h>
+
+int
+main (void)
+{
+	g_autoptr(GrlColor)       bg = grl_color_new (25, 35, 70, 255);
+	g_autoptr(GrlColor)       line = grl_color_new (240, 240, 230, 255);
+	g_autoptr(GrlColor)       glass = grl_color_new (230, 40, 60, 140);
+	g_autoptr(LrgImageCanvas) canvas = NULL;
+	g_autoptr(GrlImage)       final = NULL;
+	gint                      f;
+
+	/* draw at 3x, resolve to 512 x 256 */
+	canvas = lrg_image_canvas_new_supersampled (512, 256, 3, bg);
+	f = (gint) lrg_image_canvas_get_supersample (canvas);
+
+	lrg_image_canvas_draw_line (canvas, 20 * f, 236 * f, 220 * f, 40 * f, 1 * f, line);
+	lrg_image_canvas_fill_circle (canvas, 380 * f, 150 * f, 45 * f, glass);
+	lrg_image_canvas_fill_circle (canvas, 420 * f, 150 * f, 45 * f, glass);
+
+	final = lrg_image_canvas_resolve (canvas, LRG_RESAMPLE_FILTER_LANCZOS3);
+	return grl_image_export (final, "scene.png") ? 0 : 1;
+}
+#+end_src
+
+For light that exceeds white (glows, suns, HDR shading) draw into an [[file:hdr-canvas.org][LrgHdrCanvas]] instead and tone-map it to a =GrlImage=. The [[file:../../guides/image-cookbook.org][image cookbook]] has twelve reference scenes for both paths.
+
 ** Overview
 
 =LrgImageCanvas= is a thin, ergonomic facade over graylib's software rasterizer
@@ -38,6 +83,9 @@ g_autoptr(GrlTexture) tex = lrg_image_canvas_to_texture (canvas); /* needs GL */
 #+end_src
 
 ** Transform stack
+:PROPERTIES:
+:CUSTOM_ID: transform-stack
+:END:
 
 =save= / =restore= push and pop the transform; =translate=, =scale=, =rotate=
 (radians) and =reset_transform= modify the current matrix. Geometry primitives
@@ -62,10 +110,37 @@ pixel operations and are transform-independent by design.
 | Group | Functions |
 |-------+-----------|
 | Construction | =new=, =new_for_image=, =get_image=, =to_texture= |
+| Quality (0.14) | =new_quality=, =set_quality=, =new_supersampled=, =get_supersample=, =resolve= |
 | State | =set_blend_mode=, =set_blend_color_space=, =set_antialias=, =set_clip_rect= |
 | Transform | =save=, =restore=, =translate=, =scale=, =rotate=, =reset_transform= |
 | Draw | =clear=, =fill_circle=, =stroke_circle=, =fill_rect=, =draw_line=, =fill_polygon=, =fill_path=, =stroke_path=, =draw_text=, =draw_gradient_rect=, =draw_gradient_radial= |
+| SDF fill (0.14) | =fill_sdf=, =fill_sdf_rect= ([[#lrg-image-canvas-fill-sdf][below]]) |
 | Composite | =composite=, =apply_mask=, =blur=, =drop_shadow= |
 
 For anything not wrapped here, =lrg_image_canvas_get_image()= returns the
 underlying =GrlImage= (transfer none) for direct graylib calls.
+
+** Signed distance fills
+:PROPERTIES:
+:CUSTOM_ID: lrg-image-canvas-fill-sdf
+:END:
+=lrg_image_canvas_fill_sdf (canvas, func, user_data, color)= fills any shape described by a 2D signed distance field (an =LrgSdf2Func=, see [[file:../shading/sdf.org][signed distance functions]]) with analytic anti-aliasing (since 0.14). The field is evaluated once per pixel centre (x + 0.5, y + 0.5) in image pixel coordinates; the coverage =lrg_sdf2_coverage (d, 1)= (a one-pixel ramp across the edge) scales the colour's alpha, and the pixel is written with =grl_image_draw_pixel()=, so it goes through the canvas's blend mode, clip rectangle and blend colour space. Pixels with no coverage are not touched. =lrg_image_canvas_fill_sdf_rect (canvas, x, y, width, height, func, user_data, color)= evaluates only inside a rectangle (pass the shape's bounding box grown by a pixel); both also skip everything outside the clip rectangle.
+
+#+begin_src C
+static gfloat
+pill (const gfloat p[2], gpointer user_data)
+{
+	gfloat a[2] = { 16.0f, 32.0f };
+	gfloat b[2] = { 48.0f, 32.0f };
+
+	return lrg_sdf2_capsule (p, a, b, 10.5f);
+}
+
+lrg_image_canvas_set_blend_mode (canvas, GRL_IMAGE_BLEND_OVER);
+lrg_image_canvas_set_blend_color_space (canvas, GRL_IMAGE_COLOR_SPACE_LINEAR);
+lrg_image_canvas_fill_sdf_rect (canvas, 4, 20, 56, 24, pill, NULL, white);
+#+end_src
+
+- Use =GRL_IMAGE_BLEND_OVER= (ideally with =GRL_IMAGE_COLOR_SPACE_LINEAR=) for smooth edges over existing content. With the default =GRL_IMAGE_BLEND_REPLACE= the edge pixels *replace* what was there with a partly transparent colour, which is right only on a transparent canvas.
+- The transform stack is *not* applied: the field receives raw image pixel coordinates; transform the point inside your callback.
+- A NaN distance draws nothing; an empty or off-image rectangle draws nothing.

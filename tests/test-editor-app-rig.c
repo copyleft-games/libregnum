@@ -557,6 +557,104 @@ test_rig_mesh_tool (EditorAppFixture *f,
 	g_assert_no_error (error);
 }
 
+/* Mesh edits rebuild the sprite: blend shapes keep the offsets of the
+ * surviving vertices (a new vertex starts at 0, a removed one drops its
+ * offset), and the document stays a version 2 rig with its shape keys. */
+static void
+test_rig_mesh_shapes (EditorAppFixture *f,
+                      gconstpointer     data)
+{
+	static const gchar *rig =
+		"rskel2d: 2\n"
+		"bones:\n"
+		"  - name: upper\n"
+		"    length: 50\n"
+		"slots:\n"
+		"  - name: arm\n"
+		"    bone: upper\n"
+		"    attachment: arm\n"
+		"skins:\n"
+		"  - name: default\n"
+		"    attachments:\n"
+		"      - slot: arm\n"
+		"        name: arm\n"
+		"        vertices:\n"
+		"          - [0, -8, 0, 0]\n"
+		"          - [100, -8, 1, 0]\n"
+		"          - [0, 8, 0, 1]\n"
+		"          - [100, 8, 1, 1]\n"
+		"        triangles:\n"
+		"          - [0, 1, 2]\n"
+		"          - [1, 3, 2]\n"
+		"        shapes:\n"
+		"          - name: squash\n"
+		"            offsets:\n"
+		"              - [1, 0, 3]\n"
+		"              - [3, 0, 4]\n"
+		"animations:\n"
+		"  - name: squish\n"
+		"    duration: 1\n"
+		"    slots:\n"
+		"      - slot: arm\n"
+		"        shapes:\n"
+		"          - shape: squash\n"
+		"            keys:\n"
+		"              - {time: 0, w: 0}\n"
+		"              - {time: 1, w: 1}\n";
+	g_autofree gchar          *path = write_project_file (f, "rigs/squash.rskel2d", rig);
+	g_autoptr(GError)          error = NULL;
+	g_autofree gchar          *text = NULL;
+	LrgEditorSkeleton2DEditor *ed;
+	LrgSkinnedSprite          *sp;
+	const gfloat              *off;
+	guint                      n;
+
+	ed = lrg_editor_skeleton2d_editor_open (f->app, "rigs/squash.rskel2d", &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (ed);
+	efx_frames (f, 2);
+	g_assert_true (lrg_editor_skeleton2d_editor_select_attachment (ed, 0, "arm"));
+
+	/* a fifth vertex: the old offsets stay, the new one is 0 */
+	g_assert_cmpint (lrg_editor_skeleton2d_editor_add_vertex (ed, 50.0f, 0.0f, &error), ==, 4);
+	g_assert_no_error (error);
+	sp = lrg_skeleton2d_get_attachment (lrg_editor_skeleton2d_editor_get_skeleton (ed), 0, "arm");
+	g_assert_cmpuint (lrg_skinned_sprite_get_shape_count (sp), ==, 1);
+	off = lrg_skinned_sprite_get_shape_offsets (sp, "squash", &n);
+	g_assert_cmpuint (n, ==, 10);
+	g_assert_cmpfloat (off[3], ==, 3.0f);
+	g_assert_cmpfloat (off[7], ==, 4.0f);
+	g_assert_cmpfloat (off[8], ==, 0.0f);
+	g_assert_cmpfloat (off[9], ==, 0.0f);
+
+	/* removing vertex 0 shifts the rest down by one */
+	g_assert_true (lrg_editor_skeleton2d_editor_remove_vertex (ed, 0, &error));
+	g_assert_no_error (error);
+	sp = lrg_skeleton2d_get_attachment (lrg_editor_skeleton2d_editor_get_skeleton (ed), 0, "arm");
+	off = lrg_skinned_sprite_get_shape_offsets (sp, "squash", &n);
+	g_assert_cmpuint (n, ==, 8);
+	g_assert_cmpfloat (off[1], ==, 3.0f);
+	g_assert_cmpfloat (off[5], ==, 4.0f);
+
+	/* the document keeps version 2, the shape and its keys */
+	text = doc_text (ed);
+	g_assert_true (g_str_has_prefix (text, "rskel2d: 2\n"));
+	g_assert_nonnull (strstr (text, "shapes:"));
+	g_assert_nonnull (strstr (text, "- name: squash"));
+	g_assert_nonnull (strstr (text, "- shape: squash"));
+	{
+		g_autoptr(LrgSkeleton2D) back = lrg_skeleton2d_new_from_data (text, -1, &error);
+		gfloat                   w;
+
+		g_assert_no_error (error);
+		sp = lrg_skeleton2d_get_attachment (back, 0, "arm");
+		g_assert_cmpfloat (lrg_skinned_sprite_get_shape_offsets (sp, "squash", NULL)[5], ==, 4.0f);
+		g_assert_true (lrg_skeleton2d_clip_sample_shape (lrg_skeleton2d_get_clip (back, "squish"), "arm", "squash",
+		                                                 1.0f, &w));
+		g_assert_cmpfloat (w, ==, 1.0f);
+	}
+}
+
 /* Automatic weights bind the strip to both bones; the brush on the canvas
  * pushes the selected bone's weight up, Shift erases; each stroke is one
  * undo step. */
@@ -1080,6 +1178,7 @@ main (int argc, char *argv[])
 	ADD ("attachments", test_rig_attachments);
 	ADD ("skins", test_rig_skins);
 	ADD ("mesh-tool", test_rig_mesh_tool);
+	ADD ("mesh-shapes", test_rig_mesh_shapes);
 	ADD ("weights", test_rig_weights);
 	ADD ("rename-remove", test_rig_rename_remove);
 	ADD ("animate", test_rig_animate);

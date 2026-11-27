@@ -1,0 +1,132 @@
+* Image resampling - Gamma-Correct Downsampling
+:PROPERTIES:
+:CUSTOM_ID: image-resample
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Graphics]]* > Image resampling
+#+end_quote
+
+=lrg_image_downsample()= shrinks an RGBA8 =GrlImage= by a whole factor with a box, Mitchell or Lanczos-3 filter, in linear light on premultiplied alpha. It is the resolve step of supersampled rendering (=lrg_image_canvas_new_supersampled()= and =lrg_image_canvas_resolve()= on [[file:image-canvas.org][LrgImageCanvas]]), and works on any RGBA8 image. Headless: no GL context is needed.
+
+- *Function* - =lrg_image_downsample()=
+- *Enum* - =LrgResampleFilter= (=LRG_TYPE_RESAMPLE_FILTER=, nicks =box=, =mitchell=, =lanczos3=), GIR =Libregnum.ResampleFilter=
+- *Limit* - =LRG_IMAGE_DOWNSAMPLE_MAX_FACTOR= (16)
+- *Header* - =graphics/lrg-image-resample.h= (the enum lives in =lrg-enums.h=)
+- *Since* - 0.14
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: image-resample-concepts
+:END:
+*** Why not grl_image_resize()
+:PROPERTIES:
+:CUSTOM_ID: image-resample-why
+:END:
+graylib's =grl_image_resize()= / =grl_image_resized()= document "bicubic" scaling, but they call raylib's =ImageResize()=, which runs =stbir_resize_uint8_linear()= from stb_image_resize2 directly on the 8-bit bytes. "linear" in that name means "no sRGB conversion": the bytes are filtered as if they were linear values, while they are in fact sRGB-encoded. The consequences are visible in exactly the cases supersampling exists for:
+
+- A 1-pixel black / white checkerboard (or any fine line art) halved averages the bytes 0 and 255 to 128, which displays as a grey of about 22% luminance; the true average of the light is 50% luminance, sRGB 188. Antialiased edges, thin lines and text come out too dark and too thin.
+- Translucent shapes are averaged after gamma encoding, so colour mixes at edges are muddy.
+
+=lrg_image_downsample()= decodes sRGB to linear light first, filters in floats, and encodes again, so the downsampled image has the brightness the eye integrates from the large one.
+
+*** Premultiplied alpha
+:PROPERTIES:
+:CUSTOM_ID: image-resample-premultiplied
+:END:
+The colour of a fully transparent pixel is meaningless (usually black). Averaging straight colours lets it bleed into the edge of an opaque shape: red next to transparent black becomes dark red. The downsampler multiplies each colour by its alpha before filtering and divides by the filtered alpha afterwards, so the edge pixel of a red shape stays pure red with partial alpha, which composites correctly later.
+
+*** Filters
+:PROPERTIES:
+:CUSTOM_ID: image-resample-filters
+:END:
+Kernels are written in output-pixel units =t=; source pixel =s= contributes =k((s + 0.5 - c) / factor)= to the output pixel centred at =c = (o + 0.5) x factor= source pixels. Weights of one output pixel are normalised to sum to 1, so a constant image stays exactly constant.
+
+| Filter | Kernel | Support (output px) | Character |
+|--------+--------+---------------------+-----------|
+| =LRG_RESAMPLE_FILTER_BOX= | 1 for =abs(t) < 0.5= | 0.5 | Plain block average. No ringing; the exact answer for "average the supersamples"; fine periodic detail can alias slightly |
+| =LRG_RESAMPLE_FILTER_MITCHELL= | Mitchell-Netravali cubic, B = C = 1/3 | 2 | Soft, barely any ringing; good for photographic or painterly content |
+| =LRG_RESAMPLE_FILTER_LANCZOS3= | =sinc(t) sinc(t/3)= for =abs(t) < 3= | 3 | Sharpest: best for line art, text and UI; rings near hard edges (clamped, see below) |
+
+Mitchell (B = C = 1/3): =(7x^3 - 12x^2 + 16/3) / 6= for =x < 1=, =(-7/3 x^3 + 12x^2 - 20x + 32/3) / 6= for =1 <= x < 2=, with =x = abs(t)=.
+
+*** Pipeline
+:PROPERTIES:
+:CUSTOM_ID: image-resample-pipeline
+:END:
+1. decode sRGB bytes to linear floats (IEC 61966-2-1, a 256-entry table), alpha = byte / 255
+2. premultiply: =rgb *= a=
+3. filter separably: horizontal pass (=w x h= to =w/f x h=), then vertical pass; samples beyond the edge repeat the edge pixel
+4. clamp: alpha into 0..1, colour into 0..alpha. The negative lobes of Mitchell and Lanczos over- and undershoot at hard edges; a premultiplied colour above its alpha would unpremultiply brighter than white, and a negative one would wrap. Clamping removes the ringing artefacts while keeping the sharpness of the main lobe
+5. unpremultiply, encode with the exact sRGB curve, round to bytes; pixels whose alpha rounds to 0 are written as transparent black
+
+** Quick start
+:PROPERTIES:
+:CUSTOM_ID: image-resample-quick-start
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+int
+main (void)
+{
+	g_autoptr(GrlColor) black = grl_color_new (0, 0, 0, 255);
+	g_autoptr(GrlColor) white = grl_color_new (255, 255, 255, 255);
+	g_autoptr(GrlImage) big = grl_image_new_checked (512, 512, 1, 1, black, white);
+	g_autoptr(GrlImage) small = NULL;
+
+	/* 1-px checkerboard -> mid grey 188 everywhere, not 128 */
+	small = lrg_image_downsample (big, 2, LRG_RESAMPLE_FILTER_BOX);
+	if (small == NULL)
+		return 1;
+	return grl_image_export (small, "grey.png") ? 0 : 1;
+}
+#+end_src
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: image-resample-api
+:END:
+#+begin_src C
+typedef enum
+{
+	LRG_RESAMPLE_FILTER_BOX,
+	LRG_RESAMPLE_FILTER_MITCHELL,
+	LRG_RESAMPLE_FILTER_LANCZOS3
+} LrgResampleFilter;                 /* lrg_resample_filter_get_type () */
+
+#define LRG_IMAGE_DOWNSAMPLE_MAX_FACTOR (16)
+
+GrlImage *lrg_image_downsample (GrlImage *src, guint factor, LrgResampleFilter filter);
+#+end_src
+
+| Argument / result | Notes |
+|-------------------+-------|
+| =src= | any =GrlImage=; one that is not RGBA8 is converted on a private copy, =src= is never modified |
+| =factor= | 1..16; 0 or above 16 is a programmer error (critical, =NULL=) |
+| =filter= | one of the three filters |
+| result | transfer full, new RGBA8 image of =(width / factor) x (height / factor)=; =NULL= when =src= is smaller than =factor= in either direction |
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: image-resample-behaviour
+:END:
+- =factor= 1 returns =grl_image_copy (src)=: an exact copy in the source's format.
+- Sizes need not be multiples of the factor: the output size uses integer division, and the remainder columns and rows are only reached by the tails of the wider kernels.
+- Output alpha is linear coverage; a constant image (any alpha) is reproduced byte for byte by every filter.
+- The output is deterministic and independent of the CPU (no SIMD paths, no threading).
+
+** Performance and thread safety
+:PROPERTIES:
+:CUSTOM_ID: image-resample-performance
+:END:
+- Work is =O(w x h x taps)= for the horizontal pass and =O(w/f x h x taps)= for the vertical one; taps are =f + 1= (box), =4f + 1= (Mitchell) and =6f + 1= (Lanczos-3). Resolving a 3x supersampled 1920 x 1080 frame (5760 x 3240 source) took about 0.3 s with Lanczos-3 and 0.24 s with box on one desktop core (release build): the per-pixel sRGB decode and premultiply dominate, so the filter choice barely matters for speed.
+- Memory: 16 bytes per source pixel for the linear copy, plus 16 bytes per pixel of the half-resolved intermediate.
+- The function is reentrant: it touches only its arguments and its own buffers. Do not draw into =src= from another thread while it runs.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: image-resample-see-also
+:END:
+- [[file:image-canvas.org][LrgImageCanvas]] - =new_supersampled()= and =resolve()=
+- [[file:hdr-canvas.org][LrgHdrCanvas]] - supersampling inside the shader (=lrg_hdr_canvas_shade()=) for float renders
+- [[file:hdr-image.org][LrgHdrImage]] - =lrg_hdr_image_resize()= for float RGB images

@@ -412,4 +412,73 @@ guint               lrg_post_processor_get_pass_count   (LrgPostProcessor   *sel
 LRG_AVAILABLE_IN_ALL
 void                lrg_post_processor_release          (LrgPostProcessor   *self);
 
+/**
+ * lrg_post_processor_apply_to_buffer: (skip)
+ * @self: A #LrgPostProcessor
+ * @rgba: The image, changed in place: @width x @height pixels of four
+ *   floats (red, green, blue, alpha), row 0 at the top, no padding
+ * @width: Image width in pixels (at least 1)
+ * @height: Image height in pixels (at least 1)
+ * @time: The stack clock in seconds (film grain picks its frame from it)
+ * @error: (nullable): Return location for an error
+ *
+ * Runs the chain on a float image in memory, on the CPU: every enabled
+ * effect in priority order (the GPU order), each through
+ * lrg_post_effect_apply_cpu(). The buffer convention is that of the
+ * processor's render target (see lrg_post_effect_apply_cpu()): the
+ * values each shader would read there, straight alpha, unclamped
+ * between effects. Needs no window or GL context and does not touch the
+ * processor's GPU targets; the processor's size does not matter (the
+ * effects use @width x @height). A disabled processor leaves the image
+ * unchanged. Sets lrg_post_processor_get_pass_count() to the number of
+ * effects run.
+ *
+ * Before anything runs, every enabled effect is checked for a CPU path:
+ * when one has none (screen shake, heat haze), nothing is changed and
+ * %G_IO_ERROR_NOT_SUPPORTED names it.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_post_processor_apply_to_buffer  (LrgPostProcessor   *self,
+                                                         gfloat             *rgba,
+                                                         guint               width,
+                                                         guint               height,
+                                                         gfloat              time,
+                                                         GError            **error);
+
+/**
+ * lrg_post_processor_apply_to_image:
+ * @self: A #LrgPostProcessor
+ * @image: The image, changed in place
+ * @time: The stack clock in seconds (film grain picks its frame from it)
+ * @error: (nullable): Return location for an error
+ *
+ * Runs the chain on a #GrlImage on the CPU
+ * (lrg_post_processor_apply_to_buffer()), the offline / headless twin of
+ * capturing the image and rendering it through the GPU chain.
+ *
+ * An RGBA8 image (%GRL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8) is what the
+ * GPU path would hold in its target after drawing it: each byte is
+ * divided by 255 (the colour stays display-encoded, as on the GPU, so
+ * #LrgTonemap decodes it with gamma 2.2 by default), the chain runs, and
+ * each channel is clamped to 0..1 and rounded back to a byte. A
+ * %GRL_PIXELFORMAT_UNCOMPRESSED_R32G32B32A32 image is processed in place
+ * with no conversion (a linear-light HDR render wants
+ * #LrgTonemap:linear-input). Other formats fail with
+ * %G_IO_ERROR_INVALID_ARGUMENT; an effect without a CPU path fails with
+ * %G_IO_ERROR_NOT_SUPPORTED. On failure the image is unchanged.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_post_processor_apply_to_image   (LrgPostProcessor   *self,
+                                                         GrlImage           *image,
+                                                         gfloat              time,
+                                                         GError            **error);
+
 G_END_DECLS

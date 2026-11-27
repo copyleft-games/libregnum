@@ -64,6 +64,9 @@ G_DECLARE_DERIVABLE_TYPE (LrgPostEffect, lrg_post_effect, LRG, POST_EFFECT, GObj
  * @apply: Virtual method to apply the effect to a texture
  * @resize: Virtual method called when render target size changes
  * @get_name: Virtual method to get the effect's display name
+ * @apply_cpu: Virtual method to apply the effect to a float image in
+ *   memory, without a GL context (%NULL: the effect has no CPU path).
+ *   Since: 0.14
  *
  * The class structure for #LrgPostEffect.
  */
@@ -145,8 +148,37 @@ struct _LrgPostEffectClass
      */
     const gchar * (*get_name)   (LrgPostEffect  *self);
 
+    /**
+     * LrgPostEffectClass::apply_cpu:
+     * @self: A #LrgPostEffect
+     * @rgba: (type gpointer): The image, changed in place: @width x
+     *   @height pixels of four floats (red, green, blue, alpha), row 0 at
+     *   the top, rows packed without padding
+     * @width: Image width in pixels (at least 1)
+     * @height: Image height in pixels (at least 1)
+     * @time: The stack clock in seconds, for animated effects (film grain
+     *   picks its frame from it); the same @time gives the same result
+     *
+     * Applies the effect to an image in memory, the same arithmetic as
+     * the effect's fragment shader. The buffer holds the values the
+     * shader would read from the post processor's render target (see
+     * lrg_post_effect_apply_cpu() for the convention). Must not need a
+     * GL context or a window. The wrapper has already checked that the
+     * effect is enabled; the implementation handles the base intensity
+     * as its shader does (0 leaves the image unchanged).
+     *
+     * Returns: %TRUE when the image was processed
+     *
+     * Since: 0.14
+     */
+    gboolean    (*apply_cpu)    (LrgPostEffect  *self,
+                                 gfloat         *rgba,
+                                 guint           width,
+                                 guint           height,
+                                 gfloat          time);
+
     /*< private >*/
-    gpointer _reserved[8];
+    gpointer _reserved[7];
 };
 
 /**
@@ -317,6 +349,63 @@ LrgPostQuality  lrg_post_effect_get_quality_tier     (LrgPostEffect  *self);
 LRG_AVAILABLE_IN_ALL
 void            lrg_post_effect_set_quality_tier     (LrgPostEffect  *self,
                                                  LrgPostQuality  quality);
+
+/**
+ * lrg_post_effect_has_cpu:
+ * @self: A #LrgPostEffect
+ *
+ * Checks whether the effect can run on an image in memory
+ * (lrg_post_effect_apply_cpu()), that is whether its class implements
+ * #LrgPostEffectClass.apply_cpu. Screen shake and heat haze do not.
+ *
+ * Returns: %TRUE when the effect has a CPU path
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean        lrg_post_effect_has_cpu         (LrgPostEffect  *self);
+
+/**
+ * lrg_post_effect_apply_cpu: (skip)
+ * @self: A #LrgPostEffect
+ * @rgba: The image, changed in place: @width x @height pixels of four
+ *   floats each (red, green, blue, alpha), row 0 at the top, no padding
+ * @width: Image width in pixels (at least 1)
+ * @height: Image height in pixels (at least 1)
+ * @time: The stack clock in seconds (film grain picks its frame from it)
+ *
+ * Runs the effect on a float image in memory with the arithmetic of its
+ * fragment shader, without a GL context or a window.
+ *
+ * The buffer convention is the post processor's render target: each
+ * channel holds the value the effect's shader would sample there.
+ * Colour is straight (not premultiplied) alpha. For a scene drawn the
+ * usual way that is the display-encoded colour (an RGBA8 image divided
+ * by 255; #LrgTonemap decodes it with gamma 2.2 unless
+ * #LrgTonemap:linear-input is set); a scene shaded in linear light holds
+ * linear values, which may exceed 1.0 as in an HDR (RGBA16F) target,
+ * and wants #LrgTonemap:linear-input. Values are never clamped between
+ * effects (an HDR target); alpha passes through every effect unchanged.
+ * The pixel at column x, row y (from the top) corresponds to the
+ * fragment at gl_FragCoord (x + 0.5, @height - y - 0.5), which is what
+ * screen-anchored patterns (grain cells, the palettize dither) use.
+ *
+ * As on the GPU path a disabled effect does nothing (and this returns
+ * %FALSE); an enabled effect with intensity 0 returns %TRUE and leaves
+ * the image unchanged. lrg_post_processor_apply_to_buffer() runs a
+ * whole chain.
+ *
+ * Returns: %TRUE when the effect ran, %FALSE when it is disabled or has
+ *   no CPU path (lrg_post_effect_has_cpu())
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean        lrg_post_effect_apply_cpu       (LrgPostEffect  *self,
+                                                 gfloat         *rgba,
+                                                 guint           width,
+                                                 guint           height,
+                                                 gfloat          time);
 
 /**
  * lrg_post_effect_compile_shader:

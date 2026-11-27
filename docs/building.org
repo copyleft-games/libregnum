@@ -119,6 +119,7 @@ Enables debug symbols (=-g3=) and disables optimization (=-O0=).
 | =make test-sanitize= | Run tests under ASan+UBSan (own build dir) |
 | =make test-valgrind= | Run tests under valgrind (excludes scripting tests) |
 | =make examples=  | Build examples                  |
+| =make test-examples= | Build the examples and run the headless ones small, checking their output (=tests/test-examples-smoke.sh=) |
 | =make docs=      | Build documentation             |
 | =make install=   | Install to PREFIX               |
 | =make clean=     | Clean build artifacts (cross targets' directories are kept) |

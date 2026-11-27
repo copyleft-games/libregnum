@@ -1,0 +1,141 @@
+* Noise
+:PROPERTIES:
+:CUSTOM_ID: lrg-noise
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Shading]]* > Noise
+#+end_quote
+
+=shading/lrg-noise.h= provides seeded value and simplex noise in 2D and 3D and their fractal sum (fBm). The fBm functions take a *footprint*, the size of one output pixel in noise space, and fade out the octaves too fine for that pixel: the detail dissolves to its average instead of aliasing into moire and speckle, which supersampling alone cannot fix (it only pushes the aliasing to higher frequencies).
+
+- *Header* - =shading/lrg-noise.h=
+- *Constants* - =LRG_NOISE_MAX_OCTAVES= (32), =LRG_NOISE_MAX_COORD= (1e15)
+- *Since* - 0.14
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: noise-concepts
+:END:
+*** Seeds and determinism
+:PROPERTIES:
+:CUSTOM_ID: noise-seeds
+:END:
+Every function takes a =guint32= seed. The lattice is hashed with the engine's shared integer hash (lowbias32, the one the terrain, grass and tree helpers use in =graphics/lrg-hash-noise-private.h=), so there is no permutation table, no global random state and no initialisation: the same coordinates and seed give the same value on every machine and thread. Neighbouring seeds give unrelated fields. =lrg_noise_value2()= is the same field as the engine's internal value noise for the same seed, rescaled from [0, 1] to [-1, 1].
+
+*** The four base noises
+:PROPERTIES:
+:CUSTOM_ID: noise-base
+:END:
+| Function | Kind | Range | Notes |
+|----------+------+-------+-------|
+| =lrg_noise_value2 (x, y, seed)= | value | [-1, 1] | random values on the integer lattice, quintic fade (6t^5 - 15t^4 + 10t^3, C2); blocky, axis-aligned features |
+| =lrg_noise_value3 (x, y, z, seed)= | value | [-1, 1] | trilinear with the quintic fade |
+| =lrg_noise_simplex2 (x, y, seed)= | gradient (simplex) | [-1, 1] | Gustavson's simplex noise with unit gradients in 16 directions; zero at lattice points, round isotropic features about one unit across |
+| =lrg_noise_simplex3 (x, y, z, seed)= | gradient (simplex) | [-1, 1] | 12 cube-edge gradients |
+
+All four have mean 0. The simplex outputs are scaled so the extremes reach about +-0.98 and then clamped, so the range is guaranteed.
+
+*** fBm and band-limiting
+:PROPERTIES:
+:CUSTOM_ID: noise-band-limiting
+:END:
+=lrg_noise_fbm2 (x, y, octaves, lacunarity, gain, footprint, seed)= (and =lrg_noise_fbm3= with a z) sums octaves of simplex noise: octave i has frequency lacunarity^i, amplitude gain^i, its own seed and a random coordinate offset (so the octaves do not all vanish at the origin). The sum is divided by the sum of all amplitudes, so the result stays in [-1, 1].
+
+A pixel of size =footprint= can only show wavelengths of at least 2 x =footprint= (the Nyquist limit); anything finer, sampled once per pixel, shows up as a false coarser pattern (moire) or as noise that crawls when the camera moves. So each octave is weighted by
+
+#+begin_example
+w = 1 - smoothstep (0.25, 0.5, frequency x footprint)
+#+end_example
+
+full strength while its wavelength is 4 pixels or more, fading smoothly to nothing at 2 pixels, and skipped (with every finer octave, when lacunarity > 1) below that. A faded octave falls back to its mean, 0, which is what averaging it over the pixel would give, so the result approaches a properly filtered image. The normalisation does not change when octaves fade: the field gets calmer (lower variance) as the footprint grows, exactly as a supersampled image of it would. Because w changes smoothly with the footprint, detail fades in and out without popping as you zoom or as a surface recedes.
+
+*What footprint to pass:*
+- a flat image where pixel (px, py) samples the noise at (px x s, py x s): =footprint= = s;
+- a surface hit by a ray at distance t through a pixel of angular size a: about t x a / max (|cos theta|, 0.1), theta being the angle between the ray and the normal (grazing angles stretch the pixel);
+- 0 (or anything <= 0, or NaN) turns band-limiting off: every octave is summed, as in a naive fBm.
+
+** Quick start
+:PROPERTIES:
+:CUSTOM_ID: noise-quick-start
+:END:
+A complete program: a 256 x 128 strip of rough fBm whose scale grows to the right, rendered once naively (top) and once band-limited (bottom). The top half turns into speckle and moire towards the right; the bottom half calms down to an even grey. Build it with =gcc -std=gnu89 noise-demo.c $(pkg-config --cflags --libs libregnum-1) -lm=.
+
+#+begin_src C
+#include <libregnum.h>
+#include <math.h>
+
+int
+main (void)
+{
+	GrlColor                  black = { 0, 0, 0, 255 };
+	g_autoptr(LrgImageCanvas) canvas = lrg_image_canvas_new (256, 128, &black);
+	GrlImage                 *image = lrg_image_canvas_get_image (canvas);
+	gint                      x;
+	gint                      y;
+
+	for (y = 0; y < 128; y++)
+	{
+		for (x = 0; x < 256; x++)
+		{
+			/* the size of this pixel in noise units: 1/8 on the left, 1/2 on the right */
+			gfloat   footprint = 0.125f * (1.0f + 3.0f * x / 256.0f);
+			gfloat   nx = (x + 0.5f) * footprint;
+			gfloat   ny = (y % 64 + 0.5f) * footprint;
+			gboolean band_limited = y >= 64;
+			gfloat   v;
+			GrlColor c;
+
+			/* 10 octaves, lacunarity 2, gain 0.75 (rough), seed 7 */
+			v = lrg_noise_fbm2 (nx, ny, 10, 2.0f, 0.75f, band_limited ? footprint : 0.0f, 7);
+			c.r = c.g = c.b = (guint8)lrintf (127.5f + 127.5f * v);
+			c.a = 255;
+			grl_image_draw_pixel (image, x, y, &c);
+		}
+	}
+	grl_image_export (image, "fbm.png");
+	return 0;
+}
+#+end_src
+
+To texture a 3D SDF surface, evaluate =lrg_noise_fbm3()= at the hit point with the footprint at the hit distance (see above), and use it to perturb albedo or the distance itself (a small displacement keeps the field a valid bound).
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: noise-api
+:END:
+| Function | Returns |
+|----------+---------|
+| =lrg_noise_value2 (x, y, seed)= | value noise in [-1, 1] |
+| =lrg_noise_value3 (x, y, z, seed)= | value noise in [-1, 1] |
+| =lrg_noise_simplex2 (x, y, seed)= | simplex noise in [-1, 1] |
+| =lrg_noise_simplex3 (x, y, z, seed)= | simplex noise in [-1, 1] |
+| =lrg_noise_fbm2 (x, y, octaves, lacunarity, gain, footprint, seed)= | band-limited fBm of 2D simplex noise in [-1, 1] |
+| =lrg_noise_fbm3 (x, y, z, octaves, lacunarity, gain, footprint, seed)= | band-limited fBm of 3D simplex noise in [-1, 1] |
+
+Typical fBm parameters: lacunarity 2 (each octave doubles the frequency; use 1.9..2.1 to avoid octaves lining up), gain 0.5 (smooth, "1/f") to 0.75 (rough: fur, feathers, gravel), 5..10 octaves.
+
+** Behaviour and edge cases
+:PROPERTIES:
+:CUSTOM_ID: noise-edge-cases
+:END:
+- Coordinates that are NaN, infinite or larger in magnitude than =LRG_NOISE_MAX_COORD= give 0. Large but valid coordinates work (the lattice is computed in doubles and 64-bit integers), but a =gfloat= coordinate around 1e7 has no fractional bits left: offset your coordinates near the origin for fine detail far from it.
+- =octaves= <= 0 returns 0; more than =LRG_NOISE_MAX_OCTAVES= is clamped. A NaN lacunarity or gain returns 0; a NaN footprint means no band-limiting.
+- With lacunarity <= 1 the frequencies do not grow, so faded octaves are skipped one by one instead of ending the loop; the result is still in range.
+- A footprint at least twice the base wavelength (=footprint= >= 0.5 with the base frequency 1) fades every octave: the result is exactly 0.
+- The 2D simplex gradient is one of 16 directions per lattice point, so two different seeds agree at roughly 1 point in 256 by chance; the fields are otherwise uncorrelated.
+
+** Performance and thread safety
+:PROPERTIES:
+:CUSTOM_ID: noise-performance
+:END:
+- Pure functions, re-entrant, no shared state: safe from any number of threads.
+- Rough costs on a current x86_64 desktop: =lrg_noise_simplex3()= about 45 ns, =lrg_noise_fbm2()= with 8 octaves and no band-limiting about 330 ns. Band-limiting only ever removes work: octaves past the pixel limit are not evaluated at all, so distant surfaces get cheaper.
+- Value noise is cheaper than simplex in 2D (4 hashes, no gradients) but shows its lattice; prefer simplex (and the fBm, which is built on it) for anything visible.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: noise-see-also
+:END:
+- [[file:sdf.org][Signed distance functions]] - the shapes the noise textures
+- [[file:index.org][Shading module overview]]
+- [[file:../procgen/index.org][Procedural generation]] - map and world generation

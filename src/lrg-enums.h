@@ -7044,6 +7044,172 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_texture_fallback_format_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_TEXTURE_FALLBACK_FORMAT (lrg_texture_fallback_format_get_type ())
 
+/**
+ * LrgResampleFilter:
+ * @LRG_RESAMPLE_FILTER_BOX: Box filter: the plain average of each
+ *   factor x factor block.  Sharpest footprint, no ringing, slight
+ *   aliasing of fine periodic detail.
+ * @LRG_RESAMPLE_FILTER_MITCHELL: Mitchell-Netravali cubic (B = C = 1/3),
+ *   two output pixels of support: soft, almost no ringing; a good default
+ *   for photographic content.
+ * @LRG_RESAMPLE_FILTER_LANCZOS3: Lanczos windowed sinc with three lobes:
+ *   the sharpest result for line art and text.  Its negative lobes ring
+ *   near hard edges; lrg_image_downsample() clamps the overshoot.
+ *
+ * The reconstruction filter lrg_image_downsample() and
+ * lrg_image_canvas_resolve() shrink an image with.  All filters run in
+ * linear light on premultiplied alpha.
+ *
+ * Since: 0.14
+ */
+typedef enum
+{
+    LRG_RESAMPLE_FILTER_BOX,
+    LRG_RESAMPLE_FILTER_MITCHELL,
+    LRG_RESAMPLE_FILTER_LANCZOS3
+} LrgResampleFilter;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_resample_filter_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_RESAMPLE_FILTER (lrg_resample_filter_get_type ())
+
+/**
+ * LrgFrameSide:
+ * @LRG_FRAME_SIDE_ABOVE: above the other box (its bottom edge @gap above
+ *   the other's top edge)
+ * @LRG_FRAME_SIDE_BELOW: below the other box
+ * @LRG_FRAME_SIDE_LEFT: left of the other box
+ * @LRG_FRAME_SIDE_RIGHT: right of the other box
+ *
+ * Which side of another box lrg_frame_layout_add_box_relative() puts a
+ * box on (#LrgFrameLayout).
+ *
+ * Since: 0.14
+ */
+typedef enum
+{
+    LRG_FRAME_SIDE_ABOVE,
+    LRG_FRAME_SIDE_BELOW,
+    LRG_FRAME_SIDE_LEFT,
+    LRG_FRAME_SIDE_RIGHT
+} LrgFrameSide;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_frame_side_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_FRAME_SIDE (lrg_frame_side_get_type ())
+
+/**
+ * LrgFrameAlign:
+ * @LRG_FRAME_ALIGN_START: the left edges (above or below) or the top edges
+ *   (left or right) line up
+ * @LRG_FRAME_ALIGN_CENTER: the centres line up
+ * @LRG_FRAME_ALIGN_END: the right edges (above or below) or the bottom
+ *   edges (left or right) line up
+ *
+ * How a box placed beside another lines up with it along the shared side
+ * (lrg_frame_layout_add_box_relative()).
+ *
+ * Since: 0.14
+ */
+typedef enum
+{
+    LRG_FRAME_ALIGN_START,
+    LRG_FRAME_ALIGN_CENTER,
+    LRG_FRAME_ALIGN_END
+} LrgFrameAlign;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_frame_align_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_FRAME_ALIGN (lrg_frame_align_get_type ())
+
+/**
+ * LrgViseme:
+ * @LRG_VISEME_REST: mouth closed and relaxed (silence)
+ * @LRG_VISEME_A: open mouth, jaw down ("father", "cat")
+ * @LRG_VISEME_E: mid-open, lips spread ("bed", "say")
+ * @LRG_VISEME_I: narrow opening, lips spread wide ("see", "sit")
+ * @LRG_VISEME_O: rounded open lips ("go", "law")
+ * @LRG_VISEME_U: small rounded, pushed-forward lips ("boot", "book")
+ * @LRG_VISEME_MBP: lips pressed together (m, b, p)
+ * @LRG_VISEME_FV: lower lip under the upper teeth (f, v)
+ * @LRG_VISEME_L: open with the tongue tip up behind the teeth (l, th)
+ * @LRG_VISEME_WQ: small tight round pucker (w, "queen")
+ * @LRG_VISEME_CDGKNRSTYZ: teeth nearly closed, lips relaxed (most
+ *   consonants: c, d, g, k, n, r, s, t, y, z, ch, sh)
+ *
+ * The mouth shapes of the standard shape sheet (lrg-shape-sheet.h).
+ * lrg_viseme_get_shape_name() gives the blend-shape name each one drives.
+ *
+ * Since: 0.14
+ */
+typedef enum
+{
+    LRG_VISEME_REST,
+    LRG_VISEME_A,
+    LRG_VISEME_E,
+    LRG_VISEME_I,
+    LRG_VISEME_O,
+    LRG_VISEME_U,
+    LRG_VISEME_MBP,
+    LRG_VISEME_FV,
+    LRG_VISEME_L,
+    LRG_VISEME_WQ,
+    LRG_VISEME_CDGKNRSTYZ
+} LrgViseme;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_viseme_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_VISEME (lrg_viseme_get_type ())
+
+/**
+ * LrgShapeCategory:
+ * @LRG_SHAPE_CATEGORY_MOUTH: the visemes (#LrgViseme)
+ * @LRG_SHAPE_CATEGORY_EYES: blinks, squint, wide and gaze
+ * @LRG_SHAPE_CATEGORY_BROWS: eyebrow poses
+ * @LRG_SHAPE_CATEGORY_MOOD: whole-face expressions
+ * @LRG_SHAPE_CATEGORY_BODY: squash, stretch and breathing
+ *
+ * The groups of the standard shape sheet (lrg_shape_sheet_list()).
+ *
+ * Since: 0.14
+ */
+typedef enum
+{
+    LRG_SHAPE_CATEGORY_MOUTH,
+    LRG_SHAPE_CATEGORY_EYES,
+    LRG_SHAPE_CATEGORY_BROWS,
+    LRG_SHAPE_CATEGORY_MOOD,
+    LRG_SHAPE_CATEGORY_BODY
+} LrgShapeCategory;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_shape_category_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SHAPE_CATEGORY (lrg_shape_category_get_type ())
+
+/**
+ * LrgLipSyncError:
+ * @LRG_LIP_SYNC_ERROR_PARSE: the text is not valid YAML or CSV, or a
+ *   value has the wrong type
+ * @LRG_LIP_SYNC_ERROR_INVALID: the data is well formed but wrong: a
+ *   missing or unknown key, a negative time, an end before its start
+ * @LRG_LIP_SYNC_ERROR_IO: a file could not be read
+ *
+ * Errors of #LrgLipSync loaders (domain %LRG_LIP_SYNC_ERROR).
+ *
+ * Since: 0.14
+ */
+typedef enum
+{
+    LRG_LIP_SYNC_ERROR_PARSE,
+    LRG_LIP_SYNC_ERROR_INVALID,
+    LRG_LIP_SYNC_ERROR_IO
+} LrgLipSyncError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_lip_sync_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_LIP_SYNC_ERROR (lrg_lip_sync_error_get_type ())
+
 G_END_DECLS
+
 
 

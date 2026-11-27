@@ -15,6 +15,7 @@
 #include "lrg-reel-text-clip.h"
 #include "lrg-reel-shape-clip.h"
 #include "lrg-reel-caption-clip.h"
+#include "lrg-reel-skeleton2d-clip.h"
 #include "../core/lrg-registry.h"
 #include <graylib.h>
 #include <yaml-glib.h>
@@ -33,6 +34,7 @@ lrg_reel_register_types (LrgRegistry *registry)
     lrg_registry_register (registry, "text-clip", LRG_TYPE_REEL_TEXT_CLIP);
     lrg_registry_register (registry, "shape-clip", LRG_TYPE_REEL_SHAPE_CLIP);
     lrg_registry_register (registry, "caption-clip", LRG_TYPE_REEL_CAPTION_CLIP);
+    lrg_registry_register (registry, "skeleton2d-clip", LRG_TYPE_REEL_SKELETON2D_CLIP);
 }
 
 /* Parse "#rgb", "#rrggbb" or "#rrggbbaa" into a GrlColor (alpha defaults 255). */

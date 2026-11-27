@@ -17,6 +17,10 @@
  *
  * Every effect pass runs with colour blending disabled so alpha and HDR
  * values pass through untouched; only the final composite blends.
+ *
+ * Frame flow (CPU, apply_to_buffer / apply_to_image): the same chain, in
+ * the same order, through each effect's apply_cpu on a float image in
+ * memory; no window, GL context or target is involved.
  */
 
 #include "config.h"
@@ -24,6 +28,8 @@
 #include <raylib.h>
 #include <rlgl.h>
 #include <string.h>
+#include <math.h>
+#include <gio/gio.h>
 
 /**
  * SECTION:lrg-post-processor
@@ -983,4 +989,125 @@ lrg_post_processor_release (LrgPostProcessor *self)
 			g_warning ("post processor: re-initialising %s: %s",
 			           lrg_post_effect_get_name (effect), error != NULL ? error->message : "failed");
 	}
+}
+
+/* ==========================================================================
+ * The CPU path
+ * ========================================================================== */
+
+gboolean
+lrg_post_processor_apply_to_buffer (LrgPostProcessor  *self,
+                                    gfloat            *rgba,
+                                    guint              width,
+                                    guint              height,
+                                    gfloat             time,
+                                    GError           **error)
+{
+	LrgPostProcessorPrivate *priv;
+	GList                   *l;
+
+	g_return_val_if_fail (LRG_IS_POST_PROCESSOR (self), FALSE);
+	g_return_val_if_fail (rgba != NULL, FALSE);
+	g_return_val_if_fail (width > 0 && height > 0, FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	priv = lrg_post_processor_get_instance_private (self);
+	priv->pass_count = 0;
+
+	/* a disabled processor shows the scene untouched on the GPU too */
+	if (!priv->enabled)
+		return TRUE;
+
+	/* 1. every enabled effect must have a CPU path; fail before the
+	 * buffer is touched so a failed call leaves it as it was */
+	for (l = priv->effects; l != NULL; l = l->next)
+	{
+		LrgPostEffect *effect = LRG_POST_EFFECT (l->data);
+
+		if (lrg_post_effect_is_enabled (effect) && !lrg_post_effect_has_cpu (effect))
+		{
+			g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+			             "post effect \"%s\" (%s) has no CPU path; disable or remove it "
+			             "to process images in memory",
+			             lrg_post_effect_get_name (effect), G_OBJECT_TYPE_NAME (effect));
+			return FALSE;
+		}
+	}
+
+	/* 2. the chain, in priority order: each effect reads what the one
+	 * before wrote (the GPU's ping-pong, in place) */
+	for (l = priv->effects; l != NULL; l = l->next)
+	{
+		if (lrg_post_effect_apply_cpu (LRG_POST_EFFECT (l->data), rgba, width, height, time))
+			priv->pass_count++;
+	}
+	return TRUE;
+}
+
+/* the byte for a processed channel: clamped to 0..1 and rounded (NaN: 0) */
+static guint8
+channel_to_byte (gfloat v)
+{
+	if (!(v > 0.0f))
+		return 0;
+	if (v >= 1.0f)
+		return 255;
+	return (guint8) lroundf (v * 255.0f);
+}
+
+gboolean
+lrg_post_processor_apply_to_image (LrgPostProcessor  *self,
+                                   GrlImage          *image,
+                                   gfloat             time,
+                                   GError           **error)
+{
+	g_autofree gfloat *buffer = NULL;
+	GrlPixelFormat     format;
+	Image             *handle;
+	guint8            *bytes;
+	guint              width, height;
+	gsize              i, n;
+
+	g_return_val_if_fail (LRG_IS_POST_PROCESSOR (self), FALSE);
+	g_return_val_if_fail (GRL_IS_IMAGE (image), FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	handle = (Image *) grl_image_get_handle (image);
+	if (handle == NULL || handle->data == NULL || handle->width <= 0 || handle->height <= 0)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                     "the image has no pixels");
+		return FALSE;
+	}
+	width = (guint) handle->width;
+	height = (guint) handle->height;
+	n = (gsize) width * height;
+	format = grl_image_get_format (image);
+
+	/* float RGBA: already the buffer the chain works on */
+	if (format == GRL_PIXELFORMAT_UNCOMPRESSED_R32G32B32A32)
+		return lrg_post_processor_apply_to_buffer (self, (gfloat *) handle->data, width, height,
+		                                           time, error);
+
+	if (format != GRL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8)
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		             "post processing an image needs RGBA8 or RGBA32F pixels (format %d)",
+		             (gint) format);
+		return FALSE;
+	}
+
+	/* RGBA8: the bytes over 255, as a GPU target samples them */
+	bytes = (guint8 *) handle->data;
+	buffer = g_new (gfloat, n * 4);
+	for (i = 0; i < n * 4; i++)
+		buffer[i] = (gfloat) bytes[i] / 255.0f;
+
+	if (!lrg_post_processor_apply_to_buffer (self, buffer, width, height, time, error))
+		return FALSE;
+
+	/* back to bytes, clamped and rounded */
+	for (i = 0; i < n * 4; i++)
+		bytes[i] = channel_to_byte (buffer[i]);
+	return TRUE;
 }

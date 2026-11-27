@@ -16,6 +16,32 @@
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
 
+** 0.14.0
+:PROPERTIES:
+:CUSTOM_ID: changelog-0-14-0
+:END:
+Generation-quality still images (issue #7) and talking 2D characters (issue #8), both rendered headless on the CPU. Code written by a model, or by a person in a hurry, now gets smooth edges, blended translucency, soft light and checked layouts from a few library calls instead of hundreds of lines of hand-written shading. 2D skeletons get blend shapes, a shared shape sheet, lip sync and procedural blinking, and render to frames without a GPU. graylib moves to 0.14.0 in lockstep; its only change since 0.13.2 is documentation (=grl_image_resize()= is stb on sRGB bytes, not bicubic).
+
+Images (#7):
+- Graphics: =lrg_image_canvas_new_quality()= / =_set_quality()= turn on source-over blending, linear-light blending and anti-aliasing in one call; =lrg_image_canvas_new_supersampled()= and =_resolve()= draw at 2-4x and shrink with a box, Mitchell or Lanczos-3 filter in linear light on premultiplied alpha (=lrg_image_downsample()=, =LrgResampleFilter=) ([[file:modules/graphics/image-canvas.org][Image canvas]], [[file:modules/graphics/image-resample.org][Resampling]]).
+- Graphics: =LrgHdrCanvas=, a float RGBA linear-light canvas with stratified per-pixel shading (=lrg_hdr_canvas_shade()=) and a dithered tone-mapped export (=lrg_hdr_canvas_to_image()=); =lrg_tonemap_operator_apply_rgb()= holds the operator curves the GPU and CPU share ([[file:modules/graphics/hdr-canvas.org][HDR canvas]]).
+- Post-processing: the =LrgPostProcessor= stack runs on CPU images (=lrg_post_processor_apply_to_image()=, =_apply_to_buffer()=, the =apply_cpu= vfunc): bloom (the GPU mip chain, ported exactly), tonemap, FXAA, colour grade and LUT, vignette, film grain, sharpen, colour-blind filter, palettize, and the new =LrgBlur= (GLSL and CPU). Effects without a CPU path fail with =G_IO_ERROR_NOT_SUPPORTED= ([[file:modules/postprocess/cpu.org][CPU post-processing]]).
+- Shading, a new module: 2D and 3D signed distance functions, smooth union/subtract/intersect, normals, ray marching, soft shadows and ambient occlusion (=lrg-sdf.h=); value, simplex and fBm noise with a pixel footprint that fades out octaves below the Nyquist limit, so detail softens instead of turning into moiré (=lrg-noise.h=); =lrg_image_canvas_fill_sdf()= draws any 2D distance field with analytic anti-aliasing ([[file:modules/shading/index.org][Shading]]).
+- Graphics: =LrgFrameLayout=: named boxes anchored to a safe area or placed beside each other, backdrops, allowed overlaps, and =lrg_frame_layout_validate()=, which lists every overlap and every box outside the frame or safe area, for a one-line layout test; =lrg_frame_layout_draw_debug()= ([[file:modules/graphics/frame-layout.org][Frame layout]]).
+- Docs: the image cookbook, twelve reference scenes with the call order, what good output looks like and the pitfalls (moiré, thin detail lost to tone mapping) ([[file:guides/image-cookbook.org][Image cookbook]]); =skills/skill-libregnum/references/image-quality.md= for agents.
+- Headless GPU: GLSL post shaders and render textures run headless through =build-aux/xrun.sh=, which now falls back to Xwayland on a headless compositor (gowl or weston) in a private D-Bus session when =xvfb-run= is not installed. =make test= under it runs every GPU test on Mesa llvmpipe; the CPU paths need no display at all.
+
+2D characters (#8):
+- Graphics: blend shapes on =LrgSkinnedSprite= (named per-vertex offsets applied before skinning); =lrg_image_draw_triangle_textured()=, a CPU rasteriser (top-left fill rule, bilinear premultiplied sampling); =lrg_skinned_sprite_draw_to_canvas()= ([[file:modules/graphics/skinned-sprite.org][Skinned sprite]], [[file:modules/graphics/image-raster.org][CPU textured triangles]]).
+- Animation: per-slot shape weights and =LRG_SKELETON2D_CHANNEL_SHAPE= weight tracks in =LrgSkeleton2DClip=, mixed by the component crossfade like any channel; =lrg_skeleton2d_draw_to_canvas()= renders a skeleton on the CPU exactly as on the GPU, shapes included ([[file:modules/animation/skeleton2d.org][Skeleton2D]]).
+- Animation: =.rskel2d= format version 2 stores shapes and their keys; the reader accepts 1 and 2, and the writer writes the lowest version a document needs, so existing files stay byte-identical ([[file:modules/animation/skeleton2d.org][Format]]).
+- Animation: the standard shape sheet (=LRG_SHAPE_*=, =LrgViseme=: visemes, eyes, brows, moods, body) so one clip or one lip-sync track drives a whole cast ([[file:modules/animation/shape-sheet.org][Shape sheet]]); =LrgLipSync= turns timed ARPAbet phonemes (YAML, CSV) or a recording's loudness into cross-faded viseme keys ([[file:modules/animation/lip-sync.org][Lip sync]]); =LrgSkeleton2DProcedural= adds seeded blink and breathe layers ([[file:modules/animation/procedural.org][Procedural layers]]).
+- Reel: =LrgReelSkeleton2DClip= animates a 2D character in a reel, with a pose callback for procedural layers, safe under =render_parallel=; YAML =skeleton2d-clip= ([[file:modules/reel/clips.org::#skeleton2d-clip][Skeleton2D clip]]).
+
+Examples, all headless: =reel-captions-demo= (the 0.13.5-0.13.9 reel fixes in one title sequence), =cookbook= (the twelve scenes), =image-quality-showcase=, =sdf-portrait=, =frame-layout-poster=, =skeleton2d-talking-head= (lip sync, blink, mood, MP4) and =skeleton2d-shape-sheet=. =make test-examples= runs each at a small size and checks its output.
+
+Tests: =test-sdf=, =test-noise=, =test-hdr-canvas=, =test-image-resample=, =test-post-cpu= (with a GPU-against-CPU comparison of every effect under =xrun.sh=), =test-frame-layout=, =test-cookbook=, =test-image-raster=, =test-lip-sync= and =test-skeleton2d-character= (the issue's "done when": a character with the full sheet lip-syncs, blinks and changes mood through the reel, byte-identical sequential and parallel; shapes survive a save and load; crossfades mix shape weights). The procedural audio tests skip without an audio device instead of failing.
+
 ** 0.13.9
 :PROPERTIES:
 :CUSTOM_ID: changelog-0-13-9

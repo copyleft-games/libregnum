@@ -2,9 +2,9 @@
 :PROPERTIES:
 :CUSTOM_ID: built-in-effects
 :END:
-Every built-in effect is an [[file:post-effect.org][LrgPostEffect]] that runs as a real shader pass in an [[file:post-processor.org][LrgPostProcessor]] chain, compiles its GLSL 330 shader lazily on its first pass (or in a prewarm: they all implement =LrgPrewarmable=), and mixes its result with its input by the base intensity (=lrg_post_effect_set_intensity()=, a stack's =weight=). Every tunable is a GObject property, so a [[file:post-stack.org][.rpost]] stack sets it by name under the effect's type name (the =get_name()= value below). Without a window they are pure CPU objects.
+Every built-in effect is an [[file:post-effect.org][LrgPostEffect]] that runs as a real shader pass in an [[file:post-processor.org][LrgPostProcessor]] chain, compiles its GLSL 330 shader lazily on its first pass (or in a prewarm: they all implement =LrgPrewarmable=), and mixes its result with its input by the base intensity (=lrg_post_effect_set_intensity()=, a stack's =weight=). Every tunable is a GObject property, so a [[file:post-stack.org][.rpost]] stack sets it by name under the effect's type name (the =get_name()= value below). Without a window they are pure CPU objects. Every effect but screen shake and heat haze also runs on an image in memory, with the same arithmetic and no GL context ([[file:cpu.org][cpu.org]]).
 
-Recommended order: =screen-shake=, =heat-haze= (distortions on the scene), =bloom= (needs HDR values), =tonemap=, =color-grade=, =colorblind-filter=, =sharpen=, =fxaa=, =palettize=, =film-grain=, =vignette=.
+Recommended order: =screen-shake=, =heat-haze= (distortions on the scene), =bloom= (needs HDR values), =tonemap=, =blur=, =color-grade=, =colorblind-filter=, =sharpen=, =fxaa=, =palettize=, =film-grain=, =vignette=.
 
 | Effect | Type name | Passes | Page |
 |--------+-----------+--------+------|
@@ -19,12 +19,15 @@ Recommended order: =screen-shake=, =heat-haze= (distortions on the scene), =bloo
 | =LrgColorblindFilter= | =colorblind-filter= | 1 | [[file:accessibility.org][accessibility.org]] |
 | =LrgSharpen= | =sharpen= | 1 | [[file:sharpen.org][sharpen.org]] |
 | =LrgPalettize= | =palettize= | 1 | [[file:palettize.org][palettize.org]] |
+| =LrgBlur= | =blur= | 2 | [[file:blur.org][blur.org]] |
 
 ** LrgBloom
 :PROPERTIES:
 :CUSTOM_ID: lrgbloom
 :END:
 A glow around everything brighter than a threshold: fire, magic, emissive signs, the sun on water. With HDR targets (the default) the threshold sees values above 1.0, so =threshold: 1.0= blooms only what is "brighter than white".
+
+CPU path: yes, the same mip chain on a float image (=lrg_post_effect_apply_cpu()=, [[file:cpu.org::#post-cpu-per-effect][cpu.org]]).
 
 #+begin_src C
 G_DECLARE_FINAL_TYPE (LrgBloom, lrg_bloom, LRG, BLOOM, LrgPostEffect)
@@ -89,6 +92,8 @@ lrg_bloom_set_tint (bloom, 1.0f, 0.9f, 0.75f);
 :END:
 Exposure and a tonemapping curve from scene values (possibly far above 1.0 in the HDR target) to display values (=postprocess/effects/lrg-tonemap.h=, name =tonemap=).
 
+CPU path: yes, =lrg_tonemap_apply_rgb()= per pixel ([[file:cpu.org][cpu.org]]).
+
 #+begin_src C
 G_DECLARE_FINAL_TYPE (LrgTonemap, lrg_tonemap, LRG, TONEMAP, LrgPostEffect)
 
@@ -109,6 +114,8 @@ void               lrg_tonemap_set_white_point     (LrgTonemap *self, gfloat whi
 gboolean           lrg_tonemap_get_linear_input    (LrgTonemap *self);
 void               lrg_tonemap_set_linear_input    (LrgTonemap *self, gboolean linear);
 void               lrg_tonemap_apply_rgb           (LrgTonemap *self, const gfloat *rgb, gfloat *out);
+void               lrg_tonemap_operator_apply_rgb  (LrgTonemapOperator op, gfloat white_point,
+                                                    const gfloat *in, gfloat *out);   /* since 0.14 */
 const gchar       *lrg_tonemap_get_fragment_shader (void);
 #+end_src
 
@@ -117,6 +124,14 @@ const gchar       *lrg_tonemap_get_fragment_shader (void);
 :CUSTOM_ID: tonemap-curve
 :END:
 Per channel: decode =x = c^2.2= (skipped when =linear-input=), =x *= 2^exposure=, map, clamp to 0..1, encode =m^(1/2.2)=, mix with the input by the base intensity. =lrg_tonemap_apply_rgb()= is the same arithmetic on the CPU (the GPU test compares both).
+
+=lrg_tonemap_operator_apply_rgb()= (since 0.14) is the curve alone, the single CPU definition of the operators: it takes linear values with the exposure already applied (negative and NaN components count as 0), applies the operator with the given white point (clamped into 0.1..100, used by Reinhard and filmic only) and clamps the result to 0..1 - no gamma decode, no encode, no intensity mix. =lrg_tonemap_apply_rgb()= decodes, exposes, calls it, then encodes and mixes, so its results are unchanged; [[file:../graphics/hdr-canvas.org][LrgHdrCanvas]]'s =lrg_hdr_canvas_to_image()= calls it before an exact sRGB encode. Use it whenever float pixels need the same look as the GPU pass:
+
+#+begin_src C
+gfloat rgb[3] = { 3.0f, 1.2f, 0.4f };   /* linear, exposure applied */
+
+lrg_tonemap_operator_apply_rgb (LRG_TONEMAP_OPERATOR_ACES, 4.0f, rgb, rgb);   /* in place, 0..1 linear */
+#+end_src
 | Operator | Formula | Look |
 |----------+---------+------|
 | =none= | =x= | Hard clip; exposure only |
@@ -156,6 +171,8 @@ lrg_post_effect_set_priority (LRG_POST_EFFECT (tm), 10);   /* after bloom */
 :CUSTOM_ID: lrgvignette
 :END:
 Darkens (or tints) the edges of the screen to frame the centre.
+
+CPU path: yes, the shader's formula per pixel ([[file:cpu.org][cpu.org]]).
 
 #+begin_src C
 G_DECLARE_FINAL_TYPE (LrgVignette, lrg_vignette, LRG, VIGNETTE, LrgPostEffect)
@@ -202,6 +219,8 @@ lrg_vignette_set_color (vignette, 0.15f, 0.0f, 0.0f);   /* low-health red */
 :CUSTOM_ID: lrgcolorgrade
 :END:
 Professional color grading with lift/gamma/gain controls.
+
+CPU path: yes, =lrg_color_grade_apply_rgb()= per pixel, LUT included ([[file:cpu.org][cpu.org]]).
 
 #+begin_src C
 #define LRG_TYPE_COLOR_GRADE (lrg_color_grade_get_type ())
@@ -321,6 +340,8 @@ lrg_color_grade_set_gain (grade, 0.1f, 0.05f, 0.0f);    /* Orange highlights */
 :END:
 Fast approximate anti-aliasing: smooths stair-stepped edges after the image is drawn. Run it late (after tonemap and grading, before film grain).
 
+CPU path: yes, the shader ported line by line with bilinear taps ([[file:cpu.org][cpu.org]]).
+
 #+begin_src C
 G_DECLARE_FINAL_TYPE (LrgFxaa, lrg_fxaa, LRG, FXAA, LrgPostEffect)
 
@@ -369,6 +390,8 @@ lrg_post_effect_set_priority (LRG_POST_EFFECT (fxaa), 1000);   /* last */
 :END:
 Animated film grain.
 
+CPU path: yes, the same hash; the grain frame comes from the stack clock passed in, so a given time always gives the same grain ([[file:cpu.org][cpu.org]]).
+
 #+begin_src C
 G_DECLARE_FINAL_TYPE (LrgFilmGrain, lrg_film_grain, LRG, FILM_GRAIN, LrgPostEffect)
 
@@ -413,6 +436,8 @@ lrg_film_grain_set_size (grain, 2.0f);
 :CUSTOM_ID: lrgscreenshake
 :END:
 Trauma-based screen shake for impacts and explosions, applied to the finished image (the camera does not move, so it also shakes UI drawn before =render()=).
+
+CPU path: none (=lrg_post_effect_has_cpu()= is =FALSE=): a CPU stack with it enabled fails with =G_IO_ERROR_NOT_SUPPORTED= ([[file:cpu.org][cpu.org]]).
 
 #+begin_src C
 G_DECLARE_FINAL_TYPE (LrgScreenShake, lrg_screen_shake, LRG, SCREEN_SHAKE, LrgPostEffect)
@@ -472,6 +497,8 @@ lrg_screen_shake_add_trauma (shake, 0.8f);
 :CUSTOM_ID: lrgheathaze
 :END:
 A shimmering distortion in a band about the horizon, for hot air over sand and stone (=postprocess/effects/lrg-heat-haze.h=).
+
+CPU path: none (=lrg_post_effect_has_cpu()= is =FALSE=): a CPU stack with it enabled fails with =G_IO_ERROR_NOT_SUPPORTED= ([[file:cpu.org][cpu.org]]).
 
 #+begin_src C
 G_DECLARE_FINAL_TYPE (LrgHeatHaze, lrg_heat_haze, LRG, HEAT_HAZE, LrgPostEffect)

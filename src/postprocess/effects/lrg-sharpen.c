@@ -22,6 +22,7 @@
 #include "postprocess/effects/lrg-sharpen.h"
 #include "core/lrg-prewarm.h"
 #include "graphics/lrg-glsl-private.h"
+#include "postprocess/lrg-post-cpu-private.h"
 
 /* the shader mirrors lrg_sharpen_pixel() below; one texel is 1 / textureSize */
 static const gchar sharpen_fs[] =
@@ -250,6 +251,55 @@ lrg_sharpen_real_apply (LrgPostEffect *effect,
         grl_shader_end (shader);
 }
 
+/*
+ * lrg_sharpen_real_apply_cpu: the fragment shader per pixel. The four
+ * neighbours are read from a copy of the input (clamped at the edges, as
+ * the GL sampler); lrg_sharpen_pixel() is the shader's arithmetic, then
+ * the result is mixed with the input by the base intensity. Up and down
+ * swap under the GPU's vertical mirror, which the formula ignores.
+ */
+static gboolean
+lrg_sharpen_real_apply_cpu (LrgPostEffect *effect,
+                            gfloat        *rgba,
+                            guint          width,
+                            guint          height,
+                            gfloat         time)
+{
+    LrgSharpen *self = LRG_SHARPEN (effect);
+    g_autofree gfloat *src = NULL;
+    gfloat intensity;
+    guint x;
+    guint y;
+
+    (void)time;
+
+    if (lrg_sharpen_is_identity (self))
+        return TRUE;
+    intensity = lrg_post_effect_get_intensity (effect);
+    src = lrg_post_cpu_dup (rgba, width, height);
+
+    for (y = 0; y < height; y++)
+    {
+        for (x = 0; x < width; x++)
+        {
+            const gfloat *c = lrg_post_cpu_texel (src, 4, width, height, (gint)x, (gint)y);
+            gfloat *p = rgba + ((gsize)y * width + x) * 4;
+            gfloat s[3];
+            guint k;
+
+            lrg_sharpen_pixel (self->sharpness, c,
+                               lrg_post_cpu_texel (src, 4, width, height, (gint)x, (gint)y - 1),
+                               lrg_post_cpu_texel (src, 4, width, height, (gint)x, (gint)y + 1),
+                               lrg_post_cpu_texel (src, 4, width, height, (gint)x - 1, (gint)y),
+                               lrg_post_cpu_texel (src, 4, width, height, (gint)x + 1, (gint)y),
+                               s);
+            for (k = 0; k < 3; k++)
+                p[k] = c[k] + (s[k] - c[k]) * intensity;
+        }
+    }
+    return TRUE;
+}
+
 static const gchar *
 lrg_sharpen_real_get_name (LrgPostEffect *effect)
 {
@@ -326,6 +376,7 @@ lrg_sharpen_class_init (LrgSharpenClass *klass)
     effect_class->initialize = lrg_sharpen_real_initialize;
     effect_class->shutdown = lrg_sharpen_real_shutdown;
     effect_class->apply = lrg_sharpen_real_apply;
+    effect_class->apply_cpu = lrg_sharpen_real_apply_cpu;
     effect_class->resize = lrg_sharpen_real_resize;
     effect_class->get_name = lrg_sharpen_real_get_name;
 

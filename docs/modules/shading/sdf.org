@@ -1,0 +1,229 @@
+* Signed distance functions
+:PROPERTIES:
+:CUSTOM_ID: lrg-sdf
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Shading]]* > Signed distance functions
+#+end_quote
+
+=shading/lrg-sdf.h= is a set of pure functions that return the signed distance from a point to a shape: negative inside, zero on the surface, positive outside. Shapes are combined with min/max-style operators (hard or smooth), and a handful of scene helpers turn a distance field into pixels: a tetrahedral normal, a sphere tracer, soft shadows, ambient occlusion, and the analytic coverage used to anti-alias 2D fills. The formulations follow Inigo Quilez's articles (iquilezles.org: "2D distance functions", "distance functions", "smooth minimum", "soft shadows", "normals for an SDF", "ellipse distance").
+
+- *Header* - =shading/lrg-sdf.h=
+- *Callbacks* - =LrgSdf2Func= (=gfloat (*) (const gfloat p[2], gpointer user_data)=), =LrgSdf3Func= (the same with =p[3]=)
+- *Since* - 0.14
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: sdf-concepts
+:END:
+*** Points and conventions
+:PROPERTIES:
+:CUSTOM_ID: sdf-conventions
+:END:
+Vectors are plain float arrays (=p[0]= is x, =p[1]= y, =p[2]= z); in GIR they are fixed-size arrays. Primitives are centred on the origin unless they take explicit points (segment, capsule, triangle): to place, rotate or scale a shape, transform the query point first (translate by subtracting the centre; for a uniform scale s, evaluate at p / s and multiply the result by s). In 2D images the y axis points down, which does not matter to any primitive here.
+
+*** Exact distances and bounds
+:PROPERTIES:
+:CUSTOM_ID: sdf-exact-and-bounds
+:END:
+Most primitives return the exact Euclidean distance. Two things only bound it:
+
+- =lrg_sdf3_ellipsoid()= is Inigo Quilez's k0 (k0 - 1) / k1 estimate, not the exact distance (the exact one needs a sixth-degree root). It is exact on the three axes, zero exactly on the surface and has the right sign everywhere; elsewhere it is within a small factor of the truth. Ray marching, shadows and smooth blending work with it; do not use it to measure gaps.
+- The operators: a union is exact outside both shapes, and subtraction, intersection and every smooth operator give a bound. A bound is fine for the scene helpers as long as it never overestimates by much (a Lipschitz constant near 1).
+
+=lrg_sdf2_ellipse()=, in contrast, is exact: the closest point is the root of a quartic, solved in closed form (trigonometric or Cardano branch) in double precision, with a circle fallback when the two semi-axes are equal and a flat segment when one of them is zero or negative.
+
+*** Smooth operators
+:PROPERTIES:
+:CUSTOM_ID: sdf-smooth
+:END:
+=lrg_sdf_smooth_union()= is the quadratic polynomial smooth minimum: h = max (k - |d1 - d2|, 0) / k, result = min (d1, d2) - h^2 k / 4. Where the two distances differ by more than k the result is exactly the hard union, so the blend is local; where they are equal it bulges out by k / 4. Subtraction and intersection are derived from it: smooth_subtract (d1, d2, k) = -smooth_union (-d1, d2, k), smooth_intersect (d1, d2, k) = -smooth_union (-d1, -d2, k). k is in distance units (pixels for an image-space 2D field); 0 or less gives the hard operator.
+
+*** Anti-aliasing with coverage
+:PROPERTIES:
+:CUSTOM_ID: sdf-coverage
+:END:
+A distance field knows how far each pixel centre is from the edge, so it can anti-alias analytically with one sample: =lrg_sdf2_coverage (d, pixel_width)= = clamp (0.5 - d / pixel_width, 0, 1), a one-pixel linear ramp centred on the edge. For an image-space field pixel_width is 1; for a field in world units it is the size of a pixel in those units. =lrg_image_canvas_fill_sdf()= does exactly this per pixel.
+
+*** Scene helpers
+:PROPERTIES:
+:CUSTOM_ID: sdf-scene-helpers
+:END:
+A 3D scene is a =LrgSdf3Func= that returns the distance to the nearest surface (a union of primitives, usually):
+
+- =lrg_sdf3_raymarch()= sphere-traces ro + t rd from t = 0: each step advances by the reported distance, a hit is a distance below 1e-4 x max (1, t). The direction is normalised for you. A ray starting inside a shape hits at t = 0.
+- =lrg_sdf3_normal()= is the tetrahedral gradient: four samples at p + eps x (1,-1,-1), (-1,-1,1), (-1,1,-1), (1,1,1), weighted by the same corners and normalised. eps <= 0 uses 1e-3.
+- =lrg_sdf3_soft_shadow()= marches towards the light from tmin to tmax (at most 256 steps) and tracks how narrowly the ray misses the scene, scaled by the hardness k (8 soft, 32 crisp). It uses Inigo Quilez's improved estimate, which triangulates the nearest occluder from two consecutive samples to remove banding; an occluder estimated before tmin is the surface the ray leaves, and there the plain k h / t estimate is used. The plain estimate is also used for a step where the distance more than doubles (h > 2 ph): an exact field cannot do that, but distance estimates (ellipsoids, smooth blends, displaced surfaces, a bounding sphere that returns its own distance far from the object) can, and triangulating such a step would report a full shadow where nothing blocks the light (fixed in 0.14; before, scenes built from ellipsoids showed thin black arcs and contour bands in their shadows).
+- =lrg_sdf3_ambient_occlusion()= takes five samples along the normal at 0.01 .. 0.13 units and accumulates how much closer the scene is than open space would be. The spacing is in scene units and suits objects about one unit across.
+
+** Quick start
+:PROPERTIES:
+:CUSTOM_ID: sdf-quick-start
+:END:
+A complete program: a 2D logo filled with anti-aliasing, then a small lit 3D render of a sphere on a floor, written to two PNGs. Build it with =gcc -std=gnu89 sdf-demo.c $(pkg-config --cflags --libs libregnum-1) -lm=; it runs in a few milliseconds.
+
+#+begin_src C
+#include <libregnum.h>
+#include <math.h>
+
+/* 2D: a disc and a bar blended with a 12-pixel fillet, in image pixels */
+static gfloat
+logo (const gfloat p[2],
+      gpointer     user_data)
+{
+	gfloat c[2] = { p[0] - 64.0f, p[1] - 64.0f };
+	gfloat a[2] = { 20.0f, 100.0f };
+	gfloat b[2] = { 108.0f, 30.0f };
+
+	return lrg_sdf_smooth_union (lrg_sdf2_circle (c, 34.0f),
+	                             lrg_sdf2_capsule (p, a, b, 8.0f), 12.0f);
+}
+
+/* 3D: a floor at y = 0 and a unit sphere resting on it */
+static gfloat
+scene (const gfloat p[3],
+       gpointer     user_data)
+{
+	gfloat q[3] = { p[0], p[1] - 1.0f, p[2] };
+
+	return lrg_sdf_union (p[1], lrg_sdf3_sphere (q, 1.0f));
+}
+
+int
+main (void)
+{
+	GrlColor                  bg = { 20, 22, 30, 255 };
+	GrlColor                  ink = { 80, 200, 190, 255 };
+	g_autoptr(LrgImageCanvas) canvas = lrg_image_canvas_new (128, 128, &bg);
+	g_autoptr(LrgImageCanvas) render = lrg_image_canvas_new (160, 120, &bg);
+	gfloat                    light[3] = { 0.6f, 0.7f, -0.4f };
+	gint                      x;
+	gint                      y;
+
+	/* the 2D fill: blend over the background in linear light */
+	lrg_image_canvas_set_blend_mode (canvas, GRL_IMAGE_BLEND_OVER);
+	lrg_image_canvas_set_blend_color_space (canvas, GRL_IMAGE_COLOR_SPACE_LINEAR);
+	lrg_image_canvas_fill_sdf (canvas, logo, NULL, &ink);
+	grl_image_export (lrg_image_canvas_get_image (canvas), "logo.png");
+
+	/* the 3D render: one ray per pixel from a camera at (0, 1.5, -4) */
+	for (y = 0; y < 120; y++)
+	{
+		for (x = 0; x < 160; x++)
+		{
+			gfloat   ro[3] = { 0.0f, 1.5f, -4.0f };
+			gfloat   rd[3] = { (x - 80.0f) / 120.0f, -(y - 60.0f) / 120.0f - 0.15f, 1.0f };
+			gfloat   t;
+			gfloat   shade = 0.05f;
+			GrlColor c;
+
+			if (lrg_sdf3_raymarch (scene, NULL, ro, rd, 30.0f, 128, &t))
+			{
+				gfloat len = sqrtf (rd[0] * rd[0] + rd[1] * rd[1] + rd[2] * rd[2]);
+				gfloat p[3];
+				gfloat n[3];
+				gfloat diffuse;
+
+				p[0] = ro[0] + rd[0] / len * t;
+				p[1] = ro[1] + rd[1] / len * t;
+				p[2] = ro[2] + rd[2] / len * t;
+				lrg_sdf3_normal (scene, NULL, p, 1e-3f, n);
+				diffuse = MAX (n[0] * light[0] + n[1] * light[1] + n[2] * light[2], 0.0f);
+				diffuse *= lrg_sdf3_soft_shadow (scene, NULL, p, light, 0.02f, 20.0f, 12.0f);
+				shade = 0.15f * lrg_sdf3_ambient_occlusion (scene, NULL, p, n) + 0.8f * diffuse;
+			}
+
+			/* a gamma of 2.2 for display */
+			c.r = c.g = c.b = (guint8)(255.0f * powf (CLAMP (shade, 0.0f, 1.0f), 1.0f / 2.2f));
+			c.a = 255;
+			grl_image_draw_pixel (lrg_image_canvas_get_image (render), x, y, &c);
+		}
+	}
+	grl_image_export (lrg_image_canvas_get_image (render), "sphere.png");
+	return 0;
+}
+#+end_src
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: sdf-api
+:END:
+*** Primitives
+:PROPERTIES:
+:CUSTOM_ID: sdf-api-primitives
+:END:
+| Function | Shape | Exact? |
+|----------+-------+--------|
+| =lrg_sdf2_circle (p, r)= | circle of radius r at the origin | yes |
+| =lrg_sdf2_ellipse (p, ab)= | axis-aligned ellipse, semi-axes ab[0], ab[1] | yes (closed-form quartic, double precision) |
+| =lrg_sdf2_box (p, b)= | box with half-extents b | yes |
+| =lrg_sdf2_round_box (p, b, r)= | box of half-extents b with corners of radius r (r clamped into 0 .. min (b); the outer size stays b) | yes |
+| =lrg_sdf2_segment (p, a, b)= | segment from a to b (unsigned) | yes |
+| =lrg_sdf2_capsule (p, a, b, r)= | segment a-b thickened by r | yes |
+| =lrg_sdf2_triangle (p, a, b, c)= | triangle, either winding; a degenerate one gives the unsigned edge distance | yes |
+| =lrg_sdf3_sphere (p, r)= | sphere | yes |
+| =lrg_sdf3_ellipsoid (p, r)= | axis-aligned ellipsoid, semi-axes r[0..2] | *bound* |
+| =lrg_sdf3_box (p, b)= | box with half-extents b | yes |
+| =lrg_sdf3_round_box (p, b, r)= | box with rounded edges (outer size stays b) | yes |
+| =lrg_sdf3_capsule (p, a, b, r)= | segment a-b thickened by r | yes |
+| =lrg_sdf3_round_cone (p, r1, r2, h)= | hull of a sphere r1 at the origin and a sphere r2 at (0, h, 0) | yes |
+| =lrg_sdf3_torus (p, t)= | torus around y: major radius t[0], tube radius t[1] | yes |
+
+*** Operators
+:PROPERTIES:
+:CUSTOM_ID: sdf-api-operators
+:END:
+| Function | Result |
+|----------+--------|
+| =lrg_sdf_union (d1, d2)= | min (d1, d2) |
+| =lrg_sdf_subtract (d1, d2)= | d1 minus d2: max (d1, -d2) |
+| =lrg_sdf_intersect (d1, d2)= | max (d1, d2) |
+| =lrg_sdf_smooth_union (d1, d2, k)= | polynomial smooth min, fillet of size k |
+| =lrg_sdf_smooth_subtract (d1, d2, k)= | -smooth_union (-d1, d2, k) |
+| =lrg_sdf_smooth_intersect (d1, d2, k)= | -smooth_union (-d1, -d2, k) |
+| =lrg_sdf_round (d, r)= | d - r: grow by r, rounding convex corners |
+| =lrg_sdf_onion (d, t)= | abs (d) - t: a shell of thickness 2t |
+
+*** Scene helpers
+:PROPERTIES:
+:CUSTOM_ID: sdf-api-helpers
+:END:
+| Function | Returns |
+|----------+---------|
+| =lrg_sdf2_coverage (d, pixel_width)= | pixel coverage 0 .. 1 |
+| =lrg_sdf3_normal (func, user_data, p, eps, out)= | unit normal in =out= ((0, 0, 0) when the gradient vanishes) |
+| =lrg_sdf3_raymarch (func, user_data, ro, rd, tmax, max_steps, out_t)= | =TRUE= on a hit, the distance in =out_t= (optional) |
+| =lrg_sdf3_soft_shadow (func, user_data, ro, rd, tmin, tmax, k)= | light visibility 1 (lit) .. 0 (shadowed) |
+| =lrg_sdf3_ambient_occlusion (func, user_data, p, n)= | ambient visibility 1 (open) .. 0 (occluded) |
+
+The callbacks are called synchronously and never kept (=(scope call)=); =user_data= is passed through untouched.
+
+** Behaviour and edge cases
+:PROPERTIES:
+:CUSTOM_ID: sdf-edge-cases
+:END:
+- NaN coordinates give NaN distances from the primitives; infinite ones give infinite distances. Nothing crashes or loops.
+- =lrg_sdf2_coverage()= maps a NaN distance to 0 (nothing drawn), +inf to 0 and -inf to 1; a pixel_width of 0 or less is a hard step (1 when d <= 0).
+- =lrg_sdf3_raymarch()= returns =FALSE= for a zero-length or non-finite direction, a non-finite origin, a NaN =tmax= or a NaN distance; =max_steps= is clamped into 1 .. 100000. On a miss =out_t= holds how far the march got (at most =tmax=).
+- =lrg_sdf3_soft_shadow()= returns 1 for a zero-length direction or NaN parameters, stops at a NaN distance, and returns 0 as soon as the ray touches a surface (distance below 1e-4). A negative =tmin= is treated as 0.
+- =lrg_sdf3_ambient_occlusion()= skips NaN samples (a NaN field gives 1).
+- =lrg_sdf3_round_cone()= with |r1 - r2| >= h (one sphere inside the other, or h <= 0) returns the distance to the union of the two spheres, which is the larger sphere.
+- =lrg_sdf2_round_box()= / =lrg_sdf3_round_box()= clamp r into 0 .. min (b): an oversized radius makes a circle (sphere) of the smallest half-extent, never a shape larger than b.
+- Degenerate segments and capsules (a = b) are points and spheres; a degenerate triangle is never "inside".
+
+** Performance and thread safety
+:PROPERTIES:
+:CUSTOM_ID: sdf-performance
+:END:
+- Every function is pure and re-entrant: call them from as many threads as you like (split an image into rows). The callbacks must be thread-safe themselves if you do.
+- Primitives cost a handful of float operations; =lrg_sdf2_ellipse()= is the expensive one (double precision, a cube root or an arccosine): about 50 ns per call on a current x86_64 desktop, against a few ns for the others.
+- The scene helpers cost calls of your field: =normal= 4, =ambient_occlusion= 5, =raymarch= up to =max_steps=, =soft_shadow= up to 256. A 3x3 supersampled 1024 x 1024 render (9.4 million rays) with shadows and AO easily makes a billion field calls: keep the field cheap (bound sub-scenes with a box test before evaluating them) and parallelise by rows.
+- =lrg_image_canvas_fill_sdf()= evaluates the field once per pixel of the image (or of the clip rectangle); =lrg_image_canvas_fill_sdf_rect()= limits that to a bounding box.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: sdf-see-also
+:END:
+- [[file:noise.org][Noise]] - band-limited fBm to texture SDF surfaces
+- [[file:../graphics/image-canvas.org::#lrg-image-canvas-fill-sdf][lrg_image_canvas_fill_sdf()]] - anti-aliased 2D fills
+- [[file:index.org][Shading module overview]]

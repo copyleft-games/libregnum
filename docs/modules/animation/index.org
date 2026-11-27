@@ -96,4 +96,7 @@ LrgIKChain + LrgIKSolver (post-process)
 | [[file:gltf-animation.org]] | glTF skins, clips, morph targets |
 | [[file:retargeter.org]]    | Bone maps and retargeting     |
 | [[file:sequence.org]]      | Sequences (=.rseq=) and the sequence player |
-- [[file:skeleton2d.org][LrgSkeleton2D]] - 2D bones, slots, skins, clips, .rskel2d
+- [[file:skeleton2d.org][LrgSkeleton2D]] - 2D bones, slots, skins, blend shapes, clips, .rskel2d, CPU drawing (lrg_skeleton2d_draw_to_canvas)
+- [[file:shape-sheet.org][Shape sheet]] - the standard blend-shape names for 2D faces and bodies
+- [[file:lip-sync.org][LrgLipSync]] - phoneme alignments (or audio loudness) to viseme keys
+- [[file:procedural.org][LrgSkeleton2DProcedural]] - automatic blink and breathe layers

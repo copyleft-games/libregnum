@@ -83,7 +83,7 @@ capture, data-driven YAML authoring, and a command-line tool.
 - *[[file:reel/composition.org][LrgReel]]* - the composition (id, resolution, fps, duration, clip stack, props)
 - *[[file:reel/timing.org][LrgReelContext / LrgReelSequence]]* - the relative-frame model: shift, series, loop, freeze
 - *[[file:reel/animation.org][interpolate / spring / color / noise]]* - range interpolation, spring physics, OkLab color, bezier easing, noise
-- *[[file:reel/clips.org][LrgReelClip]]* - transform, blend modes, effects + solid / gradient / image / text / shape content clips
+- *[[file:reel/clips.org][LrgReelClip]]* - transform, blend modes, effects + solid / gradient / image / text / shape content clips, and [[file:reel/clips.org::#skeleton2d-clip][LrgReelSkeleton2DClip]] (animated 2D characters, 0.14)
 - *[[file:reel/compositing.org][Effects]]* - per-clip filter chain: blur, bloom, color-grade, vignette, grain, chroma-key, drop-shadow, light-leak
 - *[[file:reel/media.org][Media]]* - video source decode, video clip (trim/rate/loop), FFT audio analysis
 - *[[file:reel/rendering.org][LrgReelRenderer]]* - offline frame-by-frame engine, render_range, render_parallel, motion blur
@@ -147,8 +147,19 @@ Window management, cameras, and rendering abstractions:
 - *[[file:graphics/index.org#lrgcamera3d][LrgCamera3D]]* - 3D camera for 3D games
 - *[[file:graphics/index.org#lrgrenderer][LrgRenderer]]* - Render management and layer system
 - *[[file:graphics/gltf-info.org][LrgGltfInfo]]* - Headless glTF/GLB inspection (raylib mesh order, node names, animations, visibility masks)
+- *[[file:graphics/frame-layout.org][LrgFrameLayout]]* - Named boxes on a still frame with a safe area, relative placement and overlap / out-of-frame checks for generated images
 - *[[file:graphics/static-batch.org][LrgStaticBatch]]* - Static mesh batching into u16 chunks per (material, layer) with bounds and layer masks
 - *[[file:graphics/model-animator.org][LrgModelAnimator]]* - Shared skinned model animation with per-actor state, crossfades, pose dedupe and masked drawing
+- *[[file:graphics/image-raster.org][CPU textured triangles]]* - =lrg_image_draw_triangle_textured()=: headless rasteriser for skinned sprites and 2D skeletons (0.14)
+- *[[file:graphics/image-canvas.org][LrgImageCanvas]]* - CPU drawing canvas; quality preset and supersampled export (=new_quality=, =new_supersampled=, =resolve=)
+- *[[file:graphics/image-resample.org][Image resampling]]* - Gamma-correct, premultiplied box / Mitchell / Lanczos-3 downsampling (=lrg_image_downsample()=)
+- *[[file:graphics/hdr-canvas.org][LrgHdrCanvas]]* - Float linear-light canvas with supersampled shading and tone-mapped, dithered sRGB export
+
+*** [[file:shading/index.org][Shading Module]] - Signed distance functions and band-limited noise (0.14)
+:PROPERTIES:
+:CUSTOM_ID: shading-module
+:END:
+CPU shading maths as pure functions: 2D and 3D signed distance primitives (exact ellipse, ellipsoid bound, capsule, round cone, box, torus, ...), hard and smooth operators, normals, ray marching, soft shadows and ambient occlusion ([[file:shading/sdf.org][sdf.org]]); seeded value and simplex noise and fBm that takes a pixel footprint so fine octaves fade out instead of aliasing ([[file:shading/noise.org][noise.org]]). =lrg_image_canvas_fill_sdf()= draws a 2D field into an =LrgImageCanvas= with analytic anti-aliasing.
 
 *** [[file:worldui/index.org][World-space UI Module]] - Speech bubbles, nameplates and emotes (0.11.0)
 :PROPERTIES:
@@ -190,6 +201,8 @@ Screen-space effects pipeline:
 - *[[file:postprocess/post-processor.org][LrgPostProcessor]]* - Effect chain manager
 - *[[file:postprocess/effects.org][Effects]]* - Bloom, vignette, color grade, FXAA, film grain, screen shake
 - *[[file:postprocess/accessibility.org][Accessibility]]* - Colorblind simulation and correction
+- *[[file:postprocess/blur.org][LrgBlur]]* - Separable Gaussian blur
+- *[[file:postprocess/cpu.org][CPU path]]* - The post stack on images in memory (headless and offline renders)
 
 *** [[file:animation/index.org][Animation Module]] - Skeletal Animation
 :PROPERTIES:
@@ -204,6 +217,10 @@ Complete skeletal animation system:
 - *[[file:animation/blend-tree.org][LrgBlendTree]]* - 1D/2D parametric blending
 - *[[file:animation/layers.org][LrgAnimationLayer]]* - Layered animation with bone masks
 - *[[file:animation/ik-solver.org][LrgIKSolver]]* - FABRIK, CCD, two-bone, look-at
+- *[[file:animation/skeleton2d.org][LrgSkeleton2D]]* - 2D bones, slots, skins, blend shapes, clips and the =.rskel2d= format
+- *[[file:animation/shape-sheet.org][Shape sheet]]* - Standard blend-shape names (visemes, eyes, brows, moods, body) shared by a cast
+- *[[file:animation/lip-sync.org][LrgLipSync]]* - Phoneme alignments or audio loudness to cross-faded viseme keys
+- *[[file:animation/procedural.org][LrgSkeleton2DProcedural]]* - Deterministic automatic blink and breathe layers
 
 *** [[file:text/index.org][Rich Text Module]] - Styled Text
 :PROPERTIES:

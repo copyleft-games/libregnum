@@ -529,3 +529,151 @@ For an arbitrary bezier/path use =LRG_REEL_SHAPE_PATH= and call
 Setting a fill color with =alpha = 0= draws nothing for the fill, but the
 stroke is drawn independently.  You can have a stroke-only shape by setting
 the fill alpha to 0 and the stroke width to a positive value.
+
+** LrgReelSkeleton2DClip — an animated 2D character
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-clip
+:END:
+Draws an [[file:../animation/skeleton2d.org][LrgSkeleton2D]] character, posed for each frame, on the CPU: no window is needed, so a character renders to frames headless (CI, a render server) and exports through any reel exporter.  Since 0.14.
+
+Each frame the clip:
+1. resets the skeleton to its setup pose (=lrg_skeleton2d_reset_pose()=), so a frame never depends on the frame rendered before it;
+2. applies its animation (an =LrgSkeleton2DClip=) at the clip-relative time =lrg_reel_context_get_seconds()= (sub-frame included, so motion blur works) times the speed, wrapped into the animation's duration when looping (the default) or clamped to it otherwise (=lrg_reel_skeleton2d_clip_get_animation_time()= returns that time);
+3. calls the pose callback, if any (=LrgReelSkeleton2DPoseFunc=, set with =lrg_reel_skeleton2d_clip_set_pose_func()=): procedural layers such as blinks, breathing or a look-at go here, as pure functions of the time (=lrg_skeleton2d_procedural_apply()= of an [[file:../animation/procedural.org][LrgSkeleton2DProcedural]] fits as is);
+4. places the skeleton through its root transform (=lrg_reel_skeleton2d_clip_set_placement (clip, x, y, scale)=, =lrg_reel_skeleton2d_clip_set_flip_x()=), the way =LrgSkeleton2DComponent= places it from a game object, computes the world transforms and draws it with =lrg_skeleton2d_draw_to_canvas()=.
+
+The inherited clip transform, opacity, blend mode and effects work too: the canvas transform composes with the placement.  Attachment images load on the first frame relative to the skeleton's =base-dir= (or set CPU source images with =lrg_skinned_sprite_set_source_image()=); see [[file:../animation/skeleton2d.org::#cpu-drawing][Drawing on the CPU]].
+
+*** Example: a character to a PNG sequence
+A complete program: it builds a two-bone arm with a generated texture, plays a bend clip with a procedural sway on top, and renders 48 frames to =frames/wave_00000.png= .. on four threads.
+
+#+begin_src c
+/* wave.c: a waving arm rendered to frames/wave_00000.png .. headless */
+#include <libregnum.h>
+#include <math.h>
+
+/* procedural layer: the upper arm sways on top of the "bend" clip */
+static void
+sway (LrgReelSkeleton2DClip *clip,
+      LrgSkeleton2D         *skel,
+      gdouble                seconds,
+      gpointer               user_data)
+{
+    gint upper = lrg_skeleton2d_find_bone (skel, "upper");
+
+    lrg_skeleton2d_set_bone_local (skel, upper, 0.0f, 0.0f,
+                                   (gfloat)(-25.0 * sin (seconds * G_PI)), 1.0f, 1.0f);
+}
+
+int
+main (void)
+{
+    g_autoptr(GError)                error = NULL;
+    g_autoptr(LrgSkeleton2D)         skel = lrg_skeleton2d_new ();
+    g_autoptr(LrgSkinnedSprite)      strip = lrg_skinned_sprite_new_grid (0, -8, 120, 16, 12, 1);
+    g_autoptr(LrgSkeleton2DClip)     bend = lrg_skeleton2d_clip_new ("bend");
+    g_autoptr(GrlImage)              skin = NULL;
+    g_autoptr(LrgReel)               reel = lrg_reel_new ("wave", 320, 240, 24.0, 48);
+    g_autoptr(LrgReelSolidClip)      bg = NULL;
+    g_autoptr(LrgReelSkeleton2DClip) arm = NULL;
+    g_autoptr(LrgReelRenderer)       renderer = NULL;
+    g_autoptr(LrgReelSeqExporter)    seq = NULL;
+    GrlColor                         sky = { 40, 50, 70, 255 };
+    GrlColor                         c1 = { 240, 160, 90, 255 };
+    GrlColor                         c2 = { 170, 80, 50, 255 };
+    gint                             upper;
+    gint                             fore;
+    gint                             slot;
+
+    /* the character: two bones, one 12-cell strip mesh weighted to both,
+     * textured with a generated gradient (no image files needed) */
+    upper = lrg_skeleton2d_add_bone (skel, "upper", -1, 0, 0, 0, 1, 1, 60);
+    fore = lrg_skeleton2d_add_bone (skel, "fore", upper, 60, 0, 0, 1, 1, 60);
+    slot = lrg_skeleton2d_add_slot (skel, "arm", upper, "arm");
+    lrg_skeleton2d_update_world (skel);
+    {
+        gint bones[2];
+
+        bones[0] = upper;
+        bones[1] = fore;
+        lrg_skeleton2d_compute_auto_weights (skel, strip, bones, 2, 4.0f, 2, 1);
+    }
+    skin = grl_image_new_gradient_linear (64, 16, 90, &c1, &c2);
+    lrg_skinned_sprite_set_source_image (strip, skin);
+    lrg_skeleton2d_set_attachment (skel, NULL, slot, "arm", strip);
+
+    /* the animation: the forearm bends 90 degrees and back over 2 s */
+    lrg_skeleton2d_clip_add_rotate_key (bend, "fore", 0.0f, 0.0f, LRG_SKELETON2D_CURVE_LINEAR);
+    lrg_skeleton2d_clip_add_rotate_key (bend, "fore", 1.0f, 90.0f, LRG_SKELETON2D_CURVE_LINEAR);
+    lrg_skeleton2d_clip_add_rotate_key (bend, "fore", 2.0f, 0.0f, LRG_SKELETON2D_CURVE_LINEAR);
+
+    /* the reel: a background and the character clip, placed with its
+     * shoulder at (80, 120), 1.2x, swaying procedurally */
+    bg = lrg_reel_solid_clip_new (&sky);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (bg));
+    arm = lrg_reel_skeleton2d_clip_new (skel, bend);
+    lrg_reel_skeleton2d_clip_set_placement (arm, 80.0, 120.0, 1.2);
+    lrg_reel_skeleton2d_clip_set_pose_func (arm, sway, NULL, NULL);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (arm));
+
+    /* 48 PNG frames, rendered on 4 threads */
+    renderer = lrg_reel_renderer_new (reel);
+    seq = lrg_reel_seq_exporter_new ("frames", "wave_%05d", LRG_REEL_IMAGE_FORMAT_PNG);
+    if (!lrg_reel_renderer_render_parallel (renderer, 4, LRG_REEL_EXPORTER (seq), &error))
+    {
+        g_printerr ("render failed: %s\n", error->message);
+        return 1;
+    }
+    g_print ("wrote %u frames\n", lrg_reel_seq_exporter_get_frame_count (seq));
+    return 0;
+}
+#+end_src
+
+Blend shapes render like everything else: the skeleton's per-slot shape weights (clip shape keys, procedural layers, =lrg_skeleton2d_set_shape_weight()= in the callback) reach the meshes through the same deform as on the GPU, so a lip-synced, blinking character renders headless; see [[file:../animation/lip-sync.org::#end-to-end][LrgLipSync: end-to-end]] and the [[file:../../examples/skeleton2d-talking-head.org][talking head example]].
+
+Loading a rig from disk is one call: =lrg_reel_skeleton2d_clip_new_from_file ("hero.rskel2d", "walk", &error)= loads the file and picks the clip by name (a missing name is an error).
+
+*** API
+| Function | Description |
+|----------+-------------|
+| =lrg_reel_skeleton2d_clip_new (skeleton, animation)= | new clip; both nullable; loops at speed 1, origin at the canvas origin |
+| =lrg_reel_skeleton2d_clip_new_from_file (path, animation, error)= | load a =.rskel2d= and pick a clip by name |
+| =lrg_reel_skeleton2d_clip_get_skeleton= / =lrg_reel_skeleton2d_clip_set_skeleton= | the skeleton (a reference is kept) |
+| =lrg_reel_skeleton2d_clip_get_animation= / =lrg_reel_skeleton2d_clip_set_animation= | the animation (any clip whose names match the skeleton) |
+| =lrg_reel_skeleton2d_clip_set_animation_name (self, name)= | play the skeleton's clip =name=; remembered and resolved again when the skeleton changes |
+| =lrg_reel_skeleton2d_clip_get_speed= / =lrg_reel_skeleton2d_clip_set_speed= | animation seconds per clip second; negative plays backwards |
+| =lrg_reel_skeleton2d_clip_get_loop= / =lrg_reel_skeleton2d_clip_set_loop= | wrap (default) or hold the last pose |
+| =lrg_reel_skeleton2d_clip_set_placement (self, x, y, scale)= / =lrg_reel_skeleton2d_clip_get_placement= | skeleton origin in canvas pixels and uniform scale |
+| =lrg_reel_skeleton2d_clip_get_flip_x= / =lrg_reel_skeleton2d_clip_set_flip_x= | mirror about the origin |
+| =lrg_reel_skeleton2d_clip_set_pose_func (self, func, user_data, destroy)= | procedural posing layer, run after the animation |
+| =lrg_reel_skeleton2d_clip_get_animation_time (self, seconds)= | the animation time used for a clip time |
+
+Properties: =skeleton=, =animation=, =animation-name=, =file= (a =.rskel2d= path; setting it loads the skeleton), =speed=, =loop=, =origin-x=, =origin-y=, =skeleton-scale=, =flip-x=.  The names avoid the inherited =x=, =y= and =scale-x= transform properties.
+
+*** YAML
+The loader registers the clip as =skeleton2d-clip= ([[file:data-yaml.org][Data-driven YAML]]); =file= names the rig (relative paths are relative to the current directory) and =animation-name= the clip:
+
+#+begin_src yaml
+clips:
+  - type: skeleton2d-clip
+    file: "rigs/hero.rskel2d"
+    animation-name: walk
+    origin-x: 320
+    origin-y: 400
+    skeleton-scale: 1.5
+    loop: true
+#+end_src
+
+A pose callback can only be set from code.
+
+*** Parallel rendering
+=lrg_reel_renderer_render_parallel()= renders different frames of the same clip objects on several threads, and the reel's rule is that a clip keeps no mutable render state on itself ([[file:rendering.org::#parallel-rendering][Parallel rendering]]).  A skeleton is mutable render state through and through: its local pose, world matrices, slot colours, attachments and draw order, and the deformed vertex buffer of every attachment are written while a frame is posed and drawn.  There are two ways to stay correct: copy the skeleton per frame, or lock.  =LrgReelSkeleton2DClip= locks:
+- =LrgSkeleton2D= has no deep copy, and a copy per frame would allocate every mesh again (and would have to learn every new channel, such as blend-shape weights).
+- The lock is one process-wide recursive mutex around steps 1 to 4 above, not one per clip or per skeleton, because attachments are shared by reference: two skeletons, and so two clips, can deform the same =LrgSkinnedSprite=.  It is recursive so a pose callback may render a nested reel holding another skeleton clip.
+- The cost: the skeleton clips of different frames pose and draw one at a time.  Everything else in those frames (other clips, effects, compositing, encoding) still runs in parallel, and posing and drawing a character is a small part of a frame.  The output is byte-identical to a sequential render; =tests/test-reel.c= (=/reel/skeleton2d/parallel=) renders two clips sharing one skeleton, with a pose callback, three times on 8 threads and compares every frame byte for byte (without the lock the same test fails).
+- The pose callback runs under the lock, on whichever renderer thread renders the frame; it must not wait for another thread that renders a skeleton clip.
+
+*** Pitfalls
+- The clip owns the skeleton's pose and root transform while a reel renders: do not pose or draw the same skeleton elsewhere at the same time.  After a render the skeleton is left in the last rendered pose.
+- A pose callback must be a pure function of =seconds=: frames render out of order and on several threads, so state carried from one call to the next breaks determinism.
+- A =file= that does not load leaves the clip empty and logs a warning (a property setter cannot return an error); use =lrg_reel_skeleton2d_clip_new_from_file()= in code to get the =GError=.

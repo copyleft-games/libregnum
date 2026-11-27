@@ -1,0 +1,112 @@
+* LrgBlur - Separable Gaussian Blur
+:PROPERTIES:
+:CUSTOM_ID: blur
+:END:
+[[file:../index.org][Modules]] / [[file:index.org][Post-Processing]] / LrgBlur
+
+=LrgBlur= (=src/postprocess/effects/lrg-blur.h=, GIR =Libregnum.Blur=, type name =blur= in =.rpost= files) blurs the whole image with a Gaussian kernel: menus over a paused game, depth-less "out of focus" backgrounds, dream sequences, soft glows built by hand. It runs on the GPU in a =LrgPostProcessor= chain and on the CPU with the same kernel ([[file:cpu.org][cpu.org]]).
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: blur-concepts
+:END:
+- *Separable*: a 2D Gaussian is the product of two 1D ones, so the blur is a horizontal pass (=2 r + 1= taps) and a vertical pass (=2 r + 1= taps) instead of =(2 r + 1)^2= taps.
+- *Kernel*: weight =w(d) = exp (-d^2 / (2 sigma^2))= for offsets =d = -r .. r=, normalised so the weights sum to 1. =r= is =LrgBlur:radius= (pixels, 0 to =LRG_BLUR_MAX_RADIUS= = 32); =sigma= is =LrgBlur:sigma=, or =r / 2= when it is 0 (the default), which keeps the kernel within two standard deviations. A sigma larger than =r / 2= makes the cut-off kernel flatter (closer to a box).
+- *Edges*: taps outside the image repeat the border pixel (GL clamp-to-edge), on both paths.
+- *Intensity*: the base =LrgPostEffect:intensity= mixes the blurred image with the source (0.5 is half blurred).
+- *Alpha* is not blurred; every pass keeps the source's alpha, like the other effects.
+
+** Quick start
+:PROPERTIES:
+:CUSTOM_ID: blur-quick-start
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+/* blur the game behind a pause menu, GPU path */
+static LrgPostProcessor *
+make_pause_post (void)
+{
+	LrgPostProcessor   *post = lrg_post_processor_new (GetRenderWidth (), GetRenderHeight ());
+	g_autoptr(LrgBlur)  blur = lrg_blur_new ();
+
+	lrg_blur_set_radius (blur, 8);
+	lrg_post_processor_add_effect (post, LRG_POST_EFFECT (blur));
+	lrg_post_processor_set_auto_resize (post, TRUE);
+	return post;
+}
+
+/* the same blur on an image in memory, CPU path */
+static gboolean
+blur_image (GrlImage  *image,
+            GError   **error)
+{
+	g_autoptr(LrgPostProcessor) post = lrg_post_processor_new (1, 1);
+	g_autoptr(LrgBlur)          blur = lrg_blur_new ();
+
+	lrg_blur_set_radius (blur, 3);
+	lrg_blur_set_sigma (blur, 1.5f);
+	lrg_post_processor_add_effect (post, LRG_POST_EFFECT (blur));
+	return lrg_post_processor_apply_to_image (post, image, 0.0f, error);
+}
+#+end_src
+
+In a =.rpost= look:
+#+begin_src yaml
+effects:
+  - type: blur
+    weight: 0.8
+    params: { radius: 6, sigma: 0 }
+#+end_src
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: blur-api
+:END:
+#+begin_src C
+#define LRG_BLUR_MAX_RADIUS (32)
+G_DECLARE_FINAL_TYPE (LrgBlur, lrg_blur, LRG, BLUR, LrgPostEffect)
+
+LrgBlur     *lrg_blur_new                 (void);
+guint        lrg_blur_get_radius          (LrgBlur *self);
+void         lrg_blur_set_radius          (LrgBlur *self, guint radius);     /* 0..32, clamped */
+gfloat       lrg_blur_get_sigma           (LrgBlur *self);
+void         lrg_blur_set_sigma           (LrgBlur *self, gfloat sigma);     /* 0..32, 0 = radius / 2 */
+gfloat      *lrg_blur_get_kernel          (LrgBlur *self, guint *n_weights);
+const gchar *lrg_blur_get_fragment_shader (void);
+#+end_src
+
+| Property | Range | Default | Look |
+|----------+-------+---------+------|
+| =radius= | 0..32 (uint) | 4 | Reach of the blur in pixels; 0 is the identity |
+| =sigma= | 0..32 | 0 (radius / 2) | Softness; larger flattens the kernel |
+
+- =lrg_blur_get_kernel()= returns the =2 r + 1= weights both passes use (offset =-r= first); free it with =g_free()=. The tests check it sums to 1 and that the CPU result equals a direct 2D convolution with it.
+- =lrg_blur_get_fragment_shader()= is the GLSL 330 source both GPU passes draw with: =texture0= the pass input, =original= the effect's source, =texel= the step between taps, =weights= the half kernel (centre first), =radius= the taps per side, =intensity= the mix with =original= (1 on the first pass).
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: blur-behaviour
+:END:
+- *GPU*: pass 1 draws the source into a private render target of the source's size (RGBA16F when the driver renders to it, else RGBA8), stepping one texel along x; pass 2 draws that into the processor's target stepping along y and mixes with the source by the intensity. Taps sit on texel centres, so the bilinear filter returns exact texels. The kernel is computed on the CPU and uploaded as a uniform array, so both paths use identical weights. The private target is created on the first apply and on a size change, and released by =lrg_post_effect_shutdown()= (=lrg_post_processor_release()=). The shader compiles on first use or in a prewarm (=LrgPrewarmable=).
+- *CPU*: the same two passes on the float buffer ([[file:cpu.org::#post-cpu-buffer][buffer convention]]), through a scratch copy.
+- *Identity*: a radius of 0 or an intensity of 0 draws (GPU) or leaves (CPU) the source unchanged without a pass.
+- *Mass*: away from the edges the blur keeps the image's mean exactly; near the edges the repeated border pixels weigh a little more.
+
+** Errors
+:PROPERTIES:
+:CUSTOM_ID: blur-errors
+:END:
+None of its own. Without a window the GPU pass is not compiled and the source is drawn unchanged; a shader compile failure is a =g_warning()= and the effect then passes the image through. Out-of-range property values are clamped.
+
+** Performance and thread safety
+:PROPERTIES:
+:CUSTOM_ID: blur-performance
+:END:
+Two full-screen passes of =2 r + 1= taps each on the GPU, plus one render target the size of the image. On the CPU about 40 ms at 1920x1080 with radius 4, growing linearly with the radius ([[file:cpu.org::#post-cpu-performance][cpu.org]]). For very wide blurs prefer =LrgBloom='s mip chain, or blur a downscaled image. Like every effect it belongs to one thread at a time.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: blur-see-also
+:END:
+[[file:cpu.org][Post-processing on the CPU]], [[file:effects.org][built-in effects]], [[file:post-effect.org][LrgPostEffect]], [[file:post-stack.org][LrgPostStack]], [[file:../graphics/image-canvas.org][LrgImageCanvas]] (its own blur for drawing). Tests: =tests/test-post-cpu.c= (=/post-cpu/blur-*=).
