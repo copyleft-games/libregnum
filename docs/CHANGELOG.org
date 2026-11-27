@@ -3,7 +3,7 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum changelog
 #+created: 2026-11-07T12:00:00-05:00
-#+updated: 2026-11-26T18:00:00-05:00
+#+updated: 2026-11-27T12:00:00-05:00
 #+version: 0.1
 
 * Changelog
@@ -15,6 +15,15 @@
 #+end_quote
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
+
+** 0.13.4
+:PROPERTIES:
+:CUSTOM_ID: changelog-0-13-4
+:END:
+The android-arm64 build image no longer fails at random. Its smoke tests piped =llvm-readelf -h= into =grep -q= under =pipefail=; when grep exited on the match, readelf died of SIGPIPE and the check reported "not AArch64" (about one build in 15 over the two checks).
+
+- Build: the image's ELF checks, =lrg_dnf_install_optional()= and the sysroot's archive listing read their command's output whole instead of piping into an early-exit reader.
+- Tests: =tests/test-pipefail-pipes.sh= (in =make test-build-system=) fails on that pattern in any build-system script ([[file:cross-compile.org::#testing-build-system][The build system itself]]).
 
 ** 0.13.3
 :PROPERTIES:

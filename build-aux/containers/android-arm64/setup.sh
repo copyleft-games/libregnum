@@ -106,7 +106,10 @@ export LRG_PKG_CONFIG_STATIC=1
 clang="${ANDROID_ROOT}/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_MIN_API}-clang"
 readelf="${ANDROID_ROOT}/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
 lrg_smoke "${clang}" lrg-sysroot-pkg-config /tmp/smoke-android
-"${readelf}" -h /tmp/smoke-android | grep -q 'AArch64' || lrg_die 'smoke binary is not AArch64'
+# The header is read whole into a string, never piped into grep -q: grep -q
+# exits on the first match, llvm-readelf then dies of SIGPIPE writing the
+# rest and pipefail fails the check (about one run in 30)
+[[ "$("${readelf}" -h /tmp/smoke-android)" == *AArch64* ]] || lrg_die 'smoke binary is not AArch64'
 # Android 15+ devices may use 16 KB pages: every LOAD segment must allow it
 if ! "${readelf}" -lW /tmp/smoke-android \
 	| gawk '$1 == "LOAD" { n++; if (strtonum($NF) < 16384) bad = 1 } END { exit (bad || n == 0) }'
@@ -129,6 +132,6 @@ lrg_log "smoke test: ${extras}"
 "${clang}" -std=gnu89 -Wall -Wextra -Werror -DSMOKE_SHARED -shared -fPIC \
 	-Wl,--no-undefined -o /tmp/smoke-extras.so "${extras}" ${flags} \
 	|| lrg_die 'cannot link a shared object against luajit, bzip2 and libjpeg'
-"${readelf}" -h /tmp/smoke-extras | grep -q 'AArch64' || lrg_die 'smoke-extras is not AArch64'
+[[ "$("${readelf}" -h /tmp/smoke-extras)" == *AArch64* ]] || lrg_die 'smoke-extras is not AArch64'
 rm -f -- /tmp/smoke-extras /tmp/smoke-extras.so
 lrg_log 'android-arm64 toolchain ready'

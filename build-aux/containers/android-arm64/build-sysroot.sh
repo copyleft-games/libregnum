@@ -68,7 +68,9 @@ fetch_source () {
 	curl -fsSL --retry 3 -o "${file}" "${url}" >&2 || lrg_die "download failed: ${url}"
 	printf '%s  %s\n' "${sha256}" "${file}" | sha256sum -c - >&2 \
 		|| lrg_die "checksum mismatch: ${url}"
-	dir="$(tar -tf "${file}" | head -n 1 | cut -d/ -f1)"
+	# sed reads the whole listing (head would exit after one line and kill
+	# tar with SIGPIPE, which pipefail reports as a failure)
+	dir="$(tar -tf "${file}" | sed -n '1s|/.*||p')"
 	tar -xf "${file}" -C "${WORK}"
 	printf '%s\n' "${WORK}/${dir}"
 }
