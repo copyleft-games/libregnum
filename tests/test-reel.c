@@ -3040,6 +3040,283 @@ test_parallel_series_in_sequence (void)
 }
 
 /* ==========================================================================
+ * LrgReelSkeleton2DClip: a 2D skeletal character rendered on the CPU
+ * ========================================================================== */
+
+/*
+ * make_reel_arm:
+ *
+ * A two-bone arm along +X ("upper" 0..50, "fore" 50..100) with a red
+ * 10-cell strip mesh (y -5 .. 5) weighted by hand, and a one-second
+ * clip "bend" turning the forearm 90 degrees (the fixture of
+ * test-skeleton2d.c).
+ */
+static LrgSkeleton2D *
+make_reel_arm (void)
+{
+    LrgSkeleton2D               *skel = lrg_skeleton2d_new ();
+    g_autoptr(LrgSkinnedSprite)  strip = lrg_skinned_sprite_new_grid (0, -5, 100, 10, 10, 1);
+    g_autoptr(LrgSkeleton2DClip) bend = lrg_skeleton2d_clip_new ("bend");
+    gint                         upper;
+    gint                         fore;
+    gint                         slot;
+    guint                        i;
+
+    upper = lrg_skeleton2d_add_bone (skel, "upper", -1, 0, 0, 0, 1, 1, 50);
+    fore = lrg_skeleton2d_add_bone (skel, "fore", upper, 50, 0, 0, 1, 1, 50);
+    slot = lrg_skeleton2d_add_slot (skel, "arm", upper, "arm");
+    for (i = 0; i < lrg_skinned_sprite_get_vertex_count (strip); i++)
+    {
+        gfloat x;
+        gint   bones[2];
+        gfloat weights[2];
+
+        lrg_skinned_sprite_get_vertex (strip, i, &x, NULL, NULL, NULL);
+        bones[0] = upper;
+        bones[1] = fore;
+        weights[0] = x < 50.0f ? 1.0f : x > 50.0f ? 0.0f : 0.5f;
+        weights[1] = 1.0f - weights[0];
+        lrg_skinned_sprite_set_weights (strip, i, 2, bones, weights);
+    }
+    lrg_skeleton2d_set_attachment (skel, NULL, slot, "arm", strip);
+    lrg_skeleton2d_set_slot_setup_color (skel, slot, 1.0f, 0.0f, 0.0f, 1.0f);
+
+    lrg_skeleton2d_clip_add_rotate_key (bend, "fore", 0.0f, 0.0f, LRG_SKELETON2D_CURVE_LINEAR);
+    lrg_skeleton2d_clip_add_rotate_key (bend, "fore", 1.0f, 90.0f, LRG_SKELETON2D_CURVE_LINEAR);
+    lrg_skeleton2d_add_clip (skel, bend);
+    lrg_skeleton2d_reset_pose (skel);
+    return skel;
+}
+
+/* Pose callback: the upper arm sways with time, and the callback
+ * counts its calls (atomically: workers call it concurrently). */
+static void
+sway_pose (LrgReelSkeleton2DClip *clip,
+           LrgSkeleton2D         *skel,
+           gdouble                seconds,
+           gpointer               user_data)
+{
+    gint *calls = user_data;
+    gint  upper = lrg_skeleton2d_find_bone (skel, "upper");
+
+    g_atomic_int_inc (calls);
+    lrg_skeleton2d_set_bone_local (skel, upper, 0.0f, 0.0f,
+                                   (gfloat) (-20.0 * sin (seconds * G_PI)), 1.0f, 1.0f);
+}
+
+static void
+count_destroy (gpointer data)
+{
+    g_atomic_int_add ((gint *) data, 1000);
+}
+
+/* The clip plays its animation at the clip-relative time: the forearm
+ * hangs straight at frame 0 and bends down by the end of the second. */
+static void
+test_skeleton2d_clip_frames (void)
+{
+    g_autoptr(LrgReel)               reel = lrg_reel_new ("arm", 160, 120, 24.0, 24);
+    g_autoptr(LrgSkeleton2D)         skel = make_reel_arm ();
+    g_autoptr(LrgReelSkeleton2DClip) clip = NULL;
+    g_autoptr(LrgReelSolidClip)      bg = NULL;
+    g_autoptr(LrgReelRenderer)       renderer = NULL;
+    GrlColor                         black = { 0, 0, 0, 255 };
+    TestMockExporter                *mock = g_object_new (TEST_TYPE_MOCK_EXPORTER, NULL);
+    g_autoptr(GError)                error = NULL;
+    GrlImage                        *f0;
+    GrlImage                        *f23;
+    Rgba                             p;
+
+    bg = lrg_reel_solid_clip_new (&black);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (bg));
+    clip = lrg_reel_skeleton2d_clip_new (skel, lrg_skeleton2d_get_clip (skel, "bend"));
+    lrg_reel_skeleton2d_clip_set_placement (clip, 20.0, 30.0, 1.0);
+    lrg_reel_skeleton2d_clip_set_loop (clip, FALSE);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (clip));
+
+    renderer = lrg_reel_renderer_new (reel);
+    g_assert_true (lrg_reel_renderer_render_to_exporter (renderer, LRG_REEL_EXPORTER (mock), &error));
+    g_assert_no_error (error);
+    g_assert_cmpuint (mock->frames->len, ==, 24);
+    f0 = g_ptr_array_index (mock->frames, 0);
+    f23 = g_ptr_array_index (mock->frames, 23);
+
+    /* frame 0: straight, x 20 .. 120 along y 30 */
+    read_px (f0, 105, 30, &p);
+    g_assert_cmpint (p.r, ==, 255);
+    read_px (f0, 70, 60, &p);
+    g_assert_cmpint (p.r, ==, 0);
+    /* frame 23 (t = 23/24 s, about 86 degrees): the forearm hangs down
+     * from (70, 30) */
+    read_px (f23, 105, 30, &p);
+    g_assert_cmpint (p.r, ==, 0);
+    read_px (f23, 72, 60, &p);
+    g_assert_cmpint (p.r, ==, 255);
+    {
+        guint8 *a = grl_image_get_pixels (f0, NULL);
+        guint8 *b = grl_image_get_pixels (g_ptr_array_index (mock->frames, 12), NULL);
+
+        g_assert_cmpint (memcmp (a, b, 160 * 120 * 4), !=, 0);
+    }
+
+    /* the time mapping: speed, looping and holding */
+    g_assert_cmpfloat_with_epsilon (lrg_reel_skeleton2d_clip_get_animation_time (clip, 2.5), 1.0, 1e-9);
+    lrg_reel_skeleton2d_clip_set_loop (clip, TRUE);
+    lrg_reel_skeleton2d_clip_set_speed (clip, 2.0);
+    g_assert_cmpfloat_with_epsilon (lrg_reel_skeleton2d_clip_get_animation_time (clip, 1.25), 0.5, 1e-9);
+    lrg_reel_skeleton2d_clip_set_speed (clip, -1.0);
+    g_assert_cmpfloat_with_epsilon (lrg_reel_skeleton2d_clip_get_animation_time (clip, 0.25), 0.75, 1e-9);
+
+    g_object_unref (mock);
+}
+
+/* A pose callback layers procedural motion on top and is released with
+ * the clip; animation-name resolves against the skeleton. */
+static void
+test_skeleton2d_clip_pose_func (void)
+{
+    g_autoptr(LrgSkeleton2D)    skel = make_reel_arm ();
+    LrgReelSkeleton2DClip      *clip = lrg_reel_skeleton2d_clip_new (skel, NULL);
+    g_autoptr(LrgReel)          reel = lrg_reel_new ("sway", 160, 120, 24.0, 12);
+    g_autoptr(LrgReelRenderer)  renderer = NULL;
+    gint                        calls = 0;
+
+    g_assert_false (lrg_reel_skeleton2d_clip_set_animation_name (clip, "nope"));
+    g_assert_null (lrg_reel_skeleton2d_clip_get_animation (clip));
+    g_assert_true (lrg_reel_skeleton2d_clip_set_animation_name (clip, "bend"));
+    g_assert_true (lrg_reel_skeleton2d_clip_get_animation (clip) == lrg_skeleton2d_get_clip (skel, "bend"));
+
+    lrg_reel_skeleton2d_clip_set_pose_func (clip, sway_pose, &calls, count_destroy);
+    lrg_reel_skeleton2d_clip_set_placement (clip, 40.0, 60.0, 0.5);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (clip));
+    renderer = lrg_reel_renderer_new (reel);
+    {
+        g_autoptr(GrlImage) f0 = lrg_reel_renderer_render_frame (renderer, 0);
+        g_autoptr(GrlImage) f6 = lrg_reel_renderer_render_frame (renderer, 6);
+        Rgba                p;
+
+        g_assert_cmpint (calls, ==, 2);
+        /* frame 0: half scale, straight from (40, 60) to (90, 60) */
+        read_px (f0, 60, 60, &p);
+        g_assert_cmpint (p.r, ==, 255);
+        /* frame 6 (0.25 s): the sway lifts the arm by about 14 degrees */
+        read_px (f6, 54, 56, &p);
+        g_assert_cmpint (p.r, ==, 255);
+        read_px (f6, 80, 60, &p);
+        g_assert_cmpint (p.r, ==, 0);
+    }
+    g_object_unref (renderer);
+    renderer = NULL;
+    g_object_unref (reel);
+    reel = NULL;
+    g_object_unref (clip);   /* the last reference: the notifier runs */
+    g_assert_cmpint (calls, ==, 1002);
+}
+
+/*
+ * Parallel rendering of skeleton clips is byte-identical to sequential:
+ * two clips share one skeleton (the worst case for its mutable pose),
+ * one with an animation and a pose callback, one mirrored at a
+ * different speed, over a background, rendered three times on 8
+ * threads.
+ */
+static void
+test_skeleton2d_clip_parallel (void)
+{
+    g_autoptr(LrgReel)               reel = lrg_reel_new ("cast", 160, 96, 24.0, 48);
+    g_autoptr(LrgSkeleton2D)         skel = make_reel_arm ();
+    g_autoptr(LrgReelSkeleton2DClip) a = NULL;
+    g_autoptr(LrgReelSkeleton2DClip) b = NULL;
+    g_autoptr(LrgReelSolidClip)      bg = NULL;
+    g_autoptr(LrgReelRenderer)       seq_r = NULL;
+    g_autoptr(GError)                error = NULL;
+    GrlColor                         navy = { 20, 30, 60, 255 };
+    TestMockExporter                *seq_m = g_object_new (TEST_TYPE_MOCK_EXPORTER, NULL);
+    gint                             calls = 0;
+    guint                            run;
+
+    bg = lrg_reel_solid_clip_new (&navy);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (bg));
+    a = lrg_reel_skeleton2d_clip_new (skel, lrg_skeleton2d_get_clip (skel, "bend"));
+    lrg_reel_skeleton2d_clip_set_placement (a, 10.0, 30.0, 0.7);
+    lrg_reel_skeleton2d_clip_set_pose_func (a, sway_pose, &calls, NULL);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (a));
+    b = lrg_reel_skeleton2d_clip_new (skel, lrg_skeleton2d_get_clip (skel, "bend"));
+    lrg_reel_skeleton2d_clip_set_placement (b, 150.0, 60.0, 0.6);
+    lrg_reel_skeleton2d_clip_set_flip_x (b, TRUE);
+    lrg_reel_skeleton2d_clip_set_speed (b, 1.7);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (b));
+
+    seq_r = lrg_reel_renderer_new (reel);
+    g_assert_true (lrg_reel_renderer_render_to_exporter (seq_r, LRG_REEL_EXPORTER (seq_m), &error));
+    g_assert_no_error (error);
+    for (run = 0; run < 3; run++)
+    {
+        g_autoptr(LrgReelRenderer) par_r = lrg_reel_renderer_new (reel);
+        TestMockExporter          *par_m = g_object_new (TEST_TYPE_MOCK_EXPORTER, NULL);
+
+        g_assert_true (lrg_reel_renderer_render_parallel (par_r, 8, LRG_REEL_EXPORTER (par_m), &error));
+        g_assert_no_error (error);
+        g_assert_cmpuint (frames_differ (seq_m, par_m, 48), ==, 0);
+        g_object_unref (par_m);
+    }
+    g_assert_cmpint (calls, ==, 48 * 4);
+    g_object_unref (seq_m);
+}
+
+/* The YAML loader knows "skeleton2d-clip": the file is loaded and the
+ * animation picked by name. */
+static void
+test_skeleton2d_clip_yaml (void)
+{
+    g_autoptr(GError)          error = NULL;
+    g_autofree gchar          *dir = g_dir_make_tmp ("lrg-reel-s2d-XXXXXX", &error);
+    g_autofree gchar          *path = NULL;
+    g_autofree gchar          *yaml = NULL;
+    g_autoptr(LrgSkeleton2D)   skel = make_reel_arm ();
+    g_autoptr(LrgReel)         reel = NULL;
+    g_autoptr(LrgReelRenderer) renderer = NULL;
+    LrgReelSkeleton2DClip     *clip;
+    Rgba                       p;
+
+    g_assert_no_error (error);
+    path = g_build_filename (dir, "arm.rskel2d", NULL);
+    g_assert_true (lrg_skeleton2d_save_to_file (skel, path, &error));
+    g_assert_no_error (error);
+    yaml = g_strdup_printf ("id: t\nwidth: 160\nheight: 120\nfps: 24\nduration-in-frames: 24\n"
+                            "clips:\n"
+                            "  - type: solid-clip\n"
+                            "    color: \"#000000ff\"\n"
+                            "  - type: skeleton2d-clip\n"
+                            "    file: \"%s\"\n"
+                            "    animation-name: bend\n"
+                            "    loop: false\n"
+                            "    origin-x: 20\n"
+                            "    origin-y: 30\n"
+                            "    skeleton-scale: 1\n", path);
+    reel = lrg_reel_load_yaml_string (yaml, NULL, &error);
+    g_assert_no_error (error);
+    g_assert_nonnull (reel);
+    clip = LRG_REEL_SKELETON2D_CLIP (g_ptr_array_index (lrg_reel_get_clips (reel), 1));
+    g_assert_nonnull (lrg_reel_skeleton2d_clip_get_skeleton (clip));
+    g_assert_nonnull (lrg_reel_skeleton2d_clip_get_animation (clip));
+    g_assert_false (lrg_reel_skeleton2d_clip_get_loop (clip));
+
+    renderer = lrg_reel_renderer_new (reel);
+    {
+        g_autoptr(GrlImage) f0 = lrg_reel_renderer_render_frame (renderer, 0);
+        g_autoptr(GrlImage) f23 = lrg_reel_renderer_render_frame (renderer, 23);
+
+        read_px (f0, 105, 30, &p);
+        g_assert_cmpint (p.r, ==, 255);
+        read_px (f23, 72, 60, &p);
+        g_assert_cmpint (p.r, ==, 255);
+    }
+    g_unlink (path);
+    g_rmdir (dir);
+}
+
+/* ==========================================================================
  * Wave F: data-driven YAML + captions
  * ========================================================================== */
 
@@ -3607,6 +3884,11 @@ main (int   argc,
     g_test_add_func ("/reel/parallel/transition-series", test_parallel_transition_series);
     g_test_add_func ("/reel/parallel/nested-series", test_parallel_nested_series);
     g_test_add_func ("/reel/parallel/series-in-sequence", test_parallel_series_in_sequence);
+
+    g_test_add_func ("/reel/skeleton2d/frames", test_skeleton2d_clip_frames);
+    g_test_add_func ("/reel/skeleton2d/pose-func", test_skeleton2d_clip_pose_func);
+    g_test_add_func ("/reel/skeleton2d/parallel", test_skeleton2d_clip_parallel);
+    g_test_add_func ("/reel/skeleton2d/yaml", test_skeleton2d_clip_yaml);
 
     g_test_add_func ("/reel/yaml/load", test_yaml_load);
     g_test_add_func ("/reel/yaml/unknown-type", test_yaml_unknown_type);

@@ -201,6 +201,8 @@ The rule that makes this hold: a clip, effect or transition keeps no mutable ren
 
 The exception is a clip that shares a cache across threads by design and locks it: =LrgReelVideoSource= guards its decoded-frame cache with a mutex, so it is safe but serializes the workers that read it; reels built mostly from video sources gain little from parallel rendering.
 
+=LrgReelSkeleton2DClip= is the other locked case: a skeleton's pose and its meshes' deformed buffers are mutable, so every skeleton clip poses and draws under one process-wide lock while the rest of each frame stays parallel; see [[file:clips.org::#skeleton2d-clip][Clips, LrgReelSkeleton2DClip]].
+
 ** Motion blur
 :PROPERTIES:
 :CUSTOM_ID: motion-blur

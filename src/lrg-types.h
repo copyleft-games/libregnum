@@ -1526,6 +1526,7 @@ typedef struct _LrgReelTextClip      LrgReelTextClip;
 typedef struct _LrgReelShapeClip     LrgReelShapeClip;
 typedef struct _LrgReelSolidClip     LrgReelSolidClip;
 typedef struct _LrgReelGradientClip  LrgReelGradientClip;
+typedef struct _LrgReelSkeleton2DClip LrgReelSkeleton2DClip;
 
 /* Reel media-in (video decode + clip) */
 typedef struct _LrgReelVideoSource   LrgReelVideoSource;

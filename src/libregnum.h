@@ -1011,6 +1011,7 @@
 #include "reel/lrg-reel-audio-analysis.h"
 #include "reel/lrg-reel-video-source.h"
 #include "reel/lrg-reel-video-clip.h"
+#include "reel/lrg-reel-skeleton2d-clip.h"
 #include "reel/lrg-reel-effect.h"
 #include "reel/lrg-reel-blur-effect.h"
 #include "reel/lrg-reel-bloom-effect.h"
