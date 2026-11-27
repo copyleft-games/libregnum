@@ -8,6 +8,7 @@
 #include "config.h"
 #include "lrg-reel-transition-series.h"
 #include "lrg-reel-context.h"
+#include "lrg-reel-context-private.h"
 #include "../graphics/lrg-image-canvas.h"
 
 /* --------------------------------------------------------------------------
@@ -94,14 +95,11 @@ struct _LrgReelTransitionSeries
     GPtrArray *items; /* of SeriesItem*, freed via series_item_free */
 
     /*
-     * Reusable scratch canvases for rendering outgoing and incoming segments
-     * during a transition overlap window.  Allocated lazily and reallocated
-     * when frame dimensions change.
+     * No render scratch lives here.  One series object is shared by every
+     * worker of lrg_reel_renderer_render_parallel(), so the two canvases an
+     * overlap window needs come from the per-renderer LrgReelContext
+     * scratch pool instead (see series render, overlap branch).
      */
-    LrgImageCanvas *tmp_out;
-    LrgImageCanvas *tmp_in;
-    gint            tmp_w;
-    gint            tmp_h;
 };
 
 G_DEFINE_FINAL_TYPE (LrgReelTransitionSeries, lrg_reel_transition_series,
@@ -172,27 +170,6 @@ series_sync_duration (LrgReelTransitionSeries *self)
 }
 
 /* --------------------------------------------------------------------------
- * Scratch canvas management
- * -------------------------------------------------------------------------- */
-
-static void
-series_ensure_scratch (LrgReelTransitionSeries *self,
-                       gint                     w,
-                       gint                     h)
-{
-    if (self->tmp_out != NULL && self->tmp_w == w && self->tmp_h == h)
-        return;
-
-    g_clear_object (&self->tmp_out);
-    g_clear_object (&self->tmp_in);
-
-    self->tmp_out = lrg_image_canvas_new (w, h, NULL);
-    self->tmp_in  = lrg_image_canvas_new (w, h, NULL);
-    self->tmp_w   = w;
-    self->tmp_h   = h;
-}
-
-/* --------------------------------------------------------------------------
  * Render helpers
  * -------------------------------------------------------------------------- */
 
@@ -223,8 +200,6 @@ lrg_reel_transition_series_render (LrgReelClip    *clip,
 {
     LrgReelTransitionSeries *self = LRG_REEL_TRANSITION_SERIES (clip);
     gint f;
-    gint w;
-    gint h;
     gint64 pos;
     guint i;
 
@@ -244,8 +219,6 @@ lrg_reel_transition_series_render (LrgReelClip    *clip,
         return;
 
     f = lrg_reel_context_get_frame (ctx);
-    w = lrg_reel_context_get_width (ctx);
-    h = lrg_reel_context_get_height (ctx);
 
     pos            = 0;
     found          = FALSE;
@@ -350,9 +323,10 @@ lrg_reel_transition_series_render (LrgReelClip    *clip,
     {
         gint    overlap_len;
         gdouble progress;
-        GrlColor transparent;
-        GrlImage *out_img;
-        GrlImage *in_img;
+        LrgReelScratch *tmp_out;
+        LrgReelScratch *tmp_in;
+        GrlImage       *out_img;
+        GrlImage       *in_img;
 
         overlap_len = overlap_end - overlap_start;
 
@@ -370,33 +344,45 @@ lrg_reel_transition_series_render (LrgReelClip    *clip,
         if (progress < 0.0) progress = 0.0;
         if (progress > 1.0) progress = 1.0;
 
-        series_ensure_scratch (self, w, h);
-
-        /* Clear both scratch buffers to fully transparent. */
-        transparent.r = 0;
-        transparent.g = 0;
-        transparent.b = 0;
-        transparent.a = 0;
-        lrg_image_canvas_clear (self->tmp_out, &transparent);
-        lrg_image_canvas_clear (self->tmp_in,  &transparent);
+        /*
+         * Take the two buffers from the context's scratch pool.  The
+         * context belongs to one renderer, and render_parallel gives each
+         * worker its own renderer, so no two threads ever draw into the
+         * same buffer.  The pool hands them back cleared to transparent
+         * with an identity transform, and nests: segments that composite
+         * through scratch themselves take further entries.
+         */
+        tmp_out = lrg_reel_context_acquire_scratch (ctx);
+        tmp_in  = lrg_reel_context_acquire_scratch (ctx);
+        if (tmp_out == NULL || tmp_in == NULL)
+        {
+            /* Zero-sized frame: there is nothing to draw. */
+            lrg_reel_context_release_scratch (ctx, tmp_out);
+            lrg_reel_context_release_scratch (ctx, tmp_in);
+            return;
+        }
 
         /* Render outgoing segment into tmp_out. */
         series_render_segment_to (active_item,
                                   active_start,
                                   active_item->duration,
-                                  ctx, self->tmp_out);
+                                  ctx, tmp_out->canvas);
 
         /* Render incoming segment into tmp_in. */
         series_render_segment_to (next_seg_item,
                                   next_seg_start,
                                   next_seg_item->duration,
-                                  ctx, self->tmp_in);
+                                  ctx, tmp_in->canvas);
 
-        out_img = lrg_image_canvas_get_image (self->tmp_out);
-        in_img  = lrg_image_canvas_get_image (self->tmp_in);
+        out_img = lrg_image_canvas_get_image (tmp_out->canvas);
+        in_img  = lrg_image_canvas_get_image (tmp_in->canvas);
 
         lrg_reel_transition_composite (trans_after, canvas,
                                        out_img, in_img, progress);
+
+        /* Hand both buffers back for the next overlap or composite. */
+        lrg_reel_context_release_scratch (ctx, tmp_in);
+        lrg_reel_context_release_scratch (ctx, tmp_out);
         return;
     }
 
@@ -417,8 +403,6 @@ lrg_reel_transition_series_finalize (GObject *object)
     LrgReelTransitionSeries *self = LRG_REEL_TRANSITION_SERIES (object);
 
     g_clear_pointer (&self->items, g_ptr_array_unref);
-    g_clear_object (&self->tmp_out);
-    g_clear_object (&self->tmp_in);
 
     G_OBJECT_CLASS (lrg_reel_transition_series_parent_class)->finalize (object);
 }
@@ -436,11 +420,7 @@ lrg_reel_transition_series_class_init (LrgReelTransitionSeriesClass *klass)
 static void
 lrg_reel_transition_series_init (LrgReelTransitionSeries *self)
 {
-    self->items   = g_ptr_array_new_with_free_func (series_item_free);
-    self->tmp_out = NULL;
-    self->tmp_in  = NULL;
-    self->tmp_w   = 0;
-    self->tmp_h   = 0;
+    self->items = g_ptr_array_new_with_free_func (series_item_free);
 }
 
 /* --------------------------------------------------------------------------

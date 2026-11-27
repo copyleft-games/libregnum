@@ -257,7 +257,10 @@ lrg_reel_text_clip_set_align (LrgReelTextClip  *self,
  * lrg_reel_text_clip_get_text_x:
  * @self: an #LrgReelTextClip.
  *
- * Returns: the X pixel coordinate of the text block's top-left corner (default 0).
+ * Returns: the X pixel coordinate of the text's horizontal anchor (default
+ *   0): the left edge of the wrap box when #LrgReelTextClip:max-width is
+ *   set, otherwise the left edge, centre or right edge of the text as
+ *   #LrgReelTextClip:align says.
  *
  * Since: 1.0
  */
@@ -269,6 +272,10 @@ lrg_reel_text_clip_get_text_x (LrgReelTextClip *self);
  * lrg_reel_text_clip_set_text_x:
  * @self: an #LrgReelTextClip.
  * @text_x: X coordinate in frame pixels.
+ *
+ * Sets the horizontal anchor of the text.  With no max-width, a centred
+ * clip is centred on @text_x and a right-aligned one ends at @text_x; see
+ * #LrgReelTextClip:align.
  *
  * Since: 1.0
  */

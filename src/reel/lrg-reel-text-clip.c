@@ -302,6 +302,7 @@ lrg_reel_text_clip_render (LrgReelClip    *base,
     gint             lh;
     gint             i;
     gint             block_width;
+    gint             block_left;
 
     (void) ctx;
 
@@ -315,21 +316,42 @@ lrg_reel_text_clip_render (LrgReelClip    *base,
     lines   = build_lines (self, &n_lines);
     lh      = natural_line_height (self);
 
-    /* Determine block_width for alignment when max_width <= 0. */
+    /*
+     * Work out the text block: its left edge (block_left) and its width
+     * (block_width).  Lines are then aligned inside it.
+     *
+     * With a max-width the block is the box [text-x, text-x + max-width],
+     * whatever the alignment: text-x is its left edge.
+     *
+     * Without one the block is as wide as the widest line, and text-x is the
+     * anchor named by the alignment: the left edge (LEFT), the centre
+     * (CENTER) or the right edge (RIGHT) of the block.  So a centred line
+     * with text-x 640 is centred on x = 640, and a right-aligned one ends
+     * there.  (Before 0.13.6 the block always started at text-x, so centre
+     * and right alignment without a max-width did nothing.)
+     */
     block_width = self->max_width;
+    block_left  = self->text_x;
     if (block_width <= 0 && self->align != LRG_REEL_TEXT_ALIGN_LEFT)
     {
         gint j;
+
         block_width = 0;
         for (j = 0; j < n_lines; j++)
         {
             gint lw;
+
             if (lines[j] == NULL)
                 continue;
             measure_line (self, lines[j], &lw, NULL);
             if (lw > block_width)
                 block_width = lw;
         }
+
+        if (self->align == LRG_REEL_TEXT_ALIGN_CENTER)
+            block_left = self->text_x - block_width / 2;
+        else
+            block_left = self->text_x - block_width;
     }
 
     for (i = 0; i < n_lines; i++)
@@ -342,20 +364,21 @@ lrg_reel_text_clip_render (LrgReelClip    *base,
 
         draw_y = self->text_y + i * lh;
 
-        /* Compute draw_x based on alignment. */
+        /* Place the line inside the block according to the alignment. */
         if (self->align == LRG_REEL_TEXT_ALIGN_CENTER ||
             self->align == LRG_REEL_TEXT_ALIGN_RIGHT)
         {
             gint lw;
+
             measure_line (self, lines[i], &lw, NULL);
             if (self->align == LRG_REEL_TEXT_ALIGN_CENTER)
-                draw_x = self->text_x + (block_width - lw) / 2;
+                draw_x = block_left + (block_width - lw) / 2;
             else
-                draw_x = self->text_x + block_width - lw;
+                draw_x = block_left + block_width - lw;
         }
         else
         {
-            draw_x = self->text_x;
+            draw_x = block_left;
         }
 
         /* Shadow pass. */
@@ -565,7 +588,15 @@ lrg_reel_text_clip_class_init (LrgReelTextClipClass *klass)
     /**
      * LrgReelTextClip:align:
      *
-     * Horizontal alignment of the text block.
+     * Horizontal alignment of the lines.
+     *
+     * With #LrgReelTextClip:max-width set, lines are aligned inside the box
+     * that starts at #LrgReelTextClip:text-x and is max-width wide.  Without
+     * it, #LrgReelTextClip:text-x is the anchor this property names: the
+     * left edge for %LRG_REEL_TEXT_ALIGN_LEFT, the centre for
+     * %LRG_REEL_TEXT_ALIGN_CENTER and the right edge for
+     * %LRG_REEL_TEXT_ALIGN_RIGHT.  Multi-line text is aligned line by line
+     * against the widest line.
      *
      * Since: 1.0
      */
@@ -581,7 +612,10 @@ lrg_reel_text_clip_class_init (LrgReelTextClipClass *klass)
     /**
      * LrgReelTextClip:text-x:
      *
-     * X pixel coordinate of the text block's top-left corner within the frame.
+     * X pixel coordinate of the text's horizontal anchor within the frame.
+     * With #LrgReelTextClip:max-width set it is the left edge of the wrap
+     * box.  Without it, it is the left edge, the centre or the right edge of
+     * the text, as #LrgReelTextClip:align says.
      * Note: this is the text content position, distinct from the inherited
      * clip transform property "x".
      *
@@ -617,7 +651,9 @@ lrg_reel_text_clip_class_init (LrgReelTextClipClass *klass)
      *
      * Maximum line width in pixels for greedy word-wrap.  Set to 0 (the
      * default) to disable word-wrapping; only explicit '\n' characters
-     * produce line breaks.
+     * produce line breaks.  A non-zero value also defines the alignment
+     * box: [#LrgReelTextClip:text-x, text-x + max-width], so centred text is
+     * centred on text-x + max-width / 2.
      *
      * Since: 1.0
      */

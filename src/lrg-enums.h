@@ -5591,11 +5591,14 @@ GType lrg_reel_shape_kind_get_type (void) G_GNUC_CONST;
 
 /**
  * LrgReelTextAlign:
- * @LRG_REEL_TEXT_ALIGN_LEFT: left-aligned.
- * @LRG_REEL_TEXT_ALIGN_CENTER: centered.
- * @LRG_REEL_TEXT_ALIGN_RIGHT: right-aligned.
+ * @LRG_REEL_TEXT_ALIGN_LEFT: left-aligned; text-x is the left edge.
+ * @LRG_REEL_TEXT_ALIGN_CENTER: centered; without a max-width, centered on
+ *   text-x.
+ * @LRG_REEL_TEXT_ALIGN_RIGHT: right-aligned; without a max-width, ending at
+ *   text-x.
  *
- * Horizontal text alignment for an #LrgReelTextClip.
+ * Horizontal text alignment for an #LrgReelTextClip.  With a max-width the
+ * lines are aligned inside the box [text-x, text-x + max-width].
  *
  * Since: 1.0
  */

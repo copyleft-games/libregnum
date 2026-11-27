@@ -472,9 +472,12 @@ reel_parallel_worker (gpointer data)
  * Renders every frame across @n_threads worker threads (each with its own
  * canvas/context), then feeds the frames to @exporter strictly in order — so
  * the output is identical to a sequential render.  Each frame is independent
- * and deterministic, which is what makes this safe.  (Clips that share mutable
- * state across threads — e.g. a video source's frame cache — are the exception
- * and should be rendered sequentially.)
+ * and deterministic, which is what makes this safe.  All workers share the
+ * reel's clip objects, so clips, effects and transitions keep no mutable
+ * render state on themselves: scratch buffers come from each worker's own
+ * #LrgReelContext.  A clip whose render writes to a field of its object
+ * races here; keep such buffers in locals instead.  (A video source's frame
+ * cache is shared on purpose and guarded by a mutex.)
  *
  * Returns: %TRUE on success
  *
