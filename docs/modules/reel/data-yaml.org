@@ -54,15 +54,16 @@ Each clip is a YAML mapping.  The =type= key names the clip type using the
 kebab-case registry name.  All remaining keys are GObject property names
 (kebab-case) for that clip type.
 
-| =type= value    | C type                  |
-|-----------------+-------------------------|
-| =solid-clip=    | =LrgReelSolidClip=      |
-| =gradient-clip= | =LrgReelGradientClip=   |
-| =image-clip=    | =LrgReelImageClip=      |
-| =text-clip=     | =LrgReelTextClip=       |
-| =shape-clip=    | =LrgReelShapeClip=      |
-| =caption-clip=  | =LrgReelCaptionClip=    |
-| =video-clip=    | =LrgReelVideoClip=      |
+| =type= value      | C type                                                                      |
+|-------------------+-----------------------------------------------------------------------------|
+| =solid-clip=      | =LrgReelSolidClip=                                                          |
+| =gradient-clip=   | =LrgReelGradientClip=                                                       |
+| =image-clip=      | =LrgReelImageClip=                                                          |
+| =text-clip=       | =LrgReelTextClip=                                                           |
+| =shape-clip=      | =LrgReelShapeClip=                                                          |
+| =caption-clip=    | =LrgReelCaptionClip=                                                        |
+| =video-clip=      | =LrgReelVideoClip=                                                          |
+| =skeleton2d-clip= | =LrgReelSkeleton2DClip= (0.14, [[file:clips.org::#skeleton2d-clip][clips]]) |
 
 *** Color strings
 

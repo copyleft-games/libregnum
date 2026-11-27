@@ -17,6 +17,7 @@
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <math.h>
+#include <string.h>
 #include <libregnum.h>
 #include <raylib.h>
 
@@ -1479,6 +1480,311 @@ test_perf (void)
 }
 
 /* ==========================================================================
+ * CPU: lrg_skeleton2d_draw_to_canvas() draws without a window
+ * ========================================================================== */
+
+/* Saves @img when LRG_TEST_SHOTS names a directory (visual checks). */
+static void
+maybe_save_cpu (GrlImage    *img,
+                const gchar *name)
+{
+	const gchar      *dir = g_getenv ("LRG_TEST_SHOTS");
+	g_autofree gchar *path = NULL;
+
+	if (dir == NULL || *dir == '\0')
+		return;
+	path = g_strdup_printf ("%s/%s.png", dir, name);
+	grl_image_export (img, path);
+}
+
+/* The RGB of pixel (x, y) of @img is within 6 of (r, g, b). */
+static gboolean
+cpu_pixel_is (GrlImage *img,
+              gint      x,
+              gint      y,
+              guint8    r,
+              guint8    g,
+              guint8    b)
+{
+	const guint8 *p = grl_image_get_pixels (img, NULL);
+
+	p += ((gsize)y * (gsize)grl_image_get_width (img) + (gsize)x) * 4;
+	return ABS ((gint)p[0] - r) <= 6 && ABS ((gint)p[1] - g) <= 6 && ABS ((gint)p[2] - b) <= 6;
+}
+
+/* A black canvas */
+static LrgImageCanvas *
+black_canvas (gint w,
+              gint h)
+{
+	GrlColor black = { 0, 0, 0, 255 };
+
+	return lrg_image_canvas_new (w, h, &black);
+}
+
+/* The arm of the GPU test drawn on the CPU: straight, then bent by the
+ * "bend" clip; the forearm pixels move with the bone. */
+static void
+test_cpu_arm (void)
+{
+	g_autoptr(LrgSkeleton2D)     skel = make_arm (NULL);
+	g_autoptr(LrgSkeleton2DClip) bend = make_bend_clip ();
+	g_autoptr(LrgImageCanvas)    straight = black_canvas (240, 200);
+	g_autoptr(LrgImageCanvas)    bent = black_canvas (240, 200);
+	GrlImage                    *img;
+
+	lrg_skeleton2d_set_slot_setup_color (skel, 0, 1.0f, 0.0f, 0.0f, 1.0f);
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_set_root_transform (skel, 100.0f, 60.0f, 0.0f, 1.0f, 1.0f);
+	lrg_skeleton2d_update_world (skel);
+	lrg_skeleton2d_draw_to_canvas (skel, straight, NULL);
+	img = lrg_image_canvas_get_image (straight);
+	maybe_save_cpu (img, "s2d-cpu-arm-straight");
+	/* the strip covers x 100 .. 200, y 55 .. 65 */
+	g_assert_true (cpu_pixel_is (img, 125, 60, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 185, 60, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 100, 55, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 199, 64, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 99, 60, 0, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 200, 60, 0, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 150, 54, 0, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 150, 65, 0, 0, 0));
+
+	/* bend the forearm 90 degrees: it now hangs down from (150, 60) */
+	lrg_skeleton2d_clip_apply (bend, skel, 1.0f, 1.0f);
+	lrg_skeleton2d_update_world (skel);
+	lrg_skeleton2d_draw_to_canvas (skel, bent, NULL);
+	img = lrg_image_canvas_get_image (bent);
+	maybe_save_cpu (img, "s2d-cpu-arm-bent");
+	g_assert_true (cpu_pixel_is (img, 125, 60, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 150, 95, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 185, 60, 0, 0, 0));   /* the straight forearm is gone */
+}
+
+/*
+ * Slot colours tint, the draw tint multiplies them, draw order decides
+ * which of two overlapping slots is on top, a transparent slot is
+ * skipped, and the canvas transform places the skeleton like a camera.
+ */
+static void
+test_cpu_tint_and_order (void)
+{
+	g_autoptr(LrgSkeleton2D)    skel = lrg_skeleton2d_new ();
+	g_autoptr(LrgSkinnedSprite) back = lrg_skinned_sprite_new_quad (0, 0, 20, 20, -1);
+	g_autoptr(LrgSkinnedSprite) front = lrg_skinned_sprite_new_quad (10, 10, 20, 20, -1);
+	g_autoptr(LrgImageCanvas)   c1 = black_canvas (64, 64);
+	g_autoptr(LrgImageCanvas)   c2 = black_canvas (64, 64);
+	g_autoptr(LrgImageCanvas)   c3 = black_canvas (64, 64);
+	g_autoptr(LrgImageCanvas)   c4 = black_canvas (64, 64);
+	GrlColor                    grey = { 128, 128, 128, 255 };
+	gint                        bone;
+	gint                        sb;
+	gint                        sf;
+	gint                        reversed[2];
+
+	bone = lrg_skeleton2d_add_bone (skel, "root", -1, 0, 0, 0, 1, 1, 0);
+	sb = lrg_skeleton2d_add_slot (skel, "back", bone, "q");
+	sf = lrg_skeleton2d_add_slot (skel, "front", bone, "q");
+	g_assert_true (lrg_skeleton2d_set_attachment (skel, NULL, sb, "q", back));
+	g_assert_true (lrg_skeleton2d_set_attachment (skel, NULL, sf, "q", front));
+	lrg_skeleton2d_set_slot_setup_color (skel, sb, 1.0f, 0.0f, 0.0f, 1.0f);
+	lrg_skeleton2d_set_slot_setup_color (skel, sf, 0.0f, 0.0f, 1.0f, 1.0f);
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_set_root_transform (skel, 10.0f, 10.0f, 0.0f, 1.0f, 1.0f);
+	lrg_skeleton2d_update_world (skel);
+
+	/* setup order: back (red) under front (blue) */
+	lrg_skeleton2d_draw_to_canvas (skel, c1, NULL);
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c1), 15, 15, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c1), 25, 25, 0, 0, 255));
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c1), 35, 35, 0, 0, 255));
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c1), 45, 45, 0, 0, 0));
+
+	/* reversed order puts red on top in the overlap; the grey tint halves
+	 * every slot colour */
+	reversed[0] = sf;
+	reversed[1] = sb;
+	g_assert_true (lrg_skeleton2d_set_draw_order (skel, reversed, 2));
+	lrg_skeleton2d_draw_to_canvas (skel, c2, &grey);
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c2), 25, 25, 128, 0, 0));
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c2), 35, 35, 0, 0, 128));
+
+	/* a slot at alpha 0 is not drawn; at alpha 0.5 it blends */
+	lrg_skeleton2d_set_slot_color (skel, sb, 1.0f, 0.0f, 0.0f, 0.0f);
+	lrg_skeleton2d_set_slot_color (skel, sf, 0.0f, 0.0f, 1.0f, 0.5f);
+	lrg_skeleton2d_draw_to_canvas (skel, c3, NULL);
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c3), 15, 15, 0, 0, 0));
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c3), 25, 25, 0, 0, 128));
+
+	/* the canvas transform moves the whole skeleton like a 2D camera */
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_update_world (skel);
+	lrg_image_canvas_translate (c4, 20.0f, 0.0f);
+	lrg_skeleton2d_draw_to_canvas (skel, c4, NULL);
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c4), 15, 15, 0, 0, 0));
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c4), 35, 15, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c4), 55, 35, 0, 0, 255));
+}
+
+/* The walking figure with a generated checker atlas on the head: both
+ * checker colours show inside the head box, the body is drawn, and the
+ * region picks the atlas cell (the blink cell is another region). */
+static void
+test_cpu_figure (void)
+{
+	g_autoptr(LrgSkeleton2D)    skel = make_figure ();
+	g_autoptr(GrlImage)         faces = NULL;
+	g_autoptr(LrgImageCanvas)   canvas = NULL;
+	g_autoptr(LrgSkinnedSprite) copy = NULL;
+	GrlColor                    c1 = { 250, 225, 190, 255 };
+	GrlColor                    c2 = { 60, 40, 30, 255 };
+	GrlColor                    bg = { 24, 26, 32, 255 };
+	GrlImage                   *img;
+	LrgSkeleton2DClip          *walk;
+	LrgSkinnedSprite           *head_sprite;
+	gint                        head;
+	guint                       lit = 0;
+	guint                       dark = 0;
+	gint                        x;
+	gint                        y;
+
+	faces = grl_image_new_checked (64, 32, 8, 4, &c1, &c2);
+	head = lrg_skeleton2d_find_slot (skel, "head");
+	head_sprite = lrg_skeleton2d_get_skin_attachment (skel, NULL, head, "head");
+	lrg_skinned_sprite_set_source_image (head_sprite, faces);
+	lrg_skinned_sprite_set_source_image (lrg_skeleton2d_get_skin_attachment (skel, NULL, head, "blink"), faces);
+	g_assert_true (lrg_skinned_sprite_get_source_image (head_sprite) == faces);
+
+	/* copies share the CPU source */
+	copy = lrg_skinned_sprite_copy (head_sprite);
+	g_assert_true (lrg_skinned_sprite_get_source_image (copy) == faces);
+
+	walk = lrg_skeleton2d_get_clip (skel, "walk");
+	g_assert_nonnull (walk);
+	canvas = lrg_image_canvas_new (440, 280, &bg);
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_clip_apply (walk, skel, 0.3f, 1.0f);
+	lrg_skeleton2d_set_root_transform (skel, 90.0f, 170.0f, 0.0f, 1.0f, 1.0f);
+	lrg_skeleton2d_update_world (skel);
+	lrg_skeleton2d_draw_to_canvas (skel, canvas, NULL);
+	img = lrg_image_canvas_get_image (canvas);
+	maybe_save_cpu (img, "s2d-cpu-figure");
+
+	/* the torso is around the hip; the head samples the checker,
+	 * tinted by the slot colour */
+	g_assert_false (cpu_pixel_is (img, 90, 140, 24, 26, 32));
+	for (y = 80; y < 110; y++)
+	{
+		for (x = 80; x < 100; x++)
+		{
+			const guint8 *p = grl_image_get_pixels (img, NULL) + ((gsize)y * 440 + (gsize)x) * 4;
+
+			if (p[0] > 180 && p[1] > 140)
+				lit++;
+			else if (p[0] > 35 && p[0] < 90 && p[2] < 60)
+				dark++;
+		}
+	}
+	g_assert_cmpuint (lit, >, 30);
+	g_assert_cmpuint (dark, >, 30);
+}
+
+/* An atlas region: the sprite samples only its cell, and bilinear
+ * filtering clamps at the cell border instead of bleeding the
+ * neighbouring cell in. */
+static void
+test_cpu_region (void)
+{
+	g_autoptr(LrgSkinnedSprite) quad = lrg_skinned_sprite_new_quad (0, 0, 16, 16, -1);
+	g_autoptr(GrlImage)         atlas = NULL;
+	g_autoptr(LrgImageCanvas)   canvas = black_canvas (16, 16);
+	GrlColor                    red = { 255, 0, 0, 255 };
+	GrlColor                    green = { 0, 255, 0, 255 };
+	GrlImage                   *img;
+	guint8                     *p;
+	gint                        x;
+	gint                        y;
+
+	/* a 4x2 atlas: red cell on the left, green cell on the right */
+	atlas = grl_image_new_color (4, 2, &red);
+	p = grl_image_get_pixels (atlas, NULL);
+	for (y = 0; y < 2; y++)
+		for (x = 2; x < 4; x++)
+			memcpy (p + (y * 4 + x) * 4, &green, 4);
+
+	lrg_skinned_sprite_set_source_image (quad, atlas);
+	lrg_skinned_sprite_set_region (quad, 2, 0, 2, 2);
+	lrg_skinned_sprite_draw_to_canvas (quad, canvas, NULL);
+	img = lrg_image_canvas_get_image (canvas);
+	for (y = 0; y < 16; y++)
+		for (x = 0; x < 16; x++)
+			g_assert_true (cpu_pixel_is (img, x, y, 0, 255, 0));
+
+	/* no region: the whole atlas, red on the left half */
+	lrg_skinned_sprite_set_region (quad, 0, 0, 0, 0);
+	lrg_skinned_sprite_draw_to_canvas (quad, canvas, NULL);
+	g_assert_true (cpu_pixel_is (img, 1, 8, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 14, 8, 0, 255, 0));
+}
+
+/* Image paths load on the CPU, relative to the skeleton's base
+ * directory: lazily on the first draw, or up front with errors. */
+static void
+test_cpu_source_files (void)
+{
+	g_autoptr(GError)           error = NULL;
+	g_autofree gchar           *dir = g_dir_make_tmp ("lrg-s2d-cpu-XXXXXX", &error);
+	g_autofree gchar           *png = NULL;
+	g_autoptr(GrlImage)         blue = NULL;
+	g_autoptr(LrgSkeleton2D)    skel = lrg_skeleton2d_new ();
+	g_autoptr(LrgSkeleton2D)    skel2 = lrg_skeleton2d_new ();
+	g_autoptr(LrgSkinnedSprite) quad = lrg_skinned_sprite_new_quad (0, 0, 8, 8, -1);
+	g_autoptr(LrgSkinnedSprite) quad2 = lrg_skinned_sprite_new_quad (0, 0, 8, 8, -1);
+	g_autoptr(LrgSkinnedSprite) missing = lrg_skinned_sprite_new_quad (0, 0, 8, 8, -1);
+	g_autoptr(LrgImageCanvas)   canvas = black_canvas (8, 8);
+	GrlColor                    c = { 20, 40, 220, 255 };
+	gint                        bone;
+	gint                        slot;
+
+	g_assert_no_error (error);
+	png = g_build_filename (dir, "blue.png", NULL);
+	blue = grl_image_new_color (4, 4, &c);
+	g_assert_true (grl_image_export (blue, png));
+
+	/* lazy: the first draw loads blue.png from the base directory */
+	bone = lrg_skeleton2d_add_bone (skel, "root", -1, 0, 0, 0, 1, 1, 0);
+	slot = lrg_skeleton2d_add_slot (skel, "s", bone, "q");
+	lrg_skinned_sprite_set_image (quad, "blue.png");
+	lrg_skeleton2d_set_attachment (skel, NULL, slot, "q", quad);
+	lrg_skeleton2d_set_base_dir (skel, dir);
+	lrg_skeleton2d_update_world (skel);
+	lrg_skeleton2d_draw_to_canvas (skel, canvas, NULL);
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (canvas), 4, 4, 20, 40, 220));
+	g_assert_nonnull (lrg_skinned_sprite_get_source_image (quad));
+
+	/* up front: both sprites naming blue.png share one decoded image */
+	bone = lrg_skeleton2d_add_bone (skel2, "root", -1, 0, 0, 0, 1, 1, 0);
+	slot = lrg_skeleton2d_add_slot (skel2, "s", bone, "q");
+	lrg_skinned_sprite_set_image (quad2, "blue.png");
+	lrg_skinned_sprite_set_image (missing, "blue.png");
+	lrg_skeleton2d_set_attachment (skel2, NULL, slot, "q", quad2);
+	lrg_skeleton2d_set_attachment (skel2, NULL, slot, "r", missing);
+	lrg_skeleton2d_set_base_dir (skel2, dir);
+	g_assert_true (lrg_skeleton2d_load_source_images (skel2, &error));
+	g_assert_no_error (error);
+	g_assert_true (lrg_skinned_sprite_get_source_image (quad2) == lrg_skinned_sprite_get_source_image (missing));
+
+	/* a missing file is an error from the explicit loader */
+	lrg_skinned_sprite_set_source_image (missing, NULL);
+	lrg_skinned_sprite_set_image (missing, "nope.png");
+	g_assert_false (lrg_skeleton2d_load_source_images (skel2, &error));
+	g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
+
+	g_unlink (png);
+	g_rmdir (dir);
+}
+
+/* ==========================================================================
  * GPU: a component in an LrgWorld draws a bending arm; a walking figure
  * ========================================================================== */
 
@@ -1678,6 +1984,11 @@ main (int   argc,
 	g_test_add_func ("/skeleton2d/format/round-trip", test_format_round_trip);
 	g_test_add_func ("/skeleton2d/format/errors", test_format_errors);
 	g_test_add_func ("/skeleton2d/perf", test_perf);
+	g_test_add_func ("/skeleton2d/cpu/arm", test_cpu_arm);
+	g_test_add_func ("/skeleton2d/cpu/tint-and-order", test_cpu_tint_and_order);
+	g_test_add_func ("/skeleton2d/cpu/figure", test_cpu_figure);
+	g_test_add_func ("/skeleton2d/cpu/region", test_cpu_region);
+	g_test_add_func ("/skeleton2d/cpu/source-files", test_cpu_source_files);
 	g_test_add_func ("/skeleton2d/gpu/world-arm", test_gpu_world_arm);
 	g_test_add_func ("/skeleton2d/gpu/figure", test_gpu_figure);
 

@@ -83,7 +83,7 @@ capture, data-driven YAML authoring, and a command-line tool.
 - *[[file:reel/composition.org][LrgReel]]* - the composition (id, resolution, fps, duration, clip stack, props)
 - *[[file:reel/timing.org][LrgReelContext / LrgReelSequence]]* - the relative-frame model: shift, series, loop, freeze
 - *[[file:reel/animation.org][interpolate / spring / color / noise]]* - range interpolation, spring physics, OkLab color, bezier easing, noise
-- *[[file:reel/clips.org][LrgReelClip]]* - transform, blend modes, effects + solid / gradient / image / text / shape content clips
+- *[[file:reel/clips.org][LrgReelClip]]* - transform, blend modes, effects + solid / gradient / image / text / shape content clips, and [[file:reel/clips.org::#skeleton2d-clip][LrgReelSkeleton2DClip]] (animated 2D characters, 0.14)
 - *[[file:reel/compositing.org][Effects]]* - per-clip filter chain: blur, bloom, color-grade, vignette, grain, chroma-key, drop-shadow, light-leak
 - *[[file:reel/media.org][Media]]* - video source decode, video clip (trim/rate/loop), FFT audio analysis
 - *[[file:reel/rendering.org][LrgReelRenderer]]* - offline frame-by-frame engine, render_range, render_parallel, motion blur
@@ -149,6 +149,7 @@ Window management, cameras, and rendering abstractions:
 - *[[file:graphics/gltf-info.org][LrgGltfInfo]]* - Headless glTF/GLB inspection (raylib mesh order, node names, animations, visibility masks)
 - *[[file:graphics/static-batch.org][LrgStaticBatch]]* - Static mesh batching into u16 chunks per (material, layer) with bounds and layer masks
 - *[[file:graphics/model-animator.org][LrgModelAnimator]]* - Shared skinned model animation with per-actor state, crossfades, pose dedupe and masked drawing
+- *[[file:graphics/image-raster.org][CPU textured triangles]]* - =lrg_image_draw_triangle_textured()=: headless rasteriser for skinned sprites and 2D skeletons (0.14)
 
 *** [[file:worldui/index.org][World-space UI Module]] - Speech bubbles, nameplates and emotes (0.11.0)
 :PROPERTIES:

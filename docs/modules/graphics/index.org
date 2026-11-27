@@ -33,10 +33,11 @@ The Graphics module provides:
 - *[[file:shader-asset.org][LrgShaderAsset]]* - user shaders (=.rshader=): GLSL 330 stages with the lit library, described uniforms, line-mapped compile errors, hot reload
 - *[[file:shaders.org][Shaders on desktop GL and OpenGL ES]]* - =lrg_glsl_prepare_source()=: one shader body for GLSL 330 and GLSL ES 300, and =build-aux/check-glsl.sh= to validate shader files against both
 - *[[file:shader-graph.org][LrgShaderGraph]]* - node shader graphs (=.rshadergraph=): typed node library, validation, deterministic GLSL generation
-- *[[file:skinned-sprite.org][LrgSkinnedSprite]]* - deformable 2D sprite meshes (up to 4 bone weights, atlas regions, CPU skinning)
+- *[[file:skinned-sprite.org][LrgSkinnedSprite]]* - deformable 2D sprite meshes (up to 4 bone weights, atlas regions, CPU skinning, CPU drawing into an image canvas)
 - *[[file:uv-unwrap.org][LrgUvUnwrap / LrgUvMesh]]* - lightmap UV2 chart unwrapper, headless CPU mesh, renderer primitives, rect packer
 - *[[file:static-batch.org][LrgStaticBatch]]* - Static geometry and copied auxiliary UV streams; [[file:aux-uv-contract.org][integration contract and verification]]
 - *[[file:image-canvas.org][LrgImageCanvas]]* - CPU dynamic-texture canvas (draw/composite/blur/transform)
+- *[[file:image-raster.org][lrg_image_draw_triangle_textured]]* - CPU textured triangles: top-left fill rule, bilinear premultiplied sampling, tint, source-over (0.14); draws skinned sprites and 2D skeletons headless
 - *[[file:vector-image.org][LrgVectorImage]]* - Load and rasterise SVG vector assets at any size
 - *[[file:skinned-mesh.org][LrgSkinnedMesh]]* - Skinned meshes posed by a bone matrix palette: GPU skinning with a CPU reference and fallback
 - *[[file:hdr-image.org][LrgHdrImage]]* - Radiance RGBE (=.hdr=) reader and writer to linear float RGB (flat and run-length scanlines, EXPOSURE, both vertical orientations); equirect panorama sampling for the environment's skies

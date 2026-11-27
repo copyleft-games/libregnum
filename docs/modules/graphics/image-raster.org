@@ -1,0 +1,122 @@
+#+title: lrg_image_draw_triangle_textured - CPU Textured Triangles
+#+description: A CPU rasteriser for textured triangles into a GrlImage: top-left fill rule, bilinear premultiplied sampling, tint and source-over
+#+created: 2026-11-27
+
+* lrg_image_draw_triangle_textured - CPU Textured Triangles
+:PROPERTIES:
+:CUSTOM_ID: image-raster
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Graphics]] > CPU textured triangles
+#+end_quote
+
+=lrg_image_draw_triangle_textured()= draws one textured triangle into an RGBA8 =GrlImage= on the CPU, following the same rules a GPU follows for a textured triangle. It is what lets 2D skeletal characters render without a window: [[file:skinned-sprite.org::#cpu-drawing][lrg_skinned_sprite_draw_to_canvas()]] draws every triangle of a deformed mesh with it, and [[file:../animation/skeleton2d.org::#cpu-drawing][lrg_skeleton2d_draw_to_canvas()]] and the reel's [[file:../reel/clips.org::#skeleton2d-clip][LrgReelSkeleton2DClip]] are built on top. graylib's own primitives draw flat-coloured shapes; this is the textured one, and it lives in libregnum.
+
+- *Header*: =graphics/lrg-image-raster.h=
+- *Function*: =lrg_image_draw_triangle_textured (dst, src, xy, uv, tint)=
+- *Since*: 0.14
+- *Headless*: yes, no window or GL context
+- *Threads*: safe to call from several threads at once as long as no two calls draw into the same destination image and the source image is already RGBA8 (see [[#pitfalls][Pitfalls]])
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+#+begin_src C
+void lrg_image_draw_triangle_textured (GrlImage       *dst,
+                                       GrlImage       *src,      /* nullable: flat tint */
+                                       const gfloat   *xy,       /* 6 floats: x0 y0 x1 y1 x2 y2 */
+                                       const gfloat   *uv,       /* 6 floats, may be NULL when src is NULL */
+                                       const GrlColor *tint);    /* nullable: opaque white */
+#+end_src
+
+The call fills every destination pixel whose centre lies inside the triangle with a bilinear sample of =src= at the interpolated texture coordinate, multiplied by =tint=, composited source-over onto the pixel. The pages below explain each of those steps, because each one is a choice that decides whether a mesh made of many triangles looks like one smooth image.
+
+** Coverage and the top-left rule
+:PROPERTIES:
+:CUSTOM_ID: coverage
+:END:
+*** Pixel centres
+Pixel =(i, j)= covers the square from =(i, j)= to =(i + 1, j + 1)=; its centre is =(i + 0.5, j + 0.5)=. A pixel is drawn when its centre is inside the triangle. There is no partial coverage (no anti-aliasing of triangle edges): a mesh's inner edges must not be anti-aliased, or every shared edge would show as a faint seam where two partly transparent edge pixels blend over each other. Smooth outer edges come from the texture instead: give the art a transparent border and bilinear sampling fades it out.
+
+*** Exact arithmetic
+Corners are snapped to 1/256 of a pixel and the inside test uses 64-bit integer edge functions, the twice-signed area of the triangle formed by an edge and the point. Integer arithmetic means the test for a pixel centre against an edge gives the same answer for both triangles that share that edge, with no floating-point rounding to make them disagree. The edge functions start at the top-left corner of the triangle's bounding box and change by a constant per pixel step, so the inner loop is three additions and three comparisons per pixel. The bounding box is clipped to the image (and its clip rectangle) first, so a triangle far larger than the image costs only the pixels it covers on the image, and each row stops at the first outside pixel after an inside one.
+
+*** Edges through pixel centres
+When a pixel centre lies exactly on an edge, the top-left rule decides who draws it: the triangle draws it only when that edge is a *top edge* (exactly horizontal, with the triangle below it) or a *left edge* (the triangle is to its right). Two triangles that share an edge walk it in opposite directions, and the rule accepts exactly one of the two directions, so a centre on a shared edge is drawn by exactly one of them. A mesh therefore has no holes (pixels neither triangle draws) and no double-blended pixels (pixels both triangles draw, visible as a brighter line under a translucent tint). This is the rule Direct3D and OpenGL implementations use.
+
+*** Winding and degenerate triangles
+The winding of the corners does not matter: the rasteriser reorders them internally. A triangle with no area after snapping (all corners on one line or one point) draws nothing, as does one with a corner that is NaN, infinite, or more than 2^21 pixels from the origin (beyond that the integer edge functions could overflow).
+
+** Sampling
+:PROPERTIES:
+:CUSTOM_ID: sampling
+:END:
+- *Interpolation*: texture coordinates are interpolated linearly across the triangle from the barycentric weights of the pixel centre. There is no perspective division; this is a 2D rasteriser and every corner has the same depth.
+- *Texture space*: =(0, 0)= is the top-left corner of =src= and =(1, 1)= the bottom-right corner; texel =(i, j)= has its centre at =((i + 0.5) / w, (j + 0.5) / h)=, as on a GPU.
+- *Bilinear*: the four texels around the sample point are weighted by distance. A coordinate halfway between two texel centres gets half of each.
+- *Clamp to edge*: coordinates are clamped to 0 .. 1 and neighbours outside the image repeat the border texel; there is no wrapping. NaN coordinates sample the top-left texel.
+- *Premultiplied*: each texel's colour is multiplied by its alpha before the four are weighted. A fully transparent texel then adds nothing, not even its colour, so the anti-aliased edge of an opaque shape on a transparent background fades to transparent without a dark or coloured fringe. (Averaging straight colours would mix the invisible colour of the transparent texels into the edge.)
+
+** Tint and blending
+:PROPERTIES:
+:CUSTOM_ID: blending
+:END:
+- *Tint*: the sample's colour is multiplied by =tint.rgb / 255= and its alpha by =tint.a / 255=. =NULL= means opaque white (no change). A tint with alpha 0 draws nothing. With =src= =NULL= the triangle is filled with the tint colour alone, which is how untextured meshes draw.
+- *Source-over, always*: the result is composited source-over onto the destination pixel, whatever blend mode the destination image is set to (=grl_image_set_blend_mode()= is not consulted). With a premultiplied source =s= and a straight-alpha destination pixel =d=: =out.a = s.a + d.a * (1 - s.a)= and =out.rgb = (s.rgb + d.rgb * d.a * (1 - s.a)) / out.a=. Destination pixels stay straight alpha, as every other =GrlImage= drawing function expects.
+- *Gamma space*: blending happens on the 8-bit sRGB values; the destination's blend colour space (=grl_image_set_blend_color_space()=) is not consulted.
+- *Clip rectangle*: honoured (=grl_image_set_clip_rect()=, =lrg_image_canvas_set_clip_rect()=).
+- *Transform*: *not* applied. =xy= are final pixel coordinates; the image's transform matrix (=lrg_image_canvas_translate()= and friends) is for callers to apply, which =lrg_skinned_sprite_draw_to_canvas()= does.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+/* map a 64x64 texture onto a rotated square made of two triangles */
+GrlColor            clear = { 0, 0, 0, 0 };
+GrlColor            light = { 250, 225, 190, 255 };
+GrlColor            dark = { 60, 40, 30, 255 };
+g_autoptr(GrlImage) dst = grl_image_new_color (128, 128, &clear);
+g_autoptr(GrlImage) tex = grl_image_new_checked (64, 64, 8, 8, &light, &dark);
+const gfloat        xy1[6] = { 64, 8,   120, 64,  64, 120 };
+const gfloat        uv1[6] = { 0, 0,    1, 0,     1, 1 };
+const gfloat        xy2[6] = { 64, 8,   64, 120,  8, 64 };
+const gfloat        uv2[6] = { 0, 0,    1, 1,     0, 1 };
+GrlColor            half = { 255, 255, 255, 128 };
+
+lrg_image_draw_triangle_textured (dst, tex, xy1, uv1, &half);
+lrg_image_draw_triangle_textured (dst, tex, xy2, uv2, &half);
+/* the diagonal is drawn once: no brighter line across the translucent square */
+grl_image_export (dst, "square.png");
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+The per-pixel cost is dominated by the four texel fetches and the float blend; coverage itself is three integer additions. A 256x256 reel frame with a gradient background and a fully textured 6-slot figure (about 120 triangles, scaled 1.4x) renders in about 1.2 ms on one core of a current x86_64 desktop (posing, deforming, rasterising and the background together), so a CPU reel renders a character at hundreds of frames per second before encoding. Large flat fills are better done with the canvas's own primitives.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Images are converted in place.* Both =dst= and =src= are read through =grl_image_get_pixels()=, which converts an image that is not RGBA8 to RGBA8 in place. Convert a texture shared between threads once, before the threads start; =lrg_skinned_sprite_set_source_image()= does this for its sources (on a private copy).
+- *No anti-aliased edges*: see [[#coverage][Pixel centres]]. Draw silhouettes with soft alpha in the texture.
+- *The transform is ignored*: apply the canvas matrix yourself, or draw through =lrg_skinned_sprite_draw_to_canvas()=.
+- *Sources sample the whole image*: for an atlas cell, crop it first (the skinned sprite caches a cropped copy of its region) or neighbouring cells bleed in at the border under bilinear filtering.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-image-raster.c= covers known coverage counts, the top-left rule (a translucent quad over black with no double-blended pixel, an irregular quad whose diagonal passes through pixel centres, a jittered 6x6 mesh where every interior centre is covered exactly once), bilinear values against hand-computed ones, premultiplied sampling, UV sub-ranges, tint, clipping and degenerate input.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:skinned-sprite.org][LrgSkinnedSprite]] (CPU drawing of deformed meshes)
+- [[file:../animation/skeleton2d.org][LrgSkeleton2D]] (=lrg_skeleton2d_draw_to_canvas()=)
+- [[file:image-canvas.org][LrgImageCanvas]]
+- [[file:../reel/clips.org::#skeleton2d-clip][LrgReelSkeleton2DClip]]
