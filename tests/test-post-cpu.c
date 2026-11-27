@@ -1101,6 +1101,7 @@ test_gpu_vs_cpu (void)
 	static const guint8 pal[] = { 0, 0, 0, 255, 255, 255, 200, 40, 40, 30, 90, 200, 240, 200, 60 };
 	g_autoptr(GBytes)   bytes = g_bytes_new_static (pal, sizeof pal);
 
+	gpu_ready = gpu_init ();
 	if (!gpu_ready)
 	{
 		g_test_skip ("needs the isolated X display (xrun.sh)");
@@ -1179,7 +1180,8 @@ main (gint   argc,
 	gint ret;
 
 	g_test_init (&argc, &argv, NULL);
-	gpu_ready = gpu_init ();
+	/* The window opens only in the GPU test (the last one), so every CPU
+	 * test above runs without a GL context, as apply_cpu promises. */
 
 	g_test_add_func ("/post-cpu/class-layout", test_class_layout);
 	g_test_add_func ("/post-cpu/has-cpu", test_has_cpu);
