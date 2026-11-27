@@ -793,6 +793,132 @@ test_draw_debug_empty (void)
 	assert_pixel (image, 25, 25, 0, 0, 0);
 }
 
+/* ==========================================================================
+ * Backdrops
+ * ========================================================================== */
+
+/* A backdrop overlaps nothing and may leave the safe area, not the frame. */
+static void
+test_backdrop_checks (void)
+{
+	g_autoptr(LrgFrameLayout) layout = lrg_frame_layout_new (200.0f, 100.0f);
+	g_autoptr(GPtrArray) problems = NULL;
+	g_autoptr(GPtrArray) out = NULL;
+	g_autofree gchar *message = NULL;
+
+	lrg_frame_layout_set_safe_area_margins (layout, 10.0f, 10.0f, 10.0f, 10.0f);
+	set_rect (layout, "bg", 0.0f, 0.0f, 200.0f, 100.0f);
+	set_rect (layout, "title", 20.0f, 20.0f, 50.0f, 20.0f);
+	set_rect (layout, "hero", 100.0f, 30.0f, 40.0f, 40.0f);
+
+	/* --- not a backdrop yet: out of safe area plus two overlaps --- */
+	g_assert_false (lrg_frame_layout_get_backdrop (layout, "bg"));
+	problems = lrg_frame_layout_get_problems (layout);
+	g_assert_cmpuint (problems->len, ==, 3);
+	g_assert_true (g_str_has_prefix (g_ptr_array_index (problems, 0), "out of safe area: \"bg\""));
+	g_assert_true (g_str_has_prefix (g_ptr_array_index (problems, 1), "overlap: \"bg\""));
+	g_assert_true (g_str_has_prefix (g_ptr_array_index (problems, 2), "overlap: \"bg\""));
+
+	/* --- as a backdrop the layout is clean --- */
+	lrg_frame_layout_set_backdrop (layout, "bg", TRUE);
+	g_assert_true (lrg_frame_layout_get_backdrop (layout, "bg"));
+	g_assert_false (lrg_frame_layout_get_backdrop (layout, "title"));
+	g_assert_true (lrg_frame_layout_validate (layout, NULL));
+
+	/* other boxes still overlap each other */
+	set_rect (layout, "hero", 60.0f, 30.0f, 40.0f, 40.0f);
+	message = expect_error (layout, LRG_FRAME_LAYOUT_ERROR_OVERLAP);
+	g_assert_true (g_str_has_prefix (message, "overlap: \"title\""));
+	g_assert_null (strstr (message, "\"bg\""));
+	set_rect (layout, "hero", 100.0f, 30.0f, 40.0f, 40.0f);
+
+	/* two backdrops do not overlap each other either */
+	set_rect (layout, "photo", 0.0f, 50.0f, 200.0f, 50.0f);
+	lrg_frame_layout_set_backdrop (layout, "photo", TRUE);
+	g_assert_true (lrg_frame_layout_validate (layout, NULL));
+
+	/* --- leaving the frame is still reported --- */
+	set_rect (layout, "bg", -5.0f, 0.0f, 210.0f, 100.0f);
+	out = lrg_frame_layout_get_problems (layout);
+	g_assert_cmpuint (out->len, ==, 1);
+	g_clear_pointer (&message, g_free);
+	message = expect_error (layout, LRG_FRAME_LAYOUT_ERROR_OUT_OF_FRAME);
+	g_assert_cmpstr (message, ==,
+	                 "out of frame: \"bg\" (x=-5, y=0, w=210, h=100) leaves the 200x100 frame by left 5, right 5");
+
+	/* --- unmarking restores the checks --- */
+	set_rect (layout, "bg", 0.0f, 0.0f, 200.0f, 100.0f);
+	lrg_frame_layout_set_backdrop (layout, "bg", FALSE);
+	g_assert_false (lrg_frame_layout_get_backdrop (layout, "bg"));
+	g_clear_pointer (&message, g_free);
+	message = expect_error (layout, LRG_FRAME_LAYOUT_ERROR_OUT_OF_SAFE_AREA);
+	/* unmarking twice is harmless */
+	lrg_frame_layout_set_backdrop (layout, "bg", FALSE);
+}
+
+/* The mark is kept by name: before the box exists, across remove and replace. */
+static void
+test_backdrop_persists (void)
+{
+	g_autoptr(LrgFrameLayout) layout = lrg_frame_layout_new (200.0f, 100.0f);
+
+	lrg_frame_layout_set_safe_area_percent (layout, 0.05f);
+	lrg_frame_layout_set_backdrop (layout, "sky", TRUE);
+	g_assert_true (lrg_frame_layout_get_backdrop (layout, "sky"));
+	set_rect (layout, "sky", 0.0f, 0.0f, 200.0f, 100.0f);
+	lrg_frame_layout_add_box (layout, "title", LRG_HUD_ANCHOR_TOP, 0.0f, 0.0f, 100.0f, 20.0f);
+	g_assert_true (lrg_frame_layout_validate (layout, NULL));
+
+	/* replace with another placement kind */
+	lrg_frame_layout_add_box (layout, "sky", LRG_HUD_ANCHOR_CENTER, 0.0f, 0.0f, 200.0f, 100.0f);
+	g_assert_true (lrg_frame_layout_validate (layout, NULL));
+
+	/* remove and add again */
+	g_assert_true (lrg_frame_layout_remove_box (layout, "sky"));
+	g_assert_true (lrg_frame_layout_get_backdrop (layout, "sky"));
+	set_rect (layout, "sky", 0.0f, 0.0f, 200.0f, 100.0f);
+	g_assert_true (lrg_frame_layout_validate (layout, NULL));
+}
+
+/* A backdrop is a grey dashed 1-pixel outline under the other boxes. */
+static void
+test_backdrop_draw (void)
+{
+	g_autoptr(LrgFrameLayout) layout = lrg_frame_layout_new (200.0f, 100.0f);
+	g_autoptr(LrgImageCanvas) canvas = NULL;
+	g_autoptr(LrgImageCanvas) again = NULL;
+	GrlColor black = { 0, 0, 0, 255 };
+	GrlImage *image;
+
+	canvas = lrg_image_canvas_new (200, 100, &black);
+	image = lrg_image_canvas_get_image (canvas);
+	lrg_frame_layout_set_safe_area_margins (layout, 10.0f, 10.0f, 10.0f, 10.0f);
+	set_rect (layout, "bg", 0.0f, 0.0f, 200.0f, 100.0f);
+	lrg_frame_layout_set_backdrop (layout, "bg", TRUE);
+	set_rect (layout, "a", 40.0f, 30.0f, 50.0f, 40.0f);
+	lrg_frame_layout_draw_debug (layout, canvas);
+
+	/* --- dashes: 6 on, 4 off, from each edge's start --- */
+	assert_pixel (image, 23, 99, 160, 160, 160);	/* bottom, dash 20..25 */
+	assert_pixel (image, 27, 99, 0, 0, 0);		/* bottom, gap 26..29 */
+	assert_pixel (image, 199, 52, 160, 160, 160);	/* right, dash 50..55 */
+	assert_pixel (image, 199, 57, 0, 0, 0);		/* right, gap */
+	assert_pixel (image, 0, 41, 160, 160, 160);	/* left, dash 40..45 */
+	assert_pixel (image, 1, 41, 0, 0, 0);		/* one pixel thin */
+	/* its label is grey */
+	assert_pixel (image, 1, 12, 160, 160, 160);
+
+	/* --- the safe area and the boxes are drawn over it --- */
+	assert_pixel (image, 10, 50, 255, 210, 0);
+	assert_pixel (image, 40, 60, 60, 220, 120);
+
+	/* --- a backdrop that leaves the frame is drawn red --- */
+	again = lrg_image_canvas_new (200, 100, &black);
+	set_rect (layout, "bg", -5.0f, 0.0f, 210.0f, 100.0f);
+	lrg_frame_layout_draw_debug (layout, again);
+	assert_pixel (lrg_image_canvas_get_image (again), 100, 1, 255, 40, 40);
+}
+
 gint
 main (gint   argc,
       gchar *argv[])
@@ -820,6 +946,9 @@ main (gint   argc,
 	g_test_add_func ("/frame-layout/boxes/replace-remove", test_replace_and_remove);
 	g_test_add_func ("/frame-layout/boxes/sizes", test_sizes);
 	g_test_add_func ("/frame-layout/enums", test_enum_types);
+	g_test_add_func ("/frame-layout/backdrop/checks", test_backdrop_checks);
+	g_test_add_func ("/frame-layout/backdrop/persists", test_backdrop_persists);
+	g_test_add_func ("/frame-layout/backdrop/draw", test_backdrop_draw);
 	g_test_add_func ("/frame-layout/draw-debug/boxes", test_draw_debug);
 	g_test_add_func ("/frame-layout/draw-debug/empty", test_draw_debug_empty);
 

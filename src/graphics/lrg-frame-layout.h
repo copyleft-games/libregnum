@@ -350,6 +350,42 @@ lrg_frame_layout_allow_overlap (LrgFrameLayout *self,
                                 const gchar    *a,
                                 const gchar    *b);
 
+/**
+ * lrg_frame_layout_set_backdrop:
+ * @self: an #LrgFrameLayout
+ * @name: a box's name
+ * @backdrop: %TRUE to mark the box as a backdrop, %FALSE to unmark it
+ *
+ * Marks a box as a backdrop: a background or full-bleed image that lies
+ * under everything else.  A backdrop overlaps no other box and may reach
+ * past the safe area (up to the whole frame), so neither is reported;
+ * leaving the frame still is (%LRG_FRAME_LAYOUT_ERROR_OUT_OF_FRAME).
+ * Like lrg_frame_layout_allow_overlap(), the mark is kept by name: the
+ * box need not exist yet, and the mark outlives removing or replacing it.
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_frame_layout_set_backdrop (LrgFrameLayout *self,
+                               const gchar    *name,
+                               gboolean        backdrop);
+
+/**
+ * lrg_frame_layout_get_backdrop:
+ * @self: an #LrgFrameLayout
+ * @name: a box's name
+ *
+ * Returns: %TRUE when @name is marked as a backdrop (whether or not a
+ *   box of that name exists)
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_frame_layout_get_backdrop (LrgFrameLayout *self,
+                               const gchar    *name);
+
 /* ==========================================================================
  * Checks
  * ========================================================================== */
@@ -362,7 +398,8 @@ lrg_frame_layout_allow_overlap (LrgFrameLayout *self,
  * lrg_frame_layout_validate() lists them: first each box in the order of
  * lrg_frame_layout_get_names() (unknown relative target, out of frame, else out of the safe area),
  * then each overlapping pair.  Boxes that only touch along an edge or at
- * a corner do not overlap, and zero-size boxes overlap nothing.
+ * a corner do not overlap, and zero-size boxes and backdrops
+ * (lrg_frame_layout_set_backdrop()) overlap nothing.
  *
  * Returns: (transfer full) (element-type utf8): the problems (empty when
  *   the layout is clean)
@@ -400,8 +437,10 @@ lrg_frame_layout_validate (LrgFrameLayout  *self,
  *
  * Draws the layout over @canvas: the safe area as a thin yellow outline,
  * every box as a green outline with its name in a label at its top-left
- * corner, and boxes with a problem in red with a thicker outline; the
- * shared area of an overlapping pair is shaded translucent red.  The
+ * corner, backdrops (lrg_frame_layout_set_backdrop()) under the rest as a
+ * thin grey dashed outline, and boxes with a problem in red with a
+ * thicker outline; the shared area of an overlapping pair is shaded
+ * translucent red.  The
  * canvas' transform is ignored; its clip rectangle applies.
  *
  * Since: 0.14

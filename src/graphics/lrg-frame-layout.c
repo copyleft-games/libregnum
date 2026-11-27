@@ -94,6 +94,7 @@ struct _LrgFrameLayout
 
 	GPtrArray  *boxes;		/* (element-type Box), insertion order */
 	GHashTable *allowed;		/* "a\037b" (sorted names) -> itself */
+	GHashTable *backdrops;		/* names of backdrop boxes -> themselves */
 	gboolean    dirty;		/* rectangles need resolving */
 };
 
@@ -203,6 +204,7 @@ lrg_frame_layout_finalize (GObject *object)
 
 	g_clear_pointer (&self->boxes, g_ptr_array_unref);
 	g_clear_pointer (&self->allowed, g_hash_table_unref);
+	g_clear_pointer (&self->backdrops, g_hash_table_unref);
 	G_OBJECT_CLASS (lrg_frame_layout_parent_class)->finalize (object);
 }
 
@@ -219,6 +221,7 @@ lrg_frame_layout_init (LrgFrameLayout *self)
 	self->height = 1.0f;
 	self->boxes = g_ptr_array_new_with_free_func (box_free);
 	self->allowed = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+	self->backdrops = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 }
 
 LrgFrameLayout *
@@ -464,6 +467,42 @@ lrg_frame_layout_allow_overlap (LrgFrameLayout *self,
 
 	key = pair_key (a, b);
 	g_hash_table_add (self->allowed, key);
+}
+
+/*
+ * Backdrops are kept by name, like allowed pairs, so the mark outlives
+ * removing and replacing the box.
+ */
+void
+lrg_frame_layout_set_backdrop (LrgFrameLayout *self,
+                               const gchar    *name,
+                               gboolean        backdrop)
+{
+	g_return_if_fail (LRG_IS_FRAME_LAYOUT (self));
+	g_return_if_fail (name != NULL);
+
+	if (backdrop)
+		g_hash_table_add (self->backdrops, g_strdup (name));
+	else
+		g_hash_table_remove (self->backdrops, name);
+}
+
+gboolean
+lrg_frame_layout_get_backdrop (LrgFrameLayout *self,
+                               const gchar    *name)
+{
+	g_return_val_if_fail (LRG_IS_FRAME_LAYOUT (self), FALSE);
+	g_return_val_if_fail (name != NULL, FALSE);
+
+	return g_hash_table_contains (self->backdrops, name);
+}
+
+/* Whether the box called @name is a backdrop. */
+static gboolean
+is_backdrop (LrgFrameLayout *self,
+             const gchar    *name)
+{
+	return g_hash_table_contains (self->backdrops, name);
 }
 
 /* ==========================================================================
@@ -781,7 +820,8 @@ collect_problems (LrgFrameLayout *self)
 			append_overhang (s, &box->resolved, &frame);
 			add_problem (problems, LRG_FRAME_LAYOUT_ERROR_OUT_OF_FRAME, s, i, G_MAXUINT, NULL);
 		}
-		else if (append_overhang (NULL, &box->resolved, &safe))
+		else if (!is_backdrop (self, box->name) &&
+		         append_overhang (NULL, &box->resolved, &safe))
 		{
 			s = g_string_new (NULL);
 			g_string_append_printf (s, "out of safe area: \"%s\" ", box->name);
@@ -799,7 +839,8 @@ collect_problems (LrgFrameLayout *self)
 	{
 		Box *a = g_ptr_array_index (self->boxes, i);
 
-		if (a->unresolved != UNRESOLVED_NONE)
+		/* backdrops lie under everything: they overlap nothing */
+		if (a->unresolved != UNRESOLVED_NONE || is_backdrop (self, a->name))
 			continue;
 		for (j = i + 1; j < self->boxes->len; j++)
 		{
@@ -808,7 +849,7 @@ collect_problems (LrgFrameLayout *self)
 			g_autofree gchar *key = NULL;
 			GString *s;
 
-			if (b->unresolved != UNRESOLVED_NONE ||
+			if (b->unresolved != UNRESOLVED_NONE || is_backdrop (self, b->name) ||
 			    !shared_area (&a->resolved, &b->resolved, &shared))
 				continue;
 			key = pair_key (a->name, b->name);
@@ -920,6 +961,59 @@ draw_box (GrlImage           *image,
 	                            DEBUG_LABEL_SIZE, problem ? &paper : &ink);
 }
 
+/*
+ * A backdrop: a thin grey dashed outline (6 pixels on, 4 off, each edge
+ * dashed from its start) and a grey name label, so it reads as "behind".
+ */
+static void
+draw_backdrop (GrlImage  *image,
+               const Box *box)
+{
+	static const GrlColor grey = { 160, 160, 160, 255 };
+	static const GrlColor ink = { 0, 0, 0, 255 };
+	GrlRectangle r = pixel_rect (&box->resolved);
+	GrlRectangle dash;
+	GrlRectangle label;
+	g_autoptr(GrlVector2) size = NULL;
+	gfloat t;
+
+	if (r.width >= 1.0f && r.height >= 1.0f)
+	{
+		/* --- top and bottom edges --- */
+		for (t = 0.0f; t < r.width; t += 10.0f)
+		{
+			dash.x = r.x + t;
+			dash.width = MIN (6.0f, r.width - t);
+			dash.height = 1.0f;
+			dash.y = r.y;
+			grl_image_draw_rectangle (image, &dash, &grey);
+			dash.y = r.y + r.height - 1.0f;
+			grl_image_draw_rectangle (image, &dash, &grey);
+		}
+		/* --- left and right edges --- */
+		for (t = 0.0f; t < r.height; t += 10.0f)
+		{
+			dash.y = r.y + t;
+			dash.height = MIN (6.0f, r.height - t);
+			dash.width = 1.0f;
+			dash.x = r.x;
+			grl_image_draw_rectangle (image, &dash, &grey);
+			dash.x = r.x + r.width - 1.0f;
+			grl_image_draw_rectangle (image, &dash, &grey);
+		}
+	}
+
+	/* --- the name, on a grey label --- */
+	size = grl_image_measure_text_bitmap (box->name, DEBUG_LABEL_SIZE);
+	label.x = r.x;
+	label.y = r.y;
+	label.width = size->x + 4.0f;
+	label.height = size->y + 4.0f;
+	grl_image_draw_rectangle (image, &label, &grey);
+	grl_image_draw_text_bitmap (image, box->name, (gint)label.x + 2, (gint)label.y + 2,
+	                            DEBUG_LABEL_SIZE, &ink);
+}
+
 void
 lrg_frame_layout_draw_debug (LrgFrameLayout *self,
                              LrgImageCanvas *canvas)
@@ -967,6 +1061,15 @@ lrg_frame_layout_draw_debug (LrgFrameLayout *self,
 		grl_image_draw_rectangle (image, &r, &shared_color);
 	}
 
+	/* --- backdrops first: everything else is drawn over them --- */
+	for (i = 0; i < self->boxes->len; i++)
+	{
+		Box *box = g_ptr_array_index (self->boxes, i);
+
+		if (box->unresolved == UNRESOLVED_NONE && !flagged[i] && is_backdrop (self, box->name))
+			draw_backdrop (image, box);
+	}
+
 	/* --- the safe area --- */
 	safe_area (self, &safe);
 	r = pixel_rect (&safe);
@@ -978,7 +1081,7 @@ lrg_frame_layout_draw_debug (LrgFrameLayout *self,
 	{
 		Box *box = g_ptr_array_index (self->boxes, i);
 
-		if (box->unresolved == UNRESOLVED_NONE && !flagged[i])
+		if (box->unresolved == UNRESOLVED_NONE && !flagged[i] && !is_backdrop (self, box->name))
 			draw_box (image, box, FALSE);
 	}
 	for (i = 0; i < self->boxes->len; i++)

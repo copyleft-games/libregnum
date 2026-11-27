@@ -58,13 +58,28 @@ Placements are kept, not just the resulting rectangles: an anchored box follows 
 - *Out of safe area* - a box inside the frame reaches past an edge of the safe area.
 - *Unknown box* - a box is placed relative to a box that does not exist, that has no rectangle itself, or the placements loop back to it.
 
-=lrg_frame_layout_allow_overlap (layout, "bubble", "speaker")= is for overlaps that are meant to be there: a speech bubble's tail over its speaker, a badge on a card, a caption over a photo.
+=lrg_frame_layout_allow_overlap (layout, "bubble", "speaker")= is for overlaps that are meant to be there: a speech bubble's tail over its speaker, a badge on a card, a caption over a photo. For a box that lies under everything, mark it as a [[#frame-layout-backdrops][backdrop]] instead of allowing each pair.
+
+*** Backdrops
+:PROPERTIES:
+:CUSTOM_ID: frame-layout-backdrops
+:END:
+A backdrop is a box for a background, a sky or a full-bleed image: it lies under every other box and usually covers the whole frame, margins included. =lrg_frame_layout_set_backdrop (layout, "sky", TRUE)= marks one.
+
+| Check | Normal box | Backdrop |
+|-------+------------+----------|
+| overlap with another box | reported unless the pair is allowed | never reported (also not between two backdrops) |
+| out of safe area | reported | not reported: a backdrop may fill the whole frame |
+| out of frame | reported | reported: a backdrop that bleeds past the frame edge is still a mistake |
+| unknown relative target | reported | reported |
+
+Like allowed pairs, the mark is kept by name: it can be set before the box exists and outlives removing or replacing the box; =lrg_frame_layout_set_backdrop (layout, name, FALSE)= clears it and =lrg_frame_layout_get_backdrop()= reads it. Other boxes may still be placed relative to a backdrop. In the [[#frame-layout-debug][debug overlay]] backdrops are drawn first, as a thin grey dashed outline, so everything else reads on top of them.
 
 ** Quick start
 :PROPERTIES:
 :CUSTOM_ID: frame-layout-quick-start
 :END:
-A 960 x 540 poster: title at the top centre, a character at the bottom left, its speech bubble to the right of it, a footer at the bottom. The program checks the layout, draws the picture into the boxes, and draws the debug overlay on top.
+A 960 x 540 poster: a full-frame sky behind everything (a backdrop, so it neither overlaps the other boxes nor breaks the safe area), title at the top centre, a character at the bottom left, its speech bubble to the right of it, a footer at the bottom. The program checks the layout, draws the picture into the boxes, and draws the debug overlay on top.
 
 #+begin_src C
 /* gcc -std=gnu89 poster.c `pkg-config --cflags --libs libregnum glib-2.0 gobject-2.0` -o poster */
@@ -89,6 +104,7 @@ main (void)
 	g_autoptr(LrgFrameLayout) layout = NULL;
 	g_autoptr(LrgImageCanvas) canvas = NULL;
 	g_autoptr(GError) error = NULL;
+	GrlColor night = { 10, 10, 20, 255 };
 	GrlColor sky = { 30, 40, 90, 255 };
 	GrlColor gold = { 240, 190, 70, 255 };
 	GrlColor blue = { 80, 140, 200, 255 };
@@ -98,6 +114,9 @@ main (void)
 	/* --- the layout: what goes where --- */
 	layout = lrg_frame_layout_new (960.0f, 540.0f);
 	lrg_frame_layout_set_safe_area_percent (layout, 0.05f);
+	lrg_frame_layout_add_box (layout, "sky", LRG_HUD_ANCHOR_TOP_LEFT,
+	                          -48.0f, -27.0f, 960.0f, 540.0f);   /* the whole frame */
+	lrg_frame_layout_set_backdrop (layout, "sky", TRUE);
 	lrg_frame_layout_add_box (layout, "title", LRG_HUD_ANCHOR_TOP,
 	                          0.0f, 0.0f, 600.0f, 80.0f);
 	lrg_frame_layout_add_box (layout, "character", LRG_HUD_ANCHOR_BOTTOM_LEFT,
@@ -116,7 +135,8 @@ main (void)
 	}
 
 	/* --- draw into the boxes, then the overlay --- */
-	canvas = lrg_image_canvas_new (960, 540, &sky);
+	canvas = lrg_image_canvas_new (960, 540, &night);
+	fill_box (canvas, layout, "sky", &sky);
 	fill_box (canvas, layout, "title", &gold);
 	fill_box (canvas, layout, "character", &blue);
 	fill_box (canvas, layout, "bubble", &paper);
@@ -128,7 +148,7 @@ main (void)
 }
 #+end_src
 
-With 5 % margins the safe area is =(48, 27) 864 x 486=, so the boxes land at: title =(180, 27) 600 x 80=, character =(88, 193) 220 x 260=, bubble =(332, 193) 320 x 140=, footer =(130, 463) 700 x 50=.
+With 5 % margins the safe area is =(48, 27) 864 x 486=, so the sky (anchored to the safe area's top-left corner and moved out by the margins) lands at =(0, 0) 960 x 540= and the other boxes at: title =(180, 27) 600 x 80=, character =(88, 193) 220 x 260=, bubble =(332, 193) 320 x 140=, footer =(130, 463) 700 x 50=.
 
 ** Test your layout
 :PROPERTIES:
@@ -208,6 +228,8 @@ gboolean   lrg_frame_layout_get_box          (LrgFrameLayout *self, const gchar 
 gboolean   lrg_frame_layout_remove_box       (LrgFrameLayout *self, const gchar *name);
 GPtrArray *lrg_frame_layout_get_names        (LrgFrameLayout *self);
 void       lrg_frame_layout_allow_overlap    (LrgFrameLayout *self, const gchar *a, const gchar *b);
+void       lrg_frame_layout_set_backdrop     (LrgFrameLayout *self, const gchar *name, gboolean backdrop);
+gboolean   lrg_frame_layout_get_backdrop     (LrgFrameLayout *self, const gchar *name);
 
 GPtrArray *lrg_frame_layout_get_problems (LrgFrameLayout *self);
 gboolean   lrg_frame_layout_validate     (LrgFrameLayout *self, GError **error);
@@ -228,6 +250,7 @@ void       lrg_frame_layout_draw_debug   (LrgFrameLayout *self, LrgImageCanvas *
 | =lrg_frame_layout_remove_box()= | =FALSE= when there was no such box; its followers become unknown-box problems |
 | =lrg_frame_layout_get_names()= | (transfer container): the names in the order the boxes were first added, owned by the layout |
 | =lrg_frame_layout_allow_overlap()= | order-independent; the boxes need not exist yet; kept across remove and replace |
+| =lrg_frame_layout_set_backdrop()=, =lrg_frame_layout_get_backdrop()= | mark or unmark a [[#frame-layout-backdrops][backdrop]] by name; kept across remove and replace |
 | =lrg_frame_layout_get_problems()= | (transfer full): one string per problem, empty when clean |
 | =lrg_frame_layout_validate()= | =TRUE= when clean; else an error listing every problem |
 | =lrg_frame_layout_draw_debug()= | the overlay, see [[#frame-layout-debug][Debug overlay]] |
@@ -238,6 +261,7 @@ void       lrg_frame_layout_draw_debug   (LrgFrameLayout *self, LrgImageCanvas *
 :END:
 - *Touching is not overlapping.* Two boxes overlap only when they share more than 0.001 pixel in both directions, so boxes that meet along an edge or at a corner (a relative box with =gap= 0, a row of tiles) are fine. The same slack applies to the frame and safe-area edges: a box exactly on an edge is inside.
 - *Zero-size boxes* (and boxes given negative or non-finite sizes, which count as 0) overlap nothing, but are still checked against the frame and safe area, so a point marker outside the frame is reported. Non-finite offsets and gaps count as 0.
+- *Backdrops* are exempt from overlaps and from the safe area, not from the frame; see [[#frame-layout-backdrops][Backdrops]].
 - *One problem per box for the edges.* A box outside the frame is also outside the safe area; only =OUT_OF_FRAME= is reported for it. The message names every edge it crosses and by how much (=by left 5, bottom 12=).
 - *Anchored boxes stay in the safe area by construction* when they fit in it and their offsets do not push them out; large offsets or boxes bigger than the safe area are reported like any other.
 - *Margins larger than the frame* collapse the safe area to zero width (or height) where they meet, in proportion to the two margins.
@@ -275,6 +299,7 @@ overlap: "title" (x=20, y=20, w=100, h=20) and "badge" (x=110, y=15, w=30, h=30)
 
 | Element | Drawing |
 |---------+---------|
+| backdrop | 1-pixel grey (160, 160, 160) dashed outline (6 on, 4 off), name in black on a grey label; drawn first, under everything else (red like any box when it leaves the frame) |
 | safe area | 1-pixel yellow (255, 210, 0) outline |
 | clean box | 2-pixel green (60, 220, 120) outline, name in black on a green label at its top-left corner |
 | box with a problem | 3-pixel red (255, 40, 40) outline, name in white on a red label; drawn after the clean boxes so it stays on top |
