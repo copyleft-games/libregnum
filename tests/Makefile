@@ -147,6 +147,7 @@ TEST_SOURCES := \
 	test-anim-graph.c \
 	test-sequence.c \
 	test-skeleton2d.c \
+	test-lip-sync.c \
 	test-runtime-prefab.c \
 	test-runtime-import-settings.c \
 	test-asset-dependencies.c \

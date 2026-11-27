@@ -1,0 +1,180 @@
+#+title: LrgLipSync - Phonemes to Viseme Keys
+#+description: Turns timed phonemes (forced-aligner or TTS alignments in YAML or CSV) or plain audio loudness into cross-faded viseme weight keys of an LrgSkeleton2DClip
+#+created: 2026-11-27
+
+* LrgLipSync - Phonemes to Viseme Keys
+:PROPERTIES:
+:CUSTOM_ID: lrglipsync
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Animation]] > LrgLipSync
+#+end_quote
+
+=LrgLipSync= makes 2D characters talk without hand-animated mouths. It holds a list of timed phonemes, loaded from the alignment a forced aligner (Montreal Forced Aligner, Gentle) or a TTS engine produces, maps each ARPAbet phoneme to a viseme of the [[file:shape-sheet.org][standard shape sheet]] and writes viseme weight keys with short cross-fades into an =LrgSkeleton2DClip=. Without an alignment, an audio fallback opens the mouth while the line is loud.
+
+- *Header*: =animation/lrg-lip-sync.h=
+- *Type*: =LrgLipSync=, final GObject, =LRG_TYPE_LIP_SYNC=, GIR =Libregnum.LipSync=; error enum =LrgLipSyncError= (=LRG_TYPE_LIP_SYNC_ERROR=, in =lrg-enums.h=)
+- *Since*: 0.14
+- *Headless*: yes
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+- A *phoneme* is =(start, end, label)= in seconds. Labels are ARPAbet as aligners write them: upper or lower case, with stress digits (=AH0=, =IY1=) and, from Gentle, word-position tags (=hh_B=, =ah_I=, =_E=, =_S=). Phonemes are kept sorted by start time.
+- *Phoneme to viseme*: =lrg_lip_sync_phoneme_to_viseme()= maps the 39 phones of the CMU dictionary (the phone set of MFA's English ARPAbet models and of Gentle) to the 11 visemes (table below). Silence and noise labels (=sil=, =sp=, =spn=, an empty label) are =LRG_VISEME_REST=; an unknown label is =LRG_VISEME_REST= too and logs a debug message in the =Libregnum-Animation= domain.
+- *Runs*: for writing, the time line from 0 to the last end is cut into runs of one viseme: gaps are =rest=, a phoneme that starts inside an earlier one cuts that one short, and neighbours with the same viseme merge.
+- *Cross-fades*: at every boundary between runs the outgoing shape falls from 1 to 0 and the incoming one rises from 0 to 1 over the same span, centred on the boundary. The span is the requested cross-fade, shortened so it never takes more than half of either run, so short phonemes still reach full weight. The viseme weights therefore sum to 1 at every moment. With a cross-fade of 0 the keys are stepped and the shapes switch exactly at the boundaries.
+- Only the visemes that occur are keyed, on one slot (the mouth). Characters without a viseme shape ignore its keys.
+
+| Viseme | ARPAbet phones |
+|--------+----------------|
+| =rest= | =sil=, =sp=, =spn=, empty, unknown |
+| =A= | AA, AE, AH, AW, AY |
+| =E= | EH, ER, EY |
+| =I= | IH, IY |
+| =O= | AO, OW, OY |
+| =U= | UH, UW |
+| =MBP= | M, B, P |
+| =FV= | F, V |
+| =L= | L, TH, DH |
+| =WQ= | W |
+| =CDGKNRSTYZ= | CH, D, G, HH, JH, K, N, NG, R, S, SH, T, Y, Z, ZH |
+
+Diphthongs (AW, AY, OY, EY, OW) take the shape of their first, more open part.
+
+** Quick start
+:PROPERTIES:
+:CUSTOM_ID: quick-start
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+/* key the "hello" line onto the mouth slot of a clip and play it */
+static gboolean
+say_hello (LrgSkeleton2D           *skel,
+           LrgSkeleton2DComponent  *rig,
+           GError                 **error)
+{
+	g_autoptr(LrgLipSync)        line = lrg_lip_sync_new ();
+	g_autoptr(LrgSkeleton2DClip) clip = lrg_skeleton2d_clip_new ("hello");
+
+	if (!lrg_lip_sync_load_file (line, "voice/hello.yaml", error))
+		return FALSE;
+	lrg_lip_sync_write_clip (line, clip, "mouth", LRG_LIP_SYNC_DEFAULT_CROSSFADE);
+	lrg_skeleton2d_add_clip (skel, clip);
+	return lrg_skeleton2d_component_play (rig, "hello", FALSE);
+}
+
+/* no alignment: drive the mouth from the recording's loudness */
+static LrgSkeleton2DClip *
+mumble (const gchar  *wav,
+        GError      **error)
+{
+	g_autoptr(LrgWaveData)       wave = lrg_wave_data_new_from_file (wav, error);
+	g_autoptr(LrgLipSync)        line = NULL;
+	g_autoptr(LrgSkeleton2DClip) clip = lrg_skeleton2d_clip_new ("mumble");
+
+	if (wave == NULL)
+		return NULL;
+	line = lrg_lip_sync_new_from_wave (wave, 30.0, 0.03f);
+	if (line == NULL)
+		return NULL;
+	lrg_lip_sync_write_clip (line, clip, "mouth", LRG_LIP_SYNC_DEFAULT_CROSSFADE);
+	return g_steal_pointer (&clip);
+}
+#+end_src
+
+=voice/hello.yaml=, a phone-level alignment (the test data =tests/data/lipsync-hello.yaml= is "hello world"):
+#+begin_src yaml
+- {start: 0.00, end: 0.10, phoneme: sil}
+- {start: 0.10, end: 0.16, phoneme: HH}
+- {start: 0.16, end: 0.23, phoneme: AH0}
+- {start: 0.23, end: 0.30, phoneme: L}
+- {start: 0.30, end: 0.45, phoneme: OW1}
+- {start: 0.45, end: 0.55, phoneme: sil}
+#+end_src
+
+The same as CSV (=.csv= files are read as CSV):
+#+begin_example
+start,end,phoneme
+0.00,0.10,sil
+0.10,0.16,HH
+0.16,0.23,AH0
+#+end_example
+
+Export from an aligner by writing its phone tier as these rows (for MFA, the =phones= tier of the TextGrid or the =Begin,End,Label= columns of its CSV export restricted to phones; for Gentle, each word's =phones= with times accumulated from the word start).
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_lip_sync_new (void)= | empty track |
+| =lrg_lip_sync_new_from_wave (wave, fps, threshold)= | audio fallback (see [[#behaviour-wave][Behaviour]]); NULL for an empty or invalid wave or =fps= <= 0 |
+| =lrg_lip_sync_phoneme_to_viseme (phoneme)= | ARPAbet label to =LrgViseme= |
+| =lrg_lip_sync_add_phoneme (self, start, end, phoneme)= | add one; FALSE for a negative or non-finite time or =end < start= |
+| =lrg_lip_sync_get_phoneme_count=, =lrg_lip_sync_get_phoneme (self, index, &start, &end, &phoneme, &viseme)= | read back in start order |
+| =lrg_lip_sync_get_duration (self)= | latest end time |
+| =lrg_lip_sync_clear (self)= | remove all |
+| =lrg_lip_sync_load_yaml (self, data, length, error)= | replace from YAML text |
+| =lrg_lip_sync_load_csv (self, data, length, error)= | replace from CSV text |
+| =lrg_lip_sync_load_file (self, path, error)= | replace from a file: CSV for =.csv=, YAML otherwise |
+| =lrg_lip_sync_write_clip (self, clip, slot, crossfade)= | write viseme keys for =slot=; returns the number of keys added |
+| =LRG_LIP_SYNC_DEFAULT_CROSSFADE= | 0.06 s, a cross-fade that reads as speech |
+| =LRG_LIP_SYNC_ERROR=, =lrg_lip_sync_error_quark()=, =LrgLipSyncError=, =lrg_lip_sync_error_get_type()= | see [[#errors][Errors]] |
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: behaviour
+:END:
+*** Loading
+:PROPERTIES:
+:CUSTOM_ID: behaviour-loading
+:END:
+- *YAML*: the document is a list of mappings with exactly the keys =start=, =end=, =phoneme= (all required; an unknown key is an error). =phoneme: null= means silence. An empty document is an empty track. Uses yaml-glib like every other libregnum format.
+- *CSV*: =start,end,phoneme= rows separated by commas. Fields are trimmed, =\r\n= line ends work, blank lines and lines starting with =#= are skipped, and the first data row is a header when its first field is not a number. An empty phoneme field means silence. Exactly three fields per row.
+- Loading replaces the track only on success; on any error the old phonemes stay.
+
+*** Writing keys
+:PROPERTIES:
+:CUSTOM_ID: behaviour-writing
+:END:
+For each run =r= of viseme =v= with half-blends =h_in= (at its start boundary) and =h_out= (at its end boundary), =lrg_lip_sync_write_clip()= adds weight keys for the shape of =v= on =slot=:
+
+| Key time | Weight | Notes |
+|----------+--------+-------|
+| =r.start - h_in= | 0 | not for the first run |
+| =r.start + h_in= | 1 | the first run starts at 1 at time 0 |
+| =r.end - h_out= | 1 | not for the last run |
+| =r.end + h_out= | 0 | not for the last run |
+
+=h= at a boundary is =min (crossfade / 2, half of the run before, half of the run after)=. Keys are linear. With =crossfade= 0 every run gets a stepped 1 key at its start and a stepped 0 key at its end (none at the end of the last run), plus a stepped 0 key at time 0 for a shape whose first run starts later (a clip holds its first key before it). Keys landing on an existing key time replace it (their weights agree). The clip's duration grows to the end of the track; a longer clip keeps its duration. Other channels and other shapes of the clip are untouched, so a lip-sync track can be written into a clip that also animates the head or the eyes.
+
+*** Audio fallback
+:PROPERTIES:
+:CUSTOM_ID: behaviour-wave
+:END:
+=lrg_lip_sync_new_from_wave()= reads =lrg_wave_data_get_samples()= (interleaved floats), averages the channels of each frame (a stereo pair that cancels out is silence), and measures the RMS of consecutive windows of =round (sample_rate / fps)= frames. Windows with an RMS at or above =threshold= are loud. Each run of loud windows becomes an =AA= phoneme (viseme =A=) and each run of quiet windows a =sil= phoneme (=rest=), with times on window boundaries. It cannot tell vowels apart or close the lips on M/B/P; use it for background characters or as a placeholder until an alignment exists.
+
+** Errors
+:PROPERTIES:
+:CUSTOM_ID: errors
+:END:
+Messages name the source (=<data>= for text, the path for files) and the node (YAML) or line (CSV), in the style of the other libregnum formats:
+
+| Code | When | Example |
+|------+------+---------|
+| =LRG_LIP_SYNC_ERROR_PARSE= | not YAML, not a list, an entry not a mapping, a value of the wrong type, a CSV row without three fields or with non-numeric times | =<data>: /1/start: expected a number, got "x"=, =<data>: line 3: expected 3 fields (start,end,phoneme), got 2= |
+| =LRG_LIP_SYNC_ERROR_INVALID= | unknown or missing key, negative start, end before start | =<data>: /0: unknown key "phone"=, =<data>: /0/end: the end comes before the start=, =<data>: line 1: expected 0 <= start <= end= |
+| =LRG_LIP_SYNC_ERROR_IO= | the file cannot be read | =voice/hello.yaml: No such file or directory= |
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:shape-sheet.org][The standard shape sheet]] (the viseme shapes to author)
+- [[file:skeleton2d.org][LrgSkeleton2D]] (shape weight keys, the =.rskel2d= version 2 format that stores them)
+- [[file:procedural.org][LrgSkeleton2DProcedural]] (blinking and breathing while talking)
+- [[file:../audio/wave-data.org][LrgWaveData]]

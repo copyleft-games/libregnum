@@ -32,6 +32,15 @@ typedef struct
 	guint  n_weights;
 } SpriteVertex;
 
+/* One blend shape: a name, one (dx, dy) offset per vertex (always as
+ * long as the vertex list) and the current weight. */
+typedef struct
+{
+	gchar  *name;
+	GArray *offsets;  /* gfloat, two per vertex */
+	gfloat  weight;
+} SpriteShape;
+
 /* Indices are drawn in chunks of this many triangles so a big mesh never
  * overflows rlgl's default batch inside one rlBegin()/rlEnd(). */
 #define TRIANGLES_PER_CHUNK (1024)
@@ -43,6 +52,7 @@ struct _LrgSkinnedSprite
 	GArray      *vertices;   /* SpriteVertex */
 	GArray      *indices;    /* guint16, three per triangle */
 	GArray      *deformed;   /* gfloat, two per vertex */
+	GPtrArray   *shapes;     /* SpriteShape*, insertion order */
 
 	GrlTexture  *texture;
 	gchar       *image;
@@ -66,6 +76,16 @@ static GParamSpec *properties[N_PROPS];
 /* ------------------------------------------------------------------ */
 
 static void
+sprite_shape_free (gpointer data)
+{
+	SpriteShape *sh = data;
+
+	g_clear_pointer (&sh->offsets, g_array_unref);
+	g_free (sh->name);
+	g_free (sh);
+}
+
+static void
 lrg_skinned_sprite_dispose (GObject *object)
 {
 	LrgSkinnedSprite *self = LRG_SKINNED_SPRITE (object);
@@ -83,6 +103,7 @@ lrg_skinned_sprite_finalize (GObject *object)
 	g_clear_pointer (&self->vertices, g_array_unref);
 	g_clear_pointer (&self->indices, g_array_unref);
 	g_clear_pointer (&self->deformed, g_array_unref);
+	g_clear_pointer (&self->shapes, g_ptr_array_unref);
 	g_clear_pointer (&self->image, g_free);
 
 	G_OBJECT_CLASS (lrg_skinned_sprite_parent_class)->finalize (object);
@@ -170,6 +191,7 @@ lrg_skinned_sprite_init (LrgSkinnedSprite *self)
 	self->vertices = g_array_new (FALSE, TRUE, sizeof (SpriteVertex));
 	self->indices = g_array_new (FALSE, FALSE, sizeof (guint16));
 	self->deformed = g_array_new (FALSE, TRUE, sizeof (gfloat));
+	self->shapes = g_ptr_array_new_with_free_func (sprite_shape_free);
 }
 
 /* ------------------------------------------------------------------ */
@@ -252,6 +274,7 @@ LrgSkinnedSprite *
 lrg_skinned_sprite_copy (LrgSkinnedSprite *self)
 {
 	LrgSkinnedSprite *copy;
+	guint             i;
 
 	g_return_val_if_fail (LRG_IS_SKINNED_SPRITE (self), NULL);
 
@@ -261,6 +284,19 @@ lrg_skinned_sprite_copy (LrgSkinnedSprite *self)
 	copy->image = g_strdup (self->image);
 	memcpy (copy->region, self->region, sizeof copy->region);
 	g_set_object (&copy->texture, self->texture);
+
+	/* blend shapes: deep copies of the offsets, weights kept */
+	for (i = 0; i < self->shapes->len; i++)
+	{
+		const SpriteShape *src = g_ptr_array_index (self->shapes, i);
+		SpriteShape       *dst = g_new0 (SpriteShape, 1);
+
+		dst->name = g_strdup (src->name);
+		dst->offsets = g_array_sized_new (FALSE, TRUE, sizeof (gfloat), src->offsets->len);
+		g_array_append_vals (dst->offsets, src->offsets->data, src->offsets->len);
+		dst->weight = src->weight;
+		g_ptr_array_add (copy->shapes, dst);
+	}
 	return copy;
 }
 
@@ -313,6 +349,15 @@ lrg_skinned_sprite_add_vertex (LrgSkinnedSprite *self,
 	sv.n_weights = 0;
 	g_array_append_val (self->vertices, sv);
 	sync_deformed (self);
+
+	/* every shape keeps one offset per vertex: the new one does not move */
+	for (i = 0; i < self->shapes->len; i++)
+	{
+		SpriteShape *sh = g_ptr_array_index (self->shapes, i);
+		gfloat       zero[2] = { 0.0f, 0.0f };
+
+		g_array_append_vals (sh->offsets, zero, 2);
+	}
 	return (gint)self->vertices->len - 1;
 }
 
@@ -556,6 +601,164 @@ lrg_skinned_sprite_clear (LrgSkinnedSprite *self)
 	g_array_set_size (self->vertices, 0);
 	g_array_set_size (self->indices, 0);
 	g_array_set_size (self->deformed, 0);
+	g_ptr_array_set_size (self->shapes, 0);
+}
+
+/* ------------------------------------------------------------------ */
+/* Blend shapes                                                        */
+/* ------------------------------------------------------------------ */
+
+static SpriteShape *
+find_shape (LrgSkinnedSprite *self,
+            const gchar      *name,
+            guint            *index)
+{
+	guint i;
+
+	if (name == NULL)
+		return NULL;
+	for (i = 0; i < self->shapes->len; i++)
+	{
+		SpriteShape *sh = g_ptr_array_index (self->shapes, i);
+
+		if (g_strcmp0 (sh->name, name) == 0)
+		{
+			if (index != NULL)
+				*index = i;
+			return sh;
+		}
+	}
+	return NULL;
+}
+
+gboolean
+lrg_skinned_sprite_add_shape (LrgSkinnedSprite *self,
+                              const gchar      *name,
+                              const gfloat     *offsets,
+                              guint             n_floats)
+{
+	SpriteShape *sh;
+	guint        n;
+	guint        i;
+
+	g_return_val_if_fail (LRG_IS_SKINNED_SPRITE (self), FALSE);
+
+	/* validate everything before touching the shape list */
+	n = self->vertices->len * 2;
+	if (name == NULL || name[0] == '\0')
+		return FALSE;
+	if (offsets != NULL)
+	{
+		if (n_floats != n)
+			return FALSE;
+		for (i = 0; i < n; i++)
+		{
+			if (!isfinite (offsets[i]))
+				return FALSE;
+		}
+	}
+
+	/* replace in place (weight and index kept) or append at weight 0 */
+	sh = find_shape (self, name, NULL);
+	if (sh == NULL)
+	{
+		sh = g_new0 (SpriteShape, 1);
+		sh->name = g_strdup (name);
+		sh->offsets = g_array_new (FALSE, TRUE, sizeof (gfloat));
+		g_ptr_array_add (self->shapes, sh);
+	}
+	g_array_set_size (sh->offsets, 0);
+	if (offsets != NULL)
+		g_array_append_vals (sh->offsets, offsets, n);
+	else
+		g_array_set_size (sh->offsets, n);   /* the array clears new elements */
+	return TRUE;
+}
+
+gboolean
+lrg_skinned_sprite_remove_shape (LrgSkinnedSprite *self,
+                                 const gchar      *name)
+{
+	guint index;
+
+	g_return_val_if_fail (LRG_IS_SKINNED_SPRITE (self), FALSE);
+
+	if (find_shape (self, name, &index) == NULL)
+		return FALSE;
+	g_ptr_array_remove_index (self->shapes, index);
+	return TRUE;
+}
+
+guint
+lrg_skinned_sprite_get_shape_count (LrgSkinnedSprite *self)
+{
+	g_return_val_if_fail (LRG_IS_SKINNED_SPRITE (self), 0);
+
+	return self->shapes->len;
+}
+
+const gchar *
+lrg_skinned_sprite_get_shape_name (LrgSkinnedSprite *self,
+                                   guint             index)
+{
+	g_return_val_if_fail (LRG_IS_SKINNED_SPRITE (self), NULL);
+
+	if (index >= self->shapes->len)
+		return NULL;
+	return ((SpriteShape *)g_ptr_array_index (self->shapes, index))->name;
+}
+
+gint
+lrg_skinned_sprite_find_shape (LrgSkinnedSprite *self,
+                               const gchar      *name)
+{
+	guint index;
+
+	g_return_val_if_fail (LRG_IS_SKINNED_SPRITE (self), -1);
+
+	return find_shape (self, name, &index) != NULL ? (gint)index : -1;
+}
+
+const gfloat *
+lrg_skinned_sprite_get_shape_offsets (LrgSkinnedSprite *self,
+                                      const gchar      *name,
+                                      guint            *n_floats)
+{
+	SpriteShape *sh;
+
+	g_return_val_if_fail (LRG_IS_SKINNED_SPRITE (self), NULL);
+
+	sh = find_shape (self, name, NULL);
+	if (n_floats != NULL)
+		*n_floats = sh != NULL ? sh->offsets->len : 0;
+	return sh != NULL ? (const gfloat *)(gconstpointer)sh->offsets->data : NULL;
+}
+
+void
+lrg_skinned_sprite_set_shape_weight (LrgSkinnedSprite *self,
+                                     const gchar      *name,
+                                     gfloat            weight)
+{
+	SpriteShape *sh;
+
+	g_return_if_fail (LRG_IS_SKINNED_SPRITE (self));
+
+	/* a missing shape is a no-op: sheets are implemented partially */
+	sh = find_shape (self, name, NULL);
+	if (sh != NULL && isfinite (weight))
+		sh->weight = weight;
+}
+
+gfloat
+lrg_skinned_sprite_get_shape_weight (LrgSkinnedSprite *self,
+                                     const gchar      *name)
+{
+	SpriteShape *sh;
+
+	g_return_val_if_fail (LRG_IS_SKINNED_SPRITE (self), 0.0f);
+
+	sh = find_shape (self, name, NULL);
+	return sh != NULL ? sh->weight : 0.0f;
 }
 
 /* ------------------------------------------------------------------ */
@@ -689,15 +892,37 @@ lrg_skinned_sprite_deform (LrgSkinnedSprite *self,
                            guint             n_floats,
                            gint              default_bone)
 {
-	const SpriteVertex *verts;
-	gfloat             *out;
-	guint               n_bones;
-	const gfloat       *fallback = NULL;
-	guint               i;
+	const SpriteVertex  *verts;
+	gfloat              *out;
+	guint                n_bones;
+	const gfloat        *fallback = NULL;
+	g_autofree const gfloat **active = NULL;
+	g_autofree gfloat   *active_w = NULL;
+	guint                n_active = 0;
+	guint                i;
 
 	g_return_if_fail (LRG_IS_SKINNED_SPRITE (self));
 
 	sync_deformed (self);
+
+	/* the shapes that move anything this frame: a non-zero, finite
+	 * weight (most of a character's sheet sits at 0 most of the time) */
+	if (self->shapes->len > 0)
+	{
+		active = g_new (const gfloat *, self->shapes->len);
+		active_w = g_new (gfloat, self->shapes->len);
+		for (i = 0; i < self->shapes->len; i++)
+		{
+			const SpriteShape *sh = g_ptr_array_index (self->shapes, i);
+
+			if (sh->weight == 0.0f || !isfinite (sh->weight))
+				continue;
+			active[n_active] = (const gfloat *)(gconstpointer)sh->offsets->data;
+			active_w[n_active] = sh->weight;
+			n_active++;
+		}
+	}
+
 	n_bones = palette != NULL ? n_floats / 6 : 0;
 	if (default_bone >= 0 && (guint)default_bone < n_bones)
 		fallback = palette + default_bone * 6;
@@ -705,15 +930,25 @@ lrg_skinned_sprite_deform (LrgSkinnedSprite *self,
 	verts = (const SpriteVertex *)(gconstpointer)self->vertices->data;
 	out = (gfloat *)(gpointer)self->deformed->data;
 
-	/* Linear blend skinning: p' = sum w_k * M_k * p over the vertex's
-	 * influences, renormalised over the bones the palette has. */
+	/* Linear blend skinning: p' = sum w_k * M_k * b over the vertex's
+	 * influences, renormalised over the bones the palette has, where b
+	 * is the bind position morphed by the active blend shapes. */
 	for (i = 0; i < self->vertices->len; i++)
 	{
 		const SpriteVertex *sv = &verts[i];
+		gfloat              bx = sv->x;
+		gfloat              by = sv->y;
 		gfloat              px = 0.0f;
 		gfloat              py = 0.0f;
 		gfloat              wsum = 0.0f;
 		guint               k;
+
+		/* morph in setup space first, so shapes follow the bones */
+		for (k = 0; k < n_active; k++)
+		{
+			bx += active_w[k] * active[k][i * 2];
+			by += active_w[k] * active[k][i * 2 + 1];
+		}
 
 		for (k = 0; k < sv->n_weights; k++)
 		{
@@ -723,8 +958,8 @@ lrg_skinned_sprite_deform (LrgSkinnedSprite *self,
 			if ((guint)sv->bones[k] >= n_bones)
 				continue;
 			m = palette + sv->bones[k] * 6;
-			px += w * (m[0] * sv->x + m[2] * sv->y + m[4]);
-			py += w * (m[1] * sv->x + m[3] * sv->y + m[5]);
+			px += w * (m[0] * bx + m[2] * by + m[4]);
+			py += w * (m[1] * bx + m[3] * by + m[5]);
 			wsum += w;
 		}
 
@@ -736,13 +971,13 @@ lrg_skinned_sprite_deform (LrgSkinnedSprite *self,
 		else if (fallback != NULL)
 		{
 			/* no usable influence: rigid on the default (slot) bone */
-			out[i * 2] = fallback[0] * sv->x + fallback[2] * sv->y + fallback[4];
-			out[i * 2 + 1] = fallback[1] * sv->x + fallback[3] * sv->y + fallback[5];
+			out[i * 2] = fallback[0] * bx + fallback[2] * by + fallback[4];
+			out[i * 2 + 1] = fallback[1] * bx + fallback[3] * by + fallback[5];
 		}
 		else
 		{
-			out[i * 2] = sv->x;
-			out[i * 2 + 1] = sv->y;
+			out[i * 2] = bx;
+			out[i * 2 + 1] = by;
 		}
 	}
 }
