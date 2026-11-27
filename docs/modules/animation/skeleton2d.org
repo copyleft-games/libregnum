@@ -1,5 +1,5 @@
 #+title: LrgSkeleton2D - 2D Skeletal Animation
-#+description: 2D bones, slots, skins of deformable sprite meshes, 2D clips with crossfades, automatic weights and the .rskel2d format
+#+description: 2D bones, slots, skins of deformable sprite meshes, blend shapes, 2D clips with crossfades, automatic weights and the .rskel2d format
 #+created: 2026-11-07
 
 * LrgSkeleton2D - 2D Skeletal Animation
@@ -10,13 +10,13 @@
 *[[file:../../index.org][Home]]* > [[file:index.org][Animation]] > LrgSkeleton2D
 #+end_quote
 
-=LrgSkeleton2D= animates 2D characters made of image pieces that bend: a hierarchy of 2D bones moves deformable sprite meshes (=LrgSkinnedSprite=), clips (=LrgSkeleton2DClip=) key bone transforms, attachment swaps, draw order, colours and events, and the whole rig is stored in libregnum's own =.rskel2d= YAML format. =LrgSkeleton2DComponent= plays it on an =LrgGameObject= in an =LrgWorld= with crossfades.
+=LrgSkeleton2D= animates 2D characters made of image pieces that bend: a hierarchy of 2D bones moves deformable sprite meshes (=LrgSkinnedSprite=), named blend shapes morph those meshes (blinks, mouth shapes, squash), clips (=LrgSkeleton2DClip=) key bone transforms, attachment swaps, draw order, colours, shape weights and events, and the whole rig is stored in libregnum's own =.rskel2d= YAML format. =LrgSkeleton2DComponent= plays it on an =LrgGameObject= in an =LrgWorld= with crossfades.
 
 - *Header*: =animation/lrg-skeleton2d.h= (plus =graphics/lrg-skinned-sprite.h=, =ecs/components/lrg-skeleton2d-component.h=)
 - *Types*: =LrgSkeleton2D= and =LrgSkeleton2DClip= (final GObjects, =LRG_TYPE_SKELETON2D=, =LRG_TYPE_SKELETON2D_CLIP=, GIR =Libregnum.Skeleton2D=, =Libregnum.Skeleton2DClip=); enums =LrgSkeleton2DError=, =LrgSkeleton2DCurve=, =LrgSkeleton2DChannel=
-- *Since*: 0.9.0
+- *Since*: 0.9.0; blend shapes, shape weight keys and format version 2 since 0.14
 - *Headless*: everything except drawing (=lrg_skeleton2d_draw()=, =lrg_skeleton2d_draw_bones()=, =lrg_skeleton2d_load_textures()=) runs without a window
-- *Format*: =.rskel2d= (version 1), our own design. Spine and DragonBones files are not read or written: their formats are proprietary or restrictively licensed. Rigs are authored in code, by hand in YAML, or with the editor's [[file:../../editor/skeleton2d-editor.org][2D Rig Editor]].
+- *Format*: =.rskel2d= (versions 1 and 2), our own design. Spine and DragonBones files are not read or written: their formats are proprietary or restrictively licensed. Rigs are authored in code, by hand in YAML, or with the editor's [[file:../../editor/skeleton2d-editor.org][2D Rig Editor]].
 
 ** Overview
 :PROPERTIES:
@@ -25,9 +25,9 @@
 
 A frame of a 2D skeletal character goes through four steps:
 
-1. *Pose*: reset to the setup pose (=lrg_skeleton2d_reset_pose()=), then apply one or more clips at a time and weight (=lrg_skeleton2d_clip_apply()=). Procedural changes (look at the mouse, IK) set bones directly with =lrg_skeleton2d_set_bone_local()=.
+1. *Pose*: reset to the setup pose (=lrg_skeleton2d_reset_pose()=), then apply one or more clips at a time and weight (=lrg_skeleton2d_clip_apply()=). Procedural changes (look at the mouse, IK) set bones directly with =lrg_skeleton2d_set_bone_local()=; procedural face layers (blink, breathe) mix into the shape weights with [[file:procedural.org][LrgSkeleton2DProcedural]].
 2. *World transforms*: =lrg_skeleton2d_update_world()= turns local poses into world matrices and the skinning palette.
-3. *Deform*: every visible attachment is skinned on the CPU with the palette (=lrg_skeleton2d_deform()=, done by draw).
+3. *Deform*: every visible attachment gets its slot's blend-shape weights, is morphed by them and skinned on the CPU with the palette (=lrg_skeleton2d_deform()=, done by draw).
 4. *Draw*: slots are drawn back to front in the current draw order, each attachment tinted by its slot colour (=lrg_skeleton2d_draw()=).
 
 =LrgSkeleton2DComponent= runs steps 1 and 2 in its update and 3 and 4 in its draw, at the owning game object's position, rotation and scale.
@@ -35,7 +35,7 @@ A frame of a 2D skeletal character goes through four steps:
 #+begin_example
 LrgSkeleton2D
  +-- bones      root > hip > torso > head ...        (hierarchy, setup + current pose)
- +-- slots      arm_r, leg_r, torso, head, ...       (draw order, bone, attachment, colour)
+ +-- slots      arm_r, leg_r, torso, head, ...       (draw order, bone, attachment, colour, shape weights)
  +-- skins      default, big-head ...                (slot + name -> LrgSkinnedSprite)
  +-- clips      walk, wave ...                       (LrgSkeleton2DClip: keys by bone/slot name)
 #+end_example
@@ -84,6 +84,14 @@ Attachment meshes are authored in *setup space*: the coordinates of the skeleton
 :END:
 The palette entry of a bone is =world(bone) * inverse(bind(bone))=, where =bind(bone)= is the bone's setup-pose world matrix without the root transform (=lrg_skeleton2d_get_palette()=). Linear blend skinning gives each vertex =sum(weight_k * palette[bone_k] * bind_position)=. In the setup pose with an identity root every palette entry is the identity, so meshes draw exactly where they were authored. Changing a bone's setup pose recomputes the bind matrices on the next update.
 
+*** Blend shapes
+:PROPERTIES:
+:CUSTOM_ID: blend-shapes
+:END:
+An attachment can carry *blend shapes* (morph targets): named sets of per-vertex offsets in setup space (=lrg_skinned_sprite_add_shape()=, see [[file:../graphics/skinned-sprite.org::#blend-shapes][LrgSkinnedSprite: blend shapes]]). A shape with weight =w= moves every vertex by =w * offset=; shapes add up. The morph happens *before* skinning, on the bind position, so a shape follows its bones: a "blink" authored on an upright head still closes the eyelid when the head is tilted.
+
+Weights belong to the *slot*, not to the mesh: =lrg_skeleton2d_set_shape_weight (skel, slot, shape, w)= sets them (clamped to 0 .. 1) and clips key them. =lrg_skeleton2d_deform()= and =lrg_skeleton2d_draw()= hand each slot's weights to whatever attachment the slot shows at that moment, so swapping the head attachment keeps the expression, and an attachment without a shape simply ignores its weight. That is what lets one clip or one lip-sync track drive a whole cast: every character implements the names of the [[file:shape-sheet.org][standard shape sheet]] it needs and nothing else. =lrg_skeleton2d_reset_pose()= returns every slot weight to 0.
+
 *** Clips
 :PROPERTIES:
 :CUSTOM_ID: clips
@@ -97,6 +105,9 @@ An =LrgSkeleton2DClip= has a name, a duration in seconds and a default loop flag
 | =LRG_SKELETON2D_CHANNEL_SCALE= | bone | x, y | factors multiplied into the setup scale |
 | =LRG_SKELETON2D_CHANNEL_COLOR= | slot | r, g, b, a | absolute slot colour |
 | =LRG_SKELETON2D_CHANNEL_ATTACHMENT= | slot | name or none | attachment swap (always stepped) |
+| =LRG_SKELETON2D_CHANNEL_SHAPE= | slot + shape name | weight 0 .. 1 | blend-shape weight (since 0.14) |
+
+A shape timeline is named by a slot *and* a shape, so it has its own functions (=lrg_skeleton2d_clip_add_shape_key()=, =lrg_skeleton2d_clip_sample_shape()=, ...); the functions taking a =(target, channel)= pair report no keys for =LRG_SKELETON2D_CHANNEL_SHAPE=. Shape keys use the same curves as the numeric channels (Bézier control points with =lrg_skeleton2d_clip_set_shape_key_bezier()=).
 
 Bone values are *relative to the setup pose*, so re-rigging (moving a bone's rest position) keeps clips valid. Clips also hold draw-order keys (the full slot order back to front, or none for the setup order) and events (a name at a time, several may share a time).
 
@@ -111,6 +122,7 @@ Adding a key later than the duration extends the duration; a key at the time of 
 =lrg_skeleton2d_clip_apply (clip, skeleton, time, alpha)= moves every keyed channel of the current pose toward the clip's value by =alpha=:
 - translation, scale and colour lerp; rotation turns along the shorter arc (=alpha= 1 sets the exact value, even beyond ±180);
 - attachment and draw-order keys apply when =alpha >= 0.5=;
+- slot shape weights lerp like colours, from the slot's current weight (0 for a shape the slot has not been given yet), and stay in 0 .. 1;
 - channels the clip does not key are left alone.
 
 So a crossfade from A to B at weight =w= is: reset, apply A at 1, apply B at =w=. Layering (an upper-body wave on top of a walk) is: reset, apply walk at 1, apply wave at 1 (wave only keys the arm). =LrgSkeleton2DComponent= does the crossfade for you with two tracks.
@@ -121,12 +133,24 @@ So a crossfade from A to B at weight =w= is: reset, apply A at 1, apply B at =w=
 :END:
 A YAML document. Loading is strict: unknown keys, wrong types, unknown bone or slot names, duplicates and out-of-range indices are errors whose message names the source and the node path (=figure.rskel2d: /bones/3/parent: unknown bone "hip" (a parent must come before its children)=). Saving is deterministic and leaves out defaults; loading a saved file and saving it again gives the same bytes. Floats are written in their shortest exact form.
 
+*** Versions
+:PROPERTIES:
+:CUSTOM_ID: format-versions
+:END:
+| Version | Since | Adds |
+|---------+-------+------|
+| 1 | 0.9.0 | bones, slots, skins, attachments, clips with bone, slot, draw-order and event keys |
+| 2 | 0.14 | blend shapes on attachments (=shapes:=) and shape weight timelines on slot tracks (=shapes:=) |
+
+The reader accepts every version from 1 to =LRG_SKELETON2D_FORMAT_VERSION= (2). The version gates the content: a version 1 document that uses =shapes:= is an error (=a blend shape needs "rskel2d: 2"=). The writer emits the *lowest* version that can hold the document, so a rig without shapes is still written as version 1, byte for byte as before; adding one shape or one shape key makes it version 2.
+
 *** Annotated example
 :PROPERTIES:
 :CUSTOM_ID: format-example
 :END:
+A version 1 document; the version 2 additions follow in [[#format-v2][the next section]].
 #+begin_src yaml
-rskel2d: 1                    # required; format version (integer, only 1)
+rskel2d: 1                    # required; format version (integer, 1 or 2; see Versions)
 name: arm                     # optional; informational name (string)
 bones:                        # optional; list, parents before children
   - name: upper               # required; unique string
@@ -206,18 +230,89 @@ animations:                   # optional; list of clips
 
 Key rules common to every timeline: =time= is required and >= 0; =curve= is optional: =linear= (default, omitted when saving), =stepped=, or =[x1, y1, x2, y2]= with =x1=, =x2= in 0 .. 1.
 
+*** Version 2: blend shapes and weight keys
+:PROPERTIES:
+:CUSTOM_ID: format-v2
+:END:
+Two keys are added, both named =shapes:=, one on an attachment and one on a clip's slot track. Everything else is exactly version 1.
+#+begin_src yaml
+rskel2d: 2                    # required to use shapes:
+name: face
+bones:
+  - name: head
+    length: 40
+slots:
+  - name: face
+    bone: head
+    attachment: face
+skins:
+  - name: default
+    attachments:
+      - slot: face
+        name: face
+        vertices:
+          - [0, 0, 0, 0]
+          - [10, 0, 1, 0]
+          - [0, 10, 0, 1]
+        weights:
+          - [head, 1]
+          - [head, 1]
+          - [head, 1]
+        triangles:
+          - [0, 1, 2]
+        shapes:               # optional (v2); list of blend shapes, in this order
+          - name: blink_l     # required; unique per attachment (any string; see the shape sheet)
+            offsets:          # optional; sparse rows [vertex, dx, dy] in setup space
+              - [0, 0, 2.5]   #   vertex 0 moves 2.5 down at weight 1
+              - [2, -1, 0.5]  #   vertices not listed do not move
+          - name: A
+            offsets: []       # a shape that moves nothing yet (written as [])
+animations:
+  - name: talk
+    duration: 1
+    slots:
+      - slot: face
+        shapes:               # optional (v2); one entry per shape timeline of this slot
+          - shape: A          # required; the shape name (attachments without it ignore it)
+            keys:             # optional; keys {time, w[, curve]}; w is the weight, 0 .. 1
+              - {time: 0, w: 0}
+              - {time: 0.25, w: 1, curve: [0.42, 0, 0.58, 1]}
+              - {time: 1, w: 0, curve: stepped}
+          - shape: blink_l
+            keys:
+              - {time: 0.5, w: 0.75}
+#+end_src
+
+Rules: a shape's =name= is required and unique within its attachment; =offsets= rows have exactly three numbers, the first a vertex index of that attachment, each vertex at most once; the writer lists only the vertices a shape moves, in vertex order. A slot track's =shapes= names each shape at most once; =w= is required and must be from 0 to 1. Shape timelines without keys are not written.
+
+*** Migration from version 1
+:PROPERTIES:
+:CUSTOM_ID: format-migration
+:END:
+Nothing to do: version 1 files load unchanged and save back byte for byte as version 1. A file becomes version 2 only when shapes or shape keys are added to it (by code, the lip-sync helper or hand editing); an older libregnum (0.13 and earlier) refuses such a file with =unsupported version 2=. To keep a rig readable by an older engine, remove its shapes and shape keys before saving.
+
 *** Errors
 :PROPERTIES:
 :CUSTOM_ID: format-errors
 :END:
 | Code | When |
 |------+------|
-| =LRG_SKELETON2D_ERROR_PARSE= | not YAML, or a value of the wrong type or shape (=expected a number, got "left"=, =expected a list of 2 numbers=, =expected true or false=) |
-| =LRG_SKELETON2D_ERROR_INVALID= | unknown key, missing required key, unknown bone/slot, duplicate name, negative time/length/size, out-of-range vertex index, a weights list whose length is not the vertex count, a draw order that does not name every slot once |
-| =LRG_SKELETON2D_ERROR_VERSION= | =rskel2d:= missing or not 1 |
+| =LRG_SKELETON2D_ERROR_PARSE= | not YAML, or a value of the wrong type or shape (=expected a number, got "left"=, =expected a list of 2 numbers=, =expected true or false=, =expected [vertex, dx, dy]=) |
+| =LRG_SKELETON2D_ERROR_INVALID= | unknown key, missing required key, unknown bone/slot, duplicate name (also a duplicate shape on an attachment or a slot track), negative time/length/size, out-of-range vertex index, a weights list whose length is not the vertex count, a draw order that does not name every slot once, a shape vertex listed twice, a shape weight outside 0 .. 1 |
+| =LRG_SKELETON2D_ERROR_VERSION= | =rskel2d:= missing, not a whole number, or outside 1 .. 2 (=unsupported version 3 (this library reads 1 to 2)=); =shapes:= in a version 1 document (=a blend shape needs "rskel2d: 2"=, =a shape weight timeline needs "rskel2d: 2"=) |
 | =LRG_SKELETON2D_ERROR_IO= | the file cannot be read or written |
 
-The error domain is =LRG_SKELETON2D_ERROR= (=lrg_skeleton2d_error_quark()=); the enum's GType is =lrg_skeleton2d_error_get_type()=.
+The error domain is =LRG_SKELETON2D_ERROR= (=lrg_skeleton2d_error_quark()=); the enum's GType is =lrg_skeleton2d_error_get_type()=. Examples of the version 2 messages:
+
+#+begin_example
+<data>: /skins/0/attachments/0/shapes: a blend shape needs "rskel2d: 2"
+<data>: /animations/0/slots/0/shapes: a shape weight timeline needs "rskel2d: 2"
+<data>: /skins/0/attachments/0/shapes/0/offsets/0/0: expected a vertex index from 0 to 0
+<data>: /skins/0/attachments/0/shapes/0/offsets/1/0: vertex 0 listed twice
+<data>: /skins/0/attachments/0/shapes/1/name: duplicate shape "x"
+<data>: /animations/0/slots/0/shapes/0/keys/0/w: a shape weight must be from 0 to 1
+<data>: /animations/0/slots/0/shapes/0/keys/0: missing key "w"
+#+end_example
 
 ** API reference
 :PROPERTIES:
@@ -230,11 +325,11 @@ The error domain is =LRG_SKELETON2D_ERROR= (=lrg_skeleton2d_error_quark()=); the
 :END:
 | Symbol | Meaning |
 |--------+---------|
-| =LRG_SKELETON2D_FORMAT_VERSION= | 1, the =rskel2d:= value read and written |
+| =LRG_SKELETON2D_FORMAT_VERSION= | 2, the newest =rskel2d:= value read and written (1 .. 2 are read; the lowest that fits is written) |
 | =LRG_SKELETON2D_DEFAULT_SKIN= | ="default"=, the skin every skeleton has |
 | =LrgSkeleton2DError=, =lrg_skeleton2d_error_get_type()=, =lrg_skeleton2d_error_quark()= | see [[#format-errors][Errors]] |
 | =LrgSkeleton2DCurve=, =lrg_skeleton2d_curve_get_type()= | =LINEAR=, =STEPPED=, =BEZIER= |
-| =LrgSkeleton2DChannel=, =lrg_skeleton2d_channel_get_type()= | =TRANSLATE=, =ROTATE=, =SCALE=, =COLOR=, =ATTACHMENT= |
+| =LrgSkeleton2DChannel=, =lrg_skeleton2d_channel_get_type()= | =TRANSLATE=, =ROTATE=, =SCALE=, =COLOR=, =ATTACHMENT=, =SHAPE= (appended in 0.14, nick =shape=) |
 
 *** Construction, files and properties
 :PROPERTIES:
@@ -287,7 +382,9 @@ Properties: =name= (string), =base-dir= (string), =skin= (string, the active ski
 | =lrg_skeleton2d_get_slot_color (self, slot, rgba[4])= / =lrg_skeleton2d_set_slot_color= | current colour |
 | =lrg_skeleton2d_set_slot_setup_color= | setup colour (and current) |
 | =lrg_skeleton2d_get_draw_order (self, &n)= / =lrg_skeleton2d_set_draw_order (self, order, n)= | current order of slot indices, back to front; set refuses a non-permutation |
-| =lrg_skeleton2d_reset_pose (self)= | bones, slot attachments and colours, and draw order back to setup |
+| =lrg_skeleton2d_reset_pose (self)= | bones, slot attachments and colours, and draw order back to setup; slot shape weights to 0 |
+| =lrg_skeleton2d_set_shape_weight (self, slot, shape, weight)= | current blend-shape weight of a slot, clamped to 0 .. 1 (non-finite ignored, bad slot ignored) |
+| =lrg_skeleton2d_get_shape_weight (self, slot, shape)= | current weight; 0 when never set |
 
 *** Skins and attachments
 :PROPERTIES:
@@ -320,7 +417,7 @@ Properties: =name= (string), =base-dir= (string), =skin= (string, the active ski
 :END:
 | Function | Description |
 |----------+-------------|
-| =lrg_skeleton2d_deform (self)= | skin every visible attachment (no window needed) |
+| =lrg_skeleton2d_deform (self)= | hand each slot's shape weights to its attachment, then morph and skin every visible attachment (no window needed) |
 | =lrg_skeleton2d_draw (self, tint)= | deform + draw in draw order, slot colour times =tint=; current 2D mode |
 | =lrg_skeleton2d_draw_bones (self, color)= | bone overlay: a line origin to tip and a dot (default yellow) |
 
@@ -352,6 +449,13 @@ Properties: =name= (string), =duration= (float >= 0), =loop= (boolean).
 | =lrg_skeleton2d_clip_get_targets (self, slots)= | animated bone (or slot) names in first-keyed order (transfer full) |
 | =lrg_skeleton2d_clip_get_draw_order_key_count=, =lrg_skeleton2d_clip_get_draw_order_key (self, index, &time)= | draw-order keys |
 | =lrg_skeleton2d_clip_get_event_count=, =lrg_skeleton2d_clip_get_event (self, index, &time)= | events in time order |
+| =lrg_skeleton2d_clip_add_shape_key (self, slot, shape, time, weight, curve)= | blend-shape weight key (weight clamped to 0 .. 1) |
+| =lrg_skeleton2d_clip_set_shape_key_bezier (self, slot, shape, index, cx1, cy1, cx2, cy2)= | make a shape key ease along a Bézier curve |
+| =lrg_skeleton2d_clip_get_shape_key_count (self, slot, shape)= | keys of a shape timeline |
+| =lrg_skeleton2d_clip_get_shape_key (self, slot, shape, index, &time, &weight, &curve)= | read a shape key |
+| =lrg_skeleton2d_clip_remove_shape_key (self, slot, shape, index)= | delete a shape key |
+| =lrg_skeleton2d_clip_sample_shape (self, slot, shape, time, &weight)= | sample a shape timeline; FALSE (weight 0) without keys |
+| =lrg_skeleton2d_clip_get_shapes (self, slot)= | shape names with timelines on a slot, first-keyed order (transfer full) |
 | =lrg_skeleton2d_clip_apply (self, skeleton, time, alpha)= | pose a skeleton (see [[#mixing][Mixing]]) |
 
 ** Examples
@@ -427,6 +531,23 @@ lrg_skeleton2d_clip_apply (wave, skel, wave_time, 1.0f);   /* keys only the righ
 lrg_skeleton2d_update_world (skel);
 #+end_src
 
+*** A blink authored in code
+:PROPERTIES:
+:CUSTOM_ID: example-blink
+:END:
+#+begin_src C
+/* the head quad's top two vertices drop 6 px at weight 1 */
+LrgSkinnedSprite *head = lrg_skeleton2d_get_attachment (skel, lrg_skeleton2d_find_slot (skel, "head"), NULL);
+gfloat            close[8] = { 0, 6, 0, 6, 0, 0, 0, 0 };
+g_autoptr(LrgSkeleton2DClip) blink = lrg_skeleton2d_clip_new ("blink");
+
+lrg_skinned_sprite_add_shape (head, LRG_SHAPE_BLINK_L, close, 8);
+lrg_skeleton2d_clip_add_shape_key (blink, "head", LRG_SHAPE_BLINK_L, 0.0f, 0.0f, LRG_SKELETON2D_CURVE_LINEAR);
+lrg_skeleton2d_clip_add_shape_key (blink, "head", LRG_SHAPE_BLINK_L, 0.08f, 1.0f, LRG_SKELETON2D_CURVE_LINEAR);
+lrg_skeleton2d_clip_add_shape_key (blink, "head", LRG_SHAPE_BLINK_L, 0.2f, 0.0f, LRG_SKELETON2D_CURVE_LINEAR);
+lrg_skeleton2d_add_clip (skel, blink);   /* the file is now saved as rskel2d: 2 */
+#+end_src
+
 *** Swapping a skin and an attachment
 :PROPERTIES:
 :CUSTOM_ID: example-skin
@@ -461,7 +582,9 @@ So a hundred animated 100-vertex characters cost well under a millisecond of CPU
 - *Attachments are shared by reference*, also across copies made with =lrg_skinned_sprite_copy()= for textures; changing a sprite's geometry changes it everywhere it is attached.
 - *Rotation keys are not wrapped*: =350 -> 10= turns 340 degrees backwards. Key =350 -> 370= for the short way.
 - *Draw-order keys must name every slot*; a key written for an older version of the rig with fewer slots is skipped when applied.
-- *Attachment swaps and draw order switch at mix weight 0.5* during crossfades; bones blend smoothly.
+- *Attachment swaps and draw order switch at mix weight 0.5* during crossfades; bones, colours and shape weights blend smoothly.
+- *Shape weights live on the slot.* Setting a weight on the sprite directly (=lrg_skinned_sprite_set_shape_weight()=) is overwritten on the next skeleton deform for every shape the slot has a weight for; drive faces through the slot.
+- *Your own deform path must push the weights.* Code that skins attachments itself (=lrg_skinned_sprite_deform()= on =lrg_skeleton2d_get_attachment()=) sees the weights last pushed by =lrg_skeleton2d_deform()= or =lrg_skeleton2d_draw()=; call one of those first.
 
 ** Using it from the editor
 :PROPERTIES:
@@ -472,7 +595,7 @@ The editor's 2D rig editor ([[file:../../editor/skeleton2d-editor.org][2D Rig Ed
 - *Mesh tool*: cut a sprite into a grid (=lrg_skinned_sprite_new_grid()=) or place vertices (=lrg_skinned_sprite_add_vertex()=, =lrg_skinned_sprite_set_vertex()=, =lrg_skinned_sprite_add_triangle()=), wireframe with =lrg_skinned_sprite_draw_wireframe()=.
 - *Weights*: an "automatic weights" button calls =lrg_skeleton2d_compute_auto_weights()=; weight painting edits =lrg_skinned_sprite_set_weights()=.
 - *Slots, skins, attachments panel*: =lrg_skeleton2d_list_attachments()=, =lrg_skeleton2d_set_attachment()=, =lrg_skeleton2d_set_skin()=; the =changed= signal refreshes the inspector.
-- *Dopesheet / clip preview*: rows from =lrg_skeleton2d_clip_get_targets()=, keys from =lrg_skeleton2d_clip_get_key()= and friends, scrubbing with =lrg_skeleton2d_component_set_time()=.
+- *Dopesheet / clip preview*: rows from =lrg_skeleton2d_clip_get_targets()=, keys from =lrg_skeleton2d_clip_get_key()= and friends, scrubbing with =lrg_skeleton2d_component_set_time()=. Shape weight timelines are not shown or edited there yet; the editor keeps them intact on save, and mesh edits keep each shape's offsets on the surviving vertices.
 - *Validation*: the document editor runs =lrg_skeleton2d_new_from_data()= on the =.rskel2d= text; messages carry the node path.
 
 
@@ -480,7 +603,8 @@ The editor's 2D rig editor ([[file:../../editor/skeleton2d-editor.org][2D Rig Ed
 :PROPERTIES:
 :CUSTOM_ID: see-also
 :END:
-- [[file:../graphics/skinned-sprite.org][LrgSkinnedSprite]] (meshes, skinning, automatic weights)
+- [[file:../graphics/skinned-sprite.org][LrgSkinnedSprite]] (meshes, skinning, blend shapes, automatic weights)
+- [[file:shape-sheet.org][The standard shape sheet]], [[file:lip-sync.org][LrgLipSync]] and [[file:procedural.org][LrgSkeleton2DProcedural]]
 - [[file:../ecs/components/skeleton2d-component.org][LrgSkeleton2DComponent]]
 - [[file:skeleton.org][LrgSkeleton]] (3D skeletons) and [[file:clip.org][LrgAnimationClip]]
 - [[file:../../guides/writing-a-data-format.org][Writing a data format]]

@@ -7044,6 +7044,70 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_texture_fallback_format_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_TEXTURE_FALLBACK_FORMAT (lrg_texture_fallback_format_get_type ())
 
+/**
+ * LrgViseme:
+ * @LRG_VISEME_REST: mouth closed and relaxed (silence)
+ * @LRG_VISEME_A: open mouth, jaw down ("father", "cat")
+ * @LRG_VISEME_E: mid-open, lips spread ("bed", "say")
+ * @LRG_VISEME_I: narrow opening, lips spread wide ("see", "sit")
+ * @LRG_VISEME_O: rounded open lips ("go", "law")
+ * @LRG_VISEME_U: small rounded, pushed-forward lips ("boot", "book")
+ * @LRG_VISEME_MBP: lips pressed together (m, b, p)
+ * @LRG_VISEME_FV: lower lip under the upper teeth (f, v)
+ * @LRG_VISEME_L: open with the tongue tip up behind the teeth (l, th)
+ * @LRG_VISEME_WQ: small tight round pucker (w, "queen")
+ * @LRG_VISEME_CDGKNRSTYZ: teeth nearly closed, lips relaxed (most
+ *   consonants: c, d, g, k, n, r, s, t, y, z, ch, sh)
+ *
+ * The mouth shapes of the standard shape sheet (lrg-shape-sheet.h).
+ * lrg_viseme_get_shape_name() gives the blend-shape name each one drives.
+ *
+ * Since: 0.14
+ */
+typedef enum
+{
+    LRG_VISEME_REST,
+    LRG_VISEME_A,
+    LRG_VISEME_E,
+    LRG_VISEME_I,
+    LRG_VISEME_O,
+    LRG_VISEME_U,
+    LRG_VISEME_MBP,
+    LRG_VISEME_FV,
+    LRG_VISEME_L,
+    LRG_VISEME_WQ,
+    LRG_VISEME_CDGKNRSTYZ
+} LrgViseme;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_viseme_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_VISEME (lrg_viseme_get_type ())
+
+/**
+ * LrgShapeCategory:
+ * @LRG_SHAPE_CATEGORY_MOUTH: the visemes (#LrgViseme)
+ * @LRG_SHAPE_CATEGORY_EYES: blinks, squint, wide and gaze
+ * @LRG_SHAPE_CATEGORY_BROWS: eyebrow poses
+ * @LRG_SHAPE_CATEGORY_MOOD: whole-face expressions
+ * @LRG_SHAPE_CATEGORY_BODY: squash, stretch and breathing
+ *
+ * The groups of the standard shape sheet (lrg_shape_sheet_list()).
+ *
+ * Since: 0.14
+ */
+typedef enum
+{
+    LRG_SHAPE_CATEGORY_MOUTH,
+    LRG_SHAPE_CATEGORY_EYES,
+    LRG_SHAPE_CATEGORY_BROWS,
+    LRG_SHAPE_CATEGORY_MOOD,
+    LRG_SHAPE_CATEGORY_BODY
+} LrgShapeCategory;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_shape_category_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SHAPE_CATEGORY (lrg_shape_category_get_type ())
+
 G_END_DECLS
 
 

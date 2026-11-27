@@ -2610,6 +2610,10 @@ put_key (LrgEditorSkeleton2DEditor  *self,
 	case LRG_SKELETON2D_CHANNEL_ATTACHMENT:
 		lrg_skeleton2d_clip_add_attachment_key (clip, target, time, attachment);
 		return TRUE;
+	case LRG_SKELETON2D_CHANNEL_SHAPE:
+		/* shape timelines are named by (slot, shape): not keyed here */
+		set_error (error, LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND, "shape weight keys are not editable here");
+		return FALSE;
 	default:
 		set_error (error, LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND, "unknown channel %d", (gint) channel);
 		return FALSE;

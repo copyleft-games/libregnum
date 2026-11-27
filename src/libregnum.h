@@ -851,6 +851,7 @@
 #include "animation/lrg-sequence.h"
 #include "animation/lrg-sequence-player.h"
 #include "animation/lrg-skeleton2d.h"
+#include "animation/lrg-shape-sheet.h"
 #include "animation/lrg-animation-keyframe.h"
 #include "animation/lrg-animation-event.h"
 #include "animation/lrg-animation-clip.h"
