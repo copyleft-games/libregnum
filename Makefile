@@ -98,6 +98,7 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-shader-asset.h \
 	src/graphics/lrg-shader-graph.h \
 	src/graphics/lrg-hdr-image.h \
+	src/graphics/lrg-frame-layout.h \
 	src/graphics/lrg-depth-prepass.h \
 	src/graphics/lrg-ssao.h \
 	src/graphics/lrg-decal.h \
@@ -938,6 +939,7 @@ SOURCES := \
 	src/graphics/lrg-shader-asset.c \
 	src/graphics/lrg-shader-graph.c \
 	src/graphics/lrg-hdr-image.c \
+	src/graphics/lrg-frame-layout.c \
 	src/graphics/lrg-depth-prepass.c \
 	src/graphics/lrg-ssao.c \
 	src/graphics/lrg-decal.c \
@@ -3098,7 +3100,7 @@ DOCS_CHECK_HEADERS := src/scripting/lrg-script-debugger.h src/scripting/lrg-scri
 	src/tilemap/lrg-tiled-map.h $(wildcard src/worldui/*.h) src/pathfinding/lrg-actor-mover.h $(wildcard src/stage/*.h) src/graphics/lrg-beam.h $(filter-out %-private.h,$(wildcard src/remote/*.h)) src/atlas/lrg-sprite-sheet-builder.h \
 	src/physics/lrg-dynamics.h src/physics/lrg-physics-shape.h src/physics/lrg-collide.h src/physics/lrg-broadphase.h src/physics/lrg-physics-layers.h src/physics/lrg-contact-solver.h src/physics/lrg-island.h src/physics/lrg-joint.h src/physics/lrg-ragdoll.h src/physics/lrg-cloth.h src/physics/lrg-fracture.h src/world3d/components/lrg-rigid-body-component.h src/world3d/components/lrg-collider-component3d.h src/world3d/components/lrg-joint-component.h src/world3d/components/lrg-cloth-component.h src/world3d/components/lrg-destructible-component.h \
 	src/lighting/lrg-lightmap3d.h src/lighting/lrg-probe-grid.h src/lighting/lrg-lightmap-baker.h src/lighting/lrg-bake-bvh.h src/graphics/lrg-uv-unwrap.h src/graphics/lrg-skinned-sprite.h src/animation/lrg-gltf-animation.h src/animation/lrg-retargeter.h src/animation/lrg-anim-graph.h src/animation/lrg-sequence.h src/animation/lrg-sequence-player.h src/animation/lrg-skeleton2d.h src/world3d/components/lrg-animator-component3d.h src/world3d/components/lrg-sequence-component.h src/ecs/components/lrg-skeleton2d-component.h \
-	src/graphics/lrg-material.h src/graphics/lrg-shader-asset.h src/graphics/lrg-shader-graph.h src/graphics/lrg-hdr-image.h src/graphics/lrg-depth-prepass.h src/graphics/lrg-ssao.h src/graphics/lrg-decal.h src/graphics/lrg-mesh-simplify.h src/graphics/lrg-lod-group.h src/lighting/lrg-environment.h src/lighting/lrg-reflection-probe.h src/lighting/lrg-volumetric-fog.h src/postprocess/lrg-post-stack.h src/world3d/components/lrg-decal-component.h src/world3d/components/lrg-lod-component.h
+	src/graphics/lrg-material.h src/graphics/lrg-shader-asset.h src/graphics/lrg-shader-graph.h src/graphics/lrg-hdr-image.h src/graphics/lrg-frame-layout.h src/graphics/lrg-depth-prepass.h src/graphics/lrg-ssao.h src/graphics/lrg-decal.h src/graphics/lrg-mesh-simplify.h src/graphics/lrg-lod-group.h src/lighting/lrg-environment.h src/lighting/lrg-reflection-probe.h src/lighting/lrg-volumetric-fog.h src/postprocess/lrg-post-stack.h src/world3d/components/lrg-decal-component.h src/world3d/components/lrg-lod-component.h
 
 docs-check:
 	@build-aux/docs-check.sh -d docs $(DOCS_CHECK_HEADERS)

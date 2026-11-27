@@ -468,6 +468,9 @@ typedef struct _LrgRendererClass  LrgRendererClass;
 /* LrgImageCanvas is a final type - no Class forward declaration needed */
 typedef struct _LrgImageCanvas    LrgImageCanvas;
 
+/* LrgFrameLayout is a final type - no Class forward declaration needed */
+typedef struct _LrgFrameLayout    LrgFrameLayout;
+
 /* LrgVectorImage is a final type - no Class forward declaration needed */
 typedef struct _LrgVectorImage    LrgVectorImage;
 

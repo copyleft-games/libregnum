@@ -147,6 +147,7 @@ Window management, cameras, and rendering abstractions:
 - *[[file:graphics/index.org#lrgcamera3d][LrgCamera3D]]* - 3D camera for 3D games
 - *[[file:graphics/index.org#lrgrenderer][LrgRenderer]]* - Render management and layer system
 - *[[file:graphics/gltf-info.org][LrgGltfInfo]]* - Headless glTF/GLB inspection (raylib mesh order, node names, animations, visibility masks)
+- *[[file:graphics/frame-layout.org][LrgFrameLayout]]* - Named boxes on a still frame with a safe area, relative placement and overlap / out-of-frame checks for generated images
 - *[[file:graphics/static-batch.org][LrgStaticBatch]]* - Static mesh batching into u16 chunks per (material, layer) with bounds and layer masks
 - *[[file:graphics/model-animator.org][LrgModelAnimator]]* - Shared skinned model animation with per-actor state, crossfades, pose dedupe and masked drawing
 

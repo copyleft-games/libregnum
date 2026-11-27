@@ -37,6 +37,7 @@ The Graphics module provides:
 - *[[file:uv-unwrap.org][LrgUvUnwrap / LrgUvMesh]]* - lightmap UV2 chart unwrapper, headless CPU mesh, renderer primitives, rect packer
 - *[[file:static-batch.org][LrgStaticBatch]]* - Static geometry and copied auxiliary UV streams; [[file:aux-uv-contract.org][integration contract and verification]]
 - *[[file:image-canvas.org][LrgImageCanvas]]* - CPU dynamic-texture canvas (draw/composite/blur/transform)
+- *[[file:frame-layout.org][LrgFrameLayout]]* - Named element boxes on a still frame (anchored to a safe area, beside each other, or explicit) with overlap, out-of-frame and out-of-safe-area checks for tests, and a debug overlay
 - *[[file:vector-image.org][LrgVectorImage]]* - Load and rasterise SVG vector assets at any size
 - *[[file:skinned-mesh.org][LrgSkinnedMesh]]* - Skinned meshes posed by a bone matrix palette: GPU skinning with a CPU reference and fallback
 - *[[file:hdr-image.org][LrgHdrImage]]* - Radiance RGBE (=.hdr=) reader and writer to linear float RGB (flat and run-length scanlines, EXPOSURE, both vertical orientations); equirect panorama sampling for the environment's skies
