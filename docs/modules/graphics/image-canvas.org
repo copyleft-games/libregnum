@@ -50,7 +50,7 @@ main (void)
 }
 #+end_src
 
-For light that exceeds white (glows, suns, HDR shading) draw into an [[file:hdr-canvas.org][LrgHdrCanvas]] instead and tone-map it to a =GrlImage=.
+For light that exceeds white (glows, suns, HDR shading) draw into an [[file:hdr-canvas.org][LrgHdrCanvas]] instead and tone-map it to a =GrlImage=. The [[file:../../guides/image-cookbook.org][image cookbook]] has twelve reference scenes for both paths.
 
 ** Overview
 

@@ -187,3 +187,4 @@ LrgHdrImage *lrg_hdr_canvas_to_hdr_image (LrgHdrCanvas *self);
 - [[file:image-canvas.org][LrgImageCanvas]] - 8-bit drawing with the quality preset and supersampled export
 - [[file:image-resample.org][Image resampling]] - the gamma-correct downsampler
 - [[file:../postprocess/effects.org::#lrgtonemap][LrgTonemap]] - the post effect sharing the operator curves
+- [[file:../../guides/image-cookbook.org][Image cookbook]] - reference scenes that shade into this canvas (raymarched busts, terrain, skies, particles)
