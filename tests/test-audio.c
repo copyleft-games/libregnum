@@ -523,6 +523,23 @@ test_sound_bank_add_from_wave (void)
  * LrgAudioManager Procedural Audio Tests
  * ========================================================================== */
 
+/*
+ * procedural_or_skip:
+ *
+ * LrgProceduralAudio opens an audio stream when it is built and returns
+ * NULL when no audio device opens (no PipeWire/PulseAudio socket, as under
+ * build-aux/xrun.sh's private runtime dir, or a machine without audio).
+ * Like the other device-dependent tests here, skip instead of failing.
+ */
+#define PROCEDURAL_OR_SKIP(var)                                          \
+    G_STMT_START {                                                       \
+        if ((var) == NULL)                                               \
+        {                                                                \
+            g_test_skip ("no audio device for a procedural audio stream"); \
+            return;                                                      \
+        }                                                                \
+    } G_STMT_END
+
 static void
 test_audio_manager_procedural_add (AudioFixture *fixture,
                                     gconstpointer user_data)
@@ -533,7 +550,7 @@ test_audio_manager_procedural_add (AudioFixture *fixture,
     (void)user_data;
 
     audio = lrg_procedural_audio_new (44100, 1);
-    g_assert_nonnull (audio);
+    PROCEDURAL_OR_SKIP (audio);
 
     /* Add procedural audio */
     lrg_audio_manager_add_procedural (fixture->manager, "test-synth", audio);
@@ -557,6 +574,7 @@ test_audio_manager_procedural_remove (AudioFixture *fixture,
     (void)user_data;
 
     audio = lrg_procedural_audio_new (44100, 1);
+    PROCEDURAL_OR_SKIP (audio);
     lrg_audio_manager_add_procedural (fixture->manager, "temp-synth", audio);
 
     result = lrg_audio_manager_remove_procedural (fixture->manager, "temp-synth");
@@ -581,6 +599,8 @@ test_audio_manager_procedural_get_names (AudioFixture *fixture,
 
     audio1 = lrg_procedural_audio_new (44100, 1);
     audio2 = lrg_procedural_audio_new (44100, 2);
+    PROCEDURAL_OR_SKIP (audio1);
+    PROCEDURAL_OR_SKIP (audio2);
 
     lrg_audio_manager_add_procedural (fixture->manager, "synth-a", audio1);
     lrg_audio_manager_add_procedural (fixture->manager, "synth-b", audio2);
@@ -603,6 +623,7 @@ test_audio_manager_procedural_play_stop (AudioFixture *fixture,
     (void)user_data;
 
     audio = lrg_procedural_audio_new (44100, 1);
+    PROCEDURAL_OR_SKIP (audio);
     lrg_audio_manager_add_procedural (fixture->manager, "play-test", audio);
 
     /* Play may fail without audio hardware */
@@ -632,6 +653,8 @@ test_audio_manager_procedural_stop_all (AudioFixture *fixture,
 
     audio1 = lrg_procedural_audio_new (44100, 1);
     audio2 = lrg_procedural_audio_new (44100, 1);
+    PROCEDURAL_OR_SKIP (audio1);
+    PROCEDURAL_OR_SKIP (audio2);
 
     lrg_audio_manager_add_procedural (fixture->manager, "stop-all-1", audio1);
     lrg_audio_manager_add_procedural (fixture->manager, "stop-all-2", audio2);

@@ -27,6 +27,10 @@
 #   - WAYLAND_DISPLAY unset and XDG_SESSION_TYPE=x11, so GLFW picks X11;
 #   - an empty, short XDG_RUNTIME_DIR, so GLFW and the editor's IPC socket
 #     never reach the session's runtime dir (socket paths must fit 107 bytes);
+#   - without xvfb-run, a private X display from Xwayland on a headless
+#     wlroots compositor (gowl, or weston's headless backend) instead,
+#     the whole stack in its own D-Bus session (dbus-run-session), so the
+#     compositor never registers anything on the user's session bus;
 #   - throwaway XDG_CONFIG_HOME / XDG_DATA_HOME / XDG_CACHE_HOME, so an
 #     editor run never reads or rewrites your ~/.config/libregnum/editor.yaml
 #     (saved layouts, recent projects) or your caches. Pass -k to keep the
@@ -40,6 +44,10 @@ usage () {
 	echo '  -t SECONDS   kill the command after SECONDS (default: no limit)'
 	echo '  -s WxH       screen size (default: 1920x1200)'
 	echo '  -k           keep the real XDG config/data/cache dirs (default: throwaway)'
+	echo
+	echo 'Uses xvfb-run when it is installed; otherwise Xwayland on a headless'
+	echo 'gowl or weston in a private D-Bus session (-s is ignored there; the'
+	echo 'headless output decides the size).'
 	echo
 	echo 'examples:'
 	echo '  build-aux/xrun.sh make test'
@@ -98,12 +106,6 @@ main () {
 		exit 2
 	fi
 
-	if ! command -v xvfb-run >/dev/null 2>&1
-	then
-		echo 'xrun.sh: xvfb-run not found (Fedora: xorg-x11-server-Xvfb)' >&2
-		exit 1
-	fi
-
 	runtime_dir="$(mktemp -d /tmp/lrgx.XXXXXX)"
 	# shellcheck disable=SC2064
 	trap "rm -rf -- '${runtime_dir}'" EXIT
@@ -121,8 +123,122 @@ main () {
 		set -- timeout "${timeout_s}" "$@"
 	fi
 
-	xvfb-run -a -s "-screen 0 ${size}x24 -noreset" \
-		env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 "${xdg_env[@]}" "$@"
+	if command -v xvfb-run >/dev/null 2>&1
+	then
+		xvfb-run -a -s "-screen 0 ${size}x24 -noreset" \
+			env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 "${xdg_env[@]}" "$@"
+		return
+	fi
+
+	if command -v Xwayland >/dev/null 2>&1 \
+		&& command -v dbus-run-session >/dev/null 2>&1 \
+		&& { command -v gowl >/dev/null 2>&1 || command -v weston >/dev/null 2>&1; }
+	then
+		# Re-enter this script in a private D-Bus session to start the stack.
+		# The bus and anything it activates see only the throwaway runtime
+		# dir, and GIO stays local (no gvfs daemon, no FUSE mount).
+		env XDG_RUNTIME_DIR="${runtime_dir}/run" GIO_USE_VFS=local GVFS_DISABLE_FUSE=1 \
+			dbus-run-session -- "${BASH_SOURCE[0]}" --headless-stack "${runtime_dir}" \
+			env "${xdg_env[@]}" "$@"
+		return
+	fi
+
+	echo 'xrun.sh: no isolated X display available: install xvfb-run (Fedora: xorg-x11-server-Xvfb),' >&2
+	echo '         or Xwayland, dbus-run-session and a headless wlroots compositor (gowl or weston)' >&2
+	exit 1
 }
+
+# headless_stack <runtime-dir> COMMAND...: start a headless compositor and
+# Xwayland on a free display number, all sockets under <runtime-dir>, run
+# COMMAND with DISPLAY set and WAYLAND_DISPLAY unset, then stop both.  Runs
+# inside dbus-run-session (see main), so DBUS_SESSION_BUS_ADDRESS is private.
+headless_stack () {
+	if [[ $# -lt 2 ]]
+	then
+		echo "headless_stack() requires at least 2 positional arguments"
+		echo 'headless_stack <runtime-dir> COMMAND...'
+		exit 1
+	fi
+
+	local base="${1}"
+	local comp_run="${base}/comp-run"
+	local display_num=''
+	local sock=''
+	local comp_pid
+	local x_pid
+	local rc=0
+	local n
+	local _
+
+	shift
+	mkdir -m 700 "${comp_run}" "${base}/comp-config" "${base}/comp-data" "${base}/comp-cache"
+
+	# A display number nobody uses (socket and lock file both free).
+	for n in $(seq 90 199)
+	do
+		if [[ ! -e "/tmp/.X11-unix/X${n}" && ! -e "/tmp/.X${n}-lock" ]]
+		then
+			display_num="${n}"
+			break
+		fi
+	done
+	if [[ -z "${display_num}" ]]
+	then
+		echo 'xrun.sh: no free X display number in 90..199' >&2
+		exit 1
+	fi
+
+	# The compositor: its own runtime/config dirs, no input devices, the
+	# software renderer (it only has to exist; clients render with Mesa).
+	if command -v gowl >/dev/null 2>&1
+	then
+		env -u WAYLAND_DISPLAY -u DISPLAY \
+			XDG_RUNTIME_DIR="${comp_run}" XDG_CONFIG_HOME="${base}/comp-config" \
+			XDG_DATA_HOME="${base}/comp-data" XDG_CACHE_HOME="${base}/comp-cache" \
+			WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman \
+			gowl > "${base}/compositor.log" 2>&1 &
+	else
+		env -u WAYLAND_DISPLAY -u DISPLAY \
+			XDG_RUNTIME_DIR="${comp_run}" XDG_CONFIG_HOME="${base}/comp-config" \
+			weston --backend=headless --socket=wayland-0 --idle-time=0 \
+			> "${base}/compositor.log" 2>&1 &
+	fi
+	comp_pid=$!
+
+	for _ in $(seq 100)
+	do
+		sock="$(find "${comp_run}" -maxdepth 1 -name 'wayland-*' -type s -print -quit)"
+		[[ -n "${sock}" ]] && break
+		sleep 0.1
+	done
+	if [[ -z "${sock}" ]]
+	then
+		echo "xrun.sh: the headless compositor did not start (see ${base}/compositor.log)" >&2
+		kill "${comp_pid}" 2>/dev/null || true
+		exit 1
+	fi
+
+	XDG_RUNTIME_DIR="${comp_run}" WAYLAND_DISPLAY="${sock##*/}" \
+		Xwayland ":${display_num}" -noreset > "${base}/xwayland.log" 2>&1 &
+	x_pid=$!
+	for _ in $(seq 100)
+	do
+		[[ -S "/tmp/.X11-unix/X${display_num}" ]] && break
+		sleep 0.1
+	done
+
+	env -u WAYLAND_DISPLAY DISPLAY=":${display_num}" XDG_SESSION_TYPE=x11 "$@" || rc=$?
+
+	kill "${x_pid}" "${comp_pid}" 2>/dev/null || true
+	wait "${x_pid}" "${comp_pid}" 2>/dev/null || true
+	return "${rc}"
+}
+
+if [[ "${1:-}" == '--headless-stack' ]]
+then
+	shift
+	headless_stack "$@"
+	exit $?
+fi
 
 main "$@"

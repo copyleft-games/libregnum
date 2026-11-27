@@ -2855,6 +2855,14 @@ else
 	$(call print_warning,"Examples disabled (BUILD_EXAMPLES=0)")
 endif
 
+# Builds the examples and runs the ones that render without a display at a
+# small size into temp dirs, checking what they write (tests/test-examples-
+# smoke.sh; DISPLAY and WAYLAND_DISPLAY are unset for every run).
+.PHONY: test-examples
+test-examples: examples
+	$(call print_status,"Running example smoke tests...")
+	@tests/test-examples-smoke.sh examples/$(BUILDDIR)/examples
+
 # =============================================================================
 # lrgldr (generic game-module loader/runner)
 # =============================================================================
