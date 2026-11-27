@@ -145,7 +145,7 @@ EXAMPLES += mmo-server mmo-zone-worker
 endif
 EXAMPLES += example-chart-2d example-chart-3d
 EXAMPLES += game-chair-simulator
-EXAMPLES += reel-hello reel-showcase
+EXAMPLES += reel-hello reel-showcase reel-captions-demo
 EXAMPLES += synthwave-song song-render song-import
 EXAMPLES += ui-showcase game-ui-menu ui-theme-editor ui-studio ui-dnd ui-property-grid level-3d-runtime pbr-showcase physics-sandbox game-showcase-3d
 
@@ -384,6 +384,12 @@ $(EXAMPLES_BUILDDIR)/reel-hello$(EXE_EXT): reel-hello.c | $(EXAMPLES_BUILDDIR)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/reel-showcase$(EXE_EXT): reel-showcase.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+# Title sequence exercising the 0.13.5-0.13.9 reel fixes (blending, text
+# alignment, parallel transitions, encoder fallback, raw-frame export)
+$(EXAMPLES_BUILDDIR)/reel-captions-demo$(EXE_EXT): reel-captions-demo.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
