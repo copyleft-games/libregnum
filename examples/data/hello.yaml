@@ -1,0 +1,32 @@
+# "Hello, I am a libregnum character": a phone-level alignment in the CMU
+# (ARPAbet) phone set, the format Montreal Forced Aligner and Gentle
+# write (stress digits kept, sil/sp for silence).  Hand-timed for about
+# 3 seconds of speech; read by examples/skeleton2d-talking-head.c.
+- {start: 0.00, end: 0.30, phoneme: sil}
+- {start: 0.30, end: 0.37, phoneme: HH}
+- {start: 0.37, end: 0.45, phoneme: AH0}
+- {start: 0.45, end: 0.53, phoneme: L}
+- {start: 0.53, end: 0.78, phoneme: OW1}
+- {start: 0.78, end: 0.95, phoneme: sp}
+- {start: 0.95, end: 1.15, phoneme: AY1}
+- {start: 1.15, end: 1.27, phoneme: AE1}
+- {start: 1.27, end: 1.38, phoneme: M}
+- {start: 1.38, end: 1.45, phoneme: AH0}
+- {start: 1.45, end: 1.53, phoneme: L}
+- {start: 1.53, end: 1.63, phoneme: IY1}
+- {start: 1.63, end: 1.70, phoneme: B}
+- {start: 1.70, end: 1.77, phoneme: R}
+- {start: 1.77, end: 1.86, phoneme: EH0}
+- {start: 1.86, end: 1.93, phoneme: G}
+- {start: 1.93, end: 2.00, phoneme: N}
+- {start: 2.00, end: 2.09, phoneme: AH0}
+- {start: 2.09, end: 2.22, phoneme: M}
+- {start: 2.22, end: 2.34, phoneme: sp}
+- {start: 2.34, end: 2.41, phoneme: K}
+- {start: 2.41, end: 2.54, phoneme: EH1}
+- {start: 2.54, end: 2.61, phoneme: R}
+- {start: 2.61, end: 2.68, phoneme: AH0}
+- {start: 2.68, end: 2.75, phoneme: K}
+- {start: 2.75, end: 2.81, phoneme: T}
+- {start: 2.81, end: 3.02, phoneme: ER0}
+- {start: 3.02, end: 3.40, phoneme: sil}

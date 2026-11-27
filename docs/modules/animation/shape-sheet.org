@@ -1,0 +1,180 @@
+#+title: The Standard Shape Sheet - Shared Blend-Shape Names for 2D Characters
+#+description: One documented set of blend-shape names (visemes, eyes, brows, moods, body) so one clip, lip-sync track or procedural layer drives a whole cast
+#+created: 2026-11-27
+
+* The Standard Shape Sheet
+:PROPERTIES:
+:CUSTOM_ID: shape-sheet
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Animation]] > Shape sheet
+#+end_quote
+
+The shape sheet is a fixed list of blend-shape names for 2D characters: mouth shapes (visemes), eyes, brows, moods and body. When every character of a game names its shapes from this list, one blink clip, one mood clip, one lip-sync track and one set of procedural layers work on the whole cast. A character implements the shapes it needs; a weight for a shape it lacks is ignored.
+
+- *Header*: =animation/lrg-shape-sheet.h=
+- *Symbols*: =LRG_SHAPE_*= name macros, enums =LrgViseme= and =LrgShapeCategory= (=LRG_TYPE_VISEME=, =LRG_TYPE_SHAPE_CATEGORY=, in =lrg-enums.h=), lookups =lrg_viseme_get_shape_name()=, =lrg_viseme_from_shape_name()=, =lrg_shape_sheet_list()=, =lrg_shape_sheet_list_all()=, =lrg_shape_sheet_lookup()=
+- *Since*: 0.14
+- *Headless*: yes (static tables)
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+- A *shape* is a blend shape on an =LrgSkinnedSprite= attachment (=lrg_skinned_sprite_add_shape()=): per-vertex offsets in setup space mixed in by a weight before skinning. See [[file:../graphics/skinned-sprite.org::#blend-shapes][blend shapes]].
+- *Weights* belong to the skeleton's slots (=lrg_skeleton2d_set_shape_weight()=) and are keyed in clips (=lrg_skeleton2d_clip_add_shape_key()=). See [[file:skeleton2d.org::#blend-shapes][LrgSkeleton2D: blend shapes]].
+- The sheet is only *names*. Shapes are authored as offsets from the character's neutral face, at full strength for weight 1: a blink shape closes the eye completely, a viseme shows the mouth shape fully. In-between weights interpolate linearly, so author shapes whose half-way point also looks right (an eyelid halfway down, not an eye shrinking).
+- Names are case sensitive. The visemes are upper case (as the phoneme-to-viseme tables of the animation trade write them), =rest= and everything else are lower case.
+- *Missing shapes are a no-op*: a character without =brow_worried= simply does not move its brows when a clip keys it. Characters can also add shapes of their own; the sheet only fixes the shared ones.
+- Mouth shapes are meant to be mutually exclusive (weights summing to 1, as [[file:lip-sync.org][LrgLipSync]] writes them); eyes, brows, moods and body shapes layer on top of each other and of the mouth.
+
+** Quick start
+:PROPERTIES:
+:CUSTOM_ID: quick-start
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+/* list what a character implements, by category */
+static void
+report (LrgSkinnedSprite *face)
+{
+	guint c;
+
+	for (c = LRG_SHAPE_CATEGORY_MOUTH; c <= LRG_SHAPE_CATEGORY_BODY; c++)
+	{
+		const gchar * const *names = lrg_shape_sheet_list ((LrgShapeCategory)c);
+		guint                i;
+
+		for (i = 0; names[i] != NULL; i++)
+			g_print ("%-12s %s\n", names[i],
+			         lrg_skinned_sprite_find_shape (face, names[i]) >= 0 ? "yes" : "-");
+	}
+}
+
+/* a surprised look on slot "head": wide eyes, raised brows, open mouth */
+static void
+surprise (LrgSkeleton2D *skel)
+{
+	gint head = lrg_skeleton2d_find_slot (skel, "head");
+
+	lrg_skeleton2d_set_shape_weight (skel, head, LRG_SHAPE_WIDE, 1.0f);
+	lrg_skeleton2d_set_shape_weight (skel, head, LRG_SHAPE_BROW_UP, 1.0f);
+	lrg_skeleton2d_set_shape_weight (skel, head, LRG_SHAPE_SURPRISED, 0.8f);
+	lrg_skeleton2d_set_shape_weight (skel, head,
+	                                 lrg_viseme_get_shape_name (LRG_VISEME_O), 0.5f);
+}
+#+end_src
+
+** The sheet
+:PROPERTIES:
+:CUSTOM_ID: sheet
+:END:
+"Left" and "right" are the *character's* left and right (a character facing the camera has its left eye on screen right). Offsets are in the y-down setup space of the rig.
+
+*** Mouth (visemes)
+:PROPERTIES:
+:CUSTOM_ID: sheet-mouth
+:END:
+| Name | Macro | =LrgViseme= | Phonemes (ARPAbet) | What the shape should look like |
+|------+-------+-------------+--------------------+---------------------------------|
+| =rest= | =LRG_SHAPE_REST= | =LRG_VISEME_REST= | silence, =sil=, =sp=, =spn= | mouth closed and relaxed; usually zero offsets (the neutral mesh), but it can be a slightly different "at rest" mouth |
+| =A= | =LRG_SHAPE_A= | =LRG_VISEME_A= | AA, AE, AH, AW, AY | wide open, jaw dropped, tongue low ("father", "cat", "cut") |
+| =E= | =LRG_SHAPE_E= | =LRG_VISEME_E= | EH, ER, EY | mid open, lips spread a little, upper teeth showing ("bed", "bird", "say") |
+| =I= | =LRG_SHAPE_I= | =LRG_VISEME_I= | IH, IY | narrow opening, lips spread wide, teeth nearly together ("see", "sit") |
+| =O= | =LRG_SHAPE_O= | =LRG_VISEME_O= | AO, OW, OY | rounded open lips, jaw half down ("go", "law", "boy") |
+| =U= | =LRG_SHAPE_U= | =LRG_VISEME_U= | UH, UW | small round opening, lips pushed forward ("boot", "book") |
+| =MBP= | =LRG_SHAPE_MBP= | =LRG_VISEME_MBP= | M, B, P | lips pressed together, slightly rolled in |
+| =FV= | =LRG_SHAPE_FV= | =LRG_VISEME_FV= | F, V | lower lip tucked under the upper front teeth |
+| =L= | =LRG_SHAPE_L= | =LRG_VISEME_L= | L, TH, DH | mouth open, tongue tip raised behind (or between) the front teeth |
+| =WQ= | =LRG_SHAPE_WQ= | =LRG_VISEME_WQ= | W | small, tight pucker, smaller than =U= ("we", "queen") |
+| =CDGKNRSTYZ= | =LRG_SHAPE_CDGKNRSTYZ= | =LRG_VISEME_CDGKNRSTYZ= | CH, D, G, HH, JH, K, N, NG, R, S, SH, T, Y, Z, ZH | teeth almost closed, lips relaxed and slightly parted: the generic consonant mouth |
+
+*** Eyes
+:PROPERTIES:
+:CUSTOM_ID: sheet-eyes
+:END:
+| Name | Macro | What the shape should look like |
+|------+-------+---------------------------------|
+| =blink_l= | =LRG_SHAPE_BLINK_L= | left eye fully closed (upper lid down to the lower lid) |
+| =blink_r= | =LRG_SHAPE_BLINK_R= | right eye fully closed |
+| =squint= | =LRG_SHAPE_SQUINT= | both eyes narrowed: lower lids raised, upper lids lowered a little |
+| =wide= | =LRG_SHAPE_WIDE= | both eyes opened wide, whites showing above the iris |
+| =look_left= | =LRG_SHAPE_LOOK_LEFT= | pupils (and irises) moved to the character's left |
+| =look_right= | =LRG_SHAPE_LOOK_RIGHT= | pupils moved to the character's right |
+| =look_up= | =LRG_SHAPE_LOOK_UP= | pupils moved up, upper lids following slightly |
+| =look_down= | =LRG_SHAPE_LOOK_DOWN= | pupils moved down, upper lids following |
+
+*** Brows
+:PROPERTIES:
+:CUSTOM_ID: sheet-brows
+:END:
+| Name | Macro | What the shape should look like |
+|------+-------+---------------------------------|
+| =brow_up= | =LRG_SHAPE_BROW_UP= | both brows raised evenly |
+| =brow_down= | =LRG_SHAPE_BROW_DOWN= | both brows lowered evenly |
+| =brow_angry= | =LRG_SHAPE_BROW_ANGRY= | inner ends pulled down and together (a frown) |
+| =brow_worried= | =LRG_SHAPE_BROW_WORRIED= | inner ends raised, outer ends level or lower |
+
+*** Moods
+:PROPERTIES:
+:CUSTOM_ID: sheet-moods
+:END:
+Moods are whole-face shapes that layer under the visemes, so a character can talk while smiling. Keep them to the cheeks, mouth corners and lids; leave the jaw to the visemes.
+
+| Name | Macro | What the shape should look like |
+|------+-------+---------------------------------|
+| =happy= | =LRG_SHAPE_HAPPY= | smile: mouth corners up and out, cheeks raised, lower lids pushed up |
+| =sad= | =LRG_SHAPE_SAD= | mouth corners down, lower lip pushed up, lids slightly lowered |
+| =angry= | =LRG_SHAPE_ANGRY= | lips tight and thin, mouth corners pulled down and out, nostrils flared |
+| =surprised= | =LRG_SHAPE_SURPRISED= | mouth dropped into an oval, cheeks pulled down |
+| =shout= | =LRG_SHAPE_SHOUT= | mouth wide open and stretched sideways, teeth showing |
+
+*** Body
+:PROPERTIES:
+:CUSTOM_ID: sheet-body
+:END:
+Body shapes go on the torso (or the whole character on simple rigs) and keep the feet in place.
+
+| Name | Macro | What the shape should look like |
+|------+-------+---------------------------------|
+| =squash= | =LRG_SHAPE_SQUASH= | body squashed down and widened, volume kept (landing, impact) |
+| =stretch= | =LRG_SHAPE_STRETCH= | body stretched up and narrowed (jump, anticipation) |
+| =breathe= | =LRG_SHAPE_BREATHE= | chest and shoulders at the top of a breath in: a small lift and widening |
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Symbol | Description |
+|--------+-------------|
+| =LRG_SHAPE_REST= .. =LRG_SHAPE_CDGKNRSTYZ=, =LRG_SHAPE_BLINK_L= .. =LRG_SHAPE_BREATHE= | the 31 names as string macros (tables above) |
+| =LrgViseme=, =lrg_viseme_get_type()= | =REST=, =A=, =E=, =I=, =O=, =U=, =MBP=, =FV=, =L=, =WQ=, =CDGKNRSTYZ= (nicks lower case) |
+| =lrg_viseme_get_shape_name (viseme)= | the shape name a viseme drives; NULL outside the enum |
+| =lrg_viseme_from_shape_name (name, &viseme)= | the inverse; FALSE if =name= is not a viseme (exact match) |
+| =LrgShapeCategory=, =lrg_shape_category_get_type()= | =MOUTH=, =EYES=, =BROWS=, =MOOD=, =BODY= |
+| =lrg_shape_sheet_list (category)= | the names of a category in sheet order (static, NULL-terminated, transfer none; empty outside the enum) |
+| =lrg_shape_sheet_list_all (void)= | all 31 names in sheet order |
+| =lrg_shape_sheet_lookup (name, &category)= | TRUE and the category if =name= is on the sheet |
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: behaviour
+:END:
+- The order of =LrgViseme= is the order of the mouth table, so =lrg_shape_sheet_list (LRG_SHAPE_CATEGORY_MOUTH)[viseme]= is the viseme's name.
+- The tables are static: the returned arrays live forever and must not be freed.
+- Nothing in the engine requires these names; =LrgLipSync= writes viseme names and =LrgSkeleton2DProcedural= writes =blink_l=, =blink_r= and =breathe=, everything else is up to your clips.
+
+** Errors
+:PROPERTIES:
+:CUSTOM_ID: errors
+:END:
+None: lookups of unknown names return FALSE or NULL.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:lip-sync.org][LrgLipSync]] (phonemes to viseme keys)
+- [[file:procedural.org][LrgSkeleton2DProcedural]] (automatic blink and breathe)
+- [[file:skeleton2d.org][LrgSkeleton2D]] and [[file:../graphics/skinned-sprite.org][LrgSkinnedSprite]]

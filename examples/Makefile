@@ -146,6 +146,7 @@ endif
 EXAMPLES += example-chart-2d example-chart-3d
 EXAMPLES += game-chair-simulator
 EXAMPLES += reel-hello reel-showcase reel-captions-demo
+EXAMPLES += skeleton2d-talking-head skeleton2d-shape-sheet
 EXAMPLES += synthwave-song song-render song-import
 EXAMPLES += ui-showcase game-ui-menu ui-theme-editor ui-studio ui-dnd ui-property-grid level-3d-runtime pbr-showcase physics-sandbox game-showcase-3d
 
@@ -523,6 +524,19 @@ $(EXAMPLES_BUILDDIR)/video-to-gif$(EXE_EXT): video-to-gif.c | $(EXAMPLES_BUILDDI
 $(EXAMPLES_BUILDDIR)/reel-transition-demo$(EXE_EXT): reel-transition-demo.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+# The skeleton2d examples share the demo character (also compiled into
+# tests/test-skeleton2d-character).
+DEMO_CHARACTER_SRC := skeleton2d/lrg-demo-character.c
+DEMO_CHARACTER_DEPS := $(DEMO_CHARACTER_SRC) skeleton2d/lrg-demo-character.h
+
+$(EXAMPLES_BUILDDIR)/skeleton2d-talking-head$(EXE_EXT): skeleton2d-talking-head.c $(DEMO_CHARACTER_DEPS) | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -std=gnu89 -o $@ $< $(DEMO_CHARACTER_SRC) $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/skeleton2d-shape-sheet$(EXE_EXT): skeleton2d-shape-sheet.c $(DEMO_CHARACTER_DEPS) | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -std=gnu89 -o $@ $< $(DEMO_CHARACTER_SRC) $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR):
 	@$(MKDIR_P) $@

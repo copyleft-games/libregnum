@@ -23,7 +23,8 @@
 Two tracks: the *current* clip and, during a crossfade, the clip *fading out*. Each update:
 1. advances both by =delta * speed= (looping clips wrap; one-shot clips stop at their end, hold the last pose and emit =finished=);
 2. advances the fade; when it completes, the old clip is dropped;
-3. resets the skeleton to its setup pose, applies the fading-out clip at weight 1 and the current clip at the mix weight (=lrg_skeleton2d_component_get_mix_weight()=).
+3. resets the skeleton to its setup pose, applies the fading-out clip at weight 1 and the current clip at the mix weight (=lrg_skeleton2d_component_get_mix_weight()=); blend-shape weights crossfade with everything else, like slot colours;
+4. runs the procedural layers, if any, on top (see [[#procedural][Procedural layers]]).
 
 Starting a crossfade during another drops the clip that was fading out (two clips at most). Events of the current clip fire when playback crosses them, once per loop; events at time 0 fire as the clip starts; scrubbing with =lrg_skeleton2d_component_set_time()= fires none. Speed 0 pauses both playback and fades.
 
@@ -46,6 +47,7 @@ Starting a crossfade during another drops the clip that was fading out (two clip
 | =lrg_skeleton2d_component_set_tint= / =lrg_skeleton2d_component_get_tint= | colour multiplied into every slot |
 | =lrg_skeleton2d_component_sync_pose (self)= | place the skeleton at the owner's render pose and update world transforms (call before reading bone positions, e.g. to attach a weapon to a hand) |
 | =lrg_skeleton2d_component_draw (self)= | sync, load textures on first use, draw (and bones if =show-bones=); the owning =LrgGameObject= calls it from =lrg_world_draw()= when the component is enabled |
+| =lrg_skeleton2d_component_set_procedural (self, layers)= / =lrg_skeleton2d_component_get_procedural= | procedural blend-shape layers run after the clips (NULL for none; since 0.14) |
 
 *** Properties
 :PROPERTIES:
@@ -101,6 +103,21 @@ EndMode2D ();
 EndDrawing ();
 #+end_src
 
+** Procedural layers
+:PROPERTIES:
+:CUSTOM_ID: procedural
+:END:
+=lrg_skeleton2d_component_set_procedural()= attaches an [[file:../../animation/procedural.org][LrgSkeleton2DProcedural]] (automatic blink, breathing). Every pose (each update, a new clip, a scrub) then ends with =lrg_skeleton2d_procedural_apply()= at the component's own running time: the sum of =delta * speed= over the updates since the layers were set. That time does not restart with each clip, so a blink is not cut off by a crossfade; speed 0 freezes the layers too. Setting layers (or NULL) restarts the time at 0 and re-poses at once. The component holds a reference to the layers.
+
+#+begin_src C
+g_autoptr(LrgSkeleton2DProcedural) life = lrg_skeleton2d_procedural_new ();
+
+lrg_skeleton2d_procedural_add_blink (life, "head", 2.0f, 5.0f, 0.15f, 42);
+lrg_skeleton2d_procedural_add_breathe (life, "torso", 4.0f, 0.5f);
+lrg_skeleton2d_component_set_procedural (rig, life);
+lrg_skeleton2d_component_play (rig, "talk", FALSE);   /* blinks and breathes while talking */
+#+end_src
+
 ** Pitfalls
 :PROPERTIES:
 :CUSTOM_ID: pitfalls
@@ -120,4 +137,5 @@ Every setting is a property, so the inspector edits it like any component. The n
 :CUSTOM_ID: see-also
 :END:
 - [[file:../../animation/skeleton2d.org][LrgSkeleton2D]] and [[file:../../graphics/skinned-sprite.org][LrgSkinnedSprite]]
+- [[file:../../animation/procedural.org][LrgSkeleton2DProcedural]], [[file:../../animation/lip-sync.org][LrgLipSync]] and the [[file:../../animation/shape-sheet.org][shape sheet]]
 - [[file:sprite-component.org][LrgSpriteComponent]], [[file:animator-component.org][LrgAnimatorComponent]] (frame animation)

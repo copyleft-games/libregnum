@@ -6,7 +6,8 @@
  *
  * LrgSkeleton2D and LrgSkeleton2DClip: 2D bones, slots, skins of
  * LrgSkinnedSprite attachments, clips with bone TRS / slot colour /
- * attachment / draw-order / event keys, and the `.rskel2d` YAML format.
+ * attachment / blend-shape weight / draw-order / event keys, and the
+ * `.rskel2d` YAML format.
  *
  * The format and the runtime are our own design.  Ideas common to 2D
  * skeletal tools (bones, slots, skins, setup pose) are used; no code or
@@ -26,6 +27,8 @@
 #include <rlgl.h>
 
 #include "animation/lrg-skeleton2d.h"
+#include "graphics/lrg-image-canvas.h"
+#include "graphics/lrg-skinned-sprite-private.h"
 #include "core/lrg-data-loader.h"
 
 #define DEG2RAD_F (0.017453292519943295f)
@@ -92,6 +95,7 @@ lrg_skeleton2d_channel_get_type (void)
 			{ LRG_SKELETON2D_CHANNEL_SCALE, "LRG_SKELETON2D_CHANNEL_SCALE", "scale" },
 			{ LRG_SKELETON2D_CHANNEL_COLOR, "LRG_SKELETON2D_CHANNEL_COLOR", "color" },
 			{ LRG_SKELETON2D_CHANNEL_ATTACHMENT, "LRG_SKELETON2D_CHANNEL_ATTACHMENT", "attachment" },
+			{ LRG_SKELETON2D_CHANNEL_SHAPE, "LRG_SKELETON2D_CHANNEL_SHAPE", "shape" },
 			{ 0, NULL, NULL }
 		};
 		GType id = g_enum_register_static (g_intern_static_string ("LrgSkeleton2DChannel"), values);
@@ -217,12 +221,21 @@ typedef struct
 	GArray *ch[3];
 } BoneTrack;
 
-/* Timelines of one slot. */
+/* The weight timeline of one blend shape on a slot (v[0] of each key is
+ * the weight, 0 .. 1). */
 typedef struct
 {
 	gchar  *name;
-	GArray *color;    /* ValueKey */
-	GArray *attach;   /* NameKey */
+	GArray *keys;     /* ValueKey */
+} ShapeTrack;
+
+/* Timelines of one slot. */
+typedef struct
+{
+	gchar     *name;
+	GArray    *color;    /* ValueKey */
+	GArray    *attach;   /* NameKey */
+	GPtrArray *shapes;   /* ShapeTrack*, first-keyed order; NULL until keyed */
 } SlotTrack;
 
 struct _LrgSkeleton2DClip
@@ -281,12 +294,23 @@ bone_track_free (gpointer data)
 }
 
 static void
+shape_track_free (gpointer data)
+{
+	ShapeTrack *t = data;
+
+	g_clear_pointer (&t->keys, g_array_unref);
+	g_free (t->name);
+	g_free (t);
+}
+
+static void
 slot_track_free (gpointer data)
 {
 	SlotTrack *t = data;
 
 	g_clear_pointer (&t->color, g_array_unref);
 	g_clear_pointer (&t->attach, g_array_unref);
+	g_clear_pointer (&t->shapes, g_ptr_array_unref);
 	g_free (t->name);
 	g_free (t);
 }
@@ -1148,6 +1172,206 @@ lrg_skeleton2d_clip_get_event (LrgSkeleton2DClip *self,
 	return k->name;
 }
 
+/* ---- blend-shape weight timelines ---- */
+
+/* The shape timeline (slot, shape), created on demand when @create;
+ * NULL when missing. */
+static ShapeTrack *
+find_shape_track (LrgSkeleton2DClip *self,
+                  const gchar       *slot,
+                  const gchar       *shape,
+                  gboolean           create)
+{
+	SlotTrack  *st = find_slot_track (self, slot, create);
+	ShapeTrack *t;
+	guint       i;
+
+	if (st == NULL)
+		return NULL;
+	for (i = 0; st->shapes != NULL && i < st->shapes->len; i++)
+	{
+		t = g_ptr_array_index (st->shapes, i);
+		if (g_strcmp0 (t->name, shape) == 0)
+			return t;
+	}
+	if (!create)
+		return NULL;
+	if (st->shapes == NULL)
+		st->shapes = g_ptr_array_new_with_free_func (shape_track_free);
+	t = g_new0 (ShapeTrack, 1);
+	t->name = g_strdup (shape);
+	t->keys = g_array_new (FALSE, TRUE, sizeof (ValueKey));
+	g_ptr_array_add (st->shapes, t);
+	return t;
+}
+
+void
+lrg_skeleton2d_clip_add_shape_key (LrgSkeleton2DClip  *self,
+                                   const gchar        *slot,
+                                   const gchar        *shape,
+                                   gfloat              time,
+                                   gfloat              weight,
+                                   LrgSkeleton2DCurve  curve)
+{
+	ShapeTrack *t;
+	ValueKey    k;
+	gboolean    replace;
+	guint       at;
+
+	g_return_if_fail (LRG_IS_SKELETON2D_CLIP (self));
+	g_return_if_fail (slot != NULL);
+	g_return_if_fail (shape != NULL && shape[0] != '\0');
+
+	/* the same key layout as the numeric channels, one value used; a
+	 * Bézier key without control points eases linearly */
+	memset (&k, 0, sizeof k);
+	k.time = MAX (time, 0.0f);
+	k.v[0] = isfinite (weight) ? CLAMP (weight, 0.0f, 1.0f) : 0.0f;
+	k.curve = curve;
+	k.bez[0] = 1.0f / 3.0f;
+	k.bez[1] = 1.0f / 3.0f;
+	k.bez[2] = 2.0f / 3.0f;
+	k.bez[3] = 2.0f / 3.0f;
+
+	t = find_shape_track (self, slot, shape, TRUE);
+	at = key_insert_index (t->keys, sizeof (ValueKey), k.time, &replace);
+	if (replace)
+		g_array_index (t->keys, ValueKey, at) = k;
+	else
+		g_array_insert_val (t->keys, at, k);
+	extend_duration (self, k.time);
+}
+
+gboolean
+lrg_skeleton2d_clip_set_shape_key_bezier (LrgSkeleton2DClip *self,
+                                          const gchar       *slot,
+                                          const gchar       *shape,
+                                          guint              index,
+                                          gfloat             cx1,
+                                          gfloat             cy1,
+                                          gfloat             cx2,
+                                          gfloat             cy2)
+{
+	ShapeTrack *t;
+	ValueKey   *k;
+
+	g_return_val_if_fail (LRG_IS_SKELETON2D_CLIP (self), FALSE);
+	g_return_val_if_fail (slot != NULL && shape != NULL, FALSE);
+
+	t = find_shape_track (self, slot, shape, FALSE);
+	if (t == NULL || index >= t->keys->len)
+		return FALSE;
+	k = &g_array_index (t->keys, ValueKey, index);
+	k->curve = LRG_SKELETON2D_CURVE_BEZIER;
+	k->bez[0] = CLAMP (cx1, 0.0f, 1.0f);
+	k->bez[1] = cy1;
+	k->bez[2] = CLAMP (cx2, 0.0f, 1.0f);
+	k->bez[3] = cy2;
+	return TRUE;
+}
+
+guint
+lrg_skeleton2d_clip_get_shape_key_count (LrgSkeleton2DClip *self,
+                                         const gchar       *slot,
+                                         const gchar       *shape)
+{
+	ShapeTrack *t;
+
+	g_return_val_if_fail (LRG_IS_SKELETON2D_CLIP (self), 0);
+	g_return_val_if_fail (slot != NULL && shape != NULL, 0);
+
+	t = find_shape_track (self, slot, shape, FALSE);
+	return t != NULL ? t->keys->len : 0;
+}
+
+gboolean
+lrg_skeleton2d_clip_get_shape_key (LrgSkeleton2DClip  *self,
+                                   const gchar        *slot,
+                                   const gchar        *shape,
+                                   guint               index,
+                                   gfloat             *time,
+                                   gfloat             *weight,
+                                   LrgSkeleton2DCurve *curve)
+{
+	ShapeTrack     *t;
+	const ValueKey *k;
+
+	g_return_val_if_fail (LRG_IS_SKELETON2D_CLIP (self), FALSE);
+	g_return_val_if_fail (slot != NULL && shape != NULL, FALSE);
+
+	t = find_shape_track (self, slot, shape, FALSE);
+	if (t == NULL || index >= t->keys->len)
+		return FALSE;
+	k = &g_array_index (t->keys, ValueKey, index);
+	if (time != NULL)
+		*time = k->time;
+	if (weight != NULL)
+		*weight = k->v[0];
+	if (curve != NULL)
+		*curve = k->curve;
+	return TRUE;
+}
+
+gboolean
+lrg_skeleton2d_clip_remove_shape_key (LrgSkeleton2DClip *self,
+                                      const gchar       *slot,
+                                      const gchar       *shape,
+                                      guint              index)
+{
+	ShapeTrack *t;
+
+	g_return_val_if_fail (LRG_IS_SKELETON2D_CLIP (self), FALSE);
+	g_return_val_if_fail (slot != NULL && shape != NULL, FALSE);
+
+	t = find_shape_track (self, slot, shape, FALSE);
+	if (t == NULL || index >= t->keys->len)
+		return FALSE;
+	g_array_remove_index (t->keys, index);
+	return TRUE;
+}
+
+gboolean
+lrg_skeleton2d_clip_sample_shape (LrgSkeleton2DClip *self,
+                                  const gchar       *slot,
+                                  const gchar       *shape,
+                                  gfloat             time,
+                                  gfloat            *weight)
+{
+	ShapeTrack *t;
+
+	g_return_val_if_fail (LRG_IS_SKELETON2D_CLIP (self), FALSE);
+	g_return_val_if_fail (slot != NULL && shape != NULL, FALSE);
+	g_return_val_if_fail (weight != NULL, FALSE);
+
+	*weight = 0.0f;
+	t = find_shape_track (self, slot, shape, FALSE);
+	if (t == NULL || t->keys->len == 0)
+		return FALSE;
+	sample_value_keys (t->keys, CLAMP (time, 0.0f, self->duration), 1, weight);
+	return TRUE;
+}
+
+gchar **
+lrg_skeleton2d_clip_get_shapes (LrgSkeleton2DClip *self,
+                                const gchar       *slot)
+{
+	GStrvBuilder *b;
+	SlotTrack    *st;
+	gchar       **out;
+	guint         i;
+
+	g_return_val_if_fail (LRG_IS_SKELETON2D_CLIP (self), NULL);
+	g_return_val_if_fail (slot != NULL, NULL);
+
+	b = g_strv_builder_new ();
+	st = find_slot_track (self, slot, FALSE);
+	for (i = 0; st != NULL && st->shapes != NULL && i < st->shapes->len; i++)
+		g_strv_builder_add (b, ((ShapeTrack *)g_ptr_array_index (st->shapes, i))->name);
+	out = g_strv_builder_end (b);
+	g_strv_builder_unref (b);
+	return out;
+}
+
 /* ================================================================== */
 /* LrgSkeleton2D                                                       */
 /* ================================================================== */
@@ -1166,6 +1390,13 @@ typedef struct
 	gfloat  inv_bind[6];
 } Bone;
 
+/* One blend-shape weight of a slot's current pose. */
+typedef struct
+{
+	gchar  *name;
+	gfloat  weight;
+} SlotShape;
+
 typedef struct
 {
 	gchar  *name;
@@ -1174,6 +1405,7 @@ typedef struct
 	gchar  *attachment;
 	gfloat  setup_color[4];
 	gfloat  color[4];
+	GArray *shapes;   /* SlotShape, NULL until a weight is set */
 } Slot;
 
 /* One attachment of a skin. */
@@ -1251,6 +1483,15 @@ slot_clear (gpointer data)
 	g_clear_pointer (&s->name, g_free);
 	g_clear_pointer (&s->setup_attachment, g_free);
 	g_clear_pointer (&s->attachment, g_free);
+	g_clear_pointer (&s->shapes, g_array_unref);
+}
+
+static void
+slot_shape_clear (gpointer data)
+{
+	SlotShape *sh = data;
+
+	g_clear_pointer (&sh->name, g_free);
 }
 
 static void
@@ -2216,7 +2457,80 @@ lrg_skeleton2d_reset_pose (LrgSkeleton2D *self)
 		set_name (&s->attachment, s->setup_attachment);
 		memcpy (s->color, s->setup_color, sizeof s->color);
 		g_array_index (self->draw_order, gint, i) = (gint)i;
+
+		/* weights go to 0 but stay listed, so the next deform hands the
+		 * 0 to the attachment too */
+		if (s->shapes != NULL)
+		{
+			guint k;
+
+			for (k = 0; k < s->shapes->len; k++)
+				g_array_index (s->shapes, SlotShape, k).weight = 0.0f;
+		}
 	}
+}
+
+/* The weight entry of @shape on @s, created at 0 when @create. */
+static SlotShape *
+slot_shape (Slot        *s,
+            const gchar *shape,
+            gboolean     create)
+{
+	SlotShape sh;
+	guint     i;
+
+	for (i = 0; s->shapes != NULL && i < s->shapes->len; i++)
+	{
+		SlotShape *e = &g_array_index (s->shapes, SlotShape, i);
+
+		if (g_strcmp0 (e->name, shape) == 0)
+			return e;
+	}
+	if (!create)
+		return NULL;
+	if (s->shapes == NULL)
+	{
+		s->shapes = g_array_new (FALSE, TRUE, sizeof (SlotShape));
+		g_array_set_clear_func (s->shapes, slot_shape_clear);
+	}
+	sh.name = g_strdup (shape);
+	sh.weight = 0.0f;
+	g_array_append_val (s->shapes, sh);
+	return &g_array_index (s->shapes, SlotShape, s->shapes->len - 1);
+}
+
+void
+lrg_skeleton2d_set_shape_weight (LrgSkeleton2D *self,
+                                 gint           slot,
+                                 const gchar   *shape,
+                                 gfloat         weight)
+{
+	Slot *s;
+
+	g_return_if_fail (LRG_IS_SKELETON2D (self));
+	g_return_if_fail (shape != NULL && shape[0] != '\0');
+
+	s = get_slot (self, slot);
+	if (s == NULL || !isfinite (weight))
+		return;
+	slot_shape (s, shape, TRUE)->weight = CLAMP (weight, 0.0f, 1.0f);
+}
+
+gfloat
+lrg_skeleton2d_get_shape_weight (LrgSkeleton2D *self,
+                                 gint           slot,
+                                 const gchar   *shape)
+{
+	Slot      *s;
+	SlotShape *sh;
+
+	g_return_val_if_fail (LRG_IS_SKELETON2D (self), 0.0f);
+
+	s = get_slot (self, slot);
+	if (s == NULL || shape == NULL)
+		return 0.0f;
+	sh = slot_shape (s, shape, FALSE);
+	return sh != NULL ? sh->weight : 0.0f;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2663,6 +2977,26 @@ lrg_skeleton2d_clip_apply (LrgSkeleton2DClip *self,
 			if (k >= 0)
 				set_name (&s->attachment, g_array_index (t->attach, NameKey, k).name);
 		}
+
+		/* blend-shape weights mix like colours, from the current weight
+		 * (0 for a shape the slot has not been given yet) */
+		if (t->shapes != NULL)
+		{
+			guint k;
+
+			for (k = 0; k < t->shapes->len; k++)
+			{
+				ShapeTrack *st = g_ptr_array_index (t->shapes, k);
+				SlotShape  *sh;
+				gfloat      v;
+
+				if (st->keys->len == 0)
+					continue;
+				sample_value_keys (st->keys, time, 1, &v);
+				sh = slot_shape (s, st->name, TRUE);
+				sh->weight = CLAMP (sh->weight + (v - sh->weight) * alpha, 0.0f, 1.0f);
+			}
+		}
 	}
 
 	/* draw order: stepped, at half weight; a key that is not a full
@@ -2697,6 +3031,26 @@ lrg_skeleton2d_clip_apply (LrgSkeleton2DClip *self,
 /* Drawing                                                             */
 /* ------------------------------------------------------------------ */
 
+/* Hands the slot's blend-shape weights to the attachment it shows (names
+ * the sprite lacks are ignored there) and skins it.  Everything that
+ * deforms a slot's attachment goes through here. */
+static void
+deform_slot (Slot             *s,
+             LrgSkinnedSprite *sprite,
+             const gfloat     *pal,
+             guint             n_pal)
+{
+	guint k;
+
+	for (k = 0; s->shapes != NULL && k < s->shapes->len; k++)
+	{
+		const SlotShape *sh = &g_array_index (s->shapes, SlotShape, k);
+
+		lrg_skinned_sprite_set_shape_weight (sprite, sh->name, sh->weight);
+	}
+	lrg_skinned_sprite_deform (sprite, pal, n_pal, s->bone);
+}
+
 void
 lrg_skeleton2d_deform (LrgSkeleton2D *self)
 {
@@ -2714,7 +3068,7 @@ lrg_skeleton2d_deform (LrgSkeleton2D *self)
 		LrgSkinnedSprite *sprite = resolve_attachment (self, si, s->attachment);
 
 		if (sprite != NULL)
-			lrg_skinned_sprite_deform (sprite, pal, n_pal, s->bone);
+			deform_slot (s, sprite, pal, n_pal);
 	}
 }
 
@@ -2758,7 +3112,7 @@ lrg_skeleton2d_draw (LrgSkeleton2D  *self,
 		c.g = mul_channel (s->color[1], t.g);
 		c.b = mul_channel (s->color[2], t.b);
 		c.a = mul_channel (s->color[3], t.a);
-		lrg_skinned_sprite_deform (sprite, pal, n_pal, s->bone);
+		deform_slot (s, sprite, pal, n_pal);
 		lrg_skinned_sprite_draw (sprite, &c);
 	}
 }
@@ -2830,6 +3184,93 @@ lrg_skeleton2d_load_textures (LrgSkeleton2D  *self,
 	return TRUE;
 }
 
+/* ------------------------------------------------------------------ */
+/* CPU drawing                                                         */
+/* ------------------------------------------------------------------ */
+
+void
+lrg_skeleton2d_draw_to_canvas (LrgSkeleton2D  *self,
+                               LrgImageCanvas *canvas,
+                               const GrlColor *tint)
+{
+	const gfloat *pal;
+	guint         n_pal;
+	guint         i;
+	GrlColor      t;
+
+	g_return_if_fail (LRG_IS_SKELETON2D (self));
+	g_return_if_fail (LRG_IS_IMAGE_CANVAS (canvas));
+
+	if (tint != NULL)
+		t = *tint;
+	else
+		t.r = t.g = t.b = t.a = 255;
+
+	/* the same walk as lrg_skeleton2d_draw(): draw order, the attachment
+	 * the slot shows (active skin, then default), slot colour times the
+	 * tint, deform through deform_slot() (so the slot's blend-shape
+	 * weights reach the sprite exactly as on the GPU) with the palette
+	 * of the last update, then draw; only the last step runs on the CPU
+	 * instead of through rlgl */
+	pal = lrg_skeleton2d_get_palette (self, &n_pal);
+	for (i = 0; i < self->draw_order->len; i++)
+	{
+		gint              si = g_array_index (self->draw_order, gint, i);
+		Slot             *s = &g_array_index (self->slots, Slot, si);
+		LrgSkinnedSprite *sprite = resolve_attachment (self, si, s->attachment);
+		GrlColor          c;
+
+		if (sprite == NULL || s->color[3] <= 0.0f)
+			continue;
+		c.r = mul_channel (s->color[0], t.r);
+		c.g = mul_channel (s->color[1], t.g);
+		c.b = mul_channel (s->color[2], t.b);
+		c.a = mul_channel (s->color[3], t.a);
+		deform_slot (s, sprite, pal, n_pal);
+		_lrg_skinned_sprite_draw_to_canvas_from (sprite, canvas, &c, self->base_dir);
+	}
+}
+
+gboolean
+lrg_skeleton2d_load_source_images (LrgSkeleton2D  *self,
+                                   GError        **error)
+{
+	g_autoptr(GHashTable) cache = NULL;
+	guint                 i;
+	guint                 j;
+
+	g_return_val_if_fail (LRG_IS_SKELETON2D (self), FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	/* one decoded image per distinct path, shared by every attachment
+	 * that names it (source images are immutable, so sharing is safe) */
+	cache = g_hash_table_new (g_str_hash, g_str_equal);
+	for (i = 0; i < self->skins->len; i++)
+	{
+		Skin *s = g_ptr_array_index (self->skins, i);
+
+		for (j = 0; j < s->entries->len; j++)
+		{
+			SkinEntry   *e = g_ptr_array_index (s->entries, j);
+			const gchar *image = lrg_skinned_sprite_get_image (e->sprite);
+			GrlImage    *img;
+
+			if (image == NULL || _lrg_skinned_sprite_peek_source_image (e->sprite) != NULL)
+				continue;
+			img = g_hash_table_lookup (cache, image);
+			if (img != NULL)
+			{
+				lrg_skinned_sprite_set_source_image (e->sprite, img);
+				continue;
+			}
+			if (!lrg_skinned_sprite_load_source_image (e->sprite, self->base_dir, error))
+				return FALSE;
+			g_hash_table_insert (cache, (gpointer)image, _lrg_skinned_sprite_peek_source_image (e->sprite));
+		}
+	}
+	return TRUE;
+}
+
 /* ================================================================== */
 /* .rskel2d reader                                                     */
 /* ================================================================== */
@@ -2838,6 +3279,7 @@ typedef struct
 {
 	const gchar  *source;
 	GError      **error;
+	gint          version;   /* the document's rskel2d: version */
 } Reader;
 
 static gboolean rd_fail (Reader      *rd,
@@ -3252,6 +3694,89 @@ read_slots (Reader        *rd,
 	return TRUE;
 }
 
+/* fails unless the document is at least version 2 (for what version 1
+ * cannot hold) */
+static gboolean
+rd_need_v2 (Reader      *rd,
+            const gchar *path,
+            const gchar *what)
+{
+	if (rd->version >= 2)
+		return TRUE;
+	return rd_fail (rd, LRG_SKELETON2D_ERROR_VERSION, path, "%s needs \"rskel2d: 2\"", what);
+}
+
+/* An attachment's "shapes": a list of {name, offsets} where offsets are
+ * sparse [vertex, dx, dy] rows (vertices not listed do not move). */
+static gboolean
+read_shapes (Reader           *rd,
+             LrgSkinnedSprite *sprite,
+             YamlNode         *node,
+             const gchar      *path)
+{
+	static const gchar * const keys[] = { "name", "offsets", NULL };
+	YamlSequence *seq;
+	guint         nv = lrg_skinned_sprite_get_vertex_count (sprite);
+	guint         i;
+
+	if (!rd_need_v2 (rd, path, "a blend shape") || !rd_sequence (rd, node, path, &seq))
+		return FALSE;
+	for (i = 0; i < yaml_sequence_get_length (seq); i++)
+	{
+		g_autofree gchar   *sp = g_strdup_printf ("%s/%u", path, i);
+		g_autofree gchar   *np = g_strdup_printf ("%s/name", sp);
+		g_autofree gfloat  *offsets = g_new0 (gfloat, (gsize)nv * 2 + 1);
+		g_autofree gboolean *seen = g_new0 (gboolean, nv + 1);
+		YamlMapping        *map;
+		const gchar        *name;
+		YamlNode           *m;
+
+		if (!rd_mapping (rd, yaml_sequence_get_element (seq, i), sp, &map) || !rd_keys (rd, map, sp, keys))
+			return FALSE;
+		if (!yaml_mapping_has_member (map, "name"))
+			return rd_fail (rd, LRG_SKELETON2D_ERROR_INVALID, sp, "missing key \"name\"");
+		if (!rd_string (rd, yaml_mapping_get_member (map, "name"), np, &name))
+			return FALSE;
+		if (lrg_skinned_sprite_find_shape (sprite, name) >= 0)
+			return rd_fail (rd, LRG_SKELETON2D_ERROR_INVALID, np, "duplicate shape \"%s\"", name);
+
+		/* the rows fill a dense, zeroed offset array */
+		if ((m = yaml_mapping_get_member (map, "offsets")) != NULL)
+		{
+			g_autofree gchar *op = g_strdup_printf ("%s/offsets", sp);
+			YamlSequence     *rows;
+			guint             k;
+
+			if (!rd_sequence (rd, m, op, &rows))
+				return FALSE;
+			for (k = 0; k < yaml_sequence_get_length (rows); k++)
+			{
+				g_autofree gchar *rp = g_strdup_printf ("%s/%u", op, k);
+				g_autofree gchar *ip = g_strdup_printf ("%s/0", rp);
+				g_autofree gchar *xp = g_strdup_printf ("%s/1", rp);
+				g_autofree gchar *yp = g_strdup_printf ("%s/2", rp);
+				YamlSequence     *row;
+				guint             v;
+
+				if (!rd_sequence (rd, yaml_sequence_get_element (rows, k), rp, &row))
+					return FALSE;
+				if (yaml_sequence_get_length (row) != 3)
+					return rd_fail (rd, LRG_SKELETON2D_ERROR_PARSE, rp, "expected [vertex, dx, dy]");
+				if (!rd_index (rd, yaml_sequence_get_element (row, 0), ip, nv, &v))
+					return FALSE;
+				if (seen[v])
+					return rd_fail (rd, LRG_SKELETON2D_ERROR_INVALID, ip, "vertex %u listed twice", v);
+				seen[v] = TRUE;
+				if (!rd_number (rd, yaml_sequence_get_element (row, 1), xp, &offsets[v * 2]) ||
+				    !rd_number (rd, yaml_sequence_get_element (row, 2), yp, &offsets[v * 2 + 1]))
+					return FALSE;
+			}
+		}
+		lrg_skinned_sprite_add_shape (sprite, name, offsets, nv * 2);
+	}
+	return TRUE;
+}
+
 static gboolean
 read_attachment (Reader        *rd,
                  LrgSkeleton2D *skel,
@@ -3259,7 +3784,8 @@ read_attachment (Reader        *rd,
                  YamlNode      *node,
                  const gchar   *path)
 {
-	static const gchar * const keys[] = { "slot", "name", "image", "region", "vertices", "weights", "triangles", NULL };
+	static const gchar * const keys[] = { "slot", "name", "image", "region", "vertices", "weights", "triangles",
+	                                      "shapes", NULL };
 	g_autoptr(LrgSkinnedSprite) sprite = lrg_skinned_sprite_new ();
 	g_autofree gchar           *p = NULL;
 	YamlMapping                *map;
@@ -3408,6 +3934,15 @@ read_attachment (Reader        *rd,
 			}
 			lrg_skinned_sprite_add_triangle (sprite, t[0], t[1], t[2]);
 		}
+	}
+
+	/* blend shapes (version 2): sparse [vertex, dx, dy] rows */
+	if ((m = yaml_mapping_get_member (map, "shapes")) != NULL)
+	{
+		g_free (p);
+		p = g_strdup_printf ("%s/shapes", path);
+		if (!read_shapes (rd, sprite, m, p))
+			return FALSE;
 	}
 
 	lrg_skeleton2d_set_attachment (skel, skin, slot, name, sprite);
@@ -3576,6 +4111,99 @@ read_value_keys (Reader            *rd,
 	return TRUE;
 }
 
+/* A slot track's "shapes" (version 2): a list of {shape, keys} where keys
+ * are {time, w, curve} flow maps like the colour keys. */
+static gboolean
+read_shape_tracks (Reader            *rd,
+                   LrgSkeleton2DClip *clip,
+                   const gchar       *slot,
+                   YamlNode          *node,
+                   const gchar       *path)
+{
+	static const gchar * const track_keys[] = { "shape", "keys", NULL };
+	static const gchar * const w_keys[] = { "time", "w", "curve", NULL };
+	g_autoptr(GPtrArray) names = g_ptr_array_new ();
+	YamlSequence        *seq;
+	guint                i;
+
+	if (!rd_need_v2 (rd, path, "a shape weight timeline") || !rd_sequence (rd, node, path, &seq))
+		return FALSE;
+	for (i = 0; i < yaml_sequence_get_length (seq); i++)
+	{
+		g_autofree gchar *tp = g_strdup_printf ("%s/%u", path, i);
+		g_autofree gchar *np = g_strdup_printf ("%s/shape", tp);
+		YamlMapping      *map;
+		const gchar      *shape;
+		YamlNode         *kn;
+		guint             k;
+
+		if (!rd_mapping (rd, yaml_sequence_get_element (seq, i), tp, &map) || !rd_keys (rd, map, tp, track_keys))
+			return FALSE;
+		if (!yaml_mapping_has_member (map, "shape"))
+			return rd_fail (rd, LRG_SKELETON2D_ERROR_INVALID, tp, "missing key \"shape\"");
+		if (!rd_string (rd, yaml_mapping_get_member (map, "shape"), np, &shape))
+			return FALSE;
+		for (k = 0; k < names->len; k++)
+		{
+			if (g_strcmp0 (g_ptr_array_index (names, k), shape) == 0)
+				return rd_fail (rd, LRG_SKELETON2D_ERROR_INVALID, np, "duplicate shape \"%s\"", shape);
+		}
+		g_ptr_array_add (names, (gpointer)shape);
+		if ((kn = yaml_mapping_get_member (map, "keys")) == NULL)
+			continue;
+
+		/* the keys: weights 0 .. 1 with the usual curves */
+		{
+			g_autofree gchar *kp = g_strdup_printf ("%s/keys", tp);
+			YamlSequence     *keys;
+
+			if (!rd_sequence (rd, kn, kp, &keys))
+				return FALSE;
+			for (k = 0; k < yaml_sequence_get_length (keys); k++)
+			{
+				g_autofree gchar   *ep = g_strdup_printf ("%s/%u", kp, k);
+				g_autofree gchar   *wp = g_strdup_printf ("%s/w", ep);
+				YamlMapping        *km;
+				gfloat              time;
+				gfloat              w;
+				gfloat              bez[4];
+				LrgSkeleton2DCurve  curve;
+
+				if (!rd_mapping (rd, yaml_sequence_get_element (keys, k), ep, &km) ||
+				    !rd_keys (rd, km, ep, w_keys) || !rd_time (rd, km, ep, &time) ||
+				    !rd_curve (rd, km, ep, &curve, bez))
+					return FALSE;
+				if (!yaml_mapping_has_member (km, "w"))
+					return rd_fail (rd, LRG_SKELETON2D_ERROR_INVALID, ep, "missing key \"w\"");
+				if (!rd_number (rd, yaml_mapping_get_member (km, "w"), wp, &w))
+					return FALSE;
+				if (w < 0.0f || w > 1.0f)
+					return rd_fail (rd, LRG_SKELETON2D_ERROR_INVALID, wp, "a shape weight must be from 0 to 1");
+				lrg_skeleton2d_clip_add_shape_key (clip, slot, shape, time, w, curve);
+				if (curve == LRG_SKELETON2D_CURVE_BEZIER)
+				{
+					guint idx;
+
+					/* the key just added: find it by time */
+					for (idx = 0; idx < lrg_skeleton2d_clip_get_shape_key_count (clip, slot, shape); idx++)
+					{
+						gfloat kt;
+
+						lrg_skeleton2d_clip_get_shape_key (clip, slot, shape, idx, &kt, NULL, NULL);
+						if (fabsf (kt - time) <= KEY_TIME_EPSILON)
+						{
+							lrg_skeleton2d_clip_set_shape_key_bezier (clip, slot, shape, idx,
+							                                          bez[0], bez[1], bez[2], bez[3]);
+							break;
+						}
+					}
+				}
+			}
+		}
+	}
+	return TRUE;
+}
+
 static gboolean
 read_animation (Reader        *rd,
                 LrgSkeleton2D *skel,
@@ -3584,7 +4212,7 @@ read_animation (Reader        *rd,
 {
 	static const gchar * const keys[] = { "name", "duration", "loop", "bones", "slots", "draw_order", "events", NULL };
 	static const gchar * const bone_keys[] = { "bone", "translate", "rotate", "scale", NULL };
-	static const gchar * const slot_keys[] = { "slot", "attachment", "color", NULL };
+	static const gchar * const slot_keys[] = { "slot", "attachment", "color", "shapes", NULL };
 	static const gchar * const att_keys[] = { "time", "name", NULL };
 	static const gchar * const order_keys[] = { "time", "order", NULL };
 	g_autoptr(LrgSkeleton2DClip) clip = NULL;
@@ -3724,6 +4352,13 @@ read_animation (Reader        *rd,
 				if (!read_value_keys (rd, clip, slot, KEYS_COLOR, kn, cp))
 					return FALSE;
 			}
+			if ((kn = yaml_mapping_get_member (sm, "shapes")) != NULL)
+			{
+				g_autofree gchar *hp = g_strdup_printf ("%s/shapes", sp);
+
+				if (!read_shape_tracks (rd, clip, slot, kn, hp))
+					return FALSE;
+			}
 		}
 	}
 
@@ -3836,12 +4471,16 @@ read_document (Reader   *rd,
 	}
 	if (!rd_number (rd, yaml_mapping_get_member (map, "rskel2d"), "/rskel2d", &version))
 		return NULL;
-	if (version != (gfloat)LRG_SKELETON2D_FORMAT_VERSION)
+
+	/* every whole version from 1 to the newest reads; the version gates
+	 * what the document may contain (rd_need_v2) */
+	if (version != floorf (version) || version < 1.0f || version > (gfloat)LRG_SKELETON2D_FORMAT_VERSION)
 	{
-		rd_fail (rd, LRG_SKELETON2D_ERROR_VERSION, "/rskel2d", "unsupported version %g (this library reads %d)",
+		rd_fail (rd, LRG_SKELETON2D_ERROR_VERSION, "/rskel2d", "unsupported version %g (this library reads 1 to %d)",
 		         (gdouble)version, LRG_SKELETON2D_FORMAT_VERSION);
 		return NULL;
 	}
+	rd->version = (gint)version;
 	if (!rd_keys (rd, map, "/", keys))
 		return NULL;
 
@@ -3896,6 +4535,7 @@ lrg_skeleton2d_new_from_data (const gchar  *data,
 	}
 	rd.source = "<data>";
 	rd.error = error;
+	rd.version = 0;
 	return read_document (&rd, yaml_parser_get_root (parser));
 }
 
@@ -3926,6 +4566,7 @@ lrg_skeleton2d_new_from_file (const gchar  *path,
 	}
 	rd.source = path;
 	rd.error = error;
+	rd.version = 0;
 	skel = read_document (&rd, yaml_parser_get_root (parser));
 	if (skel != NULL)
 	{
@@ -4202,6 +4843,126 @@ write_attachment (GString       *out,
 			g_string_append_printf (out, "- [%u, %u, %u]\n", a, b, c);
 		}
 	}
+
+	/* blend shapes (version 2): only the vertices a shape moves */
+	if (lrg_skinned_sprite_get_shape_count (sp) > 0)
+	{
+		w_indent (out, 4);
+		g_string_append (out, "shapes:\n");
+		for (i = 0; i < lrg_skinned_sprite_get_shape_count (sp); i++)
+		{
+			const gchar  *name = lrg_skinned_sprite_get_shape_name (sp, i);
+			guint         n = 0;
+			const gfloat *off = lrg_skinned_sprite_get_shape_offsets (sp, name, &n);
+			gboolean      any = FALSE;
+			guint         v;
+
+			w_indent (out, 5);
+			g_string_append (out, "- name: ");
+			w_str (out, name);
+			g_string_append_c (out, '\n');
+			w_indent (out, 6);
+			g_string_append (out, "offsets:");
+			for (v = 0; v + 1 < n; v += 2)
+			{
+				if (off[v] == 0.0f && off[v + 1] == 0.0f)
+					continue;
+				if (!any)
+					g_string_append_c (out, '\n');
+				any = TRUE;
+				w_indent (out, 7);
+				g_string_append_printf (out, "- [%u, ", v / 2);
+				w_num (out, off[v]);
+				g_string_append (out, ", ");
+				w_num (out, off[v + 1]);
+				g_string_append (out, "]\n");
+			}
+			if (!any)
+				g_string_append (out, " []\n");
+		}
+	}
+}
+
+/* A slot track's shape weight timelines (version 2); empty ones are
+ * left out. */
+static void
+w_shape_tracks (GString   *out,
+                SlotTrack *t)
+{
+	gboolean any = FALSE;
+	guint    i;
+	guint    k;
+
+	for (i = 0; t->shapes != NULL && i < t->shapes->len; i++)
+	{
+		ShapeTrack *st = g_ptr_array_index (t->shapes, i);
+
+		if (st->keys->len == 0)
+			continue;
+		if (!any)
+		{
+			w_indent (out, 4);
+			g_string_append (out, "shapes:\n");
+			any = TRUE;
+		}
+		w_indent (out, 5);
+		g_string_append (out, "- shape: ");
+		w_str (out, st->name);
+		g_string_append_c (out, '\n');
+		w_indent (out, 6);
+		g_string_append (out, "keys:\n");
+		for (k = 0; k < st->keys->len; k++)
+		{
+			const ValueKey *vk = &g_array_index (st->keys, ValueKey, k);
+
+			w_indent (out, 7);
+			g_string_append (out, "- {time: ");
+			w_num (out, vk->time);
+			g_string_append (out, ", w: ");
+			w_num (out, vk->v[0]);
+			w_curve (out, vk);
+			g_string_append (out, "}\n");
+		}
+	}
+}
+
+/* The lowest format version that holds the skeleton: 2 once any
+ * attachment has blend shapes or any clip has shape weight keys. */
+static gint
+document_version (LrgSkeleton2D *self)
+{
+	guint i;
+	guint j;
+
+	for (i = 0; i < self->skins->len; i++)
+	{
+		Skin *s = g_ptr_array_index (self->skins, i);
+
+		for (j = 0; j < s->entries->len; j++)
+		{
+			SkinEntry *e = g_ptr_array_index (s->entries, j);
+
+			if (lrg_skinned_sprite_get_shape_count (e->sprite) > 0)
+				return 2;
+		}
+	}
+	for (i = 0; i < self->clips->len; i++)
+	{
+		LrgSkeleton2DClip *clip = g_ptr_array_index (self->clips, i);
+
+		for (j = 0; j < clip->slot_tracks->len; j++)
+		{
+			SlotTrack *t = g_ptr_array_index (clip->slot_tracks, j);
+			guint      k;
+
+			for (k = 0; t->shapes != NULL && k < t->shapes->len; k++)
+			{
+				if (((ShapeTrack *)g_ptr_array_index (t->shapes, k))->keys->len > 0)
+					return 2;
+			}
+		}
+	}
+	return 1;
 }
 
 static void
@@ -4274,6 +5035,7 @@ write_clip (GString           *out,
 				}
 			}
 			w_value_keys (out, 4, "color", t->color, KEYS_COLOR);
+			w_shape_tracks (out, t);
 		}
 	}
 
@@ -4338,7 +5100,9 @@ lrg_skeleton2d_save_to_data (LrgSkeleton2D *self,
 	g_return_val_if_fail (LRG_IS_SKELETON2D (self), NULL);
 
 	out = g_string_new (NULL);
-	g_string_append_printf (out, "rskel2d: %d\n", LRG_SKELETON2D_FORMAT_VERSION);
+	/* the lowest version that can hold it, so older readers keep reading
+	 * every document that does not use the newer features */
+	g_string_append_printf (out, "rskel2d: %d\n", document_version (self));
 	if (self->name != NULL)
 		w_key_str (out, 0, "name", self->name);
 

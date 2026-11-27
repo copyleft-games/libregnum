@@ -76,6 +76,7 @@ G_BEGIN_DECLS
 #define LRG_LOG_DOMAIN_SANDBOX    "Libregnum-Sandbox"
 #define LRG_LOG_DOMAIN_PROCGEN    "Libregnum-Procgen"
 #define LRG_LOG_DOMAIN_REPLAY     "Libregnum-Replay"
+#define LRG_LOG_DOMAIN_ANIMATION  "Libregnum-Animation"
 
 /* ==========================================================================
  * Logging Macros

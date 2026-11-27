@@ -169,6 +169,8 @@ See the [[file:quickstart.org][Quickstart Guide]] for more detailed examples.
 - *[[file:examples/level-3d-runtime.org][Level 3D Runtime]]* - A standalone game playing an lrgeditor level with LrgWorld3D and LrgWorld3DRenderer
 - *[[file:examples/pbr-showcase.org][PBR Showcase]]* - Every 0.9.0 rendering feature in one level: environment/IBL, .rmat materials, spot/point shadows, decal, reflection probe, LOD, .rpost, with toggles
 - *[[file:examples/reel-captions-demo.org][Reel Captions Demo]]* - A 720p title sequence with translucent caption bands, glass and haze, anchored titles, a dissolve and an iris, rendered on every core and exported to H.264 with whatever encoder ffmpeg can run
+- *[[file:examples/skeleton2d-talking-head.org][Skeleton2D Talking Head]]* - A 2D character built in code lip-syncs a phoneme alignment, blinks, breathes and changes mood, rendered headless on the CPU to PNG frames and an MP4
+- *[[file:examples/skeleton2d-shape-sheet.org][Skeleton2D Shape Sheet]]* - A labelled contact sheet of every shape of the standard 2D shape sheet (visemes, eyes, brows, moods, body) on that character
 - *[[file:examples/synthwave-song.org][Synthwave Song]]* - "Neon Drive", a 2:40 song made in code with the music module: synths, an 808, a Foley impact, sidechained mix, rendered at -14 LUFS and exported to every audio format
 - *[[file:../examples/data/music/00_index.org][Example songs]]* - nine songs as =.rsong= files (synthwave, chillwave, ambient, outrun, heavy metal, hard rock, doom; 2:30 to 6:00), rendered with =examples/song-render=
 - *[[file:modules/music/import.org][Song import]]* - =examples/song-import= turns a recording into an editable =.rsong= (tempo, bars, sections, key, optional transcription)

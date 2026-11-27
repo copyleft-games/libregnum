@@ -1,0 +1,100 @@
+#+title: LrgSkeleton2DProcedural - Automatic Blink and Breathe
+#+description: Deterministic procedural blend-shape layers (random-interval blinking, breathing) that mix on top of any LrgSkeleton2D clip
+#+created: 2026-11-27
+
+* LrgSkeleton2DProcedural - Automatic Blink and Breathe
+:PROPERTIES:
+:CUSTOM_ID: lrgskeleton2dprocedural
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Animation]] > LrgSkeleton2DProcedural
+#+end_quote
+
+=LrgSkeleton2DProcedural= holds procedural layers that keep a 2D character alive between and during clips: an automatic blink at random intervals and a breathing cycle. Layers drive the blend-shape weights of the [[file:shape-sheet.org][standard shape sheet]] (=blink_l=, =blink_r=, =breathe=) on a slot, after the clips have posed the skeleton. =LrgSkeleton2DComponent= runs them for you.
+
+- *Header*: =animation/lrg-skeleton2d-procedural.h=
+- *Type*: =LrgSkeleton2DProcedural=, final GObject, =LRG_TYPE_SKELETON2D_PROCEDURAL=, GIR =Libregnum.Skeleton2DProcedural=
+- *Since*: 0.14
+- *Headless*: yes
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+- A *layer* targets one slot by name (usually the head or face slot); layers naming a slot the skeleton lacks are skipped, so one set of layers serves a whole cast.
+- *Blink*: blink =k= starts after =k + 1= intervals, each drawn uniformly from =[min_interval, max_interval]= by a seeded generator; during a blink of =duration= seconds the weight rises linearly to 1 at the middle and falls back to 0. The weight goes to both =blink_l= and =blink_r=. The layer mixes with =max (current, layer)=: it never opens eyes a clip closed (a "sleep" or wink clip wins).
+- *Breathe*: the weight =amount * (1 - cos (2 pi t / period)) / 2= goes to =breathe=; it is 0 at time 0 and =amount= half a period later. The layer *adds* to the clip's weight and the sum is clamped to 0 .. 1.
+- *Determinism*: the blink generator is a small splitmix32 seeded by the layer's seed, the same on every platform. Blink times are a pure function of the arguments and the time: evaluating forwards, backwards or scrubbing gives the same weights (start times are cached as they are first needed). Give each character its own seed so a crowd does not blink in sync.
+- *Time* is the caller's: seconds since the layers started. =LrgSkeleton2DComponent= uses its own running time (update steps times its speed), independent of which clip plays.
+
+** Quick start
+:PROPERTIES:
+:CUSTOM_ID: quick-start
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+/* blink every 2 .. 5 s and breathe every 4 s, on top of whatever plays */
+static void
+bring_to_life (LrgSkeleton2DComponent *rig,
+               guint32                 seed)
+{
+	g_autoptr(LrgSkeleton2DProcedural) life = lrg_skeleton2d_procedural_new ();
+
+	lrg_skeleton2d_procedural_add_blink (life, "head", 2.0f, 5.0f, 0.15f, seed);
+	lrg_skeleton2d_procedural_add_breathe (life, "torso", 4.0f, 0.6f);
+	lrg_skeleton2d_component_set_procedural (rig, life);
+}
+
+/* without a component: after the clips, before deforming */
+static void
+pose_by_hand (LrgSkeleton2D           *skel,
+              LrgSkeleton2DClip       *talk,
+              LrgSkeleton2DProcedural *life,
+              gdouble                  t)
+{
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_clip_apply (talk, skel, (gfloat)t, 1.0f);
+	lrg_skeleton2d_procedural_apply (life, skel, t);
+	lrg_skeleton2d_update_world (skel);
+	lrg_skeleton2d_deform (skel);
+}
+#+end_src
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_skeleton2d_procedural_new (void)= | no layers |
+| =lrg_skeleton2d_procedural_add_blink (self, slot, min_interval, max_interval, duration, seed)= | add a blink layer; FALSE unless =0 < min_interval <= max_interval= and =duration > 0= (a duration longer than =min_interval= is shortened to it, so blinks never overlap) |
+| =lrg_skeleton2d_procedural_add_breathe (self, slot, period, amount)= | add a breathing layer; FALSE unless =period > 0= and =amount= is in 0 .. 1 |
+| =lrg_skeleton2d_procedural_get_layer_count=, =lrg_skeleton2d_procedural_clear= | layers |
+| =lrg_skeleton2d_procedural_get_blink_weight (self, index, time)= | the weight a blink layer gives at =time= (0 for another layer kind, a bad index or a negative time) |
+| =lrg_skeleton2d_procedural_apply (self, skeleton, time)= | mix every layer into the skeleton's slot shape weights |
+| =lrg_skeleton2d_component_set_procedural (rig, layers)= / =lrg_skeleton2d_component_get_procedural= | run layers in a component (see [[file:../ecs/components/skeleton2d-component.org::#procedural][LrgSkeleton2DComponent]]) |
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: behaviour
+:END:
+- Layers apply in the order they were added; two blink layers on one slot combine with =max=, two breathe layers add.
+- =apply= reads and writes the weights with =lrg_skeleton2d_get_shape_weight()= and =lrg_skeleton2d_set_shape_weight()=, so the slot weights are clamped to 0 .. 1 and reach the attachment on the next deform or draw. A character without blink or breathe shapes is not changed visibly.
+- Run it *after* the clips and *after* =lrg_skeleton2d_reset_pose()=: the reset sets every weight back to 0, and applying the layers twice without a reset would add the breath twice.
+- The cache of blink start times grows by one entry per blink reached (a few hundred bytes per hour of play).
+- In a reel, call =apply= from the pose callback of an [[file:../reel/clips.org::#skeleton2d-clip][LrgReelSkeleton2DClip]] (=lrg_reel_skeleton2d_clip_set_pose_func()=), with the clip time: the layers are pure functions of the time, so frames may render in any order, and the clip runs every pose callback under its render lock, so the blink cache is never written from two threads at once (=render_parallel= output stays byte-identical). See [[file:lip-sync.org::#end-to-end][LrgLipSync: end-to-end]] and the [[file:../../examples/skeleton2d-talking-head.org][talking head example]].
+
+** Errors
+:PROPERTIES:
+:CUSTOM_ID: errors
+:END:
+None: invalid layer arguments make the =add= functions return FALSE without adding anything.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:shape-sheet.org][The standard shape sheet]]
+- [[file:lip-sync.org][LrgLipSync]]
+- [[file:skeleton2d.org][LrgSkeleton2D]] and [[file:../ecs/components/skeleton2d-component.org][LrgSkeleton2DComponent]]

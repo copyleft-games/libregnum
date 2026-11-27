@@ -7,14 +7,17 @@
  * Tests for 2D skeletal animation: LrgSkeleton2D (hierarchy, world
  * transforms, skins, slots, draw order), LrgSkinnedSprite (CPU skinning,
  * automatic weights), LrgSkeleton2DClip (sampling, curves, slot swaps,
- * draw order, events), the .rskel2d format (fixture, byte-stable round
- * trip, strict errors) and LrgSkeleton2DComponent (crossfades, events,
- * drawing a bending arm and a walking figure under a GPU).
+ * draw order, events), blend shapes (sprite API, morph before skinning,
+ * slot weights, weight tracks with curves, crossfading shapes), the
+ * .rskel2d format (v1 and v2 fixtures, byte-stable round trip, strict
+ * errors) and LrgSkeleton2DComponent (crossfades, events, drawing a
+ * bending arm and a walking figure under a GPU).
  */
 
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <math.h>
+#include <string.h>
 #include <libregnum.h>
 #include <raylib.h>
 
@@ -627,6 +630,330 @@ test_crossfade (void)
 }
 
 /* ==========================================================================
+ * Blend shapes
+ * ========================================================================== */
+
+/* The sprite's shape API at its boundaries: sizes, replacement, missing
+ * names, vertices added later, copy and clear. */
+static void
+test_shape_api (void)
+{
+	g_autoptr(LrgSkinnedSprite) quad = lrg_skinned_sprite_new_quad (0, 0, 10, 10, -1);
+	g_autoptr(LrgSkinnedSprite) copy = NULL;
+	gfloat                      off[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+	gfloat                      bad[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+	const gfloat               *got;
+	guint                       n;
+
+	/* wrong length, empty name and non-finite offsets are refused */
+	g_assert_false (lrg_skinned_sprite_add_shape (quad, "A", off, 6));
+	g_assert_false (lrg_skinned_sprite_add_shape (quad, "", off, 8));
+	bad[3] = INFINITY;
+	g_assert_false (lrg_skinned_sprite_add_shape (quad, "A", bad, 8));
+	g_assert_cmpuint (lrg_skinned_sprite_get_shape_count (quad), ==, 0);
+
+	/* add, read back, weights start at 0 */
+	g_assert_true (lrg_skinned_sprite_add_shape (quad, LRG_SHAPE_A, off, 8));
+	g_assert_true (lrg_skinned_sprite_add_shape (quad, LRG_SHAPE_BLINK_L, NULL, 0));
+	g_assert_cmpuint (lrg_skinned_sprite_get_shape_count (quad), ==, 2);
+	g_assert_cmpstr (lrg_skinned_sprite_get_shape_name (quad, 1), ==, "blink_l");
+	g_assert_null (lrg_skinned_sprite_get_shape_name (quad, 2));
+	g_assert_cmpint (lrg_skinned_sprite_find_shape (quad, "A"), ==, 0);
+	g_assert_cmpint (lrg_skinned_sprite_find_shape (quad, "nope"), ==, -1);
+	got = lrg_skinned_sprite_get_shape_offsets (quad, "A", &n);
+	g_assert_cmpuint (n, ==, 8);
+	g_assert_cmpfloat (got[5], ==, 6.0f);
+	got = lrg_skinned_sprite_get_shape_offsets (quad, "blink_l", &n);
+	g_assert_cmpuint (n, ==, 8);
+	g_assert_cmpfloat (got[7], ==, 0.0f);
+	g_assert_null (lrg_skinned_sprite_get_shape_offsets (quad, "nope", &n));
+	g_assert_cmpuint (n, ==, 0);
+	g_assert_cmpfloat (lrg_skinned_sprite_get_shape_weight (quad, "A"), ==, 0.0f);
+
+	/* weights: unknown names are a no-op, non-finite values ignored, the
+	 * sprite itself does not clamp */
+	lrg_skinned_sprite_set_shape_weight (quad, "nope", 1.0f);
+	g_assert_cmpfloat (lrg_skinned_sprite_get_shape_weight (quad, "nope"), ==, 0.0f);
+	lrg_skinned_sprite_set_shape_weight (quad, "A", 0.5f);
+	lrg_skinned_sprite_set_shape_weight (quad, "A", NAN);
+	g_assert_cmpfloat (lrg_skinned_sprite_get_shape_weight (quad, "A"), ==, 0.5f);
+	lrg_skinned_sprite_set_shape_weight (quad, "blink_l", 2.0f);
+	g_assert_cmpfloat (lrg_skinned_sprite_get_shape_weight (quad, "blink_l"), ==, 2.0f);
+
+	/* replacing keeps the weight and the index */
+	off[0] = 9.0f;
+	g_assert_true (lrg_skinned_sprite_add_shape (quad, "A", off, 8));
+	g_assert_cmpint (lrg_skinned_sprite_find_shape (quad, "A"), ==, 0);
+	g_assert_cmpfloat (lrg_skinned_sprite_get_shape_weight (quad, "A"), ==, 0.5f);
+	g_assert_cmpfloat (lrg_skinned_sprite_get_shape_offsets (quad, "A", NULL)[0], ==, 9.0f);
+
+	/* a vertex added later gets a zero offset in every shape */
+	g_assert_cmpint (lrg_skinned_sprite_add_vertex (quad, 20, 20, 1, 1), ==, 4);
+	got = lrg_skinned_sprite_get_shape_offsets (quad, "A", &n);
+	g_assert_cmpuint (n, ==, 10);
+	g_assert_cmpfloat (got[8], ==, 0.0f);
+	g_assert_cmpfloat (got[9], ==, 0.0f);
+
+	/* copies are deep and keep weights */
+	copy = lrg_skinned_sprite_copy (quad);
+	g_assert_cmpuint (lrg_skinned_sprite_get_shape_count (copy), ==, 2);
+	g_assert_cmpfloat (lrg_skinned_sprite_get_shape_weight (copy, "A"), ==, 0.5f);
+	g_assert_true (lrg_skinned_sprite_get_shape_offsets (copy, "A", NULL) !=
+	               lrg_skinned_sprite_get_shape_offsets (quad, "A", NULL));
+	g_assert_cmpfloat (lrg_skinned_sprite_get_shape_offsets (copy, "A", NULL)[0], ==, 9.0f);
+
+	/* remove; clear drops the rest */
+	g_assert_true (lrg_skinned_sprite_remove_shape (quad, "A"));
+	g_assert_false (lrg_skinned_sprite_remove_shape (quad, "A"));
+	g_assert_cmpint (lrg_skinned_sprite_find_shape (quad, "blink_l"), ==, 0);
+	lrg_skinned_sprite_clear (quad);
+	g_assert_cmpuint (lrg_skinned_sprite_get_shape_count (quad), ==, 0);
+	g_assert_cmpuint (lrg_skinned_sprite_get_shape_count (copy), ==, 2);
+}
+
+/* Shapes morph the bind positions before skinning (so the offset turns
+ * with the bone), mix additively, and the skeleton hands each slot's
+ * weights to the attachment it shows. */
+static void
+test_shape_deform (void)
+{
+	LrgSkinnedSprite         *strip = NULL;
+	g_autoptr(LrgSkeleton2D)  skel = make_arm (&strip);
+	g_autofree gfloat        *up = NULL;
+	g_autofree gfloat        *wide = NULL;
+	const gfloat             *pos;
+	guint                     nv;
+	gfloat                    x;
+	gfloat                    y;
+
+	/* vertex 10 is the top-right corner (100, -5), fully on "fore" */
+	nv = lrg_skinned_sprite_get_vertex_count (strip);
+	lrg_skinned_sprite_get_vertex (strip, 10, &x, &y, NULL, NULL);
+	g_assert_cmpfloat (x, ==, 100.0f);
+	g_assert_cmpfloat (y, ==, -5.0f);
+	up = g_new0 (gfloat, nv * 2);
+	wide = g_new0 (gfloat, nv * 2);
+	up[10 * 2 + 1] = 4.0f;
+	wide[10 * 2] = 2.0f;
+	g_assert_true (lrg_skinned_sprite_add_shape (strip, "up", up, nv * 2));
+	g_assert_true (lrg_skinned_sprite_add_shape (strip, "wide", wide, nv * 2));
+
+	/* bend the forearm 90 degrees: (x, y) on fore -> (50 - y, x - 50) */
+	lrg_skeleton2d_set_bone_local (skel, 1, 50, 0, 90, 1, 1);
+	lrg_skeleton2d_update_world (skel);
+
+	/* weight 0: plain skinning */
+	lrg_skeleton2d_deform (skel);
+	pos = lrg_skinned_sprite_get_deformed (strip, NULL);
+	g_assert_cmpfloat_with_epsilon (pos[20], 55.0f, EPS);
+	g_assert_cmpfloat_with_epsilon (pos[21], 50.0f, EPS);
+
+	/* "up" at 1 through the slot: (100, -1) skinned -> (51, 50); applied
+	 * after skinning it would have been (55, 54) */
+	lrg_skeleton2d_set_shape_weight (skel, 0, "up", 1.0f);
+	lrg_skeleton2d_deform (skel);
+	g_assert_cmpfloat (lrg_skinned_sprite_get_shape_weight (strip, "up"), ==, 1.0f);
+	pos = lrg_skinned_sprite_get_deformed (strip, NULL);
+	g_assert_cmpfloat_with_epsilon (pos[20], 51.0f, EPS);
+	g_assert_cmpfloat_with_epsilon (pos[21], 50.0f, EPS);
+
+	/* shapes add: up 0.5 + wide 1 -> (102, -3) -> (53, 52) */
+	lrg_skeleton2d_set_shape_weight (skel, 0, "up", 0.5f);
+	lrg_skeleton2d_set_shape_weight (skel, 0, "wide", 1.0f);
+	lrg_skeleton2d_deform (skel);
+	pos = lrg_skinned_sprite_get_deformed (strip, NULL);
+	g_assert_cmpfloat_with_epsilon (pos[20], 53.0f, EPS);
+	g_assert_cmpfloat_with_epsilon (pos[21], 52.0f, EPS);
+	/* other vertices did not move off their skinned place */
+	g_assert_cmpfloat_with_epsilon (pos[0], 0.0f, EPS);
+	g_assert_cmpfloat_with_epsilon (pos[1], -5.0f, EPS);
+
+	/* slot weights clamp to 0 .. 1; shapes the attachment lacks and bad
+	 * slots are a no-op; non-finite weights are ignored */
+	lrg_skeleton2d_set_shape_weight (skel, 0, "wide", 7.0f);
+	g_assert_cmpfloat (lrg_skeleton2d_get_shape_weight (skel, 0, "wide"), ==, 1.0f);
+	lrg_skeleton2d_set_shape_weight (skel, 0, "wide", -1.0f);
+	g_assert_cmpfloat (lrg_skeleton2d_get_shape_weight (skel, 0, "wide"), ==, 0.0f);
+	lrg_skeleton2d_set_shape_weight (skel, 0, "wide", NAN);
+	g_assert_cmpfloat (lrg_skeleton2d_get_shape_weight (skel, 0, "wide"), ==, 0.0f);
+	lrg_skeleton2d_set_shape_weight (skel, 0, LRG_SHAPE_SHOUT, 1.0f);
+	lrg_skeleton2d_set_shape_weight (skel, 7, "up", 1.0f);
+	g_assert_cmpfloat (lrg_skeleton2d_get_shape_weight (skel, 7, "up"), ==, 0.0f);
+	g_assert_cmpfloat (lrg_skeleton2d_get_shape_weight (skel, 0, "never"), ==, 0.0f);
+	lrg_skeleton2d_deform (skel);
+	pos = lrg_skinned_sprite_get_deformed (strip, NULL);
+	g_assert_cmpfloat_with_epsilon (pos[20], 53.0f, EPS);    /* up 0.5 -> (100, -3) */
+	g_assert_cmpfloat_with_epsilon (pos[21], 50.0f, EPS);
+
+	/* reset_pose zeroes the weights, and the zero reaches the sprite */
+	lrg_skeleton2d_reset_pose (skel);
+	g_assert_cmpfloat (lrg_skeleton2d_get_shape_weight (skel, 0, "up"), ==, 0.0f);
+	lrg_skeleton2d_set_bone_local (skel, 1, 50, 0, 90, 1, 1);
+	lrg_skeleton2d_update_world (skel);
+	lrg_skeleton2d_deform (skel);
+	g_assert_cmpfloat (lrg_skinned_sprite_get_shape_weight (strip, "up"), ==, 0.0f);
+	pos = lrg_skinned_sprite_get_deformed (strip, NULL);
+	g_assert_cmpfloat_with_epsilon (pos[20], 55.0f, EPS);
+
+	/* an unweighted vertex (default bone branch) and no palette at all
+	 * (bind branch) morph too */
+	{
+		g_autoptr(LrgSkinnedSprite) quad = lrg_skinned_sprite_new_quad (60, -5, 10, 10, -1);
+		gfloat                      d[8] = { 0, 2, 0, 0, 0, 0, 0, 0 };
+		const gfloat               *p;
+		guint                       np = 0;
+
+		const gfloat               *pal = lrg_skeleton2d_get_palette (skel, &np);
+
+		g_assert_true (lrg_skinned_sprite_add_shape (quad, "s", d, 8));
+		lrg_skinned_sprite_set_shape_weight (quad, "s", 1.0f);
+		lrg_skinned_sprite_deform (quad, pal, np, 1);
+		p = lrg_skinned_sprite_get_deformed (quad, NULL);
+		/* (60, -3) on fore -> (53, 10) */
+		g_assert_cmpfloat_with_epsilon (p[0], 53.0f, EPS);
+		g_assert_cmpfloat_with_epsilon (p[1], 10.0f, EPS);
+		lrg_skinned_sprite_deform (quad, NULL, 0, -1);
+		p = lrg_skinned_sprite_get_deformed (quad, NULL);
+		g_assert_cmpfloat_with_epsilon (p[0], 60.0f, EPS);
+		g_assert_cmpfloat_with_epsilon (p[1], -3.0f, EPS);
+	}
+}
+
+/* Weight timelines: keys, curves, sampling, listing, applying with a mix
+ * weight. */
+static void
+test_shape_clip (void)
+{
+	g_autoptr(LrgSkeleton2D)     skel = make_arm (NULL);
+	g_autoptr(LrgSkeleton2DClip) clip = lrg_skeleton2d_clip_new ("talk");
+	g_auto(GStrv)                shapes = NULL;
+	g_auto(GStrv)                slots = NULL;
+	gfloat                       w;
+	gfloat                       t;
+	LrgSkeleton2DCurve           curve;
+
+	lrg_skeleton2d_clip_add_shape_key (clip, "arm", "A", 0.0f, 0.0f, LRG_SKELETON2D_CURVE_LINEAR);
+	lrg_skeleton2d_clip_add_shape_key (clip, "arm", "A", 1.0f, 1.0f, LRG_SKELETON2D_CURVE_STEPPED);
+	lrg_skeleton2d_clip_add_shape_key (clip, "arm", "A", 2.0f, 0.0f, LRG_SKELETON2D_CURVE_LINEAR);
+	lrg_skeleton2d_clip_add_shape_key (clip, "arm", "O", 0.5f, 3.0f, LRG_SKELETON2D_CURVE_LINEAR);   /* clamped */
+	g_assert_cmpfloat (lrg_skeleton2d_clip_get_duration (clip), ==, 2.0f);
+	g_assert_cmpuint (lrg_skeleton2d_clip_get_shape_key_count (clip, "arm", "A"), ==, 3);
+	g_assert_cmpuint (lrg_skeleton2d_clip_get_shape_key_count (clip, "arm", "nope"), ==, 0);
+	g_assert_cmpuint (lrg_skeleton2d_clip_get_shape_key_count (clip, "hand", "A"), ==, 0);
+	g_assert_true (lrg_skeleton2d_clip_get_shape_key (clip, "arm", "O", 0, &t, &w, &curve));
+	g_assert_cmpfloat (w, ==, 1.0f);
+	g_assert_false (lrg_skeleton2d_clip_get_shape_key (clip, "arm", "O", 1, NULL, NULL, NULL));
+
+	/* the generic (target, channel) functions see no shape keys */
+	g_assert_cmpuint (lrg_skeleton2d_clip_get_key_count (clip, "arm", LRG_SKELETON2D_CHANNEL_SHAPE), ==, 0);
+	{
+		g_autoptr(GEnumClass) klass = g_type_class_ref (LRG_TYPE_SKELETON2D_CHANNEL);
+
+		g_assert_cmpstr (g_enum_get_value (klass, LRG_SKELETON2D_CHANNEL_SHAPE)->value_nick, ==, "shape");
+	}
+
+	/* listing */
+	shapes = lrg_skeleton2d_clip_get_shapes (clip, "arm");
+	g_assert_cmpuint (g_strv_length (shapes), ==, 2);
+	g_assert_cmpstr (shapes[0], ==, "A");
+	g_assert_cmpstr (shapes[1], ==, "O");
+	slots = lrg_skeleton2d_clip_get_targets (clip, TRUE);
+	g_assert_cmpstr (slots[0], ==, "arm");
+
+	/* sampling: linear, stepped hold, clamped ends */
+	g_assert_true (lrg_skeleton2d_clip_sample_shape (clip, "arm", "A", 0.25f, &w));
+	g_assert_cmpfloat_with_epsilon (w, 0.25f, EPS);
+	lrg_skeleton2d_clip_sample_shape (clip, "arm", "A", 1.75f, &w);
+	g_assert_cmpfloat_with_epsilon (w, 1.0f, EPS);
+	lrg_skeleton2d_clip_sample_shape (clip, "arm", "A", 9.0f, &w);
+	g_assert_cmpfloat_with_epsilon (w, 0.0f, EPS);
+	g_assert_false (lrg_skeleton2d_clip_sample_shape (clip, "arm", "nope", 0.5f, &w));
+	g_assert_cmpfloat (w, ==, 0.0f);
+
+	/* a Bézier ease-in-out is half way at the middle, slower at 1/4 */
+	g_assert_true (lrg_skeleton2d_clip_set_shape_key_bezier (clip, "arm", "A", 0, 0.42f, 0.0f, 0.58f, 1.0f));
+	g_assert_false (lrg_skeleton2d_clip_set_shape_key_bezier (clip, "arm", "A", 9, 0, 0, 1, 1));
+	g_assert_true (lrg_skeleton2d_clip_get_shape_key (clip, "arm", "A", 0, NULL, NULL, &curve));
+	g_assert_cmpint (curve, ==, LRG_SKELETON2D_CURVE_BEZIER);
+	lrg_skeleton2d_clip_sample_shape (clip, "arm", "A", 0.5f, &w);
+	g_assert_cmpfloat_with_epsilon (w, 0.5f, 1e-3f);
+	lrg_skeleton2d_clip_sample_shape (clip, "arm", "A", 0.25f, &w);
+	g_assert_cmpfloat (w, <, 0.2f);
+
+	/* applying: alpha mixes from the current weight */
+	lrg_skeleton2d_add_clip (skel, clip);
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_clip_apply (clip, skel, 1.5f, 1.0f);
+	g_assert_cmpfloat_with_epsilon (lrg_skeleton2d_get_shape_weight (skel, 0, "A"), 1.0f, EPS);
+	g_assert_cmpfloat_with_epsilon (lrg_skeleton2d_get_shape_weight (skel, 0, "O"), 1.0f, EPS);
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_set_shape_weight (skel, 0, "A", 0.5f);
+	lrg_skeleton2d_clip_apply (clip, skel, 1.5f, 0.25f);
+	g_assert_cmpfloat_with_epsilon (lrg_skeleton2d_get_shape_weight (skel, 0, "A"), 0.625f, EPS);
+
+	/* removing keys */
+	g_assert_true (lrg_skeleton2d_clip_remove_shape_key (clip, "arm", "O", 0));
+	g_assert_false (lrg_skeleton2d_clip_remove_shape_key (clip, "arm", "O", 0));
+	g_assert_cmpuint (lrg_skeleton2d_clip_get_shape_key_count (clip, "arm", "O"), ==, 0);
+	g_assert_false (lrg_skeleton2d_clip_sample_shape (clip, "arm", "O", 0.5f, &w));
+}
+
+/* A component crossfade mixes shape weights like every other channel. */
+static void
+test_shape_crossfade (void)
+{
+	LrgSkinnedSprite                 *strip = NULL;
+	g_autoptr(LrgSkeleton2D)          skel = make_arm (&strip);
+	g_autoptr(LrgSkeleton2DClip)      calm = lrg_skeleton2d_clip_new ("calm");
+	g_autoptr(LrgSkeleton2DClip)      shout = lrg_skeleton2d_clip_new ("shout");
+	g_autoptr(LrgSkeleton2DComponent) comp = NULL;
+	g_autofree gfloat                *off = NULL;
+	guint                             nv = lrg_skinned_sprite_get_vertex_count (strip);
+	const gfloat                     *pos;
+
+	/* vertex 0 (0, -5) moves up 10 with the shout shape */
+	off = g_new0 (gfloat, nv * 2);
+	off[1] = -10.0f;
+	g_assert_true (lrg_skinned_sprite_add_shape (strip, LRG_SHAPE_SHOUT, off, nv * 2));
+
+	lrg_skeleton2d_clip_add_shape_key (calm, "arm", LRG_SHAPE_SHOUT, 0.0f, 0.0f, LRG_SKELETON2D_CURVE_LINEAR);
+	lrg_skeleton2d_clip_add_shape_key (calm, "arm", LRG_SHAPE_HAPPY, 0.0f, 1.0f, LRG_SKELETON2D_CURVE_LINEAR);
+	lrg_skeleton2d_clip_set_duration (calm, 1.0f);
+	lrg_skeleton2d_clip_add_shape_key (shout, "arm", LRG_SHAPE_SHOUT, 0.0f, 0.0f, LRG_SKELETON2D_CURVE_LINEAR);
+	lrg_skeleton2d_clip_add_shape_key (shout, "arm", LRG_SHAPE_SHOUT, 1.0f, 1.0f, LRG_SKELETON2D_CURVE_LINEAR);
+	lrg_skeleton2d_add_clip (skel, calm);
+	lrg_skeleton2d_add_clip (skel, shout);
+
+	comp = lrg_skeleton2d_component_new_with_skeleton (skel);
+	g_assert_true (lrg_skeleton2d_component_play (comp, "calm", TRUE));
+	lrg_component_update (LRG_COMPONENT (comp), 0.25f);
+	g_assert_cmpfloat_with_epsilon (lrg_skeleton2d_get_shape_weight (skel, 0, LRG_SHAPE_HAPPY), 1.0f, EPS);
+
+	/* fade calm (shout 0, happy 1) into shout (0 -> 1 over 1 s) over 1 s:
+	 * at 0.5 s shout samples 0.5 and mixes at 0.5 over 0 -> 0.25; happy
+	 * is only keyed by calm, so it stays at calm's 1 */
+	g_assert_true (lrg_skeleton2d_component_crossfade (comp, "shout", 1.0f, FALSE));
+	lrg_component_update (LRG_COMPONENT (comp), 0.5f);
+	g_assert_cmpfloat_with_epsilon (lrg_skeleton2d_component_get_mix_weight (comp), 0.5f, EPS);
+	g_assert_cmpfloat_with_epsilon (lrg_skeleton2d_get_shape_weight (skel, 0, LRG_SHAPE_SHOUT), 0.25f, EPS);
+	g_assert_cmpfloat_with_epsilon (lrg_skeleton2d_get_shape_weight (skel, 0, LRG_SHAPE_HAPPY), 1.0f, EPS);
+	lrg_skeleton2d_update_world (skel);
+	lrg_skeleton2d_deform (skel);
+	pos = lrg_skinned_sprite_get_deformed (strip, NULL);
+	g_assert_cmpfloat_with_epsilon (pos[1], -7.5f, EPS);
+
+	/* fade done: shout's own weight */
+	lrg_component_update (LRG_COMPONENT (comp), 0.6f);
+	g_assert_cmpfloat_with_epsilon (lrg_skeleton2d_component_get_mix_weight (comp), 1.0f, EPS);
+	g_assert_cmpfloat_with_epsilon (lrg_skeleton2d_get_shape_weight (skel, 0, LRG_SHAPE_SHOUT), 1.0f, EPS);
+	g_assert_cmpfloat_with_epsilon (lrg_skeleton2d_get_shape_weight (skel, 0, LRG_SHAPE_HAPPY), 0.0f, EPS);
+	lrg_skeleton2d_update_world (skel);
+	lrg_skeleton2d_deform (skel);
+	pos = lrg_skinned_sprite_get_deformed (strip, NULL);
+	g_assert_cmpfloat_with_epsilon (pos[1], -15.0f, EPS);
+}
+
+/* ==========================================================================
  * Automatic weights
  * ========================================================================== */
 
@@ -817,6 +1144,119 @@ test_format_fixture (void)
 	g_assert_cmpuint (lrg_skeleton2d_clip_get_event_count (lrg_skeleton2d_get_clip (skel, "idle")), ==, 0);
 }
 
+/* A version 2 document: blend shapes on an attachment (sparse offsets, an
+ * empty shape) and shape weight keys with curves.  The writer emits it
+ * byte for byte. */
+static const gchar *fixture_v2 =
+	"rskel2d: 2\n"
+	"name: face\n"
+	"bones:\n"
+	"  - name: head\n"
+	"    length: 40\n"
+	"slots:\n"
+	"  - name: face\n"
+	"    bone: head\n"
+	"    attachment: face\n"
+	"skins:\n"
+	"  - name: default\n"
+	"    attachments:\n"
+	"      - slot: face\n"
+	"        name: face\n"
+	"        vertices:\n"
+	"          - [0, 0, 0, 0]\n"
+	"          - [10, 0, 1, 0]\n"
+	"          - [0, 10, 0, 1]\n"
+	"        weights:\n"
+	"          - [head, 1]\n"
+	"          - [head, 1]\n"
+	"          - [head, 1]\n"
+	"        triangles:\n"
+	"          - [0, 1, 2]\n"
+	"        shapes:\n"
+	"          - name: blink_l\n"
+	"            offsets:\n"
+	"              - [0, 0, 2.5]\n"
+	"              - [2, -1, 0.5]\n"
+	"          - name: A\n"
+	"            offsets: []\n"
+	"animations:\n"
+	"  - name: talk\n"
+	"    duration: 1\n"
+	"    slots:\n"
+	"      - slot: face\n"
+	"        shapes:\n"
+	"          - shape: A\n"
+	"            keys:\n"
+	"              - {time: 0, w: 0}\n"
+	"              - {time: 0.25, w: 1, curve: [0.42, 0, 0.58, 1]}\n"
+	"              - {time: 1, w: 0, curve: stepped}\n"
+	"          - shape: blink_l\n"
+	"            keys:\n"
+	"              - {time: 0.5, w: 0.75}\n";
+
+static void
+test_format_v2 (void)
+{
+	g_autoptr(GError)        error = NULL;
+	g_autoptr(LrgSkeleton2D) skel = lrg_skeleton2d_new_from_data (fixture_v2, -1, &error);
+	g_autoptr(LrgSkeleton2D) back = NULL;
+	g_autofree gchar        *text = NULL;
+	g_autofree gchar        *text2 = NULL;
+	g_autofree gchar        *v1 = NULL;
+	LrgSkeleton2DClip       *talk;
+	LrgSkinnedSprite        *face;
+	const gfloat            *off;
+	guint                    n;
+	gfloat                   w;
+	LrgSkeleton2DCurve       curve;
+
+	g_assert_no_error (error);
+	g_assert_nonnull (skel);
+	text = lrg_skeleton2d_save_to_data (skel, NULL);
+	g_assert_cmpstr (text, ==, fixture_v2);
+
+	/* field by field */
+	face = lrg_skeleton2d_get_skin_attachment (skel, NULL, 0, "face");
+	g_assert_cmpuint (lrg_skinned_sprite_get_shape_count (face), ==, 2);
+	off = lrg_skinned_sprite_get_shape_offsets (face, "blink_l", &n);
+	g_assert_cmpuint (n, ==, 6);
+	g_assert_cmpfloat (off[0], ==, 0.0f);
+	g_assert_cmpfloat (off[1], ==, 2.5f);
+	g_assert_cmpfloat (off[2], ==, 0.0f);
+	g_assert_cmpfloat (off[3], ==, 0.0f);
+	g_assert_cmpfloat (off[4], ==, -1.0f);
+	g_assert_cmpfloat (off[5], ==, 0.5f);
+	talk = lrg_skeleton2d_get_clip (skel, "talk");
+	g_assert_true (lrg_skeleton2d_clip_get_shape_key (talk, "face", "A", 1, NULL, &w, &curve));
+	g_assert_cmpfloat (w, ==, 1.0f);
+	g_assert_cmpint (curve, ==, LRG_SKELETON2D_CURVE_BEZIER);
+	g_assert_true (lrg_skeleton2d_clip_get_shape_key (talk, "face", "A", 2, NULL, NULL, &curve));
+	g_assert_cmpint (curve, ==, LRG_SKELETON2D_CURVE_STEPPED);
+
+	/* load / save again: same bytes */
+	back = lrg_skeleton2d_new_from_data (text, -1, &error);
+	g_assert_no_error (error);
+	text2 = lrg_skeleton2d_save_to_data (back, NULL);
+	g_assert_cmpstr (text2, ==, fixture_v2);
+
+	/* without the version 2 features the writer falls back to version 1 */
+	g_assert_true (lrg_skinned_sprite_remove_shape (face, "blink_l"));
+	g_assert_true (lrg_skinned_sprite_remove_shape (face, "A"));
+	lrg_skeleton2d_remove_clip (skel, "talk");
+	v1 = lrg_skeleton2d_save_to_data (skel, NULL);
+	g_assert_true (g_str_has_prefix (v1, "rskel2d: 1\n"));
+	g_assert_null (strstr (v1, "shapes"));
+
+	/* the shapes of a loaded character drive its mesh through a clip */
+	lrg_skeleton2d_reset_pose (back);
+	lrg_skeleton2d_clip_apply (lrg_skeleton2d_get_clip (back, "talk"), back, 0.5f, 1.0f);
+	lrg_skeleton2d_update_world (back);
+	lrg_skeleton2d_deform (back);
+	off = lrg_skinned_sprite_get_deformed (lrg_skeleton2d_get_skin_attachment (back, NULL, 0, "face"), NULL);
+	g_assert_cmpfloat_with_epsilon (off[1], 0.75f * 2.5f, EPS);
+	g_assert_cmpfloat_with_epsilon (off[4], -0.75f, EPS);
+}
+
 static void
 test_format_round_trip (void)
 {
@@ -880,8 +1320,57 @@ static void
 test_format_errors (void)
 {
 	static const BadDoc cases[] = {
-		{ "bones: []\n", LRG_SKELETON2D_ERROR_VERSION, "<data>: /: missing \"rskel2d: 1\"" },
-		{ "rskel2d: 2\n", LRG_SKELETON2D_ERROR_VERSION, "/rskel2d: unsupported version 2" },
+		{ "bones: []\n", LRG_SKELETON2D_ERROR_VERSION, "<data>: /: missing \"rskel2d: 2\"" },
+		{ "rskel2d: 3\n", LRG_SKELETON2D_ERROR_VERSION, "/rskel2d: unsupported version 3 (this library reads 1 to 2)" },
+		{ "rskel2d: 1.5\n", LRG_SKELETON2D_ERROR_VERSION, "/rskel2d: unsupported version 1.5" },
+		{ "rskel2d: 0\n", LRG_SKELETON2D_ERROR_VERSION, "/rskel2d: unsupported version 0" },
+		/* version 2 features in a version 1 document */
+		{ "rskel2d: 1\nbones:\n  - name: a\nslots:\n  - name: s\n    bone: a\nskins:\n  - name: default\n"
+		  "    attachments:\n      - slot: s\n        name: m\n        shapes: []\n", LRG_SKELETON2D_ERROR_VERSION,
+		  "<data>: /skins/0/attachments/0/shapes: a blend shape needs \"rskel2d: 2\"" },
+		{ "rskel2d: 1\nbones:\n  - name: a\nslots:\n  - name: s\n    bone: a\nanimations:\n  - name: w\n"
+		  "    slots:\n      - slot: s\n        shapes: []\n", LRG_SKELETON2D_ERROR_VERSION,
+		  "/animations/0/slots/0/shapes: a shape weight timeline needs \"rskel2d: 2\"" },
+		/* version 2 shapes */
+		{ "rskel2d: 2\nbones:\n  - name: a\nslots:\n  - name: s\n    bone: a\nskins:\n  - name: default\n"
+		  "    attachments:\n      - slot: s\n        name: m\n        vertices:\n          - [0, 0, 0, 0]\n"
+		  "        shapes:\n          - name: x\n            offsets:\n              - [1, 0, 0]\n",
+		  LRG_SKELETON2D_ERROR_INVALID, "/skins/0/attachments/0/shapes/0/offsets/0/0: expected a vertex index from 0 to 0" },
+		{ "rskel2d: 2\nbones:\n  - name: a\nslots:\n  - name: s\n    bone: a\nskins:\n  - name: default\n"
+		  "    attachments:\n      - slot: s\n        name: m\n        vertices:\n          - [0, 0, 0, 0]\n"
+		  "        shapes:\n          - name: x\n            offsets:\n              - [0, 1]\n",
+		  LRG_SKELETON2D_ERROR_PARSE, "/skins/0/attachments/0/shapes/0/offsets/0: expected [vertex, dx, dy]" },
+		{ "rskel2d: 2\nbones:\n  - name: a\nslots:\n  - name: s\n    bone: a\nskins:\n  - name: default\n"
+		  "    attachments:\n      - slot: s\n        name: m\n        vertices:\n          - [0, 0, 0, 0]\n"
+		  "        shapes:\n          - name: x\n            offsets:\n              - [0, 1, 1]\n"
+		  "              - [0, 2, 2]\n",
+		  LRG_SKELETON2D_ERROR_INVALID, "/skins/0/attachments/0/shapes/0/offsets/1/0: vertex 0 listed twice" },
+		{ "rskel2d: 2\nbones:\n  - name: a\nslots:\n  - name: s\n    bone: a\nskins:\n  - name: default\n"
+		  "    attachments:\n      - slot: s\n        name: m\n        shapes:\n          - name: x\n"
+		  "          - name: x\n", LRG_SKELETON2D_ERROR_INVALID,
+		  "/skins/0/attachments/0/shapes/1/name: duplicate shape \"x\"" },
+		{ "rskel2d: 2\nbones:\n  - name: a\nslots:\n  - name: s\n    bone: a\nskins:\n  - name: default\n"
+		  "    attachments:\n      - slot: s\n        name: m\n        shapes:\n          - name: x\n"
+		  "            weight: 1\n", LRG_SKELETON2D_ERROR_INVALID,
+		  "/skins/0/attachments/0/shapes/0: unknown key \"weight\"" },
+		{ "rskel2d: 2\nbones:\n  - name: a\nslots:\n  - name: s\n    bone: a\nanimations:\n  - name: w\n"
+		  "    slots:\n      - slot: s\n        shapes:\n          - keys: []\n", LRG_SKELETON2D_ERROR_INVALID,
+		  "/animations/0/slots/0/shapes/0: missing key \"shape\"" },
+		{ "rskel2d: 2\nbones:\n  - name: a\nslots:\n  - name: s\n    bone: a\nanimations:\n  - name: w\n"
+		  "    slots:\n      - slot: s\n        shapes:\n          - shape: A\n            keys:\n"
+		  "              - {time: 0, w: 1.5}\n", LRG_SKELETON2D_ERROR_INVALID,
+		  "/animations/0/slots/0/shapes/0/keys/0/w: a shape weight must be from 0 to 1" },
+		{ "rskel2d: 2\nbones:\n  - name: a\nslots:\n  - name: s\n    bone: a\nanimations:\n  - name: w\n"
+		  "    slots:\n      - slot: s\n        shapes:\n          - shape: A\n            keys:\n"
+		  "              - {time: 0}\n", LRG_SKELETON2D_ERROR_INVALID,
+		  "/animations/0/slots/0/shapes/0/keys/0: missing key \"w\"" },
+		{ "rskel2d: 2\nbones:\n  - name: a\nslots:\n  - name: s\n    bone: a\nanimations:\n  - name: w\n"
+		  "    slots:\n      - slot: s\n        shapes:\n          - shape: A\n            keys:\n"
+		  "              - {time: 0, weight: 1}\n", LRG_SKELETON2D_ERROR_INVALID,
+		  "/animations/0/slots/0/shapes/0/keys/0: unknown key \"weight\"" },
+		{ "rskel2d: 2\nbones:\n  - name: a\nslots:\n  - name: s\n    bone: a\nanimations:\n  - name: w\n"
+		  "    slots:\n      - slot: s\n        shapes:\n          - shape: A\n          - shape: A\n",
+		  LRG_SKELETON2D_ERROR_INVALID, "/animations/0/slots/0/shapes/1/shape: duplicate shape \"A\"" },
 		{ "rskel2d: 1\nbone: []\n", LRG_SKELETON2D_ERROR_INVALID, "/: unknown key \"bone\"" },
 		{ "rskel2d: 1\nbones:\n  - name: a\n    parent: b\n  - name: b\n", LRG_SKELETON2D_ERROR_INVALID,
 		  "/bones/0/parent: unknown bone \"b\" (a parent must come before its children)" },
@@ -988,6 +1477,410 @@ test_perf (void)
 	g_test_message ("deform the figure (6 slots, %u vertices): %.2f us", 4u * 26u + 8u, figure_us);
 	if (g_getenv ("LRG_SKEL2D_PERF") != NULL)
 		g_printerr ("perf: pose %.2f us, skin1024x4 %.2f us, figure %.2f us\n", pose_us, skin_us, figure_us);
+}
+
+/* ==========================================================================
+ * CPU: lrg_skeleton2d_draw_to_canvas() draws without a window
+ * ========================================================================== */
+
+/* Saves @img when LRG_TEST_SHOTS names a directory (visual checks). */
+static void
+maybe_save_cpu (GrlImage    *img,
+                const gchar *name)
+{
+	const gchar      *dir = g_getenv ("LRG_TEST_SHOTS");
+	g_autofree gchar *path = NULL;
+
+	if (dir == NULL || *dir == '\0')
+		return;
+	path = g_strdup_printf ("%s/%s.png", dir, name);
+	grl_image_export (img, path);
+}
+
+/* The RGB of pixel (x, y) of @img is within 6 of (r, g, b). */
+static gboolean
+cpu_pixel_is (GrlImage *img,
+              gint      x,
+              gint      y,
+              guint8    r,
+              guint8    g,
+              guint8    b)
+{
+	const guint8 *p = grl_image_get_pixels (img, NULL);
+
+	p += ((gsize)y * (gsize)grl_image_get_width (img) + (gsize)x) * 4;
+	return ABS ((gint)p[0] - r) <= 6 && ABS ((gint)p[1] - g) <= 6 && ABS ((gint)p[2] - b) <= 6;
+}
+
+/* A black canvas */
+static LrgImageCanvas *
+black_canvas (gint w,
+              gint h)
+{
+	GrlColor black = { 0, 0, 0, 255 };
+
+	return lrg_image_canvas_new (w, h, &black);
+}
+
+/* The arm of the GPU test drawn on the CPU: straight, then bent by the
+ * "bend" clip; the forearm pixels move with the bone. */
+static void
+test_cpu_arm (void)
+{
+	g_autoptr(LrgSkeleton2D)     skel = make_arm (NULL);
+	g_autoptr(LrgSkeleton2DClip) bend = make_bend_clip ();
+	g_autoptr(LrgImageCanvas)    straight = black_canvas (240, 200);
+	g_autoptr(LrgImageCanvas)    bent = black_canvas (240, 200);
+	GrlImage                    *img;
+
+	lrg_skeleton2d_set_slot_setup_color (skel, 0, 1.0f, 0.0f, 0.0f, 1.0f);
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_set_root_transform (skel, 100.0f, 60.0f, 0.0f, 1.0f, 1.0f);
+	lrg_skeleton2d_update_world (skel);
+	lrg_skeleton2d_draw_to_canvas (skel, straight, NULL);
+	img = lrg_image_canvas_get_image (straight);
+	maybe_save_cpu (img, "s2d-cpu-arm-straight");
+	/* the strip covers x 100 .. 200, y 55 .. 65 */
+	g_assert_true (cpu_pixel_is (img, 125, 60, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 185, 60, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 100, 55, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 199, 64, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 99, 60, 0, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 200, 60, 0, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 150, 54, 0, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 150, 65, 0, 0, 0));
+
+	/* bend the forearm 90 degrees: it now hangs down from (150, 60) */
+	lrg_skeleton2d_clip_apply (bend, skel, 1.0f, 1.0f);
+	lrg_skeleton2d_update_world (skel);
+	lrg_skeleton2d_draw_to_canvas (skel, bent, NULL);
+	img = lrg_image_canvas_get_image (bent);
+	maybe_save_cpu (img, "s2d-cpu-arm-bent");
+	g_assert_true (cpu_pixel_is (img, 125, 60, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 150, 95, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 185, 60, 0, 0, 0));   /* the straight forearm is gone */
+}
+
+/*
+ * Slot colours tint, the draw tint multiplies them, draw order decides
+ * which of two overlapping slots is on top, a transparent slot is
+ * skipped, and the canvas transform places the skeleton like a camera.
+ */
+static void
+test_cpu_tint_and_order (void)
+{
+	g_autoptr(LrgSkeleton2D)    skel = lrg_skeleton2d_new ();
+	g_autoptr(LrgSkinnedSprite) back = lrg_skinned_sprite_new_quad (0, 0, 20, 20, -1);
+	g_autoptr(LrgSkinnedSprite) front = lrg_skinned_sprite_new_quad (10, 10, 20, 20, -1);
+	g_autoptr(LrgImageCanvas)   c1 = black_canvas (64, 64);
+	g_autoptr(LrgImageCanvas)   c2 = black_canvas (64, 64);
+	g_autoptr(LrgImageCanvas)   c3 = black_canvas (64, 64);
+	g_autoptr(LrgImageCanvas)   c4 = black_canvas (64, 64);
+	GrlColor                    grey = { 128, 128, 128, 255 };
+	gint                        bone;
+	gint                        sb;
+	gint                        sf;
+	gint                        reversed[2];
+
+	bone = lrg_skeleton2d_add_bone (skel, "root", -1, 0, 0, 0, 1, 1, 0);
+	sb = lrg_skeleton2d_add_slot (skel, "back", bone, "q");
+	sf = lrg_skeleton2d_add_slot (skel, "front", bone, "q");
+	g_assert_true (lrg_skeleton2d_set_attachment (skel, NULL, sb, "q", back));
+	g_assert_true (lrg_skeleton2d_set_attachment (skel, NULL, sf, "q", front));
+	lrg_skeleton2d_set_slot_setup_color (skel, sb, 1.0f, 0.0f, 0.0f, 1.0f);
+	lrg_skeleton2d_set_slot_setup_color (skel, sf, 0.0f, 0.0f, 1.0f, 1.0f);
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_set_root_transform (skel, 10.0f, 10.0f, 0.0f, 1.0f, 1.0f);
+	lrg_skeleton2d_update_world (skel);
+
+	/* setup order: back (red) under front (blue) */
+	lrg_skeleton2d_draw_to_canvas (skel, c1, NULL);
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c1), 15, 15, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c1), 25, 25, 0, 0, 255));
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c1), 35, 35, 0, 0, 255));
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c1), 45, 45, 0, 0, 0));
+
+	/* reversed order puts red on top in the overlap; the grey tint halves
+	 * every slot colour */
+	reversed[0] = sf;
+	reversed[1] = sb;
+	g_assert_true (lrg_skeleton2d_set_draw_order (skel, reversed, 2));
+	lrg_skeleton2d_draw_to_canvas (skel, c2, &grey);
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c2), 25, 25, 128, 0, 0));
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c2), 35, 35, 0, 0, 128));
+
+	/* a slot at alpha 0 is not drawn; at alpha 0.5 it blends */
+	lrg_skeleton2d_set_slot_color (skel, sb, 1.0f, 0.0f, 0.0f, 0.0f);
+	lrg_skeleton2d_set_slot_color (skel, sf, 0.0f, 0.0f, 1.0f, 0.5f);
+	lrg_skeleton2d_draw_to_canvas (skel, c3, NULL);
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c3), 15, 15, 0, 0, 0));
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c3), 25, 25, 0, 0, 128));
+
+	/* the canvas transform moves the whole skeleton like a 2D camera */
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_update_world (skel);
+	lrg_image_canvas_translate (c4, 20.0f, 0.0f);
+	lrg_skeleton2d_draw_to_canvas (skel, c4, NULL);
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c4), 15, 15, 0, 0, 0));
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c4), 35, 15, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (c4), 55, 35, 0, 0, 255));
+}
+
+/* The walking figure with a generated checker atlas on the head: both
+ * checker colours show inside the head box, the body is drawn, and the
+ * region picks the atlas cell (the blink cell is another region). */
+static void
+test_cpu_figure (void)
+{
+	g_autoptr(LrgSkeleton2D)    skel = make_figure ();
+	g_autoptr(GrlImage)         faces = NULL;
+	g_autoptr(LrgImageCanvas)   canvas = NULL;
+	g_autoptr(LrgSkinnedSprite) copy = NULL;
+	GrlColor                    c1 = { 250, 225, 190, 255 };
+	GrlColor                    c2 = { 60, 40, 30, 255 };
+	GrlColor                    bg = { 24, 26, 32, 255 };
+	GrlImage                   *img;
+	LrgSkeleton2DClip          *walk;
+	LrgSkinnedSprite           *head_sprite;
+	gint                        head;
+	guint                       lit = 0;
+	guint                       dark = 0;
+	gint                        x;
+	gint                        y;
+
+	faces = grl_image_new_checked (64, 32, 8, 4, &c1, &c2);
+	head = lrg_skeleton2d_find_slot (skel, "head");
+	head_sprite = lrg_skeleton2d_get_skin_attachment (skel, NULL, head, "head");
+	lrg_skinned_sprite_set_source_image (head_sprite, faces);
+	lrg_skinned_sprite_set_source_image (lrg_skeleton2d_get_skin_attachment (skel, NULL, head, "blink"), faces);
+	g_assert_true (lrg_skinned_sprite_get_source_image (head_sprite) == faces);
+
+	/* copies share the CPU source */
+	copy = lrg_skinned_sprite_copy (head_sprite);
+	g_assert_true (lrg_skinned_sprite_get_source_image (copy) == faces);
+
+	walk = lrg_skeleton2d_get_clip (skel, "walk");
+	g_assert_nonnull (walk);
+	canvas = lrg_image_canvas_new (440, 280, &bg);
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_clip_apply (walk, skel, 0.3f, 1.0f);
+	lrg_skeleton2d_set_root_transform (skel, 90.0f, 170.0f, 0.0f, 1.0f, 1.0f);
+	lrg_skeleton2d_update_world (skel);
+	lrg_skeleton2d_draw_to_canvas (skel, canvas, NULL);
+	img = lrg_image_canvas_get_image (canvas);
+	maybe_save_cpu (img, "s2d-cpu-figure");
+
+	/* the torso is around the hip; the head samples the checker,
+	 * tinted by the slot colour */
+	g_assert_false (cpu_pixel_is (img, 90, 140, 24, 26, 32));
+	for (y = 80; y < 110; y++)
+	{
+		for (x = 80; x < 100; x++)
+		{
+			const guint8 *p = grl_image_get_pixels (img, NULL) + ((gsize)y * 440 + (gsize)x) * 4;
+
+			if (p[0] > 180 && p[1] > 140)
+				lit++;
+			else if (p[0] > 35 && p[0] < 90 && p[2] < 60)
+				dark++;
+		}
+	}
+	g_assert_cmpuint (lit, >, 30);
+	g_assert_cmpuint (dark, >, 30);
+}
+
+/* An atlas region: the sprite samples only its cell, and bilinear
+ * filtering clamps at the cell border instead of bleeding the
+ * neighbouring cell in. */
+static void
+test_cpu_region (void)
+{
+	g_autoptr(LrgSkinnedSprite) quad = lrg_skinned_sprite_new_quad (0, 0, 16, 16, -1);
+	g_autoptr(GrlImage)         atlas = NULL;
+	g_autoptr(LrgImageCanvas)   canvas = black_canvas (16, 16);
+	GrlColor                    red = { 255, 0, 0, 255 };
+	GrlColor                    green = { 0, 255, 0, 255 };
+	GrlImage                   *img;
+	guint8                     *p;
+	gint                        x;
+	gint                        y;
+
+	/* a 4x2 atlas: red cell on the left, green cell on the right */
+	atlas = grl_image_new_color (4, 2, &red);
+	p = grl_image_get_pixels (atlas, NULL);
+	for (y = 0; y < 2; y++)
+		for (x = 2; x < 4; x++)
+			memcpy (p + (y * 4 + x) * 4, &green, 4);
+
+	lrg_skinned_sprite_set_source_image (quad, atlas);
+	lrg_skinned_sprite_set_region (quad, 2, 0, 2, 2);
+	lrg_skinned_sprite_draw_to_canvas (quad, canvas, NULL);
+	img = lrg_image_canvas_get_image (canvas);
+	for (y = 0; y < 16; y++)
+		for (x = 0; x < 16; x++)
+			g_assert_true (cpu_pixel_is (img, x, y, 0, 255, 0));
+
+	/* no region: the whole atlas, red on the left half */
+	lrg_skinned_sprite_set_region (quad, 0, 0, 0, 0);
+	lrg_skinned_sprite_draw_to_canvas (quad, canvas, NULL);
+	g_assert_true (cpu_pixel_is (img, 1, 8, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (img, 14, 8, 0, 255, 0));
+}
+
+/*
+ * Blend shapes reach the CPU path exactly as the GPU path: the weights
+ * live on the slot and only get to the sprite through the skeleton's
+ * per-slot deform, so lrg_skeleton2d_draw_to_canvas() must go through it
+ * too.  A 2x2 grid mesh on a rotated bone has a shape that pushes its
+ * right column 16 units outwards; at slot weight 1 the CPU render
+ * covers pixels the weight 0 render leaves black, and the positions it
+ * drew are the ones lrg_skeleton2d_deform() computes.
+ */
+static void
+test_cpu_shapes (void)
+{
+	g_autoptr(LrgSkeleton2D)    skel = lrg_skeleton2d_new ();
+	g_autoptr(LrgSkinnedSprite) grid = lrg_skinned_sprite_new_grid (0, 0, 20, 20, 2, 2);
+	g_autoptr(LrgImageCanvas)   rest = black_canvas (64, 64);
+	g_autoptr(LrgImageCanvas)   open = black_canvas (64, 64);
+	g_autofree gfloat          *push = NULL;
+	g_autofree gfloat          *drawn = NULL;
+	GrlColor                    black = { 0, 0, 0, 255 };
+	const gfloat               *pos;
+	GrlImage                   *a;
+	GrlImage                   *b;
+	guint                       nv;
+	guint                       i;
+	gint                        bone;
+	gint                        slot;
+
+	/* the mesh sits on one bone that the pose turns 90 degrees, placed
+	 * at (40, 10): setup (x, y) lands on canvas (40 - y, 10 + x) */
+	bone = lrg_skeleton2d_add_bone (skel, "head", -1, 0, 0, 0, 1, 1, 0);
+	slot = lrg_skeleton2d_add_slot (skel, "face", bone, "mesh");
+	g_assert_true (lrg_skeleton2d_set_attachment (skel, NULL, slot, "mesh", grid));
+	lrg_skeleton2d_set_slot_setup_color (skel, slot, 1.0f, 0.0f, 0.0f, 1.0f);
+
+	/* the shape moves every vertex of the right column (x = 20) by +16 x */
+	nv = lrg_skinned_sprite_get_vertex_count (grid);
+	push = g_new0 (gfloat, nv * 2);
+	for (i = 0; i < nv; i++)
+	{
+		gfloat x;
+		gfloat y;
+
+		lrg_skinned_sprite_get_vertex (grid, i, &x, &y, NULL, NULL);
+		if (x == 20.0f)
+			push[i * 2] = 16.0f;
+	}
+	g_assert_true (lrg_skinned_sprite_add_shape (grid, LRG_SHAPE_STRETCH, push, nv * 2));
+
+	/* weight 0 */
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_set_bone_local (skel, bone, 0, 0, 90, 1, 1);
+	lrg_skeleton2d_set_root_transform (skel, 40.0f, 10.0f, 0.0f, 1.0f, 1.0f);
+	lrg_skeleton2d_update_world (skel);
+	lrg_skeleton2d_draw_to_canvas (skel, rest, NULL);
+	a = lrg_image_canvas_get_image (rest);
+	maybe_save_cpu (a, "s2d-cpu-shape-rest");
+
+	/* weight 1, set on the slot only (never on the sprite directly) */
+	lrg_skeleton2d_set_shape_weight (skel, slot, LRG_SHAPE_STRETCH, 1.0f);
+	lrg_skeleton2d_draw_to_canvas (skel, open, NULL);
+	b = lrg_image_canvas_get_image (open);
+	maybe_save_cpu (b, "s2d-cpu-shape-stretch");
+	g_assert_cmpfloat (lrg_skinned_sprite_get_shape_weight (grid, LRG_SHAPE_STRETCH), ==, 1.0f);
+
+	/* rest covers canvas y 10 .. 30; the stretch reaches y 46 */
+	g_assert_true (cpu_pixel_is (a, 30, 20, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (a, 30, 38, 0, 0, 0));
+	g_assert_true (cpu_pixel_is (b, 30, 20, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (b, 30, 38, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (b, 30, 44, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (b, 30, 48, 0, 0, 0));
+	g_assert_true (memcmp (grl_image_get_pixels (a, NULL), grl_image_get_pixels (b, NULL), 64 * 64 * 4) != 0);
+
+	/* the CPU draw left exactly the deform's positions in the sprite */
+	pos = lrg_skinned_sprite_get_deformed (grid, NULL);
+	drawn = g_memdup2 (pos, nv * 2 * sizeof (gfloat));
+	lrg_skeleton2d_deform (skel);
+	pos = lrg_skinned_sprite_get_deformed (grid, NULL);
+	for (i = 0; i < nv * 2; i++)
+		g_assert_cmpfloat (drawn[i], ==, pos[i]);
+	for (i = 0; i < nv; i++)
+	{
+		gfloat x;
+		gfloat y;
+
+		lrg_skinned_sprite_get_vertex (grid, i, &x, &y, NULL, NULL);
+		if (x == 20.0f)
+			g_assert_cmpfloat_with_epsilon (pos[i * 2 + 1], 10.0f + 36.0f, EPS);
+	}
+
+	/* back to weight 0 through a pose reset: the render matches rest */
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_set_bone_local (skel, bone, 0, 0, 90, 1, 1);
+	lrg_skeleton2d_update_world (skel);
+	lrg_image_canvas_clear (open, &black);
+	lrg_skeleton2d_draw_to_canvas (skel, open, NULL);
+	g_assert_true (memcmp (grl_image_get_pixels (a, NULL), grl_image_get_pixels (lrg_image_canvas_get_image (open), NULL), 64 * 64 * 4) == 0);
+}
+
+/* Image paths load on the CPU, relative to the skeleton's base
+ * directory: lazily on the first draw, or up front with errors. */
+static void
+test_cpu_source_files (void)
+{
+	g_autoptr(GError)           error = NULL;
+	g_autofree gchar           *dir = g_dir_make_tmp ("lrg-s2d-cpu-XXXXXX", &error);
+	g_autofree gchar           *png = NULL;
+	g_autoptr(GrlImage)         blue = NULL;
+	g_autoptr(LrgSkeleton2D)    skel = lrg_skeleton2d_new ();
+	g_autoptr(LrgSkeleton2D)    skel2 = lrg_skeleton2d_new ();
+	g_autoptr(LrgSkinnedSprite) quad = lrg_skinned_sprite_new_quad (0, 0, 8, 8, -1);
+	g_autoptr(LrgSkinnedSprite) quad2 = lrg_skinned_sprite_new_quad (0, 0, 8, 8, -1);
+	g_autoptr(LrgSkinnedSprite) missing = lrg_skinned_sprite_new_quad (0, 0, 8, 8, -1);
+	g_autoptr(LrgImageCanvas)   canvas = black_canvas (8, 8);
+	GrlColor                    c = { 20, 40, 220, 255 };
+	gint                        bone;
+	gint                        slot;
+
+	g_assert_no_error (error);
+	png = g_build_filename (dir, "blue.png", NULL);
+	blue = grl_image_new_color (4, 4, &c);
+	g_assert_true (grl_image_export (blue, png));
+
+	/* lazy: the first draw loads blue.png from the base directory */
+	bone = lrg_skeleton2d_add_bone (skel, "root", -1, 0, 0, 0, 1, 1, 0);
+	slot = lrg_skeleton2d_add_slot (skel, "s", bone, "q");
+	lrg_skinned_sprite_set_image (quad, "blue.png");
+	lrg_skeleton2d_set_attachment (skel, NULL, slot, "q", quad);
+	lrg_skeleton2d_set_base_dir (skel, dir);
+	lrg_skeleton2d_update_world (skel);
+	lrg_skeleton2d_draw_to_canvas (skel, canvas, NULL);
+	g_assert_true (cpu_pixel_is (lrg_image_canvas_get_image (canvas), 4, 4, 20, 40, 220));
+	g_assert_nonnull (lrg_skinned_sprite_get_source_image (quad));
+
+	/* up front: both sprites naming blue.png share one decoded image */
+	bone = lrg_skeleton2d_add_bone (skel2, "root", -1, 0, 0, 0, 1, 1, 0);
+	slot = lrg_skeleton2d_add_slot (skel2, "s", bone, "q");
+	lrg_skinned_sprite_set_image (quad2, "blue.png");
+	lrg_skinned_sprite_set_image (missing, "blue.png");
+	lrg_skeleton2d_set_attachment (skel2, NULL, slot, "q", quad2);
+	lrg_skeleton2d_set_attachment (skel2, NULL, slot, "r", missing);
+	lrg_skeleton2d_set_base_dir (skel2, dir);
+	g_assert_true (lrg_skeleton2d_load_source_images (skel2, &error));
+	g_assert_no_error (error);
+	g_assert_true (lrg_skinned_sprite_get_source_image (quad2) == lrg_skinned_sprite_get_source_image (missing));
+
+	/* a missing file is an error from the explicit loader */
+	lrg_skinned_sprite_set_source_image (missing, NULL);
+	lrg_skinned_sprite_set_image (missing, "nope.png");
+	g_assert_false (lrg_skeleton2d_load_source_images (skel2, &error));
+	g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
+
+	g_unlink (png);
+	g_rmdir (dir);
 }
 
 /* ==========================================================================
@@ -1181,10 +2074,21 @@ main (int   argc,
 	g_test_add_func ("/skeleton2d/clip-sampling", test_clip_sampling);
 	g_test_add_func ("/skeleton2d/crossfade", test_crossfade);
 	g_test_add_func ("/skeleton2d/auto-weights", test_auto_weights);
+	g_test_add_func ("/skeleton2d/shapes/api", test_shape_api);
+	g_test_add_func ("/skeleton2d/shapes/deform", test_shape_deform);
+	g_test_add_func ("/skeleton2d/shapes/clip", test_shape_clip);
+	g_test_add_func ("/skeleton2d/shapes/crossfade", test_shape_crossfade);
 	g_test_add_func ("/skeleton2d/format/fixture", test_format_fixture);
+	g_test_add_func ("/skeleton2d/format/v2", test_format_v2);
 	g_test_add_func ("/skeleton2d/format/round-trip", test_format_round_trip);
 	g_test_add_func ("/skeleton2d/format/errors", test_format_errors);
 	g_test_add_func ("/skeleton2d/perf", test_perf);
+	g_test_add_func ("/skeleton2d/cpu/arm", test_cpu_arm);
+	g_test_add_func ("/skeleton2d/cpu/tint-and-order", test_cpu_tint_and_order);
+	g_test_add_func ("/skeleton2d/cpu/figure", test_cpu_figure);
+	g_test_add_func ("/skeleton2d/cpu/region", test_cpu_region);
+	g_test_add_func ("/skeleton2d/cpu/source-files", test_cpu_source_files);
+	g_test_add_func ("/skeleton2d/cpu/shapes", test_cpu_shapes);
 	g_test_add_func ("/skeleton2d/gpu/world-arm", test_gpu_world_arm);
 	g_test_add_func ("/skeleton2d/gpu/figure", test_gpu_figure);
 

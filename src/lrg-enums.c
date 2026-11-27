@@ -6538,3 +6538,76 @@ lrg_frame_align_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+GType
+lrg_viseme_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_VISEME_REST, "LRG_VISEME_REST", "rest" },
+            { LRG_VISEME_A, "LRG_VISEME_A", "a" },
+            { LRG_VISEME_E, "LRG_VISEME_E", "e" },
+            { LRG_VISEME_I, "LRG_VISEME_I", "i" },
+            { LRG_VISEME_O, "LRG_VISEME_O", "o" },
+            { LRG_VISEME_U, "LRG_VISEME_U", "u" },
+            { LRG_VISEME_MBP, "LRG_VISEME_MBP", "mbp" },
+            { LRG_VISEME_FV, "LRG_VISEME_FV", "fv" },
+            { LRG_VISEME_L, "LRG_VISEME_L", "l" },
+            { LRG_VISEME_WQ, "LRG_VISEME_WQ", "wq" },
+            { LRG_VISEME_CDGKNRSTYZ, "LRG_VISEME_CDGKNRSTYZ", "cdgknrstyz" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgViseme"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_shape_category_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SHAPE_CATEGORY_MOUTH, "LRG_SHAPE_CATEGORY_MOUTH", "mouth" },
+            { LRG_SHAPE_CATEGORY_EYES, "LRG_SHAPE_CATEGORY_EYES", "eyes" },
+            { LRG_SHAPE_CATEGORY_BROWS, "LRG_SHAPE_CATEGORY_BROWS", "brows" },
+            { LRG_SHAPE_CATEGORY_MOOD, "LRG_SHAPE_CATEGORY_MOOD", "mood" },
+            { LRG_SHAPE_CATEGORY_BODY, "LRG_SHAPE_CATEGORY_BODY", "body" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgShapeCategory"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_lip_sync_error_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_LIP_SYNC_ERROR_PARSE, "LRG_LIP_SYNC_ERROR_PARSE", "parse" },
+            { LRG_LIP_SYNC_ERROR_INVALID, "LRG_LIP_SYNC_ERROR_INVALID", "invalid" },
+            { LRG_LIP_SYNC_ERROR_IO, "LRG_LIP_SYNC_ERROR_IO", "io" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgLipSyncError"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

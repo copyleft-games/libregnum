@@ -888,6 +888,10 @@ typedef struct _LrgAnimationStateMachineClass  LrgAnimationStateMachineClass;
 /* LrgAnimationLayer is a final type - no Class forward declaration needed */
 typedef struct _LrgAnimationLayer  LrgAnimationLayer;
 
+/* 2D blend-shape helpers (final types) */
+typedef struct _LrgLipSync               LrgLipSync;
+typedef struct _LrgSkeleton2DProcedural  LrgSkeleton2DProcedural;
+
 /* LrgBlendTree is a derivable type */
 typedef struct _LrgBlendTree       LrgBlendTree;
 typedef struct _LrgBlendTreeClass  LrgBlendTreeClass;
@@ -1533,6 +1537,7 @@ typedef struct _LrgReelTextClip      LrgReelTextClip;
 typedef struct _LrgReelShapeClip     LrgReelShapeClip;
 typedef struct _LrgReelSolidClip     LrgReelSolidClip;
 typedef struct _LrgReelGradientClip  LrgReelGradientClip;
+typedef struct _LrgReelSkeleton2DClip LrgReelSkeleton2DClip;
 
 /* Reel media-in (video decode + clip) */
 typedef struct _LrgReelVideoSource   LrgReelVideoSource;

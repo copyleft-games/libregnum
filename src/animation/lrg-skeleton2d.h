@@ -7,9 +7,10 @@
  * LrgSkeleton2D: 2D skeletal animation.  A skeleton is a hierarchy of 2D
  * bones (translation, rotation in degrees, non-uniform scale, length),
  * slots (draw-order entries bound to a bone that show one attachment at
- * a time, tinted by a colour), skins (named sets of attachments, each an
- * #LrgSkinnedSprite mesh) and clips (#LrgSkeleton2DClip: bone TRS,
- * slot attachment and colour keys, draw-order keys and events).  It
+ * a time, tinted by a colour, with blend-shape weights), skins (named
+ * sets of attachments, each an #LrgSkinnedSprite mesh) and clips
+ * (#LrgSkeleton2DClip: bone TRS, slot attachment, colour and shape
+ * weight keys, draw-order keys and events).  It
  * loads from and saves to the `.rskel2d` YAML format.
  */
 
@@ -22,6 +23,7 @@
 #include <glib-object.h>
 #include <graylib.h>
 #include "../lrg-version.h"
+#include "../lrg-types.h"
 #include "../graphics/lrg-skinned-sprite.h"
 
 G_BEGIN_DECLS
@@ -29,10 +31,13 @@ G_BEGIN_DECLS
 /**
  * LRG_SKELETON2D_FORMAT_VERSION:
  *
- * The `.rskel2d` format version this library reads and writes (the value
- * of the root `rskel2d:` key).
+ * The newest `.rskel2d` format version this library reads and writes
+ * (the value of the root `rskel2d:` key).  Every version from 1 up to it
+ * is read.  The writer emits the lowest version that can hold the
+ * document: 1 unless it has blend shapes or shape weight keys, which
+ * need version 2.
  */
-#define LRG_SKELETON2D_FORMAT_VERSION (1)
+#define LRG_SKELETON2D_FORMAT_VERSION (2)
 
 /**
  * LRG_SKELETON2D_DEFAULT_SKIN:
@@ -122,9 +127,14 @@ GType lrg_skeleton2d_curve_get_type (void) G_GNUC_CONST;
  *   r, g, b, a in 0 .. 1)
  * @LRG_SKELETON2D_CHANNEL_ATTACHMENT: slot attachment name (stepped; no
  *   values)
+ * @LRG_SKELETON2D_CHANNEL_SHAPE: a blend-shape weight of a slot (one
+ *   value, 0 .. 1; since 0.14).  A shape timeline is named by a slot and
+ *   a shape, so it has its own functions
+ *   (lrg_skeleton2d_clip_add_shape_key() and friends); the functions
+ *   taking a (target, channel) pair see no keys on this channel.
  *
  * The animatable channels of a clip.  The first three target bones, the
- * last two target slots.
+ * others target slots.
  */
 typedef enum
 {
@@ -132,7 +142,8 @@ typedef enum
 	LRG_SKELETON2D_CHANNEL_ROTATE,
 	LRG_SKELETON2D_CHANNEL_SCALE,
 	LRG_SKELETON2D_CHANNEL_COLOR,
-	LRG_SKELETON2D_CHANNEL_ATTACHMENT
+	LRG_SKELETON2D_CHANNEL_ATTACHMENT,
+	LRG_SKELETON2D_CHANNEL_SHAPE
 } LrgSkeleton2DChannel;
 
 LRG_AVAILABLE_IN_ALL
@@ -545,6 +556,157 @@ const gchar * lrg_skeleton2d_clip_get_event (LrgSkeleton2DClip *self,
                                              gfloat            *time);
 
 /**
+ * lrg_skeleton2d_clip_add_shape_key:
+ * @self: an #LrgSkeleton2DClip
+ * @slot: slot name
+ * @shape: blend-shape name (one of the standard sheet's names, such as
+ *   `LRG_SHAPE_BLINK_L`, or any other)
+ * @time: key time in seconds (0 or more)
+ * @weight: the shape weight, clamped to 0 .. 1
+ * @curve: interpolation toward the next key
+ *
+ * Adds (or, at an existing key time, replaces) a blend-shape weight key
+ * of a slot.  When the clip is applied the weight goes to the shape of
+ * whatever attachment the slot shows; an attachment without that shape
+ * ignores it.
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_skeleton2d_clip_add_shape_key (LrgSkeleton2DClip  *self,
+                                        const gchar        *slot,
+                                        const gchar        *shape,
+                                        gfloat              time,
+                                        gfloat              weight,
+                                        LrgSkeleton2DCurve  curve);
+
+/**
+ * lrg_skeleton2d_clip_set_shape_key_bezier:
+ * @self: an #LrgSkeleton2DClip
+ * @slot: slot name
+ * @shape: blend-shape name
+ * @index: key index in time order
+ * @cx1: first control point X (0 .. 1)
+ * @cy1: first control point Y
+ * @cx2: second control point X (0 .. 1)
+ * @cy2: second control point Y
+ *
+ * Makes a shape weight key ease toward the next one along a cubic Bézier
+ * timing curve, like lrg_skeleton2d_clip_set_key_bezier().
+ *
+ * Returns: %TRUE if the key exists
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_skeleton2d_clip_set_shape_key_bezier (LrgSkeleton2DClip *self,
+                                                   const gchar       *slot,
+                                                   const gchar       *shape,
+                                                   guint              index,
+                                                   gfloat             cx1,
+                                                   gfloat             cy1,
+                                                   gfloat             cx2,
+                                                   gfloat             cy2);
+
+/**
+ * lrg_skeleton2d_clip_get_shape_key_count:
+ * @self: an #LrgSkeleton2DClip
+ * @slot: slot name
+ * @shape: blend-shape name
+ *
+ * Returns: the number of weight keys of that shape timeline (0 if there
+ *   is none)
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_skeleton2d_clip_get_shape_key_count (LrgSkeleton2DClip *self,
+                                               const gchar       *slot,
+                                               const gchar       *shape);
+
+/**
+ * lrg_skeleton2d_clip_get_shape_key:
+ * @self: an #LrgSkeleton2DClip
+ * @slot: slot name
+ * @shape: blend-shape name
+ * @index: key index in time order
+ * @time: (out) (optional): the key time
+ * @weight: (out) (optional): the key weight
+ * @curve: (out) (optional): the key's curve
+ *
+ * Reads a shape weight key.
+ *
+ * Returns: %TRUE if the key exists
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_skeleton2d_clip_get_shape_key (LrgSkeleton2DClip  *self,
+                                            const gchar        *slot,
+                                            const gchar        *shape,
+                                            guint               index,
+                                            gfloat             *time,
+                                            gfloat             *weight,
+                                            LrgSkeleton2DCurve *curve);
+
+/**
+ * lrg_skeleton2d_clip_remove_shape_key:
+ * @self: an #LrgSkeleton2DClip
+ * @slot: slot name
+ * @shape: blend-shape name
+ * @index: key index in time order
+ *
+ * Removes one shape weight key.  The duration is kept.
+ *
+ * Returns: %TRUE if the key existed
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_skeleton2d_clip_remove_shape_key (LrgSkeleton2DClip *self,
+                                               const gchar       *slot,
+                                               const gchar       *shape,
+                                               guint              index);
+
+/**
+ * lrg_skeleton2d_clip_sample_shape:
+ * @self: an #LrgSkeleton2DClip
+ * @slot: slot name
+ * @shape: blend-shape name
+ * @time: time in seconds (clamped to the clip)
+ * @weight: (out): the sampled weight (0 when there is no timeline)
+ *
+ * Samples one shape weight timeline with its curves.
+ *
+ * Returns: %TRUE if the timeline exists and has keys
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_skeleton2d_clip_sample_shape (LrgSkeleton2DClip *self,
+                                           const gchar       *slot,
+                                           const gchar       *shape,
+                                           gfloat             time,
+                                           gfloat            *weight);
+
+/**
+ * lrg_skeleton2d_clip_get_shapes:
+ * @self: an #LrgSkeleton2DClip
+ * @slot: slot name
+ *
+ * The names of the shapes the clip has weight timelines for on @slot, in
+ * the order they were first keyed.  The slots themselves are listed by
+ * lrg_skeleton2d_clip_get_targets().
+ *
+ * Returns: (transfer full) (array zero-terminated=1): the names
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gchar ** lrg_skeleton2d_clip_get_shapes (LrgSkeleton2DClip *self,
+                                         const gchar       *slot);
+
+/**
  * lrg_skeleton2d_clip_apply:
  * @self: an #LrgSkeleton2DClip
  * @skeleton: the skeleton to pose
@@ -556,7 +718,9 @@ const gchar * lrg_skeleton2d_clip_get_event (LrgSkeleton2DClip *self,
  * channel moves from the current value toward the clip value by @alpha
  * (rotation along the shorter arc; @alpha 1 sets the value exactly);
  * slot colours mix the same way; attachment and draw-order keys apply
- * when @alpha is at least 0.5.  Channels the clip does not key are left
+ * when @alpha is at least 0.5; slot blend-shape weights mix like colours
+ * (a shape the slot has no weight for yet starts from 0).  Channels the
+ * clip does not key are left
  * alone, so reset with lrg_skeleton2d_reset_pose() first, then apply
  * clips in order: apply A at 1 and B at w to crossfade from A to B.
  * Call lrg_skeleton2d_update_world() afterwards.
@@ -624,7 +788,9 @@ LrgSkeleton2D * lrg_skeleton2d_new_from_data (const gchar  *data,
  *
  * Writes the skeleton (setup pose, slots, skins, clips) as `.rskel2d`
  * text.  Output is deterministic: loading it and saving again gives the
- * same bytes.  Values equal to their defaults are left out.
+ * same bytes.  Values equal to their defaults are left out.  The
+ * `rskel2d:` version written is the lowest that holds the document (see
+ * %LRG_SKELETON2D_FORMAT_VERSION).
  *
  * Returns: (transfer full): the document text
  */
@@ -1229,10 +1395,50 @@ gboolean lrg_skeleton2d_set_draw_order (LrgSkeleton2D *self,
  * @self: an #LrgSkeleton2D
  *
  * Returns every bone to its setup pose and every slot to its setup
- * attachment and colour, and the draw order to the setup order.
+ * attachment and colour, every slot blend-shape weight to 0, and the draw
+ * order to the setup order.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_skeleton2d_reset_pose (LrgSkeleton2D *self);
+
+/**
+ * lrg_skeleton2d_set_shape_weight:
+ * @self: an #LrgSkeleton2D
+ * @slot: a slot index
+ * @shape: a blend-shape name
+ * @weight: the weight, clamped to 0 .. 1 (non-finite values are ignored)
+ *
+ * Sets a blend-shape weight of the slot's current pose.  Weights belong
+ * to the slot, not to an attachment: lrg_skeleton2d_deform() and
+ * lrg_skeleton2d_draw() hand them to whatever attachment the slot shows
+ * at that moment, and an attachment without the shape ignores it, so one
+ * clip or lip-sync track drives every character that implements the
+ * shape sheet.  Like the rest of the pose, weights go back to 0 in
+ * lrg_skeleton2d_reset_pose().
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_skeleton2d_set_shape_weight (LrgSkeleton2D *self,
+                                      gint           slot,
+                                      const gchar   *shape,
+                                      gfloat         weight);
+
+/**
+ * lrg_skeleton2d_get_shape_weight:
+ * @self: an #LrgSkeleton2D
+ * @slot: a slot index
+ * @shape: a blend-shape name
+ *
+ * Returns: the slot's current weight of @shape (0 when never set or for
+ *   an invalid @slot)
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_skeleton2d_get_shape_weight (LrgSkeleton2D *self,
+                                        gint           slot,
+                                        const gchar   *shape);
 
 /* ------------------------------------------------------------------ */
 /* Skins and attachments                                               */
@@ -1462,7 +1668,8 @@ LrgSkeleton2DClip * lrg_skeleton2d_get_clip_at (LrgSkeleton2D *self,
  *
  * Skins every attachment the slots currently show with the palette of
  * the last lrg_skeleton2d_update_world() (no drawing; no window
- * needed).  lrg_skeleton2d_draw() does this itself.
+ * needed), after handing each attachment its slot's blend-shape weights.
+ * lrg_skeleton2d_draw() does this itself.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_skeleton2d_deform (LrgSkeleton2D *self);
@@ -1492,5 +1699,67 @@ void lrg_skeleton2d_draw (LrgSkeleton2D  *self,
 LRG_AVAILABLE_IN_ALL
 void lrg_skeleton2d_draw_bones (LrgSkeleton2D  *self,
                                 const GrlColor *color);
+
+/* ------------------------------------------------------------------ */
+/* CPU drawing                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * lrg_skeleton2d_draw_to_canvas:
+ * @self: an #LrgSkeleton2D
+ * @canvas: the canvas drawn into
+ * @tint: (nullable): colour multiplied into every slot, or %NULL for
+ *   white
+ *
+ * The CPU counterpart of lrg_skeleton2d_draw(), for headless rendering
+ * (reels, thumbnails, tests in CI): deforms and draws the attachments the
+ * slots show, in the current draw order, each tinted by its slot colour
+ * times @tint, with lrg_skinned_sprite_draw_to_canvas().  No window is
+ * needed.
+ *
+ * Placement works as on the GPU: the root transform
+ * (lrg_skeleton2d_set_root_transform(), applied by
+ * lrg_skeleton2d_update_world()) places the skeleton in canvas pixels,
+ * and the canvas's current transform (lrg_image_canvas_translate(),
+ * lrg_image_canvas_scale(), lrg_image_canvas_rotate()) plays the part of
+ * the 2D camera of BeginMode2D().  Call lrg_skeleton2d_update_world()
+ * after posing and before drawing, as for lrg_skeleton2d_draw().
+ *
+ * Attachments without a CPU source image load their image path on first
+ * use, relative to #LrgSkeleton2D:base-dir
+ * (lrg_skeleton2d_load_source_images() does it up front and reports
+ * errors); a mesh with no image is filled with its slot colour, as on
+ * the GPU.
+ *
+ * The skeleton's pose and its sprites' deformed buffers are mutable
+ * state: one skeleton must not be posed or drawn from two threads at
+ * once (#LrgReelSkeleton2DClip serialises its renders for that reason).
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_skeleton2d_draw_to_canvas (LrgSkeleton2D  *self,
+                                    LrgImageCanvas *canvas,
+                                    const GrlColor *tint);
+
+/**
+ * lrg_skeleton2d_load_source_images:
+ * @self: an #LrgSkeleton2D
+ * @error: return location for a #GError
+ *
+ * The CPU counterpart of lrg_skeleton2d_load_textures(): loads the image
+ * of every attachment that has an image path and no CPU source image
+ * (lrg_skinned_sprite_set_source_image()), relative to
+ * #LrgSkeleton2D:base-dir, decoding each distinct path once.  No window
+ * is needed.
+ *
+ * Returns: %TRUE on success; on failure the attachments loaded so far
+ *   keep their images
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_skeleton2d_load_source_images (LrgSkeleton2D  *self,
+                                            GError        **error);
 
 G_END_DECLS

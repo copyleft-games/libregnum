@@ -127,7 +127,7 @@ Key points:
 - [[file:composition.org][composition.org]] — =LrgReel=: id, dimensions, fps, duration, clip z-order, default props
 - [[file:timing.org][timing.org]] — =LrgReelContext= + =LrgReelSequence=: relative-frame model and all four modes
 - [[file:animation.org][animation.org]] — =lrg_reel_interpolate=, =lrg_reel_spring=, color interpolation (OkLab), bezier easing, noise/random
-- [[file:clips.org][clips.org]] — =LrgReelClip=: transform/blend/effects + solid/gradient/image/text/shape content clips
+- [[file:clips.org][clips.org]] — =LrgReelClip=: transform/blend/effects + solid/gradient/image/text/shape content clips, and [[file:clips.org::#skeleton2d-clip][LrgReelSkeleton2DClip]] (animated 2D characters drawn on the CPU)
 - [[file:compositing.org][compositing.org]] — layer-pool compositor, =LrgReelEffect= chain: blur, bloom, color-grade, vignette, grain, chroma-key, drop-shadow, light-leak
 - [[file:media.org][media.org]] — =LrgReelVideoSource= / =LrgReelVideoClip= (decode/trim/rate/loop) + FFT audio analysis
 - [[file:rendering.org][rendering.org]] — =LrgReelRenderer=: offline loop, range/parallel render, motion blur, progress callback
@@ -206,6 +206,7 @@ Key points:
 | =src/reel/lrg-reel-caption-clip.h=            | Subtitle caption clip                       |
 | =src/reel/lrg-reel-video-source.h=            | ffmpeg video decoder                        |
 | =src/reel/lrg-reel-video-clip.h=              | Video layer clip                            |
+| =src/reel/lrg-reel-skeleton2d-clip.h=         | Animated 2D skeleton character clip (CPU)   |
 | =src/reel/lrg-reel-sequence.h=                | Time-remapping sequences                    |
 | =src/reel/lrg-reel-transition-series.h=       | Auto-sequenced clip chain                   |
 | =src/reel/lrg-reel-effect.h=                  | Effect base class                           |

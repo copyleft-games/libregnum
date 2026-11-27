@@ -1,0 +1,14 @@
+# "hello world": a phone-level alignment in the CMU (ARPAbet) phone set,
+# as Montreal Forced Aligner writes it (stress digits kept, sil/sp for
+# silence).  Read by tests/test-lip-sync.c.
+- {start: 0.00, end: 0.10, phoneme: sil}
+- {start: 0.10, end: 0.16, phoneme: HH}
+- {start: 0.16, end: 0.23, phoneme: AH0}
+- {start: 0.23, end: 0.30, phoneme: L}
+- {start: 0.30, end: 0.45, phoneme: OW1}
+- {start: 0.45, end: 0.50, phoneme: sp}
+- {start: 0.50, end: 0.58, phoneme: W}
+- {start: 0.58, end: 0.72, phoneme: ER1}
+- {start: 0.72, end: 0.80, phoneme: L}
+- {start: 0.80, end: 0.88, phoneme: D}
+- {start: 0.88, end: 1.00, phoneme: sil}

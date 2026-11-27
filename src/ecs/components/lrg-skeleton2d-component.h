@@ -20,6 +20,7 @@
 #include "../../lrg-version.h"
 #include "../lrg-component.h"
 #include "../../animation/lrg-skeleton2d.h"
+#include "../../animation/lrg-skeleton2d-procedural.h"
 
 G_BEGIN_DECLS
 
@@ -249,5 +250,34 @@ void lrg_skeleton2d_component_sync_pose (LrgSkeleton2DComponent *self);
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_skeleton2d_component_draw (LrgSkeleton2DComponent *self);
+
+/**
+ * lrg_skeleton2d_component_set_procedural:
+ * @self: an #LrgSkeleton2DComponent
+ * @procedural: (nullable): procedural layers (blink, breathe), or %NULL
+ *   for none
+ *
+ * Sets layers mixed on top of the clips on every pose: after the
+ * fading-out and current clips are applied, the component runs
+ * lrg_skeleton2d_procedural_apply() at its own running time (the sum of
+ * the update steps times #LrgSkeleton2DComponent:speed, independent of
+ * which clip plays).  Setting layers restarts that time at 0.
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_skeleton2d_component_set_procedural (LrgSkeleton2DComponent  *self,
+                                              LrgSkeleton2DProcedural *procedural);
+
+/**
+ * lrg_skeleton2d_component_get_procedural:
+ * @self: an #LrgSkeleton2DComponent
+ *
+ * Returns: (transfer none) (nullable): the procedural layers
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+LrgSkeleton2DProcedural * lrg_skeleton2d_component_get_procedural (LrgSkeleton2DComponent *self);
 
 G_END_DECLS
