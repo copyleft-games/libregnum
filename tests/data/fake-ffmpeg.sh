@@ -14,6 +14,7 @@
 #   probes.log    one line per `-encoders` probe
 #   trials.log    one line per trial encode (the encoder name)
 #   argv.txt      the argv of the real encode, one argument per line
+#   stdin.bytes   how many bytes of frames the real encode read
 #
 # A real encode reads stdin to EOF (the frames) and exits 0.
 
@@ -53,5 +54,5 @@ then
 fi
 
 printf '%s\n' "$@" > "${dir}/argv.txt"
-cat > /dev/null
+wc -c > "${dir}/stdin.bytes"
 exit 0

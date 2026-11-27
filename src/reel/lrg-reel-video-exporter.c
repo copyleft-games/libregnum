@@ -26,11 +26,14 @@ struct _LrgReelVideoExporter
     gchar             *ffmpeg_path;   /* override, or NULL to auto-discover */
     gchar             *encoder;       /* -c:v override, or NULL to choose */
     gchar             *resolved;      /* encoder chosen by the last begin() */
+    gint               threads;       /* encoder threads; 0 = automatic */
     LrgWaveData       *audio;         /* optional, ref */
 
     /* Active encode state (begin .. finish). */
     GSubprocess  *proc;
     GOutputStream *stdin_stream;      /* (transfer none), owned by proc */
+    gint          frame_w;            /* frame size begin() was given; every */
+    gint          frame_h;            /* frame must match (raw RGBA input)   */
     gchar        *temp_dir;           /* created when audio is muxed */
     gchar        *temp_audio_path;
 };
@@ -400,6 +403,93 @@ reel_video_openh264_kbps (gint    width,
     return MAX (100, (gint) (bits / 1000.0 + 0.5));
 }
 
+/* ==========================================================================
+ * Encoder speed
+ * ==========================================================================
+ *
+ * set_preset() takes x264's words.  libvpx-vp9 (-cpu-used, 0 slowest .. 8)
+ * and SVT-AV1 (-preset, 0 slowest .. 13) take numbers, so the words map
+ * onto their scales; a preset that is a plain number is passed through.
+ */
+
+typedef struct
+{
+    const gchar *word;
+    gint         speed;
+} PresetSpeed;
+
+static const PresetSpeed vpx_speeds[] = {
+    { "ultrafast", 8 }, { "superfast", 7 }, { "veryfast", 6 }, { "faster", 5 },
+    { "fast", 4 }, { "medium", 3 }, { "slow", 2 }, { "slower", 1 },
+    { "veryslow", 0 }, { NULL, 0 }
+};
+
+static const PresetSpeed svtav1_speeds[] = {
+    { "ultrafast", 12 }, { "superfast", 11 }, { "veryfast", 10 }, { "faster", 9 },
+    { "fast", 8 }, { "medium", 6 }, { "slow", 4 }, { "slower", 2 },
+    { "veryslow", 0 }, { NULL, 0 }
+};
+
+/*
+ * reel_video_preset_speed:
+ * @preset: (nullable): the set_preset() value
+ * @table: the encoder's word -> speed table
+ * @fallback: the speed when @preset is unset or unknown
+ *
+ * Returns the numeric speed @preset names for this encoder.  An unknown
+ * word logs a warning and uses @fallback.
+ */
+static gint
+reel_video_preset_speed (const gchar       *preset,
+                         const PresetSpeed *table,
+                         gint               fallback)
+{
+    guint i;
+
+    if (preset == NULL)
+        return fallback;
+    if (g_ascii_isdigit (preset[0]))
+    {
+        gchar  *end = NULL;
+        gint64  v = g_ascii_strtoll (preset, &end, 10);
+
+        if (end != NULL && *end == '\0' && v >= 0 && v <= 13)
+            return (gint) v;
+    }
+    for (i = 0; table[i].word != NULL; i++)
+        if (g_ascii_strcasecmp (preset, table[i].word) == 0)
+            return table[i].speed;
+    g_warning ("lrg-reel-video-exporter: unknown preset '%s', using speed %d",
+               preset, fallback);
+    return fallback;
+}
+
+/* Encoder threads: set_threads(), or the CPU count capped at 16 (libvpx
+ * gains little past that at video sizes). */
+static gint
+reel_video_threads (LrgReelVideoExporter *self)
+{
+    if (self->threads > 0)
+        return self->threads;
+    return CLAMP ((gint) g_get_num_processors (), 1, 16);
+}
+
+/* VP9 tile columns as log2: one column per 256 px of width, at most 16
+ * columns (4); 1280 px gives 2 (4 columns), 1920 px gives 2, 3840 px 3. */
+static gint
+reel_video_tile_columns (gint width)
+{
+    gint cols = 0;
+    gint w = width / 256;
+
+    while (w > 1 && cols < 4)
+    {
+        w /= 2;
+        cols++;
+    }
+    return cols;
+}
+
 /* Build the ffmpeg argv. Returns a NULL-terminated, owned string vector. */
 static gchar **
 reel_video_build_argv (LrgReelVideoExporter *self,
@@ -428,13 +518,21 @@ reel_video_build_argv (LrgReelVideoExporter *self,
         g_ptr_array_add (args, g_strdup (REEL_VAAPI_DEVICE));
     }
 
-    /* Video input: a stream of PNG frames at the composition frame rate. */
+    /*
+     * Video input: raw RGBA frames (width x height x 4 bytes each, no
+     * header) at the composition frame rate.  Until 0.13.9 every frame was
+     * PNG-encoded and piped through image2pipe; zlib-compressing each
+     * frame cost more than drawing it (about 93% of a 720p frame), and
+     * ffmpeg then spent its time decoding PNG again.
+     */
+    g_ptr_array_add (args, g_strdup ("-f"));
+    g_ptr_array_add (args, g_strdup ("rawvideo"));
+    g_ptr_array_add (args, g_strdup ("-pix_fmt"));
+    g_ptr_array_add (args, g_strdup ("rgba"));
+    g_ptr_array_add (args, g_strdup ("-s"));
+    g_ptr_array_add (args, g_strdup_printf ("%dx%d", width, height));
     g_ptr_array_add (args, g_strdup ("-framerate"));
     g_ptr_array_add (args, g_strdup_printf ("%.6g", fps));
-    g_ptr_array_add (args, g_strdup ("-f"));
-    g_ptr_array_add (args, g_strdup ("image2pipe"));
-    g_ptr_array_add (args, g_strdup ("-vcodec"));
-    g_ptr_array_add (args, g_strdup ("png"));
     g_ptr_array_add (args, g_strdup ("-i"));
     g_ptr_array_add (args, g_strdup ("pipe:0"));
 
@@ -517,9 +615,7 @@ reel_video_build_argv (LrgReelVideoExporter *self,
                 g_ptr_array_add (args, g_strdup_printf ("%d", self->crf));
                 break;
             case ENC_SVTAV1:
-                /* SVT-AV1 presets are numeric (0 slowest .. 13 fastest). */
-                g_ptr_array_add (args, g_strdup ("-preset"));
-                g_ptr_array_add (args, g_strdup ("8"));
+                /* The -preset (speed) comes with the speed flags below. */
                 g_ptr_array_add (args, g_strdup ("-crf"));
                 g_ptr_array_add (args, g_strdup_printf ("%d", self->crf));
                 break;
@@ -554,6 +650,38 @@ reel_video_build_argv (LrgReelVideoExporter *self,
                 /* Unknown encoder named by the caller: its own defaults. */
                 break;
             }
+        }
+
+        /*
+         * Speed and threading for the encoders whose defaults are slow and
+         * single-threaded.  These apply with CRF and with a bitrate alike.
+         * libvpx-vp9 without them runs at its slowest setting on about one
+         * core (ffmpeg sat at ~130% CPU on a 64-core machine): row-based
+         * multithreading, tile columns (which bound how many threads a
+         * frame can use), the "good" deadline and a cpu-used speed.
+         */
+        if (kind == ENC_VPX)
+        {
+            gint threads = reel_video_threads (self);
+
+            g_ptr_array_add (args, g_strdup ("-row-mt"));
+            g_ptr_array_add (args, g_strdup ("1"));
+            g_ptr_array_add (args, g_strdup ("-threads"));
+            g_ptr_array_add (args, g_strdup_printf ("%d", threads));
+            g_ptr_array_add (args, g_strdup ("-tile-columns"));
+            g_ptr_array_add (args, g_strdup_printf ("%d", reel_video_tile_columns (width)));
+            g_ptr_array_add (args, g_strdup ("-deadline"));
+            g_ptr_array_add (args, g_strdup ("good"));
+            g_ptr_array_add (args, g_strdup ("-cpu-used"));
+            g_ptr_array_add (args, g_strdup_printf ("%d",
+                reel_video_preset_speed (self->preset, vpx_speeds, 5)));
+        }
+        else if (kind == ENC_SVTAV1)
+        {
+            /* SVT-AV1 threads itself; its presets are 0 (slowest) .. 13. */
+            g_ptr_array_add (args, g_strdup ("-preset"));
+            g_ptr_array_add (args, g_strdup_printf ("%d",
+                reel_video_preset_speed (self->preset, svtav1_speeds, 8)));
         }
 
         /* H.265 in MP4 wants the hvc1 tag for QuickTime/Apple compatibility. */
@@ -599,6 +727,15 @@ lrg_reel_video_exporter_real_begin (LrgReelExporter *base,
     g_auto(GStrv)         argv = NULL;
     GSubprocessLauncher  *launcher;
     GError               *local = NULL;
+
+    if (width <= 0 || height <= 0)
+    {
+        g_set_error (error, LRG_REEL_EXPORTER_ERROR, LRG_REEL_EXPORTER_ERROR_FAILED,
+                     "invalid frame size %dx%d", width, height);
+        return FALSE;
+    }
+    self->frame_w = width;
+    self->frame_h = height;
 
     ffmpeg = reel_video_find_ffmpeg (self);
     if (ffmpeg == NULL)
@@ -663,7 +800,7 @@ lrg_reel_video_exporter_real_add_frame (LrgReelExporter *base,
                                         GError         **error)
 {
     LrgReelVideoExporter *self = LRG_REEL_VIDEO_EXPORTER (base);
-    guint8               *png = NULL;
+    guint8               *pixels;
     gsize                 size = 0;
     gsize                 written = 0;
     GError               *local = NULL;
@@ -677,19 +814,31 @@ lrg_reel_video_exporter_real_add_frame (LrgReelExporter *base,
         return FALSE;
     }
 
-    png = grl_image_export_to_memory (frame, ".png", &size);
-    if (png == NULL || size == 0)
+    /* ffmpeg was told the frame size at begin(): every frame must match. */
+    if (grl_image_get_width (frame) != self->frame_w
+        || grl_image_get_height (frame) != self->frame_h)
     {
-        g_free (png);
-        g_set_error_literal (error, LRG_REEL_EXPORTER_ERROR,
-                             LRG_REEL_EXPORTER_ERROR_WRITE,
-                             "failed to encode frame to PNG");
+        g_set_error (error, LRG_REEL_EXPORTER_ERROR,
+                     LRG_REEL_EXPORTER_ERROR_WRITE,
+                     "frame is %dx%d but the export began at %dx%d",
+                     grl_image_get_width (frame), grl_image_get_height (frame),
+                     self->frame_w, self->frame_h);
         return FALSE;
     }
 
-    ok = g_output_stream_write_all (self->stdin_stream, png, size,
+    /* The tightly packed RGBA8 buffer is exactly one rawvideo frame
+     * (converted in place if the image was in another format). */
+    pixels = grl_image_get_pixels (frame, &size);
+    if (pixels == NULL || size != (gsize) self->frame_w * (gsize) self->frame_h * 4)
+    {
+        g_set_error_literal (error, LRG_REEL_EXPORTER_ERROR,
+                             LRG_REEL_EXPORTER_ERROR_WRITE,
+                             "frame has no RGBA8 pixel buffer");
+        return FALSE;
+    }
+
+    ok = g_output_stream_write_all (self->stdin_stream, pixels, size,
                                     &written, NULL, &local);
-    g_free (png);
 
     if (!ok)
     {
@@ -924,6 +1073,45 @@ lrg_reel_video_exporter_get_encoder (LrgReelVideoExporter *self)
     g_return_val_if_fail (LRG_IS_REEL_VIDEO_EXPORTER (self), NULL);
 
     return self->resolved != NULL ? self->resolved : self->encoder;
+}
+
+/**
+ * lrg_reel_video_exporter_set_threads:
+ * @self: a #LrgReelVideoExporter
+ * @threads: encoder threads, or 0 (the default) for the CPU count capped
+ *   at 16.
+ *
+ * Sets how many threads libvpx-vp9 encodes with (`-threads`, together with
+ * row-based multithreading and tile columns).  Other encoders thread
+ * themselves and ignore it.
+ *
+ * Since: 0.13.9
+ */
+void
+lrg_reel_video_exporter_set_threads (LrgReelVideoExporter *self,
+                                     gint                  threads)
+{
+    g_return_if_fail (LRG_IS_REEL_VIDEO_EXPORTER (self));
+    g_return_if_fail (threads >= 0);
+
+    self->threads = threads;
+}
+
+/**
+ * lrg_reel_video_exporter_get_threads:
+ * @self: a #LrgReelVideoExporter
+ *
+ * Returns: the thread count set with
+ *   lrg_reel_video_exporter_set_threads(), or 0 for automatic.
+ *
+ * Since: 0.13.9
+ */
+gint
+lrg_reel_video_exporter_get_threads (LrgReelVideoExporter *self)
+{
+    g_return_val_if_fail (LRG_IS_REEL_VIDEO_EXPORTER (self), 0);
+
+    return self->threads;
 }
 
 gboolean
