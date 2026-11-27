@@ -149,6 +149,7 @@ Window management, cameras, and rendering abstractions:
 - *[[file:graphics/gltf-info.org][LrgGltfInfo]]* - Headless glTF/GLB inspection (raylib mesh order, node names, animations, visibility masks)
 - *[[file:graphics/static-batch.org][LrgStaticBatch]]* - Static mesh batching into u16 chunks per (material, layer) with bounds and layer masks
 - *[[file:graphics/model-animator.org][LrgModelAnimator]]* - Shared skinned model animation with per-actor state, crossfades, pose dedupe and masked drawing
+- *[[file:graphics/image-raster.org][CPU textured triangles]]* - =lrg_image_draw_triangle_textured()=: headless rasteriser for skinned sprites and 2D skeletons (0.14)
 
 *** [[file:worldui/index.org][World-space UI Module]] - Speech bubbles, nameplates and emotes (0.11.0)
 :PROPERTIES:

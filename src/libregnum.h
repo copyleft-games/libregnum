@@ -93,6 +93,7 @@
 #include "graphics/lrg-camera-zoom.h"
 #include "graphics/lrg-renderer.h"
 #include "graphics/lrg-image-canvas.h"
+#include "graphics/lrg-image-raster.h"
 #include "graphics/lrg-vector-image.h"
 #include "graphics/lrg-gltf-info.h"
 #include "graphics/lrg-dds-image.h"
