@@ -1727,6 +1727,105 @@ test_cpu_region (void)
 	g_assert_true (cpu_pixel_is (img, 14, 8, 0, 255, 0));
 }
 
+/*
+ * Blend shapes reach the CPU path exactly as the GPU path: the weights
+ * live on the slot and only get to the sprite through the skeleton's
+ * per-slot deform, so lrg_skeleton2d_draw_to_canvas() must go through it
+ * too.  A 2x2 grid mesh on a rotated bone has a shape that pushes its
+ * right column 16 units outwards; at slot weight 1 the CPU render
+ * covers pixels the weight 0 render leaves black, and the positions it
+ * drew are the ones lrg_skeleton2d_deform() computes.
+ */
+static void
+test_cpu_shapes (void)
+{
+	g_autoptr(LrgSkeleton2D)    skel = lrg_skeleton2d_new ();
+	g_autoptr(LrgSkinnedSprite) grid = lrg_skinned_sprite_new_grid (0, 0, 20, 20, 2, 2);
+	g_autoptr(LrgImageCanvas)   rest = black_canvas (64, 64);
+	g_autoptr(LrgImageCanvas)   open = black_canvas (64, 64);
+	g_autofree gfloat          *push = NULL;
+	g_autofree gfloat          *drawn = NULL;
+	GrlColor                    black = { 0, 0, 0, 255 };
+	const gfloat               *pos;
+	GrlImage                   *a;
+	GrlImage                   *b;
+	guint                       nv;
+	guint                       i;
+	gint                        bone;
+	gint                        slot;
+
+	/* the mesh sits on one bone that the pose turns 90 degrees, placed
+	 * at (40, 10): setup (x, y) lands on canvas (40 - y, 10 + x) */
+	bone = lrg_skeleton2d_add_bone (skel, "head", -1, 0, 0, 0, 1, 1, 0);
+	slot = lrg_skeleton2d_add_slot (skel, "face", bone, "mesh");
+	g_assert_true (lrg_skeleton2d_set_attachment (skel, NULL, slot, "mesh", grid));
+	lrg_skeleton2d_set_slot_setup_color (skel, slot, 1.0f, 0.0f, 0.0f, 1.0f);
+
+	/* the shape moves every vertex of the right column (x = 20) by +16 x */
+	nv = lrg_skinned_sprite_get_vertex_count (grid);
+	push = g_new0 (gfloat, nv * 2);
+	for (i = 0; i < nv; i++)
+	{
+		gfloat x;
+		gfloat y;
+
+		lrg_skinned_sprite_get_vertex (grid, i, &x, &y, NULL, NULL);
+		if (x == 20.0f)
+			push[i * 2] = 16.0f;
+	}
+	g_assert_true (lrg_skinned_sprite_add_shape (grid, LRG_SHAPE_STRETCH, push, nv * 2));
+
+	/* weight 0 */
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_set_bone_local (skel, bone, 0, 0, 90, 1, 1);
+	lrg_skeleton2d_set_root_transform (skel, 40.0f, 10.0f, 0.0f, 1.0f, 1.0f);
+	lrg_skeleton2d_update_world (skel);
+	lrg_skeleton2d_draw_to_canvas (skel, rest, NULL);
+	a = lrg_image_canvas_get_image (rest);
+	maybe_save_cpu (a, "s2d-cpu-shape-rest");
+
+	/* weight 1, set on the slot only (never on the sprite directly) */
+	lrg_skeleton2d_set_shape_weight (skel, slot, LRG_SHAPE_STRETCH, 1.0f);
+	lrg_skeleton2d_draw_to_canvas (skel, open, NULL);
+	b = lrg_image_canvas_get_image (open);
+	maybe_save_cpu (b, "s2d-cpu-shape-stretch");
+	g_assert_cmpfloat (lrg_skinned_sprite_get_shape_weight (grid, LRG_SHAPE_STRETCH), ==, 1.0f);
+
+	/* rest covers canvas y 10 .. 30; the stretch reaches y 46 */
+	g_assert_true (cpu_pixel_is (a, 30, 20, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (a, 30, 38, 0, 0, 0));
+	g_assert_true (cpu_pixel_is (b, 30, 20, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (b, 30, 38, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (b, 30, 44, 255, 0, 0));
+	g_assert_true (cpu_pixel_is (b, 30, 48, 0, 0, 0));
+	g_assert_true (memcmp (grl_image_get_pixels (a, NULL), grl_image_get_pixels (b, NULL), 64 * 64 * 4) != 0);
+
+	/* the CPU draw left exactly the deform's positions in the sprite */
+	pos = lrg_skinned_sprite_get_deformed (grid, NULL);
+	drawn = g_memdup2 (pos, nv * 2 * sizeof (gfloat));
+	lrg_skeleton2d_deform (skel);
+	pos = lrg_skinned_sprite_get_deformed (grid, NULL);
+	for (i = 0; i < nv * 2; i++)
+		g_assert_cmpfloat (drawn[i], ==, pos[i]);
+	for (i = 0; i < nv; i++)
+	{
+		gfloat x;
+		gfloat y;
+
+		lrg_skinned_sprite_get_vertex (grid, i, &x, &y, NULL, NULL);
+		if (x == 20.0f)
+			g_assert_cmpfloat_with_epsilon (pos[i * 2 + 1], 10.0f + 36.0f, EPS);
+	}
+
+	/* back to weight 0 through a pose reset: the render matches rest */
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_set_bone_local (skel, bone, 0, 0, 90, 1, 1);
+	lrg_skeleton2d_update_world (skel);
+	lrg_image_canvas_clear (open, &black);
+	lrg_skeleton2d_draw_to_canvas (skel, open, NULL);
+	g_assert_true (memcmp (grl_image_get_pixels (a, NULL), grl_image_get_pixels (lrg_image_canvas_get_image (open), NULL), 64 * 64 * 4) == 0);
+}
+
 /* Image paths load on the CPU, relative to the skeleton's base
  * directory: lazily on the first draw, or up front with errors. */
 static void
@@ -1989,6 +2088,7 @@ main (int   argc,
 	g_test_add_func ("/skeleton2d/cpu/figure", test_cpu_figure);
 	g_test_add_func ("/skeleton2d/cpu/region", test_cpu_region);
 	g_test_add_func ("/skeleton2d/cpu/source-files", test_cpu_source_files);
+	g_test_add_func ("/skeleton2d/cpu/shapes", test_cpu_shapes);
 	g_test_add_func ("/skeleton2d/gpu/world-arm", test_gpu_world_arm);
 	g_test_add_func ("/skeleton2d/gpu/figure", test_gpu_figure);
 

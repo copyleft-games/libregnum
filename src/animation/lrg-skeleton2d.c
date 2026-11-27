@@ -3208,8 +3208,10 @@ lrg_skeleton2d_draw_to_canvas (LrgSkeleton2D  *self,
 
 	/* the same walk as lrg_skeleton2d_draw(): draw order, the attachment
 	 * the slot shows (active skin, then default), slot colour times the
-	 * tint, deform with the palette of the last update, then draw; only
-	 * the last step runs on the CPU instead of through rlgl */
+	 * tint, deform through deform_slot() (so the slot's blend-shape
+	 * weights reach the sprite exactly as on the GPU) with the palette
+	 * of the last update, then draw; only the last step runs on the CPU
+	 * instead of through rlgl */
 	pal = lrg_skeleton2d_get_palette (self, &n_pal);
 	for (i = 0; i < self->draw_order->len; i++)
 	{
@@ -3224,7 +3226,7 @@ lrg_skeleton2d_draw_to_canvas (LrgSkeleton2D  *self,
 		c.g = mul_channel (s->color[1], t.g);
 		c.b = mul_channel (s->color[2], t.b);
 		c.a = mul_channel (s->color[3], t.a);
-		lrg_skinned_sprite_deform (sprite, pal, n_pal, s->bone);
+		deform_slot (s, sprite, pal, n_pal);
 		_lrg_skinned_sprite_draw_to_canvas_from (sprite, canvas, &c, self->base_dir);
 	}
 }
