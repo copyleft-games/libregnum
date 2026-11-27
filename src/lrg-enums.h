@@ -7044,6 +7044,36 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_texture_fallback_format_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_TEXTURE_FALLBACK_FORMAT (lrg_texture_fallback_format_get_type ())
 
+/**
+ * LrgResampleFilter:
+ * @LRG_RESAMPLE_FILTER_BOX: Box filter: the plain average of each
+ *   factor x factor block.  Sharpest footprint, no ringing, slight
+ *   aliasing of fine periodic detail.
+ * @LRG_RESAMPLE_FILTER_MITCHELL: Mitchell-Netravali cubic (B = C = 1/3),
+ *   two output pixels of support: soft, almost no ringing; a good default
+ *   for photographic content.
+ * @LRG_RESAMPLE_FILTER_LANCZOS3: Lanczos windowed sinc with three lobes:
+ *   the sharpest result for line art and text.  Its negative lobes ring
+ *   near hard edges; lrg_image_downsample() clamps the overshoot.
+ *
+ * The reconstruction filter lrg_image_downsample() and
+ * lrg_image_canvas_resolve() shrink an image with.  All filters run in
+ * linear light on premultiplied alpha.
+ *
+ * Since: 0.14
+ */
+typedef enum
+{
+    LRG_RESAMPLE_FILTER_BOX,
+    LRG_RESAMPLE_FILTER_MITCHELL,
+    LRG_RESAMPLE_FILTER_LANCZOS3
+} LrgResampleFilter;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_resample_filter_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_RESAMPLE_FILTER (lrg_resample_filter_get_type ())
+
 G_END_DECLS
+
 
 

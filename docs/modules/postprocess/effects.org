@@ -109,6 +109,8 @@ void               lrg_tonemap_set_white_point     (LrgTonemap *self, gfloat whi
 gboolean           lrg_tonemap_get_linear_input    (LrgTonemap *self);
 void               lrg_tonemap_set_linear_input    (LrgTonemap *self, gboolean linear);
 void               lrg_tonemap_apply_rgb           (LrgTonemap *self, const gfloat *rgb, gfloat *out);
+void               lrg_tonemap_operator_apply_rgb  (LrgTonemapOperator op, gfloat white_point,
+                                                    const gfloat *in, gfloat *out);   /* since 0.14 */
 const gchar       *lrg_tonemap_get_fragment_shader (void);
 #+end_src
 
@@ -117,6 +119,14 @@ const gchar       *lrg_tonemap_get_fragment_shader (void);
 :CUSTOM_ID: tonemap-curve
 :END:
 Per channel: decode =x = c^2.2= (skipped when =linear-input=), =x *= 2^exposure=, map, clamp to 0..1, encode =m^(1/2.2)=, mix with the input by the base intensity. =lrg_tonemap_apply_rgb()= is the same arithmetic on the CPU (the GPU test compares both).
+
+=lrg_tonemap_operator_apply_rgb()= (since 0.14) is the curve alone, the single CPU definition of the operators: it takes linear values with the exposure already applied (negative and NaN components count as 0), applies the operator with the given white point (clamped into 0.1..100, used by Reinhard and filmic only) and clamps the result to 0..1 - no gamma decode, no encode, no intensity mix. =lrg_tonemap_apply_rgb()= decodes, exposes, calls it, then encodes and mixes, so its results are unchanged; [[file:../graphics/hdr-canvas.org][LrgHdrCanvas]]'s =lrg_hdr_canvas_to_image()= calls it before an exact sRGB encode. Use it whenever float pixels need the same look as the GPU pass:
+
+#+begin_src C
+gfloat rgb[3] = { 3.0f, 1.2f, 0.4f };   /* linear, exposure applied */
+
+lrg_tonemap_operator_apply_rgb (LRG_TONEMAP_OPERATOR_ACES, 4.0f, rgb, rgb);   /* in place, 0..1 linear */
+#+end_src
 | Operator | Formula | Look |
 |----------+---------+------|
 | =none= | =x= | Hard clip; exposure only |
