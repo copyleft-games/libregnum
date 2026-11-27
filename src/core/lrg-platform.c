@@ -1070,6 +1070,124 @@ lrg_platform_get_display_size (gint *width,
 #endif
 }
 
+#ifdef LRG_PLATFORM_ANDROID
+/* ime_request: shows or hides the soft keyboard through the activity's
+ * InputMethodManager, for the window's decor view.
+ *
+ * ANativeActivity_showSoftInput() asks for NativeActivity's content view,
+ * which on current Android (seen on 15) the input method does not serve:
+ * InputMethodManager logs "Ignoring showSoftInput() as view=
+ * NativeActivity$NativeContentView is not served" and nothing shows.  The
+ * view it serves is the decor view, so this asks for that one:
+ *
+ *   activity.getSystemService("input_method").showSoftInput(
+ *       activity.getWindow().getDecorView(), 0)
+ *   ...hideSoftInputFromWindow(decorView.getWindowToken(), 0)
+ *
+ * Returns FALSE when any step fails (a missing method, an exception), for
+ * the caller to fall back to the NDK's call. */
+static gboolean
+ime_request (struct android_app *app,
+             gboolean            show)
+{
+	JavaVM *vm = app->activity->vm;
+	JNIEnv *env = NULL;
+	gboolean attached = FALSE;
+	gboolean ok = FALSE;
+	jobject activity = app->activity->clazz;
+	jclass activity_class = NULL;
+	jclass imm_class = NULL;
+	jclass window_class = NULL;
+	jclass view_class = NULL;
+	jstring service_name = NULL;
+	jobject imm = NULL;
+	jobject window = NULL;
+	jobject decor = NULL;
+	jobject token = NULL;
+	jmethodID method;
+
+	if ((*vm)->GetEnv (vm, (void **) &env, JNI_VERSION_1_6) != JNI_OK)
+	{
+		if ((*vm)->AttachCurrentThread (vm, &env, NULL) != JNI_OK)
+			return FALSE;
+		attached = TRUE;
+	}
+
+	/* the InputMethodManager and the decor view */
+	activity_class = (*env)->GetObjectClass (env, activity);
+	service_name = (*env)->NewStringUTF (env, "input_method");
+	method = (*env)->GetMethodID (env, activity_class, "getSystemService",
+	                              "(Ljava/lang/String;)Ljava/lang/Object;");
+	if (method == NULL || (*env)->ExceptionCheck (env))
+		goto out;
+	imm = (*env)->CallObjectMethod (env, activity, method, service_name);
+	method = (*env)->GetMethodID (env, activity_class, "getWindow", "()Landroid/view/Window;");
+	if (imm == NULL || method == NULL || (*env)->ExceptionCheck (env))
+		goto out;
+	window = (*env)->CallObjectMethod (env, activity, method);
+	if (window == NULL || (*env)->ExceptionCheck (env))
+		goto out;
+	window_class = (*env)->GetObjectClass (env, window);
+	method = (*env)->GetMethodID (env, window_class, "getDecorView", "()Landroid/view/View;");
+	if (method == NULL || (*env)->ExceptionCheck (env))
+		goto out;
+	decor = (*env)->CallObjectMethod (env, window, method);
+	if (decor == NULL || (*env)->ExceptionCheck (env))
+		goto out;
+	imm_class = (*env)->GetObjectClass (env, imm);
+
+	if (show)
+	{
+		method = (*env)->GetMethodID (env, imm_class, "showSoftInput", "(Landroid/view/View;I)Z");
+		if (method == NULL || (*env)->ExceptionCheck (env))
+			goto out;
+		(void) (*env)->CallBooleanMethod (env, imm, method, decor, (jint) 0);
+	}
+	else
+	{
+		view_class = (*env)->GetObjectClass (env, decor);
+		method = (*env)->GetMethodID (env, view_class, "getWindowToken", "()Landroid/os/IBinder;");
+		if (method == NULL || (*env)->ExceptionCheck (env))
+			goto out;
+		token = (*env)->CallObjectMethod (env, decor, method);
+		method = (*env)->GetMethodID (env, imm_class, "hideSoftInputFromWindow",
+		                              "(Landroid/os/IBinder;I)Z");
+		if (token == NULL || method == NULL || (*env)->ExceptionCheck (env))
+			goto out;
+		(void) (*env)->CallBooleanMethod (env, imm, method, token, (jint) 0);
+	}
+	ok = !(*env)->ExceptionCheck (env);
+
+out:
+	if ((*env)->ExceptionCheck (env))
+	{
+		(*env)->ExceptionClear (env);
+		ok = FALSE;
+	}
+	if (token != NULL)
+		(*env)->DeleteLocalRef (env, token);
+	if (decor != NULL)
+		(*env)->DeleteLocalRef (env, decor);
+	if (window != NULL)
+		(*env)->DeleteLocalRef (env, window);
+	if (imm != NULL)
+		(*env)->DeleteLocalRef (env, imm);
+	if (service_name != NULL)
+		(*env)->DeleteLocalRef (env, service_name);
+	if (view_class != NULL)
+		(*env)->DeleteLocalRef (env, view_class);
+	if (window_class != NULL)
+		(*env)->DeleteLocalRef (env, window_class);
+	if (imm_class != NULL)
+		(*env)->DeleteLocalRef (env, imm_class);
+	if (activity_class != NULL)
+		(*env)->DeleteLocalRef (env, activity_class);
+	if (attached)
+		(*vm)->DetachCurrentThread (vm);
+	return ok;
+}
+#endif
+
 /* lrg_platform_show_soft_keyboard: documented in lrg-platform.h */
 void
 lrg_platform_show_soft_keyboard (void)
@@ -1077,7 +1195,9 @@ lrg_platform_show_soft_keyboard (void)
 #ifdef LRG_PLATFORM_ANDROID
 	struct android_app *app = GetAndroidApp ();
 
-	if (app != NULL && app->activity != NULL)
+	/* the input method's own manager first (the NDK's call is ignored on
+	 * current Android), the NDK's when that fails */
+	if (app != NULL && app->activity != NULL && !ime_request (app, TRUE))
 		ANativeActivity_showSoftInput (app->activity, ANATIVEACTIVITY_SHOW_SOFT_INPUT_FORCED);
 #endif
 	soft_keyboard_requested = TRUE;
@@ -1090,7 +1210,7 @@ lrg_platform_hide_soft_keyboard (void)
 #ifdef LRG_PLATFORM_ANDROID
 	struct android_app *app = GetAndroidApp ();
 
-	if (app != NULL && app->activity != NULL)
+	if (app != NULL && app->activity != NULL && !ime_request (app, FALSE))
 		ANativeActivity_hideSoftInput (app->activity, 0);
 #endif
 	soft_keyboard_requested = FALSE;
