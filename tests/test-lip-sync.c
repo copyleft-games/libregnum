@@ -6,8 +6,9 @@
  *
  * Tests for the 2D face tools: the standard shape sheet, LrgLipSync
  * (ARPAbet -> viseme map, YAML and CSV loaders with their errors, viseme
- * keys with cross-fades, the audio loudness fallback).  Everything runs
- * headless.
+ * keys with cross-fades, the audio loudness fallback) and
+ * LrgSkeleton2DProcedural (deterministic blinks, breathing, mixing over
+ * clips, the component hook).  Everything runs headless.
  */
 
 #include <glib.h>
@@ -575,6 +576,180 @@ test_lip_sync_character (void)
 	                  ==, lrg_skeleton2d_clip_get_shape_key_count (clip, "mouth", "A"));
 }
 
+/* ==========================================================================
+ * Procedural layers
+ * ========================================================================== */
+
+static void
+test_procedural_blink (void)
+{
+	g_autoptr(LrgSkeleton2DProcedural) a = lrg_skeleton2d_procedural_new ();
+	g_autoptr(LrgSkeleton2DProcedural) b = lrg_skeleton2d_procedural_new ();
+	g_autoptr(LrgSkeleton2DProcedural) c = lrg_skeleton2d_procedural_new ();
+	g_autoptr(GArray)                  onsets = g_array_new (FALSE, FALSE, sizeof (gdouble));
+	gboolean                           differ = FALSE;
+	gfloat                             prev = 0.0f;
+	gdouble                            t;
+	guint                              i;
+
+	/* bad arguments */
+	g_assert_false (lrg_skeleton2d_procedural_add_blink (a, NULL, 2, 4, 0.15f, 1));
+	g_assert_false (lrg_skeleton2d_procedural_add_blink (a, "mouth", 0, 4, 0.15f, 1));
+	g_assert_false (lrg_skeleton2d_procedural_add_blink (a, "mouth", 4, 2, 0.15f, 1));
+	g_assert_false (lrg_skeleton2d_procedural_add_blink (a, "mouth", 2, 4, 0, 1));
+	g_assert_cmpuint (lrg_skeleton2d_procedural_get_layer_count (a), ==, 0);
+
+	g_assert_true (lrg_skeleton2d_procedural_add_blink (a, "mouth", 2.0f, 4.0f, 0.2f, 1234));
+	g_assert_true (lrg_skeleton2d_procedural_add_blink (b, "mouth", 2.0f, 4.0f, 0.2f, 1234));
+	g_assert_true (lrg_skeleton2d_procedural_add_blink (c, "mouth", 2.0f, 4.0f, 0.2f, 99));
+
+	/* b is evaluated backwards first: the cache must not matter */
+	for (t = 60.0; t >= 0.0; t -= 0.37)
+		lrg_skeleton2d_procedural_get_blink_weight (b, 0, t);
+
+	/* same seed: identical; different seed: different; weights in 0 .. 1;
+	 * blink onsets spaced by 2 .. 4 s */
+	for (i = 0; i <= 60 * 200; i++)
+	{
+		gfloat wa;
+		gfloat wb;
+		gfloat wc;
+
+		t = (gdouble)i / 200.0;
+		wa = lrg_skeleton2d_procedural_get_blink_weight (a, 0, t);
+		wb = lrg_skeleton2d_procedural_get_blink_weight (b, 0, t);
+		wc = lrg_skeleton2d_procedural_get_blink_weight (c, 0, t);
+		g_assert_cmpfloat (wa, ==, wb);
+		g_assert_cmpfloat (wa, >=, 0.0f);
+		g_assert_cmpfloat (wa, <=, 1.0f);
+		if (fabsf (wa - wc) > 1e-6f)
+			differ = TRUE;
+		if (prev == 0.0f && wa > 0.0f)
+			g_array_append_val (onsets, t);
+		prev = wa;
+	}
+	g_assert_true (differ);
+	g_assert_cmpuint (onsets->len, >=, 14);
+	g_assert_cmpuint (onsets->len, <=, 31);
+	g_assert_cmpfloat (g_array_index (onsets, gdouble, 0), >=, 2.0);
+	for (i = 1; i < onsets->len; i++)
+	{
+		gdouble gap = g_array_index (onsets, gdouble, i) - g_array_index (onsets, gdouble, i - 1);
+
+		g_assert_cmpfloat (gap, >=, 2.0 - 0.01);
+		g_assert_cmpfloat (gap, <=, 4.0 + 0.01);
+	}
+
+	/* the blink closes fully at its middle */
+	{
+		gdouble on = g_array_index (onsets, gdouble, 0);
+		gfloat  peak = 0.0f;
+
+		for (t = on - 0.01; t < on + 0.25; t += 0.001)
+			peak = MAX (peak, lrg_skeleton2d_procedural_get_blink_weight (a, 0, t));
+		g_assert_cmpfloat (peak, >, 0.98f);
+	}
+
+	/* invalid queries */
+	g_assert_cmpfloat (lrg_skeleton2d_procedural_get_blink_weight (a, 5, 1.0), ==, 0.0f);
+	g_assert_cmpfloat (lrg_skeleton2d_procedural_get_blink_weight (a, 0, -1.0), ==, 0.0f);
+	g_assert_cmpfloat (lrg_skeleton2d_procedural_get_blink_weight (a, 0, 0.0), ==, 0.0f);
+}
+
+static void
+test_procedural_apply (void)
+{
+	g_autoptr(LrgSkeleton2D)           skel = make_face (NULL);
+	g_autoptr(LrgSkeleton2DProcedural) proc = lrg_skeleton2d_procedural_new ();
+	gfloat                             peak = 0.0f;
+	gfloat                             low = 1.0f;
+	gdouble                            t;
+	gdouble                            blink_at = -1.0;
+
+	g_assert_false (lrg_skeleton2d_procedural_add_breathe (proc, "mouth", 0.0f, 0.3f));
+	g_assert_false (lrg_skeleton2d_procedural_add_breathe (proc, "mouth", 4.0f, 1.5f));
+	g_assert_true (lrg_skeleton2d_procedural_add_breathe (proc, "mouth", 4.0f, 0.3f));
+	g_assert_true (lrg_skeleton2d_procedural_add_blink (proc, "mouth", 2.0f, 3.0f, 0.2f, 7));
+	g_assert_true (lrg_skeleton2d_procedural_add_blink (proc, "no-such-slot", 2.0f, 3.0f, 0.2f, 7));
+	g_assert_cmpuint (lrg_skeleton2d_procedural_get_layer_count (proc), ==, 3);
+
+	/* breathe: 0 at 0, the amount at half a period, never more */
+	for (t = 0.0; t <= 8.0; t += 0.01)
+	{
+		gfloat w;
+
+		lrg_skeleton2d_reset_pose (skel);
+		lrg_skeleton2d_procedural_apply (proc, skel, t);
+		w = lrg_skeleton2d_get_shape_weight (skel, 0, LRG_SHAPE_BREATHE);
+		peak = MAX (peak, w);
+		low = MIN (low, w);
+		if (blink_at < 0.0 && lrg_skeleton2d_get_shape_weight (skel, 0, LRG_SHAPE_BLINK_L) > 0.5f)
+			blink_at = t;
+	}
+	g_assert_cmpfloat_with_epsilon (peak, 0.3f, 1e-3f);
+	g_assert_cmpfloat_with_epsilon (low, 0.0f, 1e-6f);
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_procedural_apply (proc, skel, 2.0);
+	g_assert_cmpfloat_with_epsilon (lrg_skeleton2d_get_shape_weight (skel, 0, LRG_SHAPE_BREATHE), 0.3f, 1e-4f);
+
+	/* breathe adds to the clip and clamps */
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_set_shape_weight (skel, 0, LRG_SHAPE_BREATHE, 0.9f);
+	lrg_skeleton2d_procedural_apply (proc, skel, 2.0);
+	g_assert_cmpfloat (lrg_skeleton2d_get_shape_weight (skel, 0, LRG_SHAPE_BREATHE), ==, 1.0f);
+
+	/* blink drives both eyes and only ever closes them further */
+	g_assert_cmpfloat (blink_at, >, 0.0);
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_procedural_apply (proc, skel, blink_at);
+	g_assert_cmpfloat (lrg_skeleton2d_get_shape_weight (skel, 0, LRG_SHAPE_BLINK_L), ==,
+	                   lrg_skeleton2d_get_shape_weight (skel, 0, LRG_SHAPE_BLINK_R));
+	lrg_skeleton2d_reset_pose (skel);
+	lrg_skeleton2d_set_shape_weight (skel, 0, LRG_SHAPE_BLINK_L, 0.8f);
+	lrg_skeleton2d_procedural_apply (proc, skel, 0.5);      /* no blink before 2 s */
+	g_assert_cmpfloat (lrg_skeleton2d_get_shape_weight (skel, 0, LRG_SHAPE_BLINK_L), ==, 0.8f);
+	g_assert_cmpfloat (lrg_skeleton2d_get_shape_weight (skel, 0, LRG_SHAPE_BLINK_R), ==, 0.0f);
+
+	lrg_skeleton2d_procedural_clear (proc);
+	g_assert_cmpuint (lrg_skeleton2d_procedural_get_layer_count (proc), ==, 0);
+}
+
+/* The component runs the layers after its clips on every update. */
+static void
+test_procedural_component (void)
+{
+	LrgSkinnedSprite                  *quad = NULL;
+	g_autoptr(LrgSkeleton2D)           skel = make_face (&quad);
+	g_autoptr(LrgSkeleton2DProcedural) proc = lrg_skeleton2d_procedural_new ();
+	g_autoptr(LrgSkeleton2DClip)       clip = lrg_skeleton2d_clip_new ("hold");
+	g_autoptr(LrgSkeleton2DComponent)  comp = NULL;
+	const gfloat                      *pos;
+
+	lrg_skeleton2d_clip_add_shape_key (clip, "mouth", LRG_SHAPE_BREATHE, 0.0f, 0.5f, LRG_SKELETON2D_CURVE_LINEAR);
+	lrg_skeleton2d_clip_set_duration (clip, 10.0f);
+	lrg_skeleton2d_add_clip (skel, clip);
+	g_assert_true (lrg_skeleton2d_procedural_add_breathe (proc, "mouth", 4.0f, 0.25f));
+
+	comp = lrg_skeleton2d_component_new_with_skeleton (skel);
+	g_assert_null (lrg_skeleton2d_component_get_procedural (comp));
+	g_assert_true (lrg_skeleton2d_component_play (comp, "hold", TRUE));
+	lrg_skeleton2d_component_set_procedural (comp, proc);
+	g_assert_true (lrg_skeleton2d_component_get_procedural (comp) == proc);
+
+	/* 2 s in: the clip's 0.5 plus the full breath 0.25 */
+	lrg_component_update (LRG_COMPONENT (comp), 1.0f);
+	lrg_component_update (LRG_COMPONENT (comp), 1.0f);
+	g_assert_cmpfloat_with_epsilon (lrg_skeleton2d_get_shape_weight (skel, 0, LRG_SHAPE_BREATHE), 0.75f, 1e-4f);
+	lrg_skeleton2d_update_world (skel);
+	lrg_skeleton2d_deform (skel);
+	pos = lrg_skinned_sprite_get_deformed (quad, NULL);
+	g_assert_cmpfloat_with_epsilon (pos[5], 13.0f, EPS);
+
+	/* removing the layers leaves the clip alone */
+	lrg_skeleton2d_component_set_procedural (comp, NULL);
+	g_assert_cmpfloat_with_epsilon (lrg_skeleton2d_get_shape_weight (skel, 0, LRG_SHAPE_BREATHE), 0.5f, 1e-4f);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -591,6 +766,9 @@ main (int   argc,
 	g_test_add_func ("/lip-sync/write-clip-edges", test_write_clip_edges);
 	g_test_add_func ("/lip-sync/wave-fallback", test_wave_fallback);
 	g_test_add_func ("/lip-sync/character", test_lip_sync_character);
+	g_test_add_func ("/procedural/blink", test_procedural_blink);
+	g_test_add_func ("/procedural/apply", test_procedural_apply);
+	g_test_add_func ("/procedural/component", test_procedural_component);
 
 	return g_test_run ();
 }

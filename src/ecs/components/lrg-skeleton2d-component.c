@@ -5,8 +5,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * LrgSkeleton2DComponent: two-track (current + fading out) clip player
- * for an LrgSkeleton2D on an LrgGameObject, with events, and drawing at
- * the owner's render pose.
+ * for an LrgSkeleton2D on an LrgGameObject, with events, optional
+ * procedural blend-shape layers, and drawing at the owner's render pose.
  */
 
 #include "config.h"
@@ -50,6 +50,9 @@ struct _LrgSkeleton2DComponent
 	gfloat         default_mix;
 	gboolean       show_bones;
 	GrlColor       tint;
+
+	LrgSkeleton2DProcedural *procedural;   /* NULL when none */
+	gdouble                  proc_time;    /* playback seconds since set */
 };
 
 G_DEFINE_FINAL_TYPE (LrgSkeleton2DComponent, lrg_skeleton2d_component, LRG_TYPE_COMPONENT)
@@ -94,7 +97,9 @@ track_clear (Track *t)
 /* ------------------------------------------------------------------ */
 
 /* Resets the skeleton to its setup pose and applies the tracks: the
- * fading-out clip fully, then the current clip at its mix weight. */
+ * fading-out clip fully, then the current clip at its mix weight (shape
+ * weights crossfade with everything else), then the procedural layers
+ * on top. */
 static void
 apply_pose (LrgSkeleton2DComponent *self)
 {
@@ -106,6 +111,8 @@ apply_pose (LrgSkeleton2DComponent *self)
 	if (self->cur.clip != NULL)
 		lrg_skeleton2d_clip_apply (self->cur.clip, self->skeleton, self->cur.time,
 		                           lrg_skeleton2d_component_get_mix_weight (self));
+	if (self->procedural != NULL)
+		lrg_skeleton2d_procedural_apply (self->procedural, self->skeleton, self->proc_time);
 }
 
 /* Emits ::event for every event of the current clip in (from, to]
@@ -198,6 +205,7 @@ lrg_skeleton2d_component_update (LrgComponent *component,
 	if (self->skeleton == NULL)
 		return;
 	dt = delta * self->speed;
+	self->proc_time += dt;
 
 	/* the fade advances with playback time, so speed 0 freezes it too */
 	if (self->prev.clip != NULL)
@@ -223,6 +231,7 @@ lrg_skeleton2d_component_dispose (GObject *object)
 	track_clear (&self->cur);
 	track_clear (&self->prev);
 	g_clear_object (&self->skeleton);
+	g_clear_object (&self->procedural);
 
 	G_OBJECT_CLASS (lrg_skeleton2d_component_parent_class)->dispose (object);
 }
@@ -783,4 +792,24 @@ lrg_skeleton2d_component_draw (LrgSkeleton2DComponent *self)
 	lrg_skeleton2d_draw (self->skeleton, &self->tint);
 	if (self->show_bones)
 		lrg_skeleton2d_draw_bones (self->skeleton, NULL);
+}
+
+void
+lrg_skeleton2d_component_set_procedural (LrgSkeleton2DComponent  *self,
+                                         LrgSkeleton2DProcedural *procedural)
+{
+	g_return_if_fail (LRG_IS_SKELETON2D_COMPONENT (self));
+	g_return_if_fail (procedural == NULL || LRG_IS_SKELETON2D_PROCEDURAL (procedural));
+
+	g_set_object (&self->procedural, procedural);
+	self->proc_time = 0.0;
+	apply_pose (self);
+}
+
+LrgSkeleton2DProcedural *
+lrg_skeleton2d_component_get_procedural (LrgSkeleton2DComponent *self)
+{
+	g_return_val_if_fail (LRG_IS_SKELETON2D_COMPONENT (self), NULL);
+
+	return self->procedural;
 }

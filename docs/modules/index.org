@@ -204,6 +204,10 @@ Complete skeletal animation system:
 - *[[file:animation/blend-tree.org][LrgBlendTree]]* - 1D/2D parametric blending
 - *[[file:animation/layers.org][LrgAnimationLayer]]* - Layered animation with bone masks
 - *[[file:animation/ik-solver.org][LrgIKSolver]]* - FABRIK, CCD, two-bone, look-at
+- *[[file:animation/skeleton2d.org][LrgSkeleton2D]]* - 2D bones, slots, skins, blend shapes, clips and the =.rskel2d= format
+- *[[file:animation/shape-sheet.org][Shape sheet]]* - Standard blend-shape names (visemes, eyes, brows, moods, body) shared by a cast
+- *[[file:animation/lip-sync.org][LrgLipSync]]* - Phoneme alignments or audio loudness to cross-faded viseme keys
+- *[[file:animation/procedural.org][LrgSkeleton2DProcedural]]* - Deterministic automatic blink and breathe layers
 
 *** [[file:text/index.org][Rich Text Module]] - Styled Text
 :PROPERTIES:
