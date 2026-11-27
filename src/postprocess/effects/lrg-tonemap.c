@@ -12,8 +12,10 @@
  *   filmic    h(2x) / h(W), h(x) = (x(Ax+CB)+DE)/(x(Ax+B)+DF) - E/F
  *             A .15 B .50 C .10 D .20 E .02 F .30          (Hable)
  *   aces      x (2.51x + .03) / (x (2.43x + .59) + .14)     (Narkowicz)
- * applied per channel. tonemap_rgb() is the same arithmetic on the CPU
- * (lrg_tonemap_apply_rgb(); the tests compare the GPU result with it).
+ * applied per channel. lrg_tonemap_operator_apply_rgb() holds the curves
+ * on the CPU (with the 0..1 clamp); lrg_tonemap_apply_rgb() wraps it in
+ * the shader's decode / exposure / encode / mix, and the tests compare
+ * the GPU result with it.
  */
 
 #include "config.h"
@@ -144,11 +146,35 @@ curve (LrgTonemapOperator op,
 }
 
 void
+lrg_tonemap_operator_apply_rgb (LrgTonemapOperator  op,
+                                gfloat              white_point,
+                                const gfloat       *in,
+                                gfloat             *out)
+{
+	gfloat x[3];
+	gint   i;
+
+	g_return_if_fail (in != NULL && out != NULL);
+
+	/* the white point has the property's range, so Reinhard never
+	 * divides by zero and filmic never normalises by a tiny h(W) */
+	if (!isfinite (white_point))
+		white_point = 4.0f;
+	white_point = CLAMP (white_point, 0.1f, 100.0f);
+
+	/* copy first: in and out may alias; MAX() also turns NaN into 0 */
+	for (i = 0; i < 3; i++)
+		x[i] = MAX (in[i], 0.0f);
+	for (i = 0; i < 3; i++)
+		out[i] = CLAMP (curve (op, x[i], white_point), 0.0f, 1.0f);
+}
+
+void
 lrg_tonemap_apply_rgb (LrgTonemap   *self,
                        const gfloat *rgb,
                        gfloat       *out)
 {
-	gfloat scale, k, in[3];
+	gfloat scale, k, in[3], x[3], m[3];
 	gint   i;
 
 	g_return_if_fail (LRG_IS_TONEMAP (self));
@@ -156,18 +182,26 @@ lrg_tonemap_apply_rgb (LrgTonemap   *self,
 
 	scale = exp2f (self->exposure);
 	k = lrg_post_effect_get_intensity (LRG_POST_EFFECT (self));
-	for (i = 0; i < 3; i++)
-		in[i] = rgb[i];
+
+	/* decode (unless linear) and expose, as the shader does */
 	for (i = 0; i < 3; i++)
 	{
-		gfloat x = MAX (in[i], 0.0f);
-		gfloat m;
-
+		in[i] = rgb[i];
+		x[i] = MAX (in[i], 0.0f);
 		if (!self->linear_input)
-			x = powf (x, 2.2f);
-		m = curve (self->op, x * scale, self->white_point);
-		m = powf (CLAMP (m, 0.0f, 1.0f), 1.0f / 2.2f);
-		out[i] = in[i] + (m - in[i]) * k;
+			x[i] = powf (x[i], 2.2f);
+		x[i] *= scale;
+	}
+
+	/* the curve (and its 0..1 clamp) lives in one place */
+	lrg_tonemap_operator_apply_rgb (self->op, self->white_point, x, m);
+
+	/* encode and mix with the input by the base intensity */
+	for (i = 0; i < 3; i++)
+	{
+		gfloat e = powf (m[i], 1.0f / 2.2f);
+
+		out[i] = in[i] + (e - in[i]) * k;
 	}
 }
 

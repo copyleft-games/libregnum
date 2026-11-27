@@ -12,6 +12,7 @@
  */
 
 #include <glib.h>
+#include <math.h>
 #include <libregnum.h>
 #include <raylib.h>  /* SetConfigFlags/FLAG_WINDOW_HIDDEN for a hidden GL context */
 
@@ -502,6 +503,156 @@ test_image_canvas_drop_shadow (void)
 }
 
 /* ==========================================================================
+ * Test: quality preset — new_quality() / set_quality()
+ * ========================================================================== */
+
+static void
+test_image_canvas_quality_preset (void)
+{
+    g_autoptr(LrgImageCanvas) plain   = NULL;
+    g_autoptr(LrgImageCanvas) quality = NULL;
+    g_autoptr(GrlColor)       black   = NULL;
+    GrlImage                 *img;
+
+    black = grl_color_new (0, 0, 0, 255);
+
+    /* the plain constructor keeps graylib's pixel-exact defaults */
+    plain = lrg_image_canvas_new (8, 8, black);
+    img = lrg_image_canvas_get_image (plain);
+    g_assert_cmpint (grl_image_get_blend_mode (img), ==, GRL_IMAGE_BLEND_REPLACE);
+    g_assert_cmpint (grl_image_get_blend_color_space (img), ==, GRL_IMAGE_COLOR_SPACE_GAMMA);
+    g_assert_false (grl_image_get_antialias (img));
+    g_assert_cmpuint (lrg_image_canvas_get_supersample (plain), ==, 1);
+
+    /* set_quality turns all three on */
+    lrg_image_canvas_set_quality (plain);
+    g_assert_cmpint (grl_image_get_blend_mode (img), ==, GRL_IMAGE_BLEND_OVER);
+    g_assert_cmpint (grl_image_get_blend_color_space (img), ==, GRL_IMAGE_COLOR_SPACE_LINEAR);
+    g_assert_true (grl_image_get_antialias (img));
+
+    /* new_quality is new + set_quality */
+    quality = lrg_image_canvas_new_quality (8, 4, NULL);
+    g_assert_nonnull (quality);
+    img = lrg_image_canvas_get_image (quality);
+    g_assert_cmpint (grl_image_get_width (img), ==, 8);
+    g_assert_cmpint (grl_image_get_height (img), ==, 4);
+    g_assert_cmpint (grl_image_get_blend_mode (img), ==, GRL_IMAGE_BLEND_OVER);
+    g_assert_cmpint (grl_image_get_blend_color_space (img), ==, GRL_IMAGE_COLOR_SPACE_LINEAR);
+    g_assert_true (grl_image_get_antialias (img));
+    g_assert_cmpuint (lrg_image_canvas_get_supersample (quality), ==, 1);
+}
+
+/*
+ * The preset blends in linear light: 50% white over black is the linear
+ * mid grey (sRGB 188), where gamma-space blending gives about 128.
+ */
+static void
+test_image_canvas_quality_linear_blend (void)
+{
+    g_autoptr(LrgImageCanvas) canvas = NULL;
+    g_autoptr(GrlColor)       black  = NULL;
+    g_autoptr(GrlColor)       half   = NULL;
+    guint8                    r, g, b, a;
+
+    black  = grl_color_new (0, 0, 0, 255);
+    half   = grl_color_new (255, 255, 255, 128);
+    canvas = lrg_image_canvas_new_quality (8, 8, black);
+    lrg_image_canvas_fill_rect (canvas, 0, 0, 8, 8, half);
+
+    g_assert_true (canvas_get_pixel (canvas, 4, 4, &r, &g, &b, &a));
+    g_assert_cmpint (a, ==, 255);
+    g_assert_cmpint (ABS ((gint)r - 188), <=, 1);
+}
+
+/* ==========================================================================
+ * Test: supersampling — new_supersampled() / resolve()
+ * ========================================================================== */
+
+static void
+test_image_canvas_supersampled (void)
+{
+    g_autoptr(LrgImageCanvas) canvas   = NULL;
+    g_autoptr(GrlColor)       black    = NULL;
+    g_autoptr(GrlColor)       white    = NULL;
+    g_autoptr(GrlImage)       resolved = NULL;
+    g_autoptr(GrlImage)       again    = NULL;
+    GrlImage                 *img;
+    const guint8             *p;
+    gdouble                   lin;
+    gint                      want;
+
+    black  = grl_color_new (0, 0, 0, 255);
+    white  = grl_color_new (255, 255, 255, 255);
+    canvas = lrg_image_canvas_new_supersampled (10, 6, 3, black);
+    g_assert_nonnull (canvas);
+    g_assert_cmpuint (lrg_image_canvas_get_supersample (canvas), ==, 3);
+
+    /* the backing image is factor times larger and carries the preset */
+    img = lrg_image_canvas_get_image (canvas);
+    g_assert_cmpint (grl_image_get_width (img), ==, 30);
+    g_assert_cmpint (grl_image_get_height (img), ==, 18);
+    g_assert_cmpint (grl_image_get_blend_mode (img), ==, GRL_IMAGE_BLEND_OVER);
+    g_assert_cmpint (grl_image_get_blend_color_space (img), ==, GRL_IMAGE_COLOR_SPACE_LINEAR);
+    g_assert_true (grl_image_get_antialias (img));
+
+    /*
+     * White over columns 0..15 of 30: final pixel 4 (source 12..14) is
+     * covered, pixel 5 (source 15..17) one third, pixel 6 not at all.
+     */
+    lrg_image_canvas_fill_rect (canvas, 0, 0, 16, 18, white);
+    resolved = lrg_image_canvas_resolve (canvas, LRG_RESAMPLE_FILTER_BOX);
+    g_assert_nonnull (resolved);
+    g_assert_cmpint (grl_image_get_width (resolved), ==, 10);
+    g_assert_cmpint (grl_image_get_height (resolved), ==, 6);
+    p = grl_image_get_pixels (resolved, NULL);
+
+    /* reference: linear coverage 1/3, encoded with the sRGB curve */
+    lin  = 1.0 / 3.0;
+    want = (gint)floor ((1.055 * pow (lin, 1.0 / 2.4) - 0.055) * 255.0 + 0.5);
+    g_assert_cmpint (p[(2 * 10 + 4) * 4 + 0], ==, 255);
+    g_assert_cmpint (ABS ((gint)p[(2 * 10 + 5) * 4 + 0] - want), <=, 1);
+    g_assert_cmpint (p[(2 * 10 + 6) * 4 + 0], ==, 0);
+    g_assert_cmpint (p[(2 * 10 + 5) * 4 + 3], ==, 255);
+
+    /* resolve leaves the canvas as it was: a second resolve is identical */
+    again = lrg_image_canvas_resolve (canvas, LRG_RESAMPLE_FILTER_BOX);
+    g_assert_cmpmem (grl_image_get_pixels (again, NULL), 10 * 6 * 4, p, 10 * 6 * 4);
+    g_assert_cmpint (grl_image_get_width (img), ==, 30);
+}
+
+/* A factor-1 canvas resolves to a copy of its image */
+static void
+test_image_canvas_resolve_factor_one (void)
+{
+    g_autoptr(LrgImageCanvas) canvas = NULL;
+    g_autoptr(GrlColor)       grey   = NULL;
+    g_autoptr(GrlImage)       out    = NULL;
+
+    grey   = grl_color_new (90, 120, 150, 200);
+    canvas = lrg_image_canvas_new_supersampled (5, 4, 1, grey);
+    out    = lrg_image_canvas_resolve (canvas, LRG_RESAMPLE_FILTER_LANCZOS3);
+    g_assert_nonnull (out);
+    g_assert_true (out != lrg_image_canvas_get_image (canvas));
+    g_assert_cmpint (grl_image_get_width (out), ==, 5);
+    g_assert_cmpmem (grl_image_get_pixels (out, NULL), 5 * 4 * 4,
+                     grl_image_get_pixels (lrg_image_canvas_get_image (canvas), NULL), 5 * 4 * 4);
+}
+
+/* Factor 0 is a programmer error (critical) */
+static void
+test_image_canvas_supersampled_invalid (void)
+{
+    if (g_test_subprocess ())
+    {
+        lrg_image_canvas_new_supersampled (4, 4, 0, NULL);
+        return;
+    }
+    g_test_trap_subprocess (NULL, 0, G_TEST_SUBPROCESS_DEFAULT);
+    g_test_trap_assert_failed ();
+    g_test_trap_assert_stderr ("*factor*");
+}
+
+/* ==========================================================================
  * main
  * ========================================================================== */
 
@@ -525,6 +676,11 @@ main (int   argc,
     g_test_add_func ("/image-canvas/composite",        test_image_canvas_composite);
     g_test_add_func ("/image-canvas/blur",             test_image_canvas_blur);
     g_test_add_func ("/image-canvas/drop-shadow",      test_image_canvas_drop_shadow);
+    g_test_add_func ("/image-canvas/quality-preset",   test_image_canvas_quality_preset);
+    g_test_add_func ("/image-canvas/quality-linear-blend", test_image_canvas_quality_linear_blend);
+    g_test_add_func ("/image-canvas/supersampled",     test_image_canvas_supersampled);
+    g_test_add_func ("/image-canvas/resolve-factor-one", test_image_canvas_resolve_factor_one);
+    g_test_add_func ("/image-canvas/supersampled-invalid", test_image_canvas_supersampled_invalid);
 
     result = g_test_run ();
     cleanup_graphics_context ();

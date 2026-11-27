@@ -401,6 +401,8 @@ TEST_SOURCES := \
 	test-font-atlas.c \
 	test-csv.c \
 	test-image-canvas.c \
+	test-image-resample.c \
+	test-hdr-canvas.c \
 	test-image-document.c \
 	test-vector-image.c \
 	test-reel.c \

@@ -1,0 +1,189 @@
+* LrgHdrCanvas - Float Linear-Light Canvas
+:PROPERTIES:
+:CUSTOM_ID: lrghdrcanvas
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Graphics]]* > HDR canvas
+#+end_quote
+
+=LrgHdrCanvas= is a float RGBA canvas in linear light with premultiplied alpha: the working surface of an offline "fragment shader" render. Shading code writes unbounded radiance into it (per pixel, by source-over blending, by adding light, or through a supersampled per-sample callback), and =lrg_hdr_canvas_to_image()= tone-maps the result with the same curves as the =LrgTonemap= post effect, encodes sRGB and dithers to an RGBA8 =GrlImage= ready for PNG export or upload. It converts to and from [[file:hdr-image.org][LrgHdrImage]] for =.hdr= files. Everything is headless: no GL context is needed.
+
+- *Type* - =LrgHdrCanvas=, final GObject, =LRG_TYPE_HDR_CANVAS=, GIR =Libregnum.HdrCanvas=
+- *Header* - =graphics/lrg-hdr-canvas.h=
+- *Callback* - =LrgHdrShadeFunc=
+- *Limits* - =LRG_HDR_CANVAS_MAX_SIZE= (16384 per side), =LRG_HDR_CANVAS_MAX_SAMPLES= (16 per axis), =LRG_HDR_CANVAS_WHITE_POINT= (4.0)
+- *Since* - 0.14
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: hdr-canvas-concepts
+:END:
+*** Why a float canvas
+:PROPERTIES:
+:CUSTOM_ID: hdr-canvas-why
+:END:
+An 8-bit sRGB image cannot hold light: a lamp ten times brighter than white clips to white, adding two lights in gamma space over-brightens, and smooth gradients band after a few operations. The usual recipe for a polished render is to accumulate light in linear floats, supersample the edges, and only at the end compress the range with a tone-map curve and quantise with a dither. =LrgHdrCanvas= is that recipe as a type; =LrgImageCanvas= stays the tool for 8-bit drawing and compositing.
+
+*** Storage: linear, premultiplied
+:PROPERTIES:
+:CUSTOM_ID: hdr-canvas-storage
+:END:
+Each pixel is four =gfloat= (R, G, B, A), rows from the top, =width x height x 4= floats in one block (=lrg_hdr_canvas_get_data()=, writable). Colour is linear light and may exceed 1. Alpha is premultiplied: the stored colour is the surface colour times its coverage. Premultiplied storage makes every operation linear:
+
+| Operation | Premultiplied form |
+|-----------+--------------------|
+| source over | =dst = src + dst x (1 - src.a)= (all four channels) |
+| average of samples | the plain mean of the premultiplied samples |
+| add light | =dst.rgb += light= |
+| over black | the stored colour itself |
+
+The per-pixel API speaks straight alpha, the way colours are usually specified: =set_pixel=, =clear= and =blend_over= take a straight colour and premultiply it, =get_pixel= divides by alpha on the way out (a pixel with alpha 0 reads as all zeros). Alpha arguments are clamped into 0..1 (NaN counts as 0); colour is not clamped.
+
+*** Shading with supersampling
+:PROPERTIES:
+:CUSTOM_ID: hdr-canvas-shade
+:END:
+=lrg_hdr_canvas_shade()= is the CPU counterpart of a full-screen fragment shader. For every pixel it calls an =LrgHdrShadeFunc= at the centres of an =n x n= grid of cells (pixel =(i, j)= is sampled at =(i + (k + 0.5) / n, j + (l + 0.5) / n)=; with =n = 1= that is the pixel centre), averages the returned straight-alpha colours in premultiplied form, and composites the average over the pixel. A hard edge that covers one of four samples therefore yields a quarter coverage in the colour of the covered part: uncovered samples (alpha 0) add nothing, not even their colour. Because positions are continuous, the shader should evaluate shapes analytically (distance fields, circles, half-planes) at the exact =(x, y)= it receives. =samples= of 0 counts as 1; more than 16 is capped at 16.
+
+*** Tone mapping to an image
+:PROPERTIES:
+:CUSTOM_ID: hdr-canvas-tonemap
+:END:
+=lrg_hdr_canvas_to_image()= produces a straight-alpha RGBA8 =GrlImage=. Per pixel:
+
+1. unpremultiply (the curves are non-linear and must see the surface colour, not colour times coverage); pixels with alpha 0 become transparent black
+2. multiply by =2^exposure= (exposure in *stops*, the same convention as =LrgTonemap:exposure=; 0 leaves values alone, +1 doubles them)
+3. map with =lrg_tonemap_operator_apply_rgb()= (white point =LRG_HDR_CANVAS_WHITE_POINT=, 4.0, the =LrgTonemap= default; only Reinhard and filmic use it), which clamps to 0..1
+4. encode with the exact sRGB curve (IEC 61966-2-1: linear below 0.0031308, otherwise =1.055 v^(1/2.4) - 0.055=) - note that the =LrgTonemap= post effect encodes with a plain 2.2 gamma because the engine's shaders do
+5. scale to 0..255, add the dither offset when =dither= is set, round down after adding 0.5, clamp
+
+The dither is a per-pixel, per-channel integer hash (white noise in [-0.5, 0.5) of one 8-bit step), so it is deterministic, has no visible ordered pattern, and moves every channel by at most one step. It breaks up the banding of slow dark gradients. Alpha is quantised by plain rounding and never dithered.
+
+*** LrgHdrImage interchange
+:PROPERTIES:
+:CUSTOM_ID: hdr-canvas-hdr-image
+:END:
+=lrg_hdr_canvas_new_from_hdr_image()= makes an opaque canvas from an =LrgHdrImage= (for example a =.hdr= read from disk). =lrg_hdr_canvas_to_hdr_image()= writes the stored premultiplied colour, which is the canvas composited over black (an =LrgHdrImage= has no alpha); an opaque canvas round-trips exactly. Save the result with =lrg_hdr_image_save_to_file()= to keep the full range.
+
+** Quick start
+:PROPERTIES:
+:CUSTOM_ID: hdr-canvas-quick-start
+:END:
+A gradient sky with a bright sun, 4 x 4 supersampled, ACES tone-mapped and dithered, saved as a PNG:
+
+#+begin_src C
+#include <libregnum.h>
+#include <math.h>
+
+typedef struct
+{
+	gfloat sun_x;
+	gfloat sun_y;
+} Sky;
+
+/* linear radiance at (x, y): a ramp plus a glow and a hard-edged disc */
+static void
+shade_sky (gfloat   x,
+           gfloat   y,
+           gfloat  *out_rgba,
+           gpointer user_data)
+{
+	Sky   *sky = user_data;
+	gfloat t = x / 512.0f;
+	gfloat dx = x - sky->sun_x;
+	gfloat dy = y - sky->sun_y;
+	gfloat d2 = dx * dx + dy * dy;
+	gfloat glow = 6.0f / (1.0f + d2 / 400.0f);
+	gfloat disc = sqrtf (d2) < 12.0f ? 40.0f : 0.0f;
+
+	out_rgba[0] = 0.02f + 0.6f * t * t + glow + disc;
+	out_rgba[1] = 0.03f + 0.25f * t * t + glow * 0.7f + disc;
+	out_rgba[2] = 0.15f * (1.0f - t) + glow * 0.35f + disc;
+	out_rgba[3] = 1.0f;
+}
+
+int
+main (void)
+{
+	g_autoptr(LrgHdrCanvas) canvas = lrg_hdr_canvas_new (512, 128);
+	g_autoptr(GrlImage)     image = NULL;
+	Sky                     sky = { 400.0f, 50.0f };
+
+	lrg_hdr_canvas_shade (canvas, shade_sky, &sky, 4);
+	image = lrg_hdr_canvas_to_image (canvas, LRG_TONEMAP_OPERATOR_ACES, 0.0f, TRUE);
+	return grl_image_export (image, "sky.png") ? 0 : 1;
+}
+#+end_src
+
+Layering works the same way: =clear= a background, =shade= one shape at a time (each returning alpha 0 outside the shape), =add= light where it falls, then export once.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: hdr-canvas-api
+:END:
+#+begin_src C
+#define LRG_HDR_CANVAS_MAX_SIZE    (16384)
+#define LRG_HDR_CANVAS_MAX_SAMPLES (16)
+#define LRG_HDR_CANVAS_WHITE_POINT (4.0f)
+
+typedef void (*LrgHdrShadeFunc) (gfloat x, gfloat y, gfloat *out_rgba, gpointer user_data);
+
+LrgHdrCanvas *lrg_hdr_canvas_new                (guint width, guint height);
+LrgHdrCanvas *lrg_hdr_canvas_new_from_hdr_image (LrgHdrImage *image);
+
+guint    lrg_hdr_canvas_get_width  (LrgHdrCanvas *self);
+guint    lrg_hdr_canvas_get_height (LrgHdrCanvas *self);
+gfloat  *lrg_hdr_canvas_get_data   (LrgHdrCanvas *self, gsize *n_floats);   /* premultiplied */
+
+void lrg_hdr_canvas_clear      (LrgHdrCanvas *self, gfloat r, gfloat g, gfloat b, gfloat a);
+void lrg_hdr_canvas_set_pixel  (LrgHdrCanvas *self, gint x, gint y, gfloat r, gfloat g, gfloat b, gfloat a);
+void lrg_hdr_canvas_get_pixel  (LrgHdrCanvas *self, gint x, gint y, gfloat *out_rgba);
+void lrg_hdr_canvas_blend_over (LrgHdrCanvas *self, gint x, gint y, gfloat r, gfloat g, gfloat b, gfloat a);
+void lrg_hdr_canvas_add        (LrgHdrCanvas *self, gint x, gint y, gfloat r, gfloat g, gfloat b);
+void lrg_hdr_canvas_shade      (LrgHdrCanvas *self, LrgHdrShadeFunc func, gpointer user_data, guint samples);
+
+GrlImage    *lrg_hdr_canvas_to_image     (LrgHdrCanvas *self, LrgTonemapOperator op,
+                                          gfloat exposure, gboolean dither);
+LrgHdrImage *lrg_hdr_canvas_to_hdr_image (LrgHdrCanvas *self);
+#+end_src
+
+| Function | Notes |
+|----------+-------|
+| =lrg_hdr_canvas_new()= | transparent black; sizes 1..16384, otherwise a critical and =NULL= |
+| =lrg_hdr_canvas_new_from_hdr_image()= | opaque copy of the image |
+| =lrg_hdr_canvas_get_data()= | transfer none, =width x height x 4= premultiplied floats, writable (keep it premultiplied) |
+| =lrg_hdr_canvas_clear()= | straight colour, premultiplied into every pixel |
+| =lrg_hdr_canvas_set_pixel()= | replaces; ignored outside the canvas |
+| =lrg_hdr_canvas_get_pixel()= | straight colour out; zeros outside and where alpha is 0 |
+| =lrg_hdr_canvas_blend_over()= | Porter-Duff source over; ignored outside |
+| =lrg_hdr_canvas_add()= | adds to the stored colour, alpha unchanged; light added where alpha is 0 is kept in storage but dropped by =get_pixel= and =to_image= |
+| =lrg_hdr_canvas_shade()= | =(scope call)=; =n x n= stratified samples, averaged premultiplied, composited over |
+| =lrg_hdr_canvas_to_image()= | new RGBA8 image, straight alpha; exposure in stops |
+| =lrg_hdr_canvas_to_hdr_image()= | new =LrgHdrImage=, colour over black |
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: hdr-canvas-behaviour
+:END:
+- Colour is never clamped while you draw: values of 40 for a sun disc are normal. Negative colour survives in storage and is treated as 0 by the tone map.
+- =blend_over= and =shade= composite; =set_pixel= and =clear= replace. A shader that should replace the background returns alpha 1 everywhere.
+- =to_image= with =LRG_TONEMAP_OPERATOR_NONE= is exposure, clamp and sRGB encode: the way to export a canvas that already holds display-referred values.
+- The white point of Reinhard and filmic is fixed at 4.0 for =to_image=; for another white point map the floats yourself with =lrg_tonemap_operator_apply_rgb()= (it takes the white point as an argument).
+
+** Performance and thread safety
+:PROPERTIES:
+:CUSTOM_ID: hdr-canvas-performance
+:END:
+- Memory is 16 bytes per pixel: 1920 x 1080 is about 33 MB.
+- =shade= calls the function =width x height x samples^2= times: 4 x 4 samples on a 1920 x 1080 canvas is 33 million calls. Use =samples = 1= while iterating on the look and raise it for the final render; 3 or 4 is usually enough for clean edges.
+- =shade= runs on the calling thread, rows from the top, left to right; the callback may keep per-call state in =user_data= without locking. A canvas is not thread-safe: do not draw into one canvas from several threads at once. Separate canvases are independent.
+- =to_image= is a single pass (one =powf= per channel for the sRGB encode plus the curve).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: hdr-canvas-see-also
+:END:
+- [[file:hdr-image.org][LrgHdrImage]] - Radiance =.hdr= files, RGB float without alpha
+- [[file:image-canvas.org][LrgImageCanvas]] - 8-bit drawing with the quality preset and supersampled export
+- [[file:image-resample.org][Image resampling]] - the gamma-correct downsampler
+- [[file:../postprocess/effects.org::#lrgtonemap][LrgTonemap]] - the post effect sharing the operator curves

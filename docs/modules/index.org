@@ -149,6 +149,9 @@ Window management, cameras, and rendering abstractions:
 - *[[file:graphics/gltf-info.org][LrgGltfInfo]]* - Headless glTF/GLB inspection (raylib mesh order, node names, animations, visibility masks)
 - *[[file:graphics/static-batch.org][LrgStaticBatch]]* - Static mesh batching into u16 chunks per (material, layer) with bounds and layer masks
 - *[[file:graphics/model-animator.org][LrgModelAnimator]]* - Shared skinned model animation with per-actor state, crossfades, pose dedupe and masked drawing
+- *[[file:graphics/image-canvas.org][LrgImageCanvas]]* - CPU drawing canvas; quality preset and supersampled export (=new_quality=, =new_supersampled=, =resolve=)
+- *[[file:graphics/image-resample.org][Image resampling]]* - Gamma-correct, premultiplied box / Mitchell / Lanczos-3 downsampling (=lrg_image_downsample()=)
+- *[[file:graphics/hdr-canvas.org][LrgHdrCanvas]]* - Float linear-light canvas with supersampled shading and tone-mapped, dithered sRGB export
 
 *** [[file:worldui/index.org][World-space UI Module]] - Speech bubbles, nameplates and emotes (0.11.0)
 :PROPERTIES:
