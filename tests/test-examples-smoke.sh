@@ -29,6 +29,12 @@ set -o pipefail
 # name | arguments (OUT is replaced by the temp dir) | files that must exist
 CASES=(
 	'reel-captions-demo|--out OUT --scale 0.25 --no-video|reel-captions-demo-day.png reel-captions-demo-dissolve.png reel-captions-demo-night.png'
+	'skeleton2d-talking-head|--out OUT --scale 0.25 --no-video|frames/frame_00000.png frames/frame_00050.png'
+	'skeleton2d-shape-sheet|--out OUT --cell 64|shape-sheet.png'
+	'cookbook|--out OUT --size 160x100 --pitfalls|cookbook-aa-shapes.png cookbook-sdf-character-bust.png cookbook-speech-bubble-layout.png cookbook-particles-glow.png'
+	'image-quality-showcase|--out OUT --size 320x160|image-quality-showcase.png'
+	'sdf-portrait|--out OUT --size 80x100 --samples 1|sdf-portrait.png'
+	'frame-layout-poster|--out OUT --size 480x270 --debug-boxes|frame-layout-poster.png frame-layout-poster-debug.png'
 )
 
 run_case () {
