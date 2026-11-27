@@ -1424,6 +1424,147 @@ test_text_clip (void)
     g_object_unref (text);
 }
 
+/*
+ * text_ink:
+ *
+ * Renders @text in white on a transparent 240x64 frame with the given
+ * alignment, text-x and max-width (16 px bitmap font, text-y 8) and returns
+ * the leftmost and rightmost columns holding ink in rows [@row0, @row1).
+ * Returns FALSE when nothing was drawn.
+ */
+static gboolean
+text_ink (const gchar      *text,
+          LrgReelTextAlign  align,
+          gint              text_x,
+          gint              max_width,
+          gint              row0,
+          gint              row1,
+          gint             *out_left,
+          gint             *out_right)
+{
+    g_autoptr(LrgReel) reel = lrg_reel_new ("t", 240, 64, 30.0, 1);
+    GrlColor white = { 255, 255, 255, 255 };
+    LrgReelTextClip *clip = lrg_reel_text_clip_new (text);
+    g_autoptr(LrgReelRenderer) renderer = NULL;
+    g_autoptr(GrlImage) f = NULL;
+    gint x;
+    gint y;
+
+    lrg_reel_text_clip_set_color (clip, &white);
+    lrg_reel_text_clip_set_font_size (clip, 16);
+    lrg_reel_text_clip_set_text_x (clip, text_x);
+    lrg_reel_text_clip_set_text_y (clip, 8);
+    lrg_reel_text_clip_set_align (clip, align);
+    lrg_reel_text_clip_set_max_width (clip, max_width);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (clip));
+    g_object_unref (clip);
+
+    renderer = lrg_reel_renderer_new (reel);
+    f = lrg_reel_renderer_render_frame (renderer, 0);
+
+    *out_left = G_MAXINT;
+    *out_right = G_MININT;
+    for (y = row0; y < row1; y++)
+        for (x = 0; x < 240; x++)
+        {
+            Rgba px;
+
+            read_px (f, x, y, &px);
+            if (px.a > 0)
+            {
+                *out_left = MIN (*out_left, x);
+                *out_right = MAX (*out_right, x);
+            }
+        }
+    return *out_left != G_MAXINT;
+}
+
+/*
+ * Issue #4: with no max-width, CENTER centres on text-x and RIGHT ends at
+ * text-x; with a max-width, lines are aligned in [text-x, text-x + W].
+ * Every case is measured against the LEFT render of the same string, so the
+ * glyphs' own side bearings cancel out.
+ */
+static void
+test_text_clip_align (void)
+{
+    const gchar *word = "CENTRE";
+    gint w;
+    gint l0, r0;
+    gint l, r;
+
+    lrg_reel_measure_text (NULL, word, 16.0, &w, NULL);
+    g_assert_cmpint (w, >, 0);
+
+    /* Reference: left-aligned at x = 20, no max-width. */
+    g_assert_true (text_ink (word, LRG_REEL_TEXT_ALIGN_LEFT, 20, 0, 0, 64, &l0, &r0));
+    g_assert_cmpint (l0, >=, 20);
+
+    /* LEFT with a max-width is unchanged. */
+    g_assert_true (text_ink (word, LRG_REEL_TEXT_ALIGN_LEFT, 20, 160, 0, 64, &l, &r));
+    g_assert_cmpint (l, ==, l0);
+    g_assert_cmpint (r, ==, r0);
+
+    /* CENTER, no max-width: the text is centred on text-x = 120. */
+    g_assert_true (text_ink (word, LRG_REEL_TEXT_ALIGN_CENTER, 120, 0, 0, 64, &l, &r));
+    g_assert_cmpint (l, ==, l0 - 20 + 120 - w / 2);
+    g_assert_cmpint (r - l, ==, r0 - l0);
+
+    /* RIGHT, no max-width: the text ends at text-x = 200. */
+    g_assert_true (text_ink (word, LRG_REEL_TEXT_ALIGN_RIGHT, 200, 0, 0, 64, &l, &r));
+    g_assert_cmpint (l, ==, l0 - 20 + 200 - w);
+    g_assert_cmpint (r, <, 200);
+
+    /* CENTER with a max-width: centred in [20, 180], i.e. on 100. */
+    g_assert_true (text_ink (word, LRG_REEL_TEXT_ALIGN_CENTER, 20, 160, 0, 64, &l, &r));
+    g_assert_cmpint (l, ==, l0 + (160 - w) / 2);
+
+    /* RIGHT with a max-width: ends at the box's right edge, 180. */
+    g_assert_true (text_ink (word, LRG_REEL_TEXT_ALIGN_RIGHT, 20, 160, 0, 64, &l, &r));
+    g_assert_cmpint (l, ==, l0 + 160 - w);
+    g_assert_cmpint (r, <, 180);
+}
+
+/*
+ * Multi-line text keeps its lines aligned to each other: with CENTER and no
+ * max-width both lines are centred on text-x; with RIGHT both end at text-x.
+ */
+static void
+test_text_clip_align_multiline (void)
+{
+    gint w1, w2;
+    gint la, ra, lb, rb;
+    gint l1, r1, l2, r2;
+
+    lrg_reel_measure_text (NULL, "WIDEST", 16.0, &w1, NULL);
+    lrg_reel_measure_text (NULL, "AB", 16.0, &w2, NULL);
+
+    /* Left-aligned reference for each line on its own row band. */
+    g_assert_true (text_ink ("WIDEST\nAB", LRG_REEL_TEXT_ALIGN_LEFT, 20, 0, 8, 24, &la, &ra));
+    g_assert_true (text_ink ("WIDEST\nAB", LRG_REEL_TEXT_ALIGN_LEFT, 20, 0, 24, 48, &lb, &rb));
+
+    g_assert_true (text_ink ("WIDEST\nAB", LRG_REEL_TEXT_ALIGN_CENTER, 120, 0, 8, 24, &l1, &r1));
+    g_assert_true (text_ink ("WIDEST\nAB", LRG_REEL_TEXT_ALIGN_CENTER, 120, 0, 24, 48, &l2, &r2));
+    g_assert_cmpint (l1, ==, la - 20 + 120 - w1 / 2);
+    g_assert_cmpint (l2, ==, lb - 20 + (120 - w1 / 2) + (w1 - w2) / 2);
+
+    g_assert_true (text_ink ("WIDEST\nAB", LRG_REEL_TEXT_ALIGN_RIGHT, 200, 0, 8, 24, &l1, &r1));
+    g_assert_true (text_ink ("WIDEST\nAB", LRG_REEL_TEXT_ALIGN_RIGHT, 200, 0, 24, 48, &l2, &r2));
+    g_assert_cmpint (l1, ==, la - 20 + 200 - w1);
+    g_assert_cmpint (l2, ==, lb - 20 + 200 - w2);
+}
+
+/* Empty text draws nothing under every alignment and does not crash. */
+static void
+test_text_clip_align_empty (void)
+{
+    gint l, r;
+
+    g_assert_false (text_ink ("", LRG_REEL_TEXT_ALIGN_LEFT, 20, 0, 0, 64, &l, &r));
+    g_assert_false (text_ink ("", LRG_REEL_TEXT_ALIGN_CENTER, 120, 0, 0, 64, &l, &r));
+    g_assert_false (text_ink ("", LRG_REEL_TEXT_ALIGN_RIGHT, 200, 160, 0, 64, &l, &r));
+}
+
 static void
 test_shape_clip_rect (void)
 {
@@ -2639,6 +2780,9 @@ main (int   argc,
     g_test_add_func ("/reel/clip/gradient", test_gradient_clip);
     g_test_add_func ("/reel/clip/image", test_image_clip);
     g_test_add_func ("/reel/clip/text", test_text_clip);
+    g_test_add_func ("/reel/text-clip/align", test_text_clip_align);
+    g_test_add_func ("/reel/text-clip/align-multiline", test_text_clip_align_multiline);
+    g_test_add_func ("/reel/text-clip/align-empty", test_text_clip_align_empty);
     g_test_add_func ("/reel/clip/shape-rect", test_shape_clip_rect);
     g_test_add_func ("/reel/clip/shape-circle", test_shape_clip_circle);
 
