@@ -587,3 +587,78 @@ lrg_image_canvas_drop_shadow (LrgImageCanvas *self,
                                 const GrlColor *shadow_color);
 
 G_END_DECLS
+
+/* ==========================================================================
+ * Signed distance fills (0.14)
+ * ========================================================================== */
+
+#include "../shading/lrg-sdf.h"
+
+G_BEGIN_DECLS
+
+/**
+ * lrg_image_canvas_fill_sdf:
+ * @self: an #LrgImageCanvas
+ * @func: (scope call) (closure user_data): the shape's signed distance,
+ *   in image pixel coordinates
+ * @user_data: (nullable): data for @func
+ * @color: the fill colour
+ *
+ * Fills the shape described by a 2D signed distance field with analytic
+ * anti-aliasing.  @func is evaluated once at every pixel centre
+ * (x + 0.5, y + 0.5) in image pixel coordinates (origin at the top-left,
+ * one unit per pixel); the pixel's coverage is
+ * lrg_sdf2_coverage (d, 1) and the pixel is drawn with grl_image_draw_pixel()
+ * in @color with its alpha scaled by the coverage, so the edges get a
+ * one-pixel ramp and pixels outside the shape are not touched.  The
+ * pixels go through the canvas's blend mode, clip rectangle and blend
+ * colour space: use %GRL_IMAGE_BLEND_OVER (and linear blending) for
+ * smooth edges over existing content; with the default
+ * %GRL_IMAGE_BLEND_REPLACE the edge pixels replace what was there with a
+ * partly transparent colour.
+ *
+ * The canvas transform stack is *not* applied: transform the query point
+ * inside @func instead.  This visits every pixel (inside the clip
+ * rectangle, if one is set); use lrg_image_canvas_fill_sdf_rect() to
+ * limit the work to the shape's bounding box.
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_image_canvas_fill_sdf (LrgImageCanvas *self,
+                           LrgSdf2Func     func,
+                           gpointer        user_data,
+                           const GrlColor *color);
+
+/**
+ * lrg_image_canvas_fill_sdf_rect:
+ * @self: an #LrgImageCanvas
+ * @x: left edge of the region to visit, in pixels
+ * @y: top edge of the region to visit, in pixels
+ * @width: width of the region in pixels
+ * @height: height of the region in pixels
+ * @func: (scope call) (closure user_data): the shape's signed distance,
+ *   in image pixel coordinates
+ * @user_data: (nullable): data for @func
+ * @color: the fill colour
+ *
+ * Like lrg_image_canvas_fill_sdf(), but only evaluates @func inside the
+ * given rectangle (intersected with the image and the clip rectangle).
+ * Pass the shape's bounding box grown by one pixel so the anti-aliased
+ * edge is not cut off.  An empty region draws nothing.
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_image_canvas_fill_sdf_rect (LrgImageCanvas *self,
+                                gint            x,
+                                gint            y,
+                                gint            width,
+                                gint            height,
+                                LrgSdf2Func     func,
+                                gpointer        user_data,
+                                const GrlColor *color);
+
+G_END_DECLS

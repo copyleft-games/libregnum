@@ -1,0 +1,40 @@
+* Shading Module
+:PROPERTIES:
+:CUSTOM_ID: shading-module
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > Shading
+#+end_quote
+
+The shading module is the maths of a CPU "fragment shader": signed distance functions to build shapes, the helpers that light them (normals, ray marching, soft shadows, ambient occlusion, analytic anti-aliasing), and seeded noise whose fractal sum fades out the detail a pixel cannot show. Everything is a pure function of its arguments: no objects, no allocation, no GL context, safe from any thread. It replaces the few hundred lines of hand-written shading maths that a polished procedural render otherwise needs (issue #7).
+
+- *Headers* - =shading/lrg-sdf.h=, =shading/lrg-noise.h= (both through =<libregnum.h>=)
+- *GIR* - plain functions in the =Libregnum= namespace (=Libregnum.sdf2_circle=, =Libregnum.noise_fbm2=, ...); the callbacks are =Libregnum.Sdf2Func= and =Libregnum.Sdf3Func=
+- *Since* - 0.14
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: shading-overview
+:END:
+- *[[file:sdf.org][Signed distance functions]]* - 2D primitives (circle, exact ellipse, box, rounded box, segment, capsule, triangle), 3D primitives (sphere, ellipsoid bound, box, rounded box, capsule, round cone, torus), boolean and smooth (polynomial smooth-min) operators, rounding and onion shells, and the scene helpers: =lrg_sdf3_normal()=, =lrg_sdf3_raymarch()=, =lrg_sdf3_soft_shadow()=, =lrg_sdf3_ambient_occlusion()= and =lrg_sdf2_coverage()=.
+- *[[file:noise.org][Noise]]* - value and simplex noise in 2D and 3D with a 32-bit seed, and band-limited fBm (=lrg_noise_fbm2()=, =lrg_noise_fbm3()=) that takes a pixel footprint so fine octaves fade out instead of aliasing into moire.
+- *[[file:../graphics/image-canvas.org::#lrg-image-canvas-fill-sdf][lrg_image_canvas_fill_sdf()]]* - fills a 2D signed distance field into an =LrgImageCanvas= with analytic anti-aliasing, through the canvas's blend mode, clip and blend colour space.
+
+** Where it fits
+:PROPERTIES:
+:CUSTOM_ID: shading-where-it-fits
+:END:
+| You want | Use |
+|----------+-----|
+| smooth-edged vector shapes on an image, blended correctly | build the shape from =lrg_sdf2_*= and the operators, draw it with =lrg_image_canvas_fill_sdf()= on a canvas in =GRL_IMAGE_BLEND_OVER= and =GRL_IMAGE_COLOR_SPACE_LINEAR= |
+| a lit 3D procedural render without a GPU | a =LrgSdf3Func= scene, =lrg_sdf3_raymarch()= per pixel, then =lrg_sdf3_normal()=, =lrg_sdf3_soft_shadow()= and =lrg_sdf3_ambient_occlusion()= for the light |
+| texture detail (stone, fur, feathers, clouds) that stays clean at any distance | =lrg_noise_fbm2()= / =lrg_noise_fbm3()= with the footprint of one pixel |
+| a raw random field (placement, jitter) | =lrg_noise_value2()=, =lrg_noise_simplex2()= and their 3D forms |
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: shading-see-also
+:END:
+- [[file:../graphics/image-canvas.org][LrgImageCanvas]] - the CPU canvas =fill_sdf= draws into
+- [[file:../graphics/hdr-image.org][LrgHdrImage]] - a linear float image to shade into before tone mapping
+- [[file:../postprocess/index.org][Post-processing]] - bloom, tone mapping, vignette and grain for the finished frame
