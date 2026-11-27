@@ -39,6 +39,8 @@ The Graphics module provides:
 - *[[file:image-canvas.org][LrgImageCanvas]]* - CPU dynamic-texture canvas (draw/composite/blur/transform); quality preset (OVER, linear blending, antialiasing) and supersampled export
 - *[[file:image-resample.org][Image resampling]]* - =lrg_image_downsample()=: gamma-correct, premultiplied box / Mitchell / Lanczos-3 downsampling
 - *[[file:hdr-canvas.org][LrgHdrCanvas]]* - float linear-light premultiplied canvas: supersampled per-sample shading, tone-map (shared =LrgTonemap= curves) to a dithered sRGB image
+- *[[file:image-canvas.org][LrgImageCanvas]]* - CPU dynamic-texture canvas (draw/composite/blur/transform)
+- *[[file:frame-layout.org][LrgFrameLayout]]* - Named element boxes on a still frame (anchored to a safe area, beside each other, or explicit) with overlap, out-of-frame and out-of-safe-area checks for tests, and a debug overlay
 - *[[file:vector-image.org][LrgVectorImage]]* - Load and rasterise SVG vector assets at any size
 - *[[file:skinned-mesh.org][LrgSkinnedMesh]]* - Skinned meshes posed by a bone matrix palette: GPU skinning with a CPU reference and fallback
 - *[[file:hdr-image.org][LrgHdrImage]]* - Radiance RGBE (=.hdr=) reader and writer to linear float RGB (flat and run-length scanlines, EXPOSURE, both vertical orientations); equirect panorama sampling for the environment's skies

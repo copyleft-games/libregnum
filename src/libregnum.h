@@ -128,6 +128,7 @@
 #include "graphics/lrg-hdr-image.h"
 #include "graphics/lrg-hdr-canvas.h"
 #include "graphics/lrg-image-resample.h"
+#include "graphics/lrg-frame-layout.h"
 #include "graphics/lrg-depth-prepass.h"
 #include "graphics/lrg-ssao.h"
 #include "graphics/lrg-decal.h"

@@ -406,6 +406,7 @@ TEST_SOURCES := \
 	test-noise.c \
 	test-image-resample.c \
 	test-hdr-canvas.c \
+	test-frame-layout.c \
 	test-image-document.c \
 	test-vector-image.c \
 	test-reel.c \
