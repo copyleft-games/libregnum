@@ -13,6 +13,7 @@
 #include <rlgl.h>
 #include "core/lrg-prewarm.h"
 #include "graphics/lrg-glsl-private.h"
+#include "postprocess/lrg-post-cpu-private.h"
 
 /**
  * SECTION:lrg-color-grade
@@ -300,6 +301,34 @@ lrg_color_grade_real_apply (LrgPostEffect *effect,
     }
 }
 
+/*
+ * lrg_color_grade_real_apply_cpu: the fragment shader per pixel;
+ * lrg_color_grade_apply_rgb() is its arithmetic (grade, LUT, intensity).
+ * The GPU path skips the pass when the grade is the identity; so does
+ * this. The shader samples the table's strip bilinearly between two blue
+ * slices; the CPU samples the table trilinearly, the same interpolation.
+ */
+static gboolean
+lrg_color_grade_real_apply_cpu (LrgPostEffect *effect,
+                                gfloat        *rgba,
+                                guint          width,
+                                guint          height,
+                                gfloat         time)
+{
+    LrgColorGrade *self = LRG_COLOR_GRADE (effect);
+    gsize i;
+    gsize n;
+
+    (void)time;
+
+    if (lrg_color_grade_is_identity (self))
+        return TRUE;
+    n = (gsize)width * height;
+    for (i = 0; i < n; i++)
+        lrg_color_grade_apply_rgb (self, rgba + i * 4, rgba + i * 4);
+    return TRUE;
+}
+
 static const gchar *
 lrg_color_grade_real_get_name (LrgPostEffect *effect)
 {
@@ -467,6 +496,7 @@ lrg_color_grade_class_init (LrgColorGradeClass *klass)
     effect_class->initialize = lrg_color_grade_real_initialize;
     effect_class->shutdown = lrg_color_grade_real_shutdown;
     effect_class->apply = lrg_color_grade_real_apply;
+    effect_class->apply_cpu = lrg_color_grade_real_apply_cpu;
     effect_class->resize = lrg_color_grade_real_resize;
     effect_class->get_name = lrg_color_grade_real_get_name;
 

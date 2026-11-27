@@ -130,6 +130,18 @@ EndDrawing ();
 
 Rendering into a render texture works the same way: =BeginTextureMode (rt)= before =begin_capture()= and =render()= composites into =rt=.
 
+** On the CPU
+:PROPERTIES:
+:CUSTOM_ID: post-processor-cpu
+:END:
+#+begin_src C
+gboolean lrg_post_processor_apply_to_buffer (LrgPostProcessor *self, gfloat *rgba, guint width,
+                                             guint height, gfloat time, GError **error);
+gboolean lrg_post_processor_apply_to_image  (LrgPostProcessor *self, GrlImage *image, gfloat time,
+                                             GError **error);
+#+end_src
+The same chain, in the same priority order, on an image in memory: each enabled effect's =apply_cpu()= in turn. No window or GL context is needed and the GPU targets are not touched. =apply_to_image()= takes an RGBA8 image (bytes over 255 in, clamped and rounded back) or an RGBA32F one (in place). An enabled effect without a CPU path (screen shake, heat haze) fails the call with =G_IO_ERROR_NOT_SUPPORTED= before anything changes. =get_pass_count()= reports the effects run. Details: [[file:cpu.org][cpu.org]].
+
 ** Performance
 :PROPERTIES:
 :CUSTOM_ID: post-processor-performance

@@ -7044,6 +7044,85 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_texture_fallback_format_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_TEXTURE_FALLBACK_FORMAT (lrg_texture_fallback_format_get_type ())
 
+/**
+ * LrgResampleFilter:
+ * @LRG_RESAMPLE_FILTER_BOX: Box filter: the plain average of each
+ *   factor x factor block.  Sharpest footprint, no ringing, slight
+ *   aliasing of fine periodic detail.
+ * @LRG_RESAMPLE_FILTER_MITCHELL: Mitchell-Netravali cubic (B = C = 1/3),
+ *   two output pixels of support: soft, almost no ringing; a good default
+ *   for photographic content.
+ * @LRG_RESAMPLE_FILTER_LANCZOS3: Lanczos windowed sinc with three lobes:
+ *   the sharpest result for line art and text.  Its negative lobes ring
+ *   near hard edges; lrg_image_downsample() clamps the overshoot.
+ *
+ * The reconstruction filter lrg_image_downsample() and
+ * lrg_image_canvas_resolve() shrink an image with.  All filters run in
+ * linear light on premultiplied alpha.
+ *
+ * Since: 0.14
+ */
+typedef enum
+{
+    LRG_RESAMPLE_FILTER_BOX,
+    LRG_RESAMPLE_FILTER_MITCHELL,
+    LRG_RESAMPLE_FILTER_LANCZOS3
+} LrgResampleFilter;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_resample_filter_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_RESAMPLE_FILTER (lrg_resample_filter_get_type ())
+
+/**
+ * LrgFrameSide:
+ * @LRG_FRAME_SIDE_ABOVE: above the other box (its bottom edge @gap above
+ *   the other's top edge)
+ * @LRG_FRAME_SIDE_BELOW: below the other box
+ * @LRG_FRAME_SIDE_LEFT: left of the other box
+ * @LRG_FRAME_SIDE_RIGHT: right of the other box
+ *
+ * Which side of another box lrg_frame_layout_add_box_relative() puts a
+ * box on (#LrgFrameLayout).
+ *
+ * Since: 0.14
+ */
+typedef enum
+{
+    LRG_FRAME_SIDE_ABOVE,
+    LRG_FRAME_SIDE_BELOW,
+    LRG_FRAME_SIDE_LEFT,
+    LRG_FRAME_SIDE_RIGHT
+} LrgFrameSide;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_frame_side_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_FRAME_SIDE (lrg_frame_side_get_type ())
+
+/**
+ * LrgFrameAlign:
+ * @LRG_FRAME_ALIGN_START: the left edges (above or below) or the top edges
+ *   (left or right) line up
+ * @LRG_FRAME_ALIGN_CENTER: the centres line up
+ * @LRG_FRAME_ALIGN_END: the right edges (above or below) or the bottom
+ *   edges (left or right) line up
+ *
+ * How a box placed beside another lines up with it along the shared side
+ * (lrg_frame_layout_add_box_relative()).
+ *
+ * Since: 0.14
+ */
+typedef enum
+{
+    LRG_FRAME_ALIGN_START,
+    LRG_FRAME_ALIGN_CENTER,
+    LRG_FRAME_ALIGN_END
+} LrgFrameAlign;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_frame_align_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_FRAME_ALIGN (lrg_frame_align_get_type ())
+
 G_END_DECLS
+
 
 

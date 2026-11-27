@@ -12,6 +12,7 @@
 #include <rlgl.h>
 #include "core/lrg-prewarm.h"
 #include "graphics/lrg-glsl-private.h"
+#include "../lrg-post-cpu-private.h"
 
 /*
  * Film grain in one pass. The screen is split into cells of @size pixels;
@@ -177,6 +178,97 @@ lrg_film_grain_real_apply (LrgPostEffect *effect,
         grl_shader_end (shader);
 }
 
+/* the shader's integer hash (lowbias32), in 32-bit unsigned arithmetic */
+static guint32
+grain_hash (guint32 x)
+{
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+/* the shader's noise(): white noise in [-0.5, 0.5] per cell, frame, channel */
+static gfloat
+grain_noise (guint32 cx,
+             guint32 cy,
+             guint32 frame,
+             guint32 channel)
+{
+    guint32 h = grain_hash (cx + grain_hash (cy + grain_hash (frame * 3u + channel)));
+
+    return (gfloat)(h & 0xffffu) / 65535.0f - 0.5f;
+}
+
+/*
+ * lrg_film_grain_real_apply_cpu: the fragment shader per pixel.
+ *
+ * Time: the GPU path advances the grain clock by delta * speed every
+ * frame; here the clock is @time * speed, so a stack clock of t seconds
+ * gives the frame the GPU shows after t seconds of updates from zero, and
+ * the same @time always gives the same grain. The effect's own clock is
+ * not touched.
+ *
+ * Cells are anchored to gl_FragCoord, which counts rows from the bottom:
+ * pixel (x, y) of the top-down buffer is fragment (x + 0.5, h - y - 0.5).
+ */
+static gboolean
+lrg_film_grain_real_apply_cpu (LrgPostEffect *effect,
+                               gfloat        *rgba,
+                               guint          width,
+                               guint          height,
+                               gfloat         time)
+{
+    LrgFilmGrain *self = LRG_FILM_GRAIN (effect);
+    gfloat amount;
+    gfloat size;
+    guint32 frame;
+    guint x;
+    guint y;
+
+    amount = self->intensity * lrg_post_effect_get_intensity (effect);
+    if (amount <= 0.0f)
+        return TRUE;
+
+    /* params.z: 24 grain frames per second, wrapped as on the GPU (the
+     * GPU clock never runs backwards: a negative time is frame 0) */
+    frame = (guint32)fmodf (floorf (MAX (time * self->speed, 0.0f) * 24.0f), 65536.0f);
+    size = MAX (self->size, 1.0f);
+
+    for (y = 0; y < height; y++)
+    {
+        guint32 cy = (guint32)(((gfloat)height - (gfloat)y - 0.5f) / size);
+
+        for (x = 0; x < width; x++)
+        {
+            gfloat *p = rgba + ((gsize)y * width + x) * 4;
+            guint32 cx = (guint32)(((gfloat)x + 0.5f) / size);
+            gfloat lum = CLAMP (lrg_post_cpu_luma601 (p), 0.0f, 1.0f);
+            gfloat a = amount * (1.0f + ((1.0f - lum) - 1.0f) * self->luminance_response);
+            gfloat n[3];
+            guint k;
+
+            /* monochrome grain: one value on every channel */
+            n[0] = grain_noise (cx, cy, frame, 0u);
+            if (self->colored)
+            {
+                n[1] = grain_noise (cx, cy, frame, 1u);
+                n[2] = grain_noise (cx, cy, frame, 2u);
+            }
+            else
+            {
+                n[1] = n[0];
+                n[2] = n[0];
+            }
+            for (k = 0; k < 3; k++)
+                p[k] = MAX (p[k] + n[k] * a, 0.0f);
+        }
+    }
+    return TRUE;
+}
+
 /* lrg_film_grain_prewarm: compiles the pass shader ahead of the first frame */
 static gboolean
 lrg_film_grain_prewarm (LrgPrewarmable *prewarmable)
@@ -280,6 +372,7 @@ lrg_film_grain_class_init (LrgFilmGrainClass *klass)
     effect_class->initialize = lrg_film_grain_real_initialize;
     effect_class->shutdown = lrg_film_grain_real_shutdown;
     effect_class->apply = lrg_film_grain_real_apply;
+    effect_class->apply_cpu = lrg_film_grain_real_apply_cpu;
     effect_class->resize = lrg_film_grain_real_resize;
     effect_class->get_name = lrg_film_grain_real_get_name;
 

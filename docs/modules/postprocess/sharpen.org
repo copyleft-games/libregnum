@@ -31,6 +31,8 @@ Per colour channel, with =mn= and =mx= the minimum and maximum of the centre and
 
 As a =LrgPostEffect= it also works inside a =LrgPostProcessor= chain (=apply()= draws the source through the shader, flipped as render textures are).
 
+CPU path: it also runs on an image in memory (=lrg_post_effect_apply_cpu()=, [[file:cpu.org][cpu.org]]): =lrg_sharpen_pixel()= per pixel with edge-clamped neighbours, mixed with the centre by the intensity.
+
 ** Tests
 :PROPERTIES:
 :CUSTOM_ID: tests

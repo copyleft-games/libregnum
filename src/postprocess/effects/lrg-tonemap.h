@@ -178,6 +178,30 @@ void                lrg_tonemap_apply_rgb           (LrgTonemap         *self,
                                                      gfloat             *out);
 
 /**
+ * lrg_tonemap_operator_apply_rgb:
+ * @op: The operator
+ * @white_point: The linear value that maps to display white (Reinhard
+ *   and filmic; ACES and none ignore it), clamped into 0.1..100
+ * @in: (array fixed-size=3): Linear scene colour, exposure already
+ *   applied; negative and NaN components count as 0
+ * @out: (array fixed-size=3) (out caller-allocates): Linear display
+ *   colour, 0..1
+ *
+ * The operator curve alone, per channel, then a clamp to 0..1: no gamma
+ * decode, no exposure, no encode.  #LrgTonemap (lrg_tonemap_apply_rgb()
+ * and the GLSL pass) and lrg_hdr_canvas_to_image() map through this
+ * one definition, so the CPU and GPU curves stay identical.  @in and
+ * @out may alias.
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_tonemap_operator_apply_rgb  (LrgTonemapOperator  op,
+                                                     gfloat              white_point,
+                                                     const gfloat       *in,
+                                                     gfloat             *out);
+
+/**
  * lrg_tonemap_get_fragment_shader:
  *
  * Gets the GLSL 330 fragment shader the effect draws with.

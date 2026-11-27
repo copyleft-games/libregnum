@@ -126,12 +126,19 @@
 #include "graphics/lrg-shader-asset.h"
 #include "graphics/lrg-shader-graph.h"
 #include "graphics/lrg-hdr-image.h"
+#include "graphics/lrg-hdr-canvas.h"
+#include "graphics/lrg-image-resample.h"
+#include "graphics/lrg-frame-layout.h"
 #include "graphics/lrg-depth-prepass.h"
 #include "graphics/lrg-ssao.h"
 #include "graphics/lrg-decal.h"
 #include "graphics/lrg-mesh-simplify.h"
 #include "graphics/lrg-lod-group.h"
 #include "graphics/lrg-texture-sampling.h"
+
+/* CPU shading: signed distance functions and band-limited noise */
+#include "shading/lrg-sdf.h"
+#include "shading/lrg-noise.h"
 #include "imageedit/lrg-image-layer.h"
 #include "imageedit/lrg-image-document.h"
 
@@ -840,6 +847,7 @@
 #include "postprocess/effects/lrg-palettize.h"
 #include "postprocess/effects/lrg-fxaa.h"
 #include "postprocess/effects/lrg-tonemap.h"
+#include "postprocess/effects/lrg-blur.h"
 
 /* Animation module (Phase 3) */
 #include "animation/lrg-bone-pose.h"

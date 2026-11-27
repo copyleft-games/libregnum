@@ -11,6 +11,7 @@
 
 #define LRG_LOG_DOMAIN "Libregnum-Graphics"
 #include "lrg-image-canvas.h"
+#include "lrg-image-resample.h"
 #include "../lrg-log.h"
 
 struct _LrgImageCanvas
@@ -18,6 +19,7 @@ struct _LrgImageCanvas
     GObject parent_instance;
 
     GrlImage *image;
+    guint     supersample;   /* 1, or the factor of new_supersampled() */
 };
 
 G_DEFINE_TYPE (LrgImageCanvas, lrg_image_canvas, G_TYPE_OBJECT)
@@ -48,6 +50,7 @@ static void
 lrg_image_canvas_init (LrgImageCanvas *self)
 {
     self->image = NULL;
+    self->supersample = 1;
 }
 
 /* ==========================================================================
@@ -103,6 +106,81 @@ lrg_image_canvas_new_for_image (GrlImage *image)
     self->image = g_object_ref (image);
 
     return self;
+}
+
+/* ==========================================================================
+ * Quality preset and supersampling
+ * ========================================================================== */
+
+LrgImageCanvas *
+lrg_image_canvas_new_quality (gint             width,
+                              gint             height,
+                              const GrlColor  *bg)
+{
+    LrgImageCanvas *self;
+
+    self = lrg_image_canvas_new (width, height, bg);
+    if (self != NULL)
+        lrg_image_canvas_set_quality (self);
+
+    return self;
+}
+
+void
+lrg_image_canvas_set_quality (LrgImageCanvas *self)
+{
+    g_return_if_fail (LRG_IS_IMAGE_CANVAS (self));
+    g_return_if_fail (self->image != NULL);
+
+    /*
+     * The three switches generated code never finds on its own:
+     * composite instead of overwrite, mix in linear light, smooth edges.
+     */
+    lrg_image_canvas_set_blend_mode (self, GRL_IMAGE_BLEND_OVER);
+    lrg_image_canvas_set_blend_color_space (self, GRL_IMAGE_COLOR_SPACE_LINEAR);
+    lrg_image_canvas_set_antialias (self, TRUE);
+}
+
+LrgImageCanvas *
+lrg_image_canvas_new_supersampled (gint             width,
+                                   gint             height,
+                                   guint            factor,
+                                   const GrlColor  *bg)
+{
+    LrgImageCanvas *self;
+
+    g_return_val_if_fail (width > 0, NULL);
+    g_return_val_if_fail (height > 0, NULL);
+    g_return_val_if_fail (factor >= 1 && factor <= LRG_IMAGE_DOWNSAMPLE_MAX_FACTOR, NULL);
+    /* the large image must stay addressable with gint coordinates */
+    g_return_val_if_fail (width <= G_MAXINT / (gint)factor, NULL);
+    g_return_val_if_fail (height <= G_MAXINT / (gint)factor, NULL);
+
+    self = lrg_image_canvas_new_quality (width * (gint)factor,
+                                         height * (gint)factor, bg);
+    if (self != NULL)
+        self->supersample = factor;
+
+    return self;
+}
+
+guint
+lrg_image_canvas_get_supersample (LrgImageCanvas *self)
+{
+    g_return_val_if_fail (LRG_IS_IMAGE_CANVAS (self), 1);
+
+    return self->supersample;
+}
+
+GrlImage *
+lrg_image_canvas_resolve (LrgImageCanvas    *self,
+                          LrgResampleFilter  filter)
+{
+    g_return_val_if_fail (LRG_IS_IMAGE_CANVAS (self), NULL);
+    g_return_val_if_fail (self->image != NULL, NULL);
+
+    /* the downsampler copies for factor 1 and never touches the canvas */
+    return lrg_image_downsample (self->image, self->supersample, filter);
 }
 
 /* ==========================================================================
@@ -538,4 +616,98 @@ lrg_image_canvas_drop_shadow (LrgImageCanvas *self,
     grl_image_composite (self->image, shadow,
                           GRL_PORTER_DUFF_DST_OVER,
                           dx, dy);
+}
+
+/* ==========================================================================
+ * Signed distance fills (0.14)
+ * ========================================================================== */
+
+#include <math.h>
+
+void
+lrg_image_canvas_fill_sdf_rect (LrgImageCanvas *self,
+                                gint            x,
+                                gint            y,
+                                gint            width,
+                                gint            height,
+                                LrgSdf2Func     func,
+                                gpointer        user_data,
+                                const GrlColor *color)
+{
+    GrlRectangle clip;
+    gint         x0;
+    gint         y0;
+    gint         x1;
+    gint         y1;
+    gint         px;
+    gint         py;
+
+    g_return_if_fail (LRG_IS_IMAGE_CANVAS (self));
+    g_return_if_fail (self->image != NULL);
+    g_return_if_fail (func != NULL);
+    g_return_if_fail (color != NULL);
+
+    if (width <= 0 || height <= 0 || color->a == 0)
+        return;
+
+    /*
+     * Region to visit: the requested rectangle (computed in 64 bits so
+     * huge sizes cannot overflow), intersected with the image and with
+     * the clip rectangle.  grl_image_draw_pixel() clips as well; this
+     * only avoids evaluating the field where nothing can be drawn.
+     */
+    x0 = MAX (x, 0);
+    y0 = MAX (y, 0);
+    x1 = (gint)MIN ((gint64)x + width,  (gint64)grl_image_get_width (self->image));
+    y1 = (gint)MIN ((gint64)y + height, (gint64)grl_image_get_height (self->image));
+    if (grl_image_get_clip_rect (self->image, &clip))
+    {
+        x0 = MAX (x0, (gint)floorf (clip.x));
+        y0 = MAX (y0, (gint)floorf (clip.y));
+        x1 = MIN (x1, (gint)ceilf (clip.x + clip.width));
+        y1 = MIN (y1, (gint)ceilf (clip.y + clip.height));
+    }
+
+    /*
+     * One sample per pixel centre; the coverage of a one-pixel-wide
+     * ramp across the edge scales the colour's alpha.  Pixels with no
+     * coverage are skipped, so the outside stays untouched even in
+     * REPLACE mode.
+     */
+    for (py = y0; py < y1; py++)
+    {
+        for (px = x0; px < x1; px++)
+        {
+            gfloat   p[2];
+            gfloat   cov;
+            gint     alpha;
+            GrlColor c;
+
+            p[0] = (gfloat)px + 0.5f;
+            p[1] = (gfloat)py + 0.5f;
+            cov = lrg_sdf2_coverage (func (p, user_data), 1.0f);
+            alpha = (gint)lrintf ((gfloat)color->a * cov);
+            if (alpha <= 0)
+                continue;
+
+            c = *color;
+            c.a = (guint8)MIN (alpha, 255);
+            grl_image_draw_pixel (self->image, px, py, &c);
+        }
+    }
+}
+
+void
+lrg_image_canvas_fill_sdf (LrgImageCanvas *self,
+                           LrgSdf2Func     func,
+                           gpointer        user_data,
+                           const GrlColor *color)
+{
+    g_return_if_fail (LRG_IS_IMAGE_CANVAS (self));
+    g_return_if_fail (self->image != NULL);
+
+    lrg_image_canvas_fill_sdf_rect (self, 0, 0,
+                                    grl_image_get_width (self->image),
+                                    grl_image_get_height (self->image),
+                                    func, user_data, color);
 }

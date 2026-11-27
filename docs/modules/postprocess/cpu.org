@@ -1,0 +1,212 @@
+* Post-Processing on the CPU
+:PROPERTIES:
+:CUSTOM_ID: post-cpu
+:END:
+[[file:../index.org][Modules]] / [[file:index.org][Post-Processing]] / CPU path
+
+The post-processing stack can run on an image in memory instead of a GPU render target: the same =LrgPostProcessor=, the same effects with the same properties, the same order, and the same arithmetic as each effect's fragment shader, but on a float buffer and without a window or a GL context. Offline renders, headless tools, tests and generated images (=LrgImageDocument=, =LrgImageCanvas=, a CPU shader) get the look of the game's =.rpost= stack with one call: =lrg_post_processor_apply_to_image()=.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: post-cpu-concepts
+:END:
+*** The CPU vfunc
+:PROPERTIES:
+:CUSTOM_ID: post-cpu-vfunc
+:END:
+=LrgPostEffectClass= has an optional virtual method next to the GPU =apply=:
+
+#+begin_src C
+gboolean (*apply_cpu) (LrgPostEffect *self, gfloat *rgba, guint width, guint height, gfloat time);
+#+end_src
+
+It took one of the class's reserved pointers (=_reserved[8]= became =_reserved[7]=), so the class size and the layout of existing subclasses did not change. An effect that leaves it =NULL= has no CPU path; =lrg_post_effect_has_cpu()= reports which.
+
+*** The buffer convention
+:PROPERTIES:
+:CUSTOM_ID: post-cpu-buffer
+:END:
+- *Layout*: =width= x =height= pixels, four =gfloat= each (red, green, blue, alpha), row 0 at the *top*, rows packed with no padding (stride =width * 4= floats). Changed in place.
+- *Alpha*: straight (not premultiplied). Every effect keeps alpha as it is, as the shaders do.
+- *Values*: the values the effect's shader would sample from the processor's render target. The stack does not convert colour spaces; neither does the GPU path:
+  - a scene drawn the usual way (raylib, =GrlImage= drawing, an RGBA8 image) holds *display-encoded* colour, the bytes over 255. =LrgTonemap= decodes it with gamma 2.2 (its default) and encodes its result; the colour-blind filter decodes and encodes on its own; bloom, blur, vignette, grain and FXAA work on the values as they are, exactly as on the GPU;
+  - a scene *shaded in linear light* (an HDR render, a float canvas) holds linear values, which may exceed 1.0; set =LrgTonemap:linear-input= so the tonemap does not decode again. The tonemap's output is display-encoded either way, so effects after it see display values, as on the GPU.
+- *Range*: values are never clamped between effects (the GPU's RGBA16F targets do not clamp either). Effects that clamp in their shader (colour grade, the colour-blind filter, palettize, sharpen, the tonemap's output) clamp here too.
+- *Pixel position*: the pixel at column =x=, row =y= is the fragment at =gl_FragCoord = (x + 0.5, height - y - 0.5)= (the GPU counts rows from the bottom). Screen-anchored patterns (film grain cells, the palettize dither) use that, so they land on the same screen pixels as on the GPU; every other effect is symmetric under the flip.
+- *Time*: =time= is the stack clock in seconds. Only film grain uses it (its frame); the same =time= gives the same image.
+
+*** Which effects run on the CPU
+:PROPERTIES:
+:CUSTOM_ID: post-cpu-effects
+:END:
+| Effect | CPU path | How |
+|--------+----------+-----|
+| =LrgBloom= | yes | The GPU mip chain itself: the same level sizes, prefilter, downsample, additive tent upsample and composite, with bilinear clamp-to-edge taps |
+| =LrgTonemap= | yes | =lrg_tonemap_apply_rgb()= per pixel |
+| =LrgFxaa= | yes | The shader's FXAA (console variant with the sub-pixel term), bilinear taps along the edge |
+| =LrgColorGrade= | yes | =lrg_color_grade_apply_rgb()= per pixel, LUT included |
+| =LrgVignette= | yes | The shader's formula per pixel |
+| =LrgFilmGrain= | yes | The shader's integer hash per cell and frame, frame from =time= |
+| =LrgSharpen= | yes | =lrg_sharpen_pixel()= per pixel, mixed by the intensity |
+| =LrgColorblindFilter= | yes | =lrg_colorblind_filter_apply_rgb()= per pixel |
+| =LrgPalettize= | yes | =lrg_palettize_apply_rgb()= per pixel, dither cell from =gl_FragCoord= |
+| =LrgBlur= | yes | The same separable Gaussian kernel ([[file:blur.org][blur.org]]) |
+| =LrgScreenShake= | no | Moves the picture by a per-frame trauma state; meaningless for a still |
+| =LrgHeatHaze= | no | Animated screen-space distortion; left to the GPU |
+
+** Quick start
+:PROPERTIES:
+:CUSTOM_ID: post-cpu-quick-start
+:END:
+A headless program: draw a scene into an image, run a bloom / tonemap / FXAA / vignette / grain stack on it, save a PNG. No window is opened.
+
+#+begin_src C
+#include <libregnum.h>
+
+int
+main (void)
+{
+	g_autoptr(GError)           error = NULL;
+	g_autoptr(GrlColor)         night = grl_color_new (14, 16, 32, 255);
+	g_autoptr(GrlColor)         lamp = grl_color_new (255, 220, 90, 255);
+	g_autoptr(GrlImage)         image = grl_image_new_color (640, 360, night);
+	g_autoptr(LrgPostProcessor) post = lrg_post_processor_new (640, 360);
+	g_autoptr(LrgBloom)         bloom = lrg_bloom_new ();
+	g_autoptr(LrgTonemap)       tonemap = lrg_tonemap_new ();
+	g_autoptr(LrgFxaa)          fxaa = lrg_fxaa_new ();
+	g_autoptr(LrgVignette)      vignette = lrg_vignette_new ();
+	g_autoptr(LrgFilmGrain)     grain = lrg_film_grain_new ();
+
+	grl_image_draw_circle (image, 320, 180, 60, lamp);
+
+	/* the order is the priority order, as on the GPU */
+	lrg_bloom_set_threshold (bloom, 0.7f);
+	lrg_tonemap_set_operator (tonemap, LRG_TONEMAP_OPERATOR_ACES);
+	lrg_post_effect_set_priority (LRG_POST_EFFECT (bloom), 10);
+	lrg_post_effect_set_priority (LRG_POST_EFFECT (tonemap), 20);
+	lrg_post_effect_set_priority (LRG_POST_EFFECT (fxaa), 30);
+	lrg_post_effect_set_priority (LRG_POST_EFFECT (vignette), 40);
+	lrg_post_effect_set_priority (LRG_POST_EFFECT (grain), 50);
+	lrg_post_processor_add_effect (post, LRG_POST_EFFECT (bloom));
+	lrg_post_processor_add_effect (post, LRG_POST_EFFECT (tonemap));
+	lrg_post_processor_add_effect (post, LRG_POST_EFFECT (fxaa));
+	lrg_post_processor_add_effect (post, LRG_POST_EFFECT (vignette));
+	lrg_post_processor_add_effect (post, LRG_POST_EFFECT (grain));
+
+	if (!lrg_post_processor_apply_to_image (post, image, 0.0f, &error))
+	{
+		g_printerr ("post: %s\n", error->message);
+		return 1;
+	}
+	return grl_image_export (image, "lamp.png") ? 0 : 1;
+}
+#+end_src
+
+A look saved as a =.rpost= file works the same way: =lrg_post_stack_build (stack, post, &error)= then =lrg_post_processor_apply_to_image()=.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: post-cpu-api
+:END:
+#+begin_src C
+/* LrgPostEffect (lrg-post-effect.h) */
+gboolean lrg_post_effect_has_cpu   (LrgPostEffect *self);
+gboolean lrg_post_effect_apply_cpu (LrgPostEffect *self, gfloat *rgba, guint width, guint height,
+                                    gfloat time);
+
+/* LrgPostProcessor (lrg-post-processor.h) */
+gboolean lrg_post_processor_apply_to_buffer (LrgPostProcessor *self, gfloat *rgba, guint width,
+                                             guint height, gfloat time, GError **error);
+gboolean lrg_post_processor_apply_to_image  (LrgPostProcessor *self, GrlImage *image, gfloat time,
+                                             GError **error);
+#+end_src
+
+| Function | Use |
+|----------+-----|
+| =lrg_post_effect_has_cpu()= | =TRUE= when the effect's class implements =apply_cpu= |
+| =lrg_post_effect_apply_cpu()= | One effect on a buffer; =FALSE= (buffer untouched) when the effect is disabled or has no CPU path |
+| =lrg_post_processor_apply_to_buffer()= | The whole chain on a float buffer, in priority order |
+| =lrg_post_processor_apply_to_image()= | The whole chain on a =GrlImage= (RGBA8 or RGBA32F), in place |
+
+=lrg_post_effect_apply_cpu()= and =lrg_post_processor_apply_to_buffer()= take a raw buffer and are not introspectable (=(skip)=); bindings use =lrg_post_processor_apply_to_image()=.
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: post-cpu-behaviour
+:END:
+*** The chain
+:PROPERTIES:
+:CUSTOM_ID: post-cpu-chain
+:END:
+=apply_to_buffer()= first checks that every enabled effect has a CPU path, then runs the enabled effects lowest priority first, each on what the previous one wrote (the GPU's ping-pong, in place). As on the GPU:
+- a disabled effect is skipped (it does not count in =lrg_post_processor_get_pass_count()=, which the call sets to the number of effects run);
+- an enabled effect with intensity 0 runs and leaves the image unchanged;
+- a disabled processor (=lrg_post_processor_set_enabled (post, FALSE)=) leaves the image unchanged and succeeds.
+
+Unlike the GPU path, effects need not be initialised (there are no GPU resources), the processor's own size does not matter (the effects use the buffer's size), the processor's GPU targets are never touched, and =IsWindowReady()= is never consulted.
+
+*** Images
+:PROPERTIES:
+:CUSTOM_ID: post-cpu-images
+:END:
+- *RGBA8* (=GRL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8=): each byte over 255 into a float buffer (what an RGBA8 image drawn into the GPU target holds), the chain, then each channel clamped to 0..1, times 255 and rounded to the nearest byte (=lroundf()=; NaN becomes 0). With an empty stack this is the identity for all 256 values.
+- *RGBA32F* (=GRL_PIXELFORMAT_UNCOMPRESSED_R32G32B32A32=): processed in place with no conversion; the place for a linear-light HDR render (with =LrgTonemap:linear-input=).
+- Anything else fails with =G_IO_ERROR_INVALID_ARGUMENT=; convert with =grl_image_set_format()= first.
+
+*** Per effect
+:PROPERTIES:
+:CUSTOM_ID: post-cpu-per-effect
+:END:
+- *Bloom* runs the GPU's chain, not an approximation of it: level 0 at half size (quarter at the low tier), then halving while both sides stay at least 2 pixels, at most =min (iterations, 3/4/6/8 by tier)= levels; prefilter (four bilinear taps half a source texel around each level-0 texel centre, soft-knee threshold), downsample (centre x4 plus four diagonal taps, /8), upsample (9-tap tent of radius =blur-size= / 4 texels, added onto the next larger level, smallest first), composite (=source + level0 * tint * intensity * base intensity / levels=). Every tap is a bilinear clamp-to-edge sample at the shader's texture coordinate. The light added equals the prefiltered energy (a test checks this to 1 %). An image too small for one level is left unchanged, as on the GPU.
+- *Tonemap* calls =lrg_tonemap_apply_rgb()= on every pixel (decode, exposure, curve, encode, mix by the intensity).
+- *FXAA* ports the shader line by line: luma (Rec. 601) of the centre and the four diagonal neighbours, the contrast test =range < max (edge-threshold-min, luma_max * edge-threshold)=, the edge direction clamped to the quality's span (4/6/8/12 pixels), the two- and four-tap blends along it (bilinear), the sub-pixel blend, the mix by the intensity.
+- *Colour grade* calls =lrg_color_grade_apply_rgb()=; the LUT is sampled trilinearly from the float table (the GPU samples an RGBA8 strip of it), and an identity grade is skipped.
+- *Vignette*: =mix (c, color, smoothstep (radius, radius + max (smoothness, 0.001), dist) * intensity * base intensity)= with =dist= the distance of the pixel centre from the image centre, x scaled by =mix (1, aspect, roundness)=, times sqrt 2.
+- *Film grain*: the shader's 32-bit integer hash per cell (=size= pixels, anchored to =gl_FragCoord=), grain frame =floor (time * speed * 24) mod 65536=. A stack clock of =t= seconds gives the frame the GPU shows after =t= seconds of updates from zero; the effect's own clock (=lrg_film_grain_update()=) is not used or changed. Noise is uniform in +/- amount / 2 (mean 0).
+- *Sharpen*, *colour-blind filter*, *palettize* call their per-pixel references (=lrg_sharpen_pixel()=, =lrg_colorblind_filter_apply_rgb()=, =lrg_palettize_apply_rgb()=); neighbours are clamped at the edges.
+- *Blur*: see [[file:blur.org][blur.org]].
+
+*** Differences from the GPU
+:PROPERTIES:
+:CUSTOM_ID: post-cpu-differences
+:END:
+- *Precision*: the CPU works in 32-bit floats; GPU targets are RGBA16F (or RGBA8 where float targets are unavailable, which also clamps every pass to 0..1), and GPUs interpolate bilinear taps with reduced (often 8-bit) weight precision. Expect differences of a few 1/255 on bloom and FXAA edges, and an occasional different palette entry for a colour that sits on a rounding boundary.
+- *Colour LUT*: the GPU samples an RGBA8 copy of the table, the CPU the float table.
+- *No final composite*: the GPU =render()= alpha-blends the result over the bound target; the CPU result is the processed image itself (alpha kept).
+- *Reel effects differ*: =LrgReelVignetteEffect=, =LrgReelGrainEffect= and =LrgReelBloomEffect= (=src/reel/=) are separate CPU effects with their own formulas (a multiplicative vignette normalised to the half diagonal, graylib's overlay noise and image bloom); they were not changed, so existing reels render as before. Use the post stack on frames when the game's look is wanted.
+
+** Errors
+:PROPERTIES:
+:CUSTOM_ID: post-cpu-errors
+:END:
+| Error | When | State after |
+|-------+------+-------------|
+| =G_IO_ERROR_NOT_SUPPORTED= | an enabled effect has no CPU path; the message names it (e.g. ="screen-shake" (LrgScreenShake)=) | buffer / image unchanged (checked before any effect runs) |
+| =G_IO_ERROR_INVALID_ARGUMENT= | =apply_to_image()= on an image that is neither RGBA8 nor RGBA32F, or has no pixels | image unchanged |
+
+Disable or remove the unsupported effect (=lrg_post_effect_set_enabled (effect, FALSE)=) to process the rest of the stack. Programming errors (a =NULL= buffer, a zero size) are =g_return_val_if_fail()= criticals.
+
+** Performance and thread safety
+:PROPERTIES:
+:CUSTOM_ID: post-cpu-performance
+:END:
+Single-threaded, scalar C. Measured on one core of a desktop x86-64 at 1920x1080 (release build):
+
+| Effect | Time |
+|--------+------|
+| vignette | 7 ms |
+| film grain | 10 ms |
+| blur, radius 4 | 40 ms |
+| tonemap (ACES) | 93 ms |
+| bloom (6 levels) | 106 ms |
+| FXAA | 122 ms |
+
+A 512x320 image through bloom (6 levels), tonemap, FXAA, vignette and grain takes about 27 ms. That is fine for offline renders and tests, not for real time: use the GPU path in a running game. Costs grow with the pixel count; blur grows with the radius (2 r + 1 taps per pass), bloom little with the levels (each is a quarter of the one before).
+
+The calls allocate scratch images (bloom's levels, a copy of the input for FXAA, sharpen and blur) and free them before returning. They read the effects' properties and write only the buffer and the processor's pass count: do not change an effect's properties from another thread while it runs. Separate processors with separate effects may run on separate threads.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: post-cpu-see-also
+:END:
+[[file:post-effect.org][LrgPostEffect]] (the =apply_cpu= vfunc), [[file:post-processor.org][LrgPostProcessor]], [[file:effects.org][built-in effects]], [[file:blur.org][LrgBlur]], [[file:post-stack.org][LrgPostStack]] (=.rpost= looks), [[file:../graphics/image-canvas.org][LrgImageCanvas]]. Tests: =tests/test-post-cpu.c=.

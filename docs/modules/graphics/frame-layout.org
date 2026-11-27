@@ -1,0 +1,316 @@
+* LrgFrameLayout - Named Boxes and Layout Checks for Still Frames
+:PROPERTIES:
+:CUSTOM_ID: lrgframelayout
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Graphics]]* > Frame layout
+#+end_quote
+
+=LrgFrameLayout= keeps the named rectangles of a still frame (a poster, a thumbnail, a comic panel, one frame of a reel): the title, the character, the speech bubble, the footer. Boxes are placed against a safe area with the nine-point anchor the HUD uses, beside other boxes, or at explicit rectangles. =lrg_frame_layout_validate()= then reports every overlap, every box that leaves the frame and every box that leaves the safe area, so generated scenes can be checked before (or instead of) looking at them, and =lrg_frame_layout_draw_debug()= draws the boxes over an [[file:image-canvas.org][LrgImageCanvas]]. Everything is headless.
+
+- *Type* - =LrgFrameLayout=, final GObject, =LRG_TYPE_FRAME_LAYOUT=, GIR =Libregnum.FrameLayout=
+- *Header* - =graphics/lrg-frame-layout.h= (enums in =lrg-enums.h=)
+- *Enums* - =LrgFrameSide= (=LRG_TYPE_FRAME_SIDE=): =ABOVE=, =BELOW=, =LEFT=, =RIGHT=; =LrgFrameAlign= (=LRG_TYPE_FRAME_ALIGN=): =START=, =CENTER=, =END=; the anchor is the HUD's =LrgHudAnchor=
+- *Errors* - domain =LRG_FRAME_LAYOUT_ERROR=, enum =LrgFrameLayoutError= (=LRG_TYPE_FRAME_LAYOUT_ERROR=): =OVERLAP=, =OUT_OF_FRAME=, =OUT_OF_SAFE_AREA=, =UNKNOWN_BOX=
+- *Since* - 0.14
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: frame-layout-concepts
+:END:
+*** The frame and the safe area
+:PROPERTIES:
+:CUSTOM_ID: frame-layout-safe-area
+:END:
+The frame is =width x height= pixels with the origin at the top-left, y down (the canvas' own coordinates). The safe area is the part of the frame titles and important elements should stay in; it starts as the whole frame. =lrg_frame_layout_set_safe_area_margins()= keeps a margin free at each edge in pixels; =lrg_frame_layout_set_safe_area_percent()= keeps the same share of the width at the left and right and of the height at the top and bottom (0.05, the common 5 % title-safe margin, gives 48 x 27 pixels on a 960 x 540 frame).
+
+*** Placing boxes
+:PROPERTIES:
+:CUSTOM_ID: frame-layout-placing
+:END:
+Every box has a unique name and is placed in one of three ways. Adding a box under an existing name replaces it (it keeps its place in the order).
+
+| Placement | Call | Where the box goes |
+|-----------+------+--------------------|
+| Anchored | =lrg_frame_layout_add_box()= | the =anchor= point of the box sits on the same point of the safe area, moved by the offset: exactly =lrg_hud_layout_resolve()= with the safe area as the canvas |
+| Relative | =lrg_frame_layout_add_box_relative()= | on a =side= of another box with a =gap= between them, lined up by =align= |
+| Explicit | =lrg_frame_layout_set_box_rect()= | at the given rectangle |
+
+The nine anchors run row by row: =TOP_LEFT=, =TOP=, =TOP_RIGHT=, =LEFT=, =CENTER=, =RIGHT=, =BOTTOM_LEFT=, =BOTTOM=, =BOTTOM_RIGHT=. The offsets always move the box right (x) and down (y), whatever the anchor: to keep a box 20 pixels in from the safe area's bottom-right corner use =BOTTOM_RIGHT= with offsets =(-20, -20)=.
+
+For a relative box, =align= picks which edges line up along the shared side:
+
+| =side= | =START= | =CENTER= | =END= |
+|--------+---------+----------+-------|
+| =ABOVE=, =BELOW= | left edges | centres | right edges |
+| =LEFT=, =RIGHT= | top edges | centres | bottom edges |
+
+Placements are kept, not just the resulting rectangles: an anchored box follows a later change of the safe area, and a relative box follows its target when the target is moved or replaced (through chains of any length).
+
+*** Checks
+:PROPERTIES:
+:CUSTOM_ID: frame-layout-checks
+:END:
+=lrg_frame_layout_validate()= and =lrg_frame_layout_get_problems()= look for four kinds of problem:
+
+- *Overlap* - two boxes share area, and the pair was not declared with =lrg_frame_layout_allow_overlap()=.
+- *Out of frame* - a box reaches past an edge of the frame.
+- *Out of safe area* - a box inside the frame reaches past an edge of the safe area.
+- *Unknown box* - a box is placed relative to a box that does not exist, that has no rectangle itself, or the placements loop back to it.
+
+=lrg_frame_layout_allow_overlap (layout, "bubble", "speaker")= is for overlaps that are meant to be there: a speech bubble's tail over its speaker, a badge on a card, a caption over a photo. For a box that lies under everything, mark it as a [[#frame-layout-backdrops][backdrop]] instead of allowing each pair.
+
+*** Backdrops
+:PROPERTIES:
+:CUSTOM_ID: frame-layout-backdrops
+:END:
+A backdrop is a box for a background, a sky or a full-bleed image: it lies under every other box and usually covers the whole frame, margins included. =lrg_frame_layout_set_backdrop (layout, "sky", TRUE)= marks one.
+
+| Check | Normal box | Backdrop |
+|-------+------------+----------|
+| overlap with another box | reported unless the pair is allowed | never reported (also not between two backdrops) |
+| out of safe area | reported | not reported: a backdrop may fill the whole frame |
+| out of frame | reported | reported: a backdrop that bleeds past the frame edge is still a mistake |
+| unknown relative target | reported | reported |
+
+Like allowed pairs, the mark is kept by name: it can be set before the box exists and outlives removing or replacing the box; =lrg_frame_layout_set_backdrop (layout, name, FALSE)= clears it and =lrg_frame_layout_get_backdrop()= reads it. Other boxes may still be placed relative to a backdrop. In the [[#frame-layout-debug][debug overlay]] backdrops are drawn first, as a thin grey dashed outline, so everything else reads on top of them.
+
+** Quick start
+:PROPERTIES:
+:CUSTOM_ID: frame-layout-quick-start
+:END:
+A 960 x 540 poster: a full-frame sky behind everything (a backdrop, so it neither overlaps the other boxes nor breaks the safe area), title at the top centre, a character at the bottom left, its speech bubble to the right of it, a footer at the bottom. The program checks the layout, draws the picture into the boxes, and draws the debug overlay on top.
+
+#+begin_src C
+/* gcc -std=gnu89 poster.c `pkg-config --cflags --libs libregnum glib-2.0 gobject-2.0` -o poster */
+#include <libregnum.h>
+
+static void
+fill_box (LrgImageCanvas *canvas,
+          LrgFrameLayout *layout,
+          const gchar    *name,
+          const GrlColor *color)
+{
+	GrlRectangle box;
+
+	if (lrg_frame_layout_get_box (layout, name, &box))
+		lrg_image_canvas_fill_rect (canvas, (gint)box.x, (gint)box.y,
+		                            (gint)box.width, (gint)box.height, color);
+}
+
+int
+main (void)
+{
+	g_autoptr(LrgFrameLayout) layout = NULL;
+	g_autoptr(LrgImageCanvas) canvas = NULL;
+	g_autoptr(GError) error = NULL;
+	GrlColor night = { 10, 10, 20, 255 };
+	GrlColor sky = { 30, 40, 90, 255 };
+	GrlColor gold = { 240, 190, 70, 255 };
+	GrlColor blue = { 80, 140, 200, 255 };
+	GrlColor paper = { 245, 245, 245, 255 };
+	GrlColor slate = { 60, 60, 80, 255 };
+
+	/* --- the layout: what goes where --- */
+	layout = lrg_frame_layout_new (960.0f, 540.0f);
+	lrg_frame_layout_set_safe_area_percent (layout, 0.05f);
+	lrg_frame_layout_add_box (layout, "sky", LRG_HUD_ANCHOR_TOP_LEFT,
+	                          -48.0f, -27.0f, 960.0f, 540.0f);   /* the whole frame */
+	lrg_frame_layout_set_backdrop (layout, "sky", TRUE);
+	lrg_frame_layout_add_box (layout, "title", LRG_HUD_ANCHOR_TOP,
+	                          0.0f, 0.0f, 600.0f, 80.0f);
+	lrg_frame_layout_add_box (layout, "character", LRG_HUD_ANCHOR_BOTTOM_LEFT,
+	                          40.0f, -60.0f, 220.0f, 260.0f);
+	lrg_frame_layout_add_box_relative (layout, "bubble", "character",
+	                                   LRG_FRAME_SIDE_RIGHT, 24.0f,
+	                                   320.0f, 140.0f, LRG_FRAME_ALIGN_START);
+	lrg_frame_layout_add_box (layout, "footer", LRG_HUD_ANCHOR_BOTTOM,
+	                          0.0f, 0.0f, 700.0f, 50.0f);
+
+	/* --- check it before drawing anything --- */
+	if (!lrg_frame_layout_validate (layout, &error))
+	{
+		g_printerr ("layout problems:\n%s\n", error->message);
+		return 1;
+	}
+
+	/* --- draw into the boxes, then the overlay --- */
+	canvas = lrg_image_canvas_new (960, 540, &night);
+	fill_box (canvas, layout, "sky", &sky);
+	fill_box (canvas, layout, "title", &gold);
+	fill_box (canvas, layout, "character", &blue);
+	fill_box (canvas, layout, "bubble", &paper);
+	fill_box (canvas, layout, "footer", &slate);
+	lrg_frame_layout_draw_debug (layout, canvas);   /* leave out in the final render */
+
+	grl_image_export (lrg_image_canvas_get_image (canvas), "poster.png");
+	return 0;
+}
+#+end_src
+
+With 5 % margins the safe area is =(48, 27) 864 x 486=, so the sky (anchored to the safe area's top-left corner and moved out by the margins) lands at =(0, 0) 960 x 540= and the other boxes at: title =(180, 27) 600 x 80=, character =(88, 193) 220 x 260=, bubble =(332, 193) 320 x 140=, footer =(130, 463) 700 x 50=.
+
+** Test your layout
+:PROPERTIES:
+:CUSTOM_ID: frame-layout-test
+:END:
+Build the layout in a function the program and its test share, and assert in a GTest that it validates. =g_assert_no_error()= prints the whole message, so a failing test names every problem at once.
+
+#+begin_src C
+/* poster-layout.c: shared by the renderer and the test */
+LrgFrameLayout *
+poster_layout_new (void)
+{
+	LrgFrameLayout *layout = lrg_frame_layout_new (960.0f, 540.0f);
+
+	lrg_frame_layout_set_safe_area_percent (layout, 0.05f);
+	lrg_frame_layout_add_box (layout, "title", LRG_HUD_ANCHOR_TOP, 0.0f, 0.0f, 600.0f, 80.0f);
+	lrg_frame_layout_add_box (layout, "character", LRG_HUD_ANCHOR_BOTTOM_LEFT,
+	                          40.0f, -60.0f, 220.0f, 260.0f);
+	lrg_frame_layout_add_box_relative (layout, "bubble", "character", LRG_FRAME_SIDE_RIGHT,
+	                                   24.0f, 320.0f, 140.0f, LRG_FRAME_ALIGN_START);
+	lrg_frame_layout_add_box (layout, "footer", LRG_HUD_ANCHOR_BOTTOM, 0.0f, 0.0f, 700.0f, 50.0f);
+	return layout;
+}
+
+/* test-poster.c */
+static void
+test_poster_layout (void)
+{
+	g_autoptr(LrgFrameLayout) layout = poster_layout_new ();
+	g_autoptr(GError) error = NULL;
+
+	lrg_frame_layout_validate (layout, &error);
+	g_assert_no_error (error);
+}
+
+int
+main (int argc, char *argv[])
+{
+	g_test_init (&argc, &argv, NULL);
+	g_test_add_func ("/poster/layout", test_poster_layout);
+	return g_test_run ();
+}
+#+end_src
+
+A failure reads like this (the badge was pushed into the title):
+
+#+begin_example
+ERROR:test-poster.c:9:test_poster_layout: assertion failed (error == NULL): overlap: "title" (x=180, y=27, w=600, h=80) and "badge" (x=712, y=87, w=200, h=120) share (x=712, y=87, w=68, h=20) (lrg-frame-layout-error-quark, 0)
+#+end_example
+
+To check one kind of problem only, or to show the problems in your own report, use =lrg_frame_layout_get_problems()=, or =g_assert_error()= with the code you expect.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: frame-layout-api
+:END:
+#+begin_src C
+GType  lrg_frame_layout_error_get_type (void);
+GQuark lrg_frame_layout_error_quark (void);
+
+LrgFrameLayout *lrg_frame_layout_new (gfloat width, gfloat height);
+gfloat     lrg_frame_layout_get_width  (LrgFrameLayout *self);
+gfloat     lrg_frame_layout_get_height (LrgFrameLayout *self);
+
+void       lrg_frame_layout_set_safe_area_margins (LrgFrameLayout *self, gfloat left, gfloat top,
+                                                   gfloat right, gfloat bottom);
+void       lrg_frame_layout_set_safe_area_percent (LrgFrameLayout *self, gfloat fraction);
+void       lrg_frame_layout_get_safe_area         (LrgFrameLayout *self, GrlRectangle *out);
+
+void       lrg_frame_layout_add_box          (LrgFrameLayout *self, const gchar *name, LrgHudAnchor anchor,
+                                              gfloat offset_x, gfloat offset_y, gfloat width, gfloat height);
+void       lrg_frame_layout_add_box_relative (LrgFrameLayout *self, const gchar *name, const gchar *of,
+                                              LrgFrameSide side, gfloat gap, gfloat width, gfloat height,
+                                              LrgFrameAlign align);
+void       lrg_frame_layout_set_box_rect     (LrgFrameLayout *self, const gchar *name, const GrlRectangle *rect);
+gboolean   lrg_frame_layout_get_box          (LrgFrameLayout *self, const gchar *name, GrlRectangle *out);
+gboolean   lrg_frame_layout_remove_box       (LrgFrameLayout *self, const gchar *name);
+GPtrArray *lrg_frame_layout_get_names        (LrgFrameLayout *self);
+void       lrg_frame_layout_allow_overlap    (LrgFrameLayout *self, const gchar *a, const gchar *b);
+void       lrg_frame_layout_set_backdrop     (LrgFrameLayout *self, const gchar *name, gboolean backdrop);
+gboolean   lrg_frame_layout_get_backdrop     (LrgFrameLayout *self, const gchar *name);
+
+GPtrArray *lrg_frame_layout_get_problems (LrgFrameLayout *self);
+gboolean   lrg_frame_layout_validate     (LrgFrameLayout *self, GError **error);
+void       lrg_frame_layout_draw_debug   (LrgFrameLayout *self, LrgImageCanvas *canvas);
+#+end_src
+
+| Function | Notes |
+|----------+-------|
+| =lrg_frame_layout_new()= | sizes below 1 (or not finite) become 1; the safe area is the whole frame |
+| =lrg_frame_layout_get_width()=, =lrg_frame_layout_get_height()= | the frame's size |
+| =lrg_frame_layout_set_safe_area_margins()= | pixels per edge; negative or non-finite margins count as 0 |
+| =lrg_frame_layout_set_safe_area_percent()= | a fraction (0.05 = 5 %) of the width for left/right and the height for top/bottom, clamped into 0 .. 0.5 |
+| =lrg_frame_layout_get_safe_area()= | the safe area in frame pixels (caller-allocated) |
+| =lrg_frame_layout_add_box()= | anchored to the safe area; replaces a box of the same name |
+| =lrg_frame_layout_add_box_relative()= | beside =of=; a negative =gap= overlaps the two on purpose |
+| =lrg_frame_layout_set_box_rect()= | explicit; also turns an anchored or relative box into an explicit one |
+| =lrg_frame_layout_get_box()= | =FALSE= (and a zeroed rectangle) for an unknown name or an unplaceable relative box; =out= may be =NULL= to test for a placed box |
+| =lrg_frame_layout_remove_box()= | =FALSE= when there was no such box; its followers become unknown-box problems |
+| =lrg_frame_layout_get_names()= | (transfer container): the names in the order the boxes were first added, owned by the layout |
+| =lrg_frame_layout_allow_overlap()= | order-independent; the boxes need not exist yet; kept across remove and replace |
+| =lrg_frame_layout_set_backdrop()=, =lrg_frame_layout_get_backdrop()= | mark or unmark a [[#frame-layout-backdrops][backdrop]] by name; kept across remove and replace |
+| =lrg_frame_layout_get_problems()= | (transfer full): one string per problem, empty when clean |
+| =lrg_frame_layout_validate()= | =TRUE= when clean; else an error listing every problem |
+| =lrg_frame_layout_draw_debug()= | the overlay, see [[#frame-layout-debug][Debug overlay]] |
+
+** Behaviour and edge cases
+:PROPERTIES:
+:CUSTOM_ID: frame-layout-behaviour
+:END:
+- *Touching is not overlapping.* Two boxes overlap only when they share more than 0.001 pixel in both directions, so boxes that meet along an edge or at a corner (a relative box with =gap= 0, a row of tiles) are fine. The same slack applies to the frame and safe-area edges: a box exactly on an edge is inside.
+- *Zero-size boxes* (and boxes given negative or non-finite sizes, which count as 0) overlap nothing, but are still checked against the frame and safe area, so a point marker outside the frame is reported. Non-finite offsets and gaps count as 0.
+- *Backdrops* are exempt from overlaps and from the safe area, not from the frame; see [[#frame-layout-backdrops][Backdrops]].
+- *One problem per box for the edges.* A box outside the frame is also outside the safe area; only =OUT_OF_FRAME= is reported for it. The message names every edge it crosses and by how much (=by left 5, bottom 12=).
+- *Anchored boxes stay in the safe area by construction* when they fit in it and their offsets do not push them out; large offsets or boxes bigger than the safe area are reported like any other.
+- *Margins larger than the frame* collapse the safe area to zero width (or height) where they meet, in proportion to the two margins.
+- *Unplaceable relative boxes* (missing target, target unplaceable, or a loop such as a box placed beside itself) have no rectangle: =lrg_frame_layout_get_box()= returns =FALSE=, they are not drawn and they take no part in the overlap and edge checks. Each is one =UNKNOWN_BOX= problem. Adding the missing target later places them.
+- *Order.* Problems come first per box in the order of =lrg_frame_layout_get_names()= (unknown target, else out of frame, else out of safe area), then the overlapping pairs in that order. The order is deterministic, so test output is stable.
+- Rectangles are resolved lazily, once per change, so queries in a loop are cheap. A layout is not thread-safe; use one per thread.
+
+** Errors
+:PROPERTIES:
+:CUSTOM_ID: frame-layout-errors
+:END:
+=lrg_frame_layout_validate()= sets one =GError= in the =LRG_FRAME_LAYOUT_ERROR= domain. Its message lists every problem, one per line, and its code is the first problem's.
+
+| Code | Line format |
+|------+-------------|
+| =LRG_FRAME_LAYOUT_ERROR_OVERLAP= | =overlap: "a" (x=.., y=.., w=.., h=..) and "b" (x=.., ..) share (x=.., ..)= |
+| =LRG_FRAME_LAYOUT_ERROR_OUT_OF_FRAME= | =out of frame: "a" (x=.., ..) leaves the 960x540 frame by right 12, bottom 4= |
+| =LRG_FRAME_LAYOUT_ERROR_OUT_OF_SAFE_AREA= | =out of safe area: "a" (x=.., ..) leaves the safe area (x=48, y=27, w=864, h=486) by left 6= |
+| =LRG_FRAME_LAYOUT_ERROR_UNKNOWN_BOX= | =unknown box: "a" is placed relative to "b", which does not exist= (or =which has no rectangle itself=, or =and the placements loop back to it=) |
+
+Example with several problems:
+
+#+begin_example
+out of safe area: "edge" (x=185, y=50, w=10, h=10) leaves the safe area (x=10, y=10, w=180, h=80) by right 5
+out of frame: "gone" (x=190, y=95, w=20, h=20) leaves the 200x100 frame by right 10, bottom 15
+unknown box: "lost" is placed relative to "nobody", which does not exist
+overlap: "title" (x=20, y=20, w=100, h=20) and "badge" (x=110, y=15, w=30, h=30) share (x=110, y=20, w=10, h=20)
+#+end_example
+
+** Debug overlay
+:PROPERTIES:
+:CUSTOM_ID: frame-layout-debug
+:END:
+=lrg_frame_layout_draw_debug()= draws straight onto the canvas' =GrlImage= in frame pixels (the canvas transform is ignored, its clip applies):
+
+| Element | Drawing |
+|---------+---------|
+| backdrop | 1-pixel grey (160, 160, 160) dashed outline (6 on, 4 off), name in black on a grey label; drawn first, under everything else (red like any box when it leaves the frame) |
+| safe area | 1-pixel yellow (255, 210, 0) outline |
+| clean box | 2-pixel green (60, 220, 120) outline, name in black on a green label at its top-left corner |
+| box with a problem | 3-pixel red (255, 40, 40) outline, name in white on a red label; drawn after the clean boxes so it stays on top |
+| overlapping area | translucent red (alpha 128) fill of the shared rectangle |
+
+The labels use the built-in 10-pixel bitmap font (=grl_image_draw_text_bitmap()=). The shading is blended over the picture; the image's blend mode is restored afterwards. Unplaceable boxes are not drawn.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: frame-layout-see-also
+:END:
+- [[file:image-canvas.org][LrgImageCanvas]] - the canvas the overlay (and the picture) is drawn on
+- [[file:../hud/index.org][HUD]] - =LrgHudLayout= and =lrg_hud_layout_resolve()=, the same nine-point anchors for in-game HUD pieces
+- [[file:../worldui/index.org][World-space UI]] - speech bubbles and nameplates placed in a live scene

@@ -96,9 +96,28 @@ struct _LrgPostEffectClass
                                  guint width, guint height, gfloat delta_time);
     void          (*resize)     (LrgPostEffect *self, guint width, guint height);
     const gchar * (*get_name)   (LrgPostEffect *self);
+    gboolean      (*apply_cpu)  (LrgPostEffect *self, gfloat *rgba, guint width, guint height,
+                                 gfloat time);   /* optional, since 0.14 */
 };
 #+end_src
+=apply_cpu()= (optional; it took one of the reserved pointers, so the class size is unchanged) runs the effect's shader arithmetic on a float RGBA image in memory, without a GL context: see [[#post-effect-cpu][The CPU path]].
+
 =get_name()= is the effect's name in =lrg_post_processor_get_effect()= and, by convention, its type name in [[file:post-stack.org][.rpost]] files (register it with =lrg_post_stack_register_effect_type()=).
+
+** The CPU path
+:PROPERTIES:
+:CUSTOM_ID: post-effect-cpu
+:END:
+#+begin_src C
+gboolean lrg_post_effect_has_cpu   (LrgPostEffect *self);
+gboolean lrg_post_effect_apply_cpu (LrgPostEffect *self, gfloat *rgba, guint width, guint height,
+                                    gfloat time);
+#+end_src
+- =has_cpu()= is =TRUE= when the class implements =apply_cpu=; every built-in effect does except screen shake and heat haze.
+- =apply_cpu()= returns =FALSE= without touching the buffer when the effect is disabled or has no CPU path, as =apply()= skips a disabled effect; it does not need =initialize()=. The implementation handles the base intensity as its shader does (0 leaves the image as it is).
+- The buffer is =width= x =height= pixels of four floats, row 0 at the top, straight alpha, holding the values the shader would sample from the processor's target (display-encoded for ordinary drawing, linear for an HDR render); nothing is clamped between effects, and pixel (x, y) is the fragment at =gl_FragCoord = (x + 0.5, height - y - 0.5)=. The full convention and per-effect notes are in [[file:cpu.org][cpu.org]].
+
+A custom effect adds a CPU path by setting =klass->apply_cpu= in its =class_init= to a function that does on the buffer what its fragment shader does on the texture: read neighbours from a copy of the input (the shader reads the source while writing the target), clamp coordinates to the edge, keep alpha.
 
 ** Writing an effect
 :PROPERTIES:

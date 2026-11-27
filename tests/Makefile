@@ -111,6 +111,7 @@ TEST_SOURCES := \
 	test-mesh-simplify.c \
 	test-lod.c \
 	test-post-stack.c \
+	test-post-cpu.c \
 	test-render-pipeline.c \
 	test-level-look.c \
 	test-shape.c \
@@ -401,6 +402,11 @@ TEST_SOURCES := \
 	test-font-atlas.c \
 	test-csv.c \
 	test-image-canvas.c \
+	test-sdf.c \
+	test-noise.c \
+	test-image-resample.c \
+	test-hdr-canvas.c \
+	test-frame-layout.c \
 	test-image-document.c \
 	test-vector-image.c \
 	test-reel.c \

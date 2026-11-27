@@ -25,6 +25,7 @@
 #include <graylib.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "../lrg-enums.h"
 
 G_BEGIN_DECLS
 
@@ -71,6 +72,118 @@ lrg_image_canvas_new (gint             width,
 LRG_AVAILABLE_IN_ALL
 LrgImageCanvas *
 lrg_image_canvas_new_for_image (GrlImage *image);
+
+/* ==========================================================================
+ * Quality preset and supersampling
+ * ========================================================================== */
+
+/**
+ * lrg_image_canvas_new_quality:
+ * @width: canvas width in pixels (must be > 0)
+ * @height: canvas height in pixels (must be > 0)
+ * @bg: (nullable): background fill color, or %NULL for transparent (RGBA8)
+ *
+ * Creates a canvas like lrg_image_canvas_new() with the quality preset
+ * already applied (lrg_image_canvas_set_quality()): source-over
+ * blending, blending in linear light and anti-aliased edges.  This is
+ * the constructor to reach for when the output is a finished picture
+ * rather than a pixel-exact texture.
+ *
+ * Returns: (transfer full): a new #LrgImageCanvas
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+LrgImageCanvas *
+lrg_image_canvas_new_quality (gint             width,
+                              gint             height,
+                              const GrlColor  *bg);
+
+/**
+ * lrg_image_canvas_set_quality:
+ * @self: an #LrgImageCanvas
+ *
+ * Applies the quality preset to subsequent draw operations: blend mode
+ * %GRL_IMAGE_BLEND_OVER (translucent shapes composite instead of
+ * overwriting), blend colour space %GRL_IMAGE_COLOR_SPACE_LINEAR (mixes
+ * happen in linear light, so a 50% white over black is the grey the eye
+ * expects) and anti-aliasing on.  Each setting can still be changed
+ * afterwards with lrg_image_canvas_set_blend_mode(),
+ * lrg_image_canvas_set_blend_color_space() and
+ * lrg_image_canvas_set_antialias().  The image must be RGBA8 (every
+ * canvas made by the constructors is).
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_image_canvas_set_quality (LrgImageCanvas *self);
+
+/**
+ * lrg_image_canvas_new_supersampled:
+ * @width: final (resolved) width in pixels (must be > 0)
+ * @height: final (resolved) height in pixels (must be > 0)
+ * @factor: supersampling factor, 1 .. %LRG_IMAGE_DOWNSAMPLE_MAX_FACTOR
+ *   (2, 3 or 4 are typical)
+ * @bg: (nullable): background fill color, or %NULL for transparent (RGBA8)
+ *
+ * Creates a quality-preset canvas (lrg_image_canvas_new_quality()) of
+ * (@width x @factor) x (@height x @factor) pixels and remembers @factor
+ * (lrg_image_canvas_get_supersample()).  Draw at the large size, in
+ * pixel coordinates multiplied by @factor, then call
+ * lrg_image_canvas_resolve() for the @width x @height result.  The
+ * transform stack starts at the identity: call
+ * lrg_image_canvas_scale (canvas, factor, factor) to draw the
+ * transform-aware primitives in final-size coordinates instead.
+ *
+ * Returns: (transfer full) (nullable): a new #LrgImageCanvas, or %NULL
+ *   if the backing image could not be allocated
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+LrgImageCanvas *
+lrg_image_canvas_new_supersampled (gint             width,
+                                   gint             height,
+                                   guint            factor,
+                                   const GrlColor  *bg);
+
+/**
+ * lrg_image_canvas_get_supersample:
+ * @self: an #LrgImageCanvas
+ *
+ * Gets the supersampling factor the canvas was created with: the
+ * @factor of lrg_image_canvas_new_supersampled(), 1 for every other
+ * constructor.
+ *
+ * Returns: the supersampling factor
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_image_canvas_get_supersample (LrgImageCanvas *self);
+
+/**
+ * lrg_image_canvas_resolve:
+ * @self: an #LrgImageCanvas
+ * @filter: the downsampling filter (%LRG_RESAMPLE_FILTER_LANCZOS3 for
+ *   line art and text, %LRG_RESAMPLE_FILTER_MITCHELL for soft content)
+ *
+ * Downsamples the canvas by its supersampling factor with
+ * lrg_image_downsample(): gamma-correct, on premultiplied alpha, ringing
+ * clamped.  The canvas is not modified and can keep drawing.  A canvas
+ * with factor 1 resolves to a copy of its image.
+ *
+ * Returns: (transfer full) (nullable): a new RGBA8 #GrlImage of the
+ *   final size, or %NULL on failure
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+GrlImage *
+lrg_image_canvas_resolve (LrgImageCanvas    *self,
+                          LrgResampleFilter  filter);
 
 /* ==========================================================================
  * Access
@@ -585,5 +698,80 @@ lrg_image_canvas_drop_shadow (LrgImageCanvas *self,
                                 gint            dy,
                                 gint            blur_radius,
                                 const GrlColor *shadow_color);
+
+G_END_DECLS
+
+/* ==========================================================================
+ * Signed distance fills (0.14)
+ * ========================================================================== */
+
+#include "../shading/lrg-sdf.h"
+
+G_BEGIN_DECLS
+
+/**
+ * lrg_image_canvas_fill_sdf:
+ * @self: an #LrgImageCanvas
+ * @func: (scope call) (closure user_data): the shape's signed distance,
+ *   in image pixel coordinates
+ * @user_data: (nullable): data for @func
+ * @color: the fill colour
+ *
+ * Fills the shape described by a 2D signed distance field with analytic
+ * anti-aliasing.  @func is evaluated once at every pixel centre
+ * (x + 0.5, y + 0.5) in image pixel coordinates (origin at the top-left,
+ * one unit per pixel); the pixel's coverage is
+ * lrg_sdf2_coverage (d, 1) and the pixel is drawn with grl_image_draw_pixel()
+ * in @color with its alpha scaled by the coverage, so the edges get a
+ * one-pixel ramp and pixels outside the shape are not touched.  The
+ * pixels go through the canvas's blend mode, clip rectangle and blend
+ * colour space: use %GRL_IMAGE_BLEND_OVER (and linear blending) for
+ * smooth edges over existing content; with the default
+ * %GRL_IMAGE_BLEND_REPLACE the edge pixels replace what was there with a
+ * partly transparent colour.
+ *
+ * The canvas transform stack is *not* applied: transform the query point
+ * inside @func instead.  This visits every pixel (inside the clip
+ * rectangle, if one is set); use lrg_image_canvas_fill_sdf_rect() to
+ * limit the work to the shape's bounding box.
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_image_canvas_fill_sdf (LrgImageCanvas *self,
+                           LrgSdf2Func     func,
+                           gpointer        user_data,
+                           const GrlColor *color);
+
+/**
+ * lrg_image_canvas_fill_sdf_rect:
+ * @self: an #LrgImageCanvas
+ * @x: left edge of the region to visit, in pixels
+ * @y: top edge of the region to visit, in pixels
+ * @width: width of the region in pixels
+ * @height: height of the region in pixels
+ * @func: (scope call) (closure user_data): the shape's signed distance,
+ *   in image pixel coordinates
+ * @user_data: (nullable): data for @func
+ * @color: the fill colour
+ *
+ * Like lrg_image_canvas_fill_sdf(), but only evaluates @func inside the
+ * given rectangle (intersected with the image and the clip rectangle).
+ * Pass the shape's bounding box grown by one pixel so the anti-aliased
+ * edge is not cut off.  An empty region draws nothing.
+ *
+ * Since: 0.14
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_image_canvas_fill_sdf_rect (LrgImageCanvas *self,
+                                gint            x,
+                                gint            y,
+                                gint            width,
+                                gint            height,
+                                LrgSdf2Func     func,
+                                gpointer        user_data,
+                                const GrlColor *color);
 
 G_END_DECLS
