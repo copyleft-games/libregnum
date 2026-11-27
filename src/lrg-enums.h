@@ -7108,6 +7108,29 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_shape_category_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_SHAPE_CATEGORY (lrg_shape_category_get_type ())
 
+/**
+ * LrgLipSyncError:
+ * @LRG_LIP_SYNC_ERROR_PARSE: the text is not valid YAML or CSV, or a
+ *   value has the wrong type
+ * @LRG_LIP_SYNC_ERROR_INVALID: the data is well formed but wrong: a
+ *   missing or unknown key, a negative time, an end before its start
+ * @LRG_LIP_SYNC_ERROR_IO: a file could not be read
+ *
+ * Errors of #LrgLipSync loaders (domain %LRG_LIP_SYNC_ERROR).
+ *
+ * Since: 0.14
+ */
+typedef enum
+{
+    LRG_LIP_SYNC_ERROR_PARSE,
+    LRG_LIP_SYNC_ERROR_INVALID,
+    LRG_LIP_SYNC_ERROR_IO
+} LrgLipSyncError;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_lip_sync_error_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_LIP_SYNC_ERROR (lrg_lip_sync_error_get_type ())
+
 G_END_DECLS
 
 

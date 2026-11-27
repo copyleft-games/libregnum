@@ -881,6 +881,9 @@ typedef struct _LrgAnimationStateMachineClass  LrgAnimationStateMachineClass;
 /* LrgAnimationLayer is a final type - no Class forward declaration needed */
 typedef struct _LrgAnimationLayer  LrgAnimationLayer;
 
+/* 2D lip sync (a final type) */
+typedef struct _LrgLipSync  LrgLipSync;
+
 /* LrgBlendTree is a derivable type */
 typedef struct _LrgBlendTree       LrgBlendTree;
 typedef struct _LrgBlendTreeClass  LrgBlendTreeClass;
