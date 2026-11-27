@@ -150,6 +150,12 @@ Window management, cameras, and rendering abstractions:
 - *[[file:graphics/static-batch.org][LrgStaticBatch]]* - Static mesh batching into u16 chunks per (material, layer) with bounds and layer masks
 - *[[file:graphics/model-animator.org][LrgModelAnimator]]* - Shared skinned model animation with per-actor state, crossfades, pose dedupe and masked drawing
 
+*** [[file:shading/index.org][Shading Module]] - Signed distance functions and band-limited noise (0.14)
+:PROPERTIES:
+:CUSTOM_ID: shading-module
+:END:
+CPU shading maths as pure functions: 2D and 3D signed distance primitives (exact ellipse, ellipsoid bound, capsule, round cone, box, torus, ...), hard and smooth operators, normals, ray marching, soft shadows and ambient occlusion ([[file:shading/sdf.org][sdf.org]]); seeded value and simplex noise and fBm that takes a pixel footprint so fine octaves fade out instead of aliasing ([[file:shading/noise.org][noise.org]]). =lrg_image_canvas_fill_sdf()= draws a 2D field into an =LrgImageCanvas= with analytic anti-aliasing.
+
 *** [[file:worldui/index.org][World-space UI Module]] - Speech bubbles, nameplates and emotes (0.11.0)
 :PROPERTIES:
 :CUSTOM_ID: worldui-module

@@ -132,6 +132,10 @@
 #include "graphics/lrg-mesh-simplify.h"
 #include "graphics/lrg-lod-group.h"
 #include "graphics/lrg-texture-sampling.h"
+
+/* CPU shading: signed distance functions and band-limited noise */
+#include "shading/lrg-sdf.h"
+#include "shading/lrg-noise.h"
 #include "imageedit/lrg-image-layer.h"
 #include "imageedit/lrg-image-document.h"
 

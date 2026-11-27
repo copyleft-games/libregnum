@@ -539,3 +539,97 @@ lrg_image_canvas_drop_shadow (LrgImageCanvas *self,
                           GRL_PORTER_DUFF_DST_OVER,
                           dx, dy);
 }
+
+/* ==========================================================================
+ * Signed distance fills (0.14)
+ * ========================================================================== */
+
+#include <math.h>
+
+void
+lrg_image_canvas_fill_sdf_rect (LrgImageCanvas *self,
+                                gint            x,
+                                gint            y,
+                                gint            width,
+                                gint            height,
+                                LrgSdf2Func     func,
+                                gpointer        user_data,
+                                const GrlColor *color)
+{
+    GrlRectangle clip;
+    gint         x0;
+    gint         y0;
+    gint         x1;
+    gint         y1;
+    gint         px;
+    gint         py;
+
+    g_return_if_fail (LRG_IS_IMAGE_CANVAS (self));
+    g_return_if_fail (self->image != NULL);
+    g_return_if_fail (func != NULL);
+    g_return_if_fail (color != NULL);
+
+    if (width <= 0 || height <= 0 || color->a == 0)
+        return;
+
+    /*
+     * Region to visit: the requested rectangle (computed in 64 bits so
+     * huge sizes cannot overflow), intersected with the image and with
+     * the clip rectangle.  grl_image_draw_pixel() clips as well; this
+     * only avoids evaluating the field where nothing can be drawn.
+     */
+    x0 = MAX (x, 0);
+    y0 = MAX (y, 0);
+    x1 = (gint)MIN ((gint64)x + width,  (gint64)grl_image_get_width (self->image));
+    y1 = (gint)MIN ((gint64)y + height, (gint64)grl_image_get_height (self->image));
+    if (grl_image_get_clip_rect (self->image, &clip))
+    {
+        x0 = MAX (x0, (gint)floorf (clip.x));
+        y0 = MAX (y0, (gint)floorf (clip.y));
+        x1 = MIN (x1, (gint)ceilf (clip.x + clip.width));
+        y1 = MIN (y1, (gint)ceilf (clip.y + clip.height));
+    }
+
+    /*
+     * One sample per pixel centre; the coverage of a one-pixel-wide
+     * ramp across the edge scales the colour's alpha.  Pixels with no
+     * coverage are skipped, so the outside stays untouched even in
+     * REPLACE mode.
+     */
+    for (py = y0; py < y1; py++)
+    {
+        for (px = x0; px < x1; px++)
+        {
+            gfloat   p[2];
+            gfloat   cov;
+            gint     alpha;
+            GrlColor c;
+
+            p[0] = (gfloat)px + 0.5f;
+            p[1] = (gfloat)py + 0.5f;
+            cov = lrg_sdf2_coverage (func (p, user_data), 1.0f);
+            alpha = (gint)lrintf ((gfloat)color->a * cov);
+            if (alpha <= 0)
+                continue;
+
+            c = *color;
+            c.a = (guint8)MIN (alpha, 255);
+            grl_image_draw_pixel (self->image, px, py, &c);
+        }
+    }
+}
+
+void
+lrg_image_canvas_fill_sdf (LrgImageCanvas *self,
+                           LrgSdf2Func     func,
+                           gpointer        user_data,
+                           const GrlColor *color)
+{
+    g_return_if_fail (LRG_IS_IMAGE_CANVAS (self));
+    g_return_if_fail (self->image != NULL);
+
+    lrg_image_canvas_fill_sdf_rect (self, 0, 0,
+                                    grl_image_get_width (self->image),
+                                    grl_image_get_height (self->image),
+                                    func, user_data, color);
+}

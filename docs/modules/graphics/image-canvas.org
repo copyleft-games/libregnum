@@ -65,7 +65,33 @@ pixel operations and are transform-independent by design.
 | State | =set_blend_mode=, =set_blend_color_space=, =set_antialias=, =set_clip_rect= |
 | Transform | =save=, =restore=, =translate=, =scale=, =rotate=, =reset_transform= |
 | Draw | =clear=, =fill_circle=, =stroke_circle=, =fill_rect=, =draw_line=, =fill_polygon=, =fill_path=, =stroke_path=, =draw_text=, =draw_gradient_rect=, =draw_gradient_radial= |
+| SDF fill (0.14) | =fill_sdf=, =fill_sdf_rect= ([[#lrg-image-canvas-fill-sdf][below]]) |
 | Composite | =composite=, =apply_mask=, =blur=, =drop_shadow= |
 
 For anything not wrapped here, =lrg_image_canvas_get_image()= returns the
 underlying =GrlImage= (transfer none) for direct graylib calls.
+
+** Signed distance fills
+:PROPERTIES:
+:CUSTOM_ID: lrg-image-canvas-fill-sdf
+:END:
+=lrg_image_canvas_fill_sdf (canvas, func, user_data, color)= fills any shape described by a 2D signed distance field (an =LrgSdf2Func=, see [[file:../shading/sdf.org][signed distance functions]]) with analytic anti-aliasing (since 0.14). The field is evaluated once per pixel centre (x + 0.5, y + 0.5) in image pixel coordinates; the coverage =lrg_sdf2_coverage (d, 1)= (a one-pixel ramp across the edge) scales the colour's alpha, and the pixel is written with =grl_image_draw_pixel()=, so it goes through the canvas's blend mode, clip rectangle and blend colour space. Pixels with no coverage are not touched. =lrg_image_canvas_fill_sdf_rect (canvas, x, y, width, height, func, user_data, color)= evaluates only inside a rectangle (pass the shape's bounding box grown by a pixel); both also skip everything outside the clip rectangle.
+
+#+begin_src C
+static gfloat
+pill (const gfloat p[2], gpointer user_data)
+{
+	gfloat a[2] = { 16.0f, 32.0f };
+	gfloat b[2] = { 48.0f, 32.0f };
+
+	return lrg_sdf2_capsule (p, a, b, 10.5f);
+}
+
+lrg_image_canvas_set_blend_mode (canvas, GRL_IMAGE_BLEND_OVER);
+lrg_image_canvas_set_blend_color_space (canvas, GRL_IMAGE_COLOR_SPACE_LINEAR);
+lrg_image_canvas_fill_sdf_rect (canvas, 4, 20, 56, 24, pill, NULL, white);
+#+end_src
+
+- Use =GRL_IMAGE_BLEND_OVER= (ideally with =GRL_IMAGE_COLOR_SPACE_LINEAR=) for smooth edges over existing content. With the default =GRL_IMAGE_BLEND_REPLACE= the edge pixels *replace* what was there with a partly transparent colour, which is right only on a transparent canvas.
+- The transform stack is *not* applied: the field receives raw image pixel coordinates; transform the point inside your callback.
+- A NaN distance draws nothing; an empty or off-image rectangle draws nothing.
