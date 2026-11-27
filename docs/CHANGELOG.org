@@ -25,6 +25,7 @@ H.264 export works with an ffmpeg that has no =libx264= (issue #3). The video ex
 - Reel: =lrg_reel_video_exporter_set_encoder()= and =lrg_reel_video_exporter_get_encoder()= name or report the ffmpeg encoder. Rate control follows the encoder: libopenh264 gets a bitrate derived from the CRF, NVENC =-cq=, QSV =-global_quality=, VA-API =-qp= with its device and upload filter ([[file:modules/reel/exporters.org::#video-encoder][Choosing the encoder]]).
 - Reel: a codec whose encoder ffmpeg lacks (=libx265=, =libsvtav1=, ...) now fails =begin()= up front with the new =LRG_REEL_EXPORTER_ERROR_ENCODER_NOT_FOUND=, which names every encoder tried, instead of failing later with an ffmpeg exit code.
 - CLI: =reel render --encoder NAME=, and =--codec av1=. MCP: =reel_render= takes an optional =encoder= and reports the one used; the MCP tools page now documents the reel tools.
+- Build: =MCP=1= links mcp-glib again. =MCP_LIBS= was expanded before the mcp-glib build directory was known, so it read =-L -lmcp-glib-1.0= and the library was never linked. (The GIR scan of an =MCP=1= build still fails on mcp-glib's types; not addressed here.)
 - Tests: a fake ffmpeg (=tests/data/fake-ffmpeg.sh=) drives the fallback chain, failed trials, the override, a failed probe, the probe cache and every encoder's argv; =/reel/video-encoder/h264-real= exports with whatever this machine's ffmpeg can run.
 ** 0.13.6
 :PROPERTIES:
