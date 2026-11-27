@@ -16,6 +16,16 @@
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
 
+** 0.13.6
+:PROPERTIES:
+:CUSTOM_ID: changelog-0-13-6
+:END:
+=LrgReelTextClip= centre and right alignment work without a =max-width= (issue #4). =text-x= is now the anchor the alignment names: a centred clip is centred on =text-x=, a right-aligned one ends at =text-x=. Before, the text block always started at =text-x=, so =align: center= and =align: right= did nothing and a "centred" title ran off to the right. The YAML examples in the docs already assumed the new meaning.
+
+- Reel: with a =max-width= nothing changes; lines are aligned in [=text-x=, =text-x + max-width=]. Clips with =center= or =right= and no =max-width= move left by half or all of their width ([[file:modules/reel/clips.org::#text-clip-alignment-migration][migration]]).
+- Docs: an alignment table for =LrgReelTextClip= ([[file:modules/reel/clips.org::#text-clip-alignment][Alignment and text-x]]); the =text-x=, =align= and =max-width= property docs say what =text-x= anchors.
+- Tests: =/reel/text-clip/align=, =/reel/text-clip/align-multiline= and =/reel/text-clip/align-empty= measure the drawn ink against a left-aligned reference for every alignment, with and without a =max-width=.
+
 ** 0.13.4
 :PROPERTIES:
 :CUSTOM_ID: changelog-0-13-4

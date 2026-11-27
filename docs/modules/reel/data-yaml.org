@@ -30,7 +30,7 @@ clips:
   - type: text-clip
     text: "Welcome"
     font-size: 72
-    text-x: 960
+    text-x: 960          # centre of the 1920-wide frame (align: center)
     text-y: 440
     align: center
     from-frame: 5
@@ -80,7 +80,7 @@ Enum properties accept the lowercase nick of the enum value.  Examples:
 | Property           | Valid values                                  |
 |--------------------+-----------------------------------------------|
 | =fit=              | =fill=, =contain=, =cover=, =none=            |
-| =align=            | =left=, =center=, =right=                     |
+| =align=            | =left=, =center=, =right=; with no =max-width=, =text-x= is the left edge, centre or right edge ([[file:clips.org::#text-clip-alignment][alignment]]) |
 | =blend-mode=       | =normal=, =multiply=, =screen=, =add=, …      |
 | =kind= (shape)     | =rect=, =rounded-rect=, =circle=, =ellipse=, … |
 
@@ -179,7 +179,7 @@ clips:
     name: score-label
     text: "SCORE"
     font-size: 24
-    text-x: 320
+    text-x: 320          # centre of the 640-wide frame
     text-y: 120
     align: center
     opacity: 1.0
@@ -191,7 +191,7 @@ clips:
     name: score-value
     text: "99,999"
     font-size: 64
-    text-x: 320
+    text-x: 320          # centre of the 640-wide frame
     text-y: 160
     align: center
     from-frame: 10
