@@ -64,6 +64,8 @@ codec_from_string (const gchar *str)
 		return LRG_REEL_VIDEO_CODEC_PRORES_ALPHA;
 	if (g_strcmp0 (str, "vp9_alpha") == 0)
 		return LRG_REEL_VIDEO_CODEC_VP9_ALPHA;
+	if (g_strcmp0 (str, "av1") == 0)
+		return LRG_REEL_VIDEO_CODEC_AV1;
 
 	lrg_debug (LRG_LOG_DOMAIN_MCP,
 	           "Unknown codec '%s', falling back to h264", str);
@@ -169,6 +171,7 @@ handle_render (LrgMcpReelTools *self,
 	const gchar *path;
 	const gchar *output;
 	const gchar *codec_str;
+	const gchar *encoder;
 	g_autoptr(LrgReel) reel = NULL;
 	g_autoptr(GError) op_error = NULL;
 	g_autoptr(LrgReelRenderer) renderer = NULL;
@@ -197,6 +200,7 @@ handle_render (LrgMcpReelTools *self,
 
 	codec_str = lrg_mcp_tool_group_get_string_arg (arguments, "codec", NULL);
 	codec     = codec_from_string (codec_str);
+	encoder   = lrg_mcp_tool_group_get_string_arg (arguments, "encoder", NULL);
 
 	reel = lrg_reel_load_yaml (path, NULL, &op_error);
 	if (reel == NULL)
@@ -211,6 +215,8 @@ handle_render (LrgMcpReelTools *self,
 
 	renderer       = lrg_reel_renderer_new (reel);
 	video_exporter = lrg_reel_video_exporter_new (output, codec);
+	if (encoder != NULL)
+		lrg_reel_video_exporter_set_encoder (video_exporter, encoder);
 
 	if (!lrg_reel_renderer_render_to_exporter (renderer,
 	                                           LRG_REEL_EXPORTER (video_exporter),
@@ -230,6 +236,10 @@ handle_render (LrgMcpReelTools *self,
 
 	json_builder_set_member_name (builder, "frames");
 	json_builder_add_int_value (builder, (gint64) duration_in_frames);
+
+	json_builder_set_member_name (builder, "encoder");
+	json_builder_add_string_value (builder,
+	    lrg_reel_video_exporter_get_encoder (video_exporter));
 
 	json_builder_end_object (builder);
 
@@ -389,8 +399,19 @@ build_schema_render (void)
 	json_builder_add_string_value (builder, "string");
 	json_builder_set_member_name (builder, "description");
 	json_builder_add_string_value (builder,
-	    "Video codec: \"h264\" (default), \"vp9\", \"h265\", "
+	    "Video codec: \"h264\" (default), \"vp9\", \"h265\", \"av1\", "
 	    "\"prores\", \"prores_alpha\", \"vp9_alpha\"");
+	json_builder_end_object (builder);
+
+	json_builder_set_member_name (builder, "encoder");
+	json_builder_begin_object (builder);
+	json_builder_set_member_name (builder, "type");
+	json_builder_add_string_value (builder, "string");
+	json_builder_set_member_name (builder, "description");
+	json_builder_add_string_value (builder,
+	    "Optional ffmpeg encoder name (e.g. \"libopenh264\", \"h264_nvenc\"). "
+	    "Omit to let the exporter pick the first one ffmpeg can run "
+	    "for the codec.");
 	json_builder_end_object (builder);
 
 	json_builder_end_object (builder);

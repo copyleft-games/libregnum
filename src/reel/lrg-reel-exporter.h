@@ -46,6 +46,9 @@ GQuark lrg_reel_exporter_error_quark (void);
  * @LRG_REEL_EXPORTER_ERROR_FFMPEG_NOT_FOUND: the ffmpeg program was not found.
  * @LRG_REEL_EXPORTER_ERROR_SPAWN: failed to spawn or run the encoder.
  * @LRG_REEL_EXPORTER_ERROR_UNSUPPORTED: operation not implemented by the sink.
+ * @LRG_REEL_EXPORTER_ERROR_ENCODER_NOT_FOUND: ffmpeg was found but has no
+ *   usable encoder for the requested codec, or no encoder of the name given
+ *   to lrg_reel_video_exporter_set_encoder() (since 0.13.7).
  *
  * Error codes for #LrgReelExporter.
  *
@@ -58,7 +61,8 @@ typedef enum
     LRG_REEL_EXPORTER_ERROR_WRITE,
     LRG_REEL_EXPORTER_ERROR_FFMPEG_NOT_FOUND,
     LRG_REEL_EXPORTER_ERROR_SPAWN,
-    LRG_REEL_EXPORTER_ERROR_UNSUPPORTED
+    LRG_REEL_EXPORTER_ERROR_UNSUPPORTED,
+    LRG_REEL_EXPORTER_ERROR_ENCODER_NOT_FOUND
 } LrgReelExporterError;
 
 LRG_AVAILABLE_IN_ALL

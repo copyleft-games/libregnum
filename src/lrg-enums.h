@@ -5420,7 +5420,9 @@ GType lrg_reel_image_format_get_type (void) G_GNUC_CONST;
 
 /**
  * LrgReelVideoCodec:
- * @LRG_REEL_VIDEO_CODEC_H264: H.264 video in an MP4 container (libx264).
+ * @LRG_REEL_VIDEO_CODEC_H264: H.264 video in an MP4 container.  The encoder
+ *   is the first that ffmpeg has and can run of libx264, libopenh264,
+ *   h264_nvenc, h264_qsv and h264_vaapi.
  * @LRG_REEL_VIDEO_CODEC_VP9: VP9 video in a WebM container (libvpx-vp9).
  * @LRG_REEL_VIDEO_CODEC_H265: H.265/HEVC video in an MP4 container (libx265).
  * @LRG_REEL_VIDEO_CODEC_PRORES: Apple ProRes 422 in a MOV container (prores_ks).
