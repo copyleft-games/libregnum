@@ -5420,7 +5420,9 @@ GType lrg_reel_image_format_get_type (void) G_GNUC_CONST;
 
 /**
  * LrgReelVideoCodec:
- * @LRG_REEL_VIDEO_CODEC_H264: H.264 video in an MP4 container (libx264).
+ * @LRG_REEL_VIDEO_CODEC_H264: H.264 video in an MP4 container.  The encoder
+ *   is the first that ffmpeg has and can run of libx264, libopenh264,
+ *   h264_nvenc, h264_qsv and h264_vaapi.
  * @LRG_REEL_VIDEO_CODEC_VP9: VP9 video in a WebM container (libvpx-vp9).
  * @LRG_REEL_VIDEO_CODEC_H265: H.265/HEVC video in an MP4 container (libx265).
  * @LRG_REEL_VIDEO_CODEC_PRORES: Apple ProRes 422 in a MOV container (prores_ks).
@@ -5589,11 +5591,14 @@ GType lrg_reel_shape_kind_get_type (void) G_GNUC_CONST;
 
 /**
  * LrgReelTextAlign:
- * @LRG_REEL_TEXT_ALIGN_LEFT: left-aligned.
- * @LRG_REEL_TEXT_ALIGN_CENTER: centered.
- * @LRG_REEL_TEXT_ALIGN_RIGHT: right-aligned.
+ * @LRG_REEL_TEXT_ALIGN_LEFT: left-aligned; text-x is the left edge.
+ * @LRG_REEL_TEXT_ALIGN_CENTER: centered; without a max-width, centered on
+ *   text-x.
+ * @LRG_REEL_TEXT_ALIGN_RIGHT: right-aligned; without a max-width, ending at
+ *   text-x.
  *
- * Horizontal text alignment for an #LrgReelTextClip.
+ * Horizontal text alignment for an #LrgReelTextClip.  With a max-width the
+ * lines are aligned inside the box [text-x, text-x + max-width].
  *
  * Since: 1.0
  */

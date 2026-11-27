@@ -546,6 +546,53 @@ Destroy a game object.
 |-----------+--------+----------+----------------------|
 | id        | string | Yes      | Object ID to destroy |
 
+** Reel Tools (=LrgMcpReelTools=)
+:PROPERTIES:
+:CUSTOM_ID: reel-tools-lrgmcpreeltools
+:END:
+Reel tools load a YAML reel ([[file:../reel/data-yaml.org][reel YAML format]]) and render it headless, on the CPU. They need no running game and no display. =reel_render= needs ffmpeg on the =PATH=.
+
+*** reel_get_metadata
+:PROPERTIES:
+:CUSTOM_ID: reel_get_metadata
+:END:
+Load a reel and return its metadata.
+
+| Parameter | Type   | Required | Description             |
+|-----------+--------+----------+-------------------------|
+| =path=    | string | yes      | Path to the YAML reel   |
+
+*Returns:* ={"id": "intro", "width": 1280, "height": 720, "fps": 24.0, "duration_in_frames": 240}=
+
+*** reel_render
+:PROPERTIES:
+:CUSTOM_ID: reel_render
+:END:
+Render every frame of a reel to a video file through ffmpeg.
+
+| Parameter | Type   | Required | Description |
+|-----------+--------+----------+-------------|
+| =path=    | string | yes      | Path to the YAML reel |
+| =output=  | string | yes      | Output video path (=.mp4=, =.webm=, =.mov=) |
+| =codec=   | string | no       | =h264= (default), =vp9=, =h265=, =av1=, =prores=, =prores_alpha=, =vp9_alpha= |
+| =encoder= | string | no       | ffmpeg encoder to use, e.g. =libopenh264= or =h264_vaapi=. Omit it to let the exporter take the first encoder the codec allows that this ffmpeg has and can run ([[file:../reel/exporters.org::#video-encoder][Choosing the encoder]]) |
+
+*Returns:* ={"output": "/tmp/intro.mp4", "frames": 240, "encoder": "libx264"}=. =encoder= is the encoder that was used. When no usable encoder exists the call fails, and the error names every encoder that was tried.
+
+*** reel_capture_still
+:PROPERTIES:
+:CUSTOM_ID: reel_capture_still
+:END:
+Render one frame of a reel to an image file.
+
+| Parameter | Type    | Required | Description                          |
+|-----------+---------+----------+--------------------------------------|
+| =path=    | string  | yes      | Path to the YAML reel                |
+| =output=  | string  | yes      | Output image path (PNG)              |
+| =frame=   | integer | no       | Frame index (default 0)              |
+
+*Returns:* ={"output": "/tmp/frame.png", "frame": 0}=
+
 ** Save Tools (=LrgMcpSaveTools=)
 :PROPERTIES:
 :CUSTOM_ID: save-tools-lrgmcpsavetools

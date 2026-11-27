@@ -63,13 +63,14 @@ Renders all frames and writes them to a video file (via ffmpeg) or an animated
 GIF (in-process, no ffmpeg required).
 
 #+begin_example
-reel render [--output PATH] [--codec CODEC] [--crf N] [--threads N] <file.yaml>
+reel render [--output PATH] [--codec CODEC] [--encoder NAME] [--crf N] [--threads N] <file.yaml>
 #+end_example
 
 | Option           | Short | Default     | Description                                                |
 |------------------+-------+-------------+------------------------------------------------------------|
 | =--output PATH=  | =-o=  | =out.mp4=   | Output file path                                           |
 | =--codec CODEC=  | =-c=  | =h264=      | Video codec (see table below)                             |
+| =--encoder NAME= | =-e=  | automatic   | ffmpeg encoder to use, e.g. =libopenh264=, =h264_vaapi= |
 | =--crf N=        |       | 23          | Encoder quality (lower = better; 0–51 for H.264)          |
 | =--threads N=    | =-t=  | 1           | Parallel render threads (0 = auto; 1 = sequential)        |
 
@@ -80,12 +81,15 @@ and =--codec= is ignored.
 
 | =--codec= value  | =LrgReelVideoCodec=               | Container | Notes                  |
 |------------------+-----------------------------------+-----------+------------------------|
-| =h264=           | =LRG_REEL_VIDEO_CODEC_H264=       | .mp4      | Default                |
+| =h264=           | =LRG_REEL_VIDEO_CODEC_H264=       | .mp4      | Default; first working of libx264, libopenh264, h264_nvenc, h264_qsv, h264_vaapi |
 | =vp9=            | =LRG_REEL_VIDEO_CODEC_VP9=        | .webm     |                        |
 | =h265=           | =LRG_REEL_VIDEO_CODEC_H265=       | .mp4      | Requires libx265       |
 | =prores=         | =LRG_REEL_VIDEO_CODEC_PRORES=     | .mov      | ProRes 422             |
 | =prores-alpha=   | =LRG_REEL_VIDEO_CODEC_PRORES_ALPHA=| .mov     | ProRes 4444 with alpha |
 | =vp9-alpha=      | =LRG_REEL_VIDEO_CODEC_VP9_ALPHA=  | .webm     | VP9 yuva420p           |
+| =av1=            | =LRG_REEL_VIDEO_CODEC_AV1=        | .mp4      | Requires libsvtav1     |
+
+Without =--encoder=, the encoder is chosen as described in [[file:exporters.org::#video-encoder][Choosing the encoder]]: the first candidate your ffmpeg lists and can run. On Fedora's own ffmpeg (no libx264) H.264 uses OpenH264 if the =openh264= package from =fedora-cisco-openh264= is installed, then a working GPU encoder; when nothing works the command fails and names every encoder it tried.
 
 *** Examples
 
@@ -101,6 +105,9 @@ $ reel render --output overlay.mov --codec prores-alpha assets/overlay.yaml
 
 # Render to WebM with VP9
 $ reel render --output intro.webm --codec vp9 assets/intro.yaml
+
+# Force a specific H.264 encoder (here VA-API on the GPU)
+$ reel render --output intro.mp4 --encoder h264_vaapi assets/intro.yaml
 #+end_example
 
 ** Pitfalls

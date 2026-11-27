@@ -920,6 +920,490 @@ test_exporter_video_missing_ffmpeg (void)
 }
 
 /* ==========================================================================
+ * Video encoder discovery (issue #3), against a fake ffmpeg
+ * ==========================================================================
+ * tests/data/fake-ffmpeg.sh answers `-encoders` from encoders.txt, passes
+ * trial encodes only for names in works, and writes the real encode's argv
+ * to argv.txt.  Each test copies it into its own temp dir, so the exporter's
+ * per-path probe cache starts empty for every test.
+ */
+
+/* An `ffmpeg -hide_banner -encoders` listing with the given video encoders. */
+static gchar *
+encoder_listing (const gchar * const *names)
+{
+    GString *out = g_string_new (
+        "Encoders:\n"
+        " V..... = Video\n"
+        " A..... = Audio\n"
+        " ------\n"
+        " A....D aac                  AAC (Advanced Audio Coding)\n");
+    guint i;
+
+    for (i = 0; names != NULL && names[i] != NULL; i++)
+        g_string_append_printf (out, " V....D %-20s some encoder\n", names[i]);
+    return g_string_free (out, FALSE);
+}
+
+typedef struct
+{
+    gchar *dir;
+    gchar *ffmpeg;
+} FakeFfmpeg;
+
+/*
+ * fake_ffmpeg_new:
+ * @encoders: (nullable): video encoders to list, or NULL for a failing probe.
+ * @works: (nullable): encoders whose trial encode succeeds.
+ */
+static FakeFfmpeg *
+fake_ffmpeg_new (const gchar * const *encoders,
+                 const gchar * const *works)
+{
+    FakeFfmpeg *f = g_new0 (FakeFfmpeg, 1);
+    g_autofree gchar *src = g_test_build_filename (G_TEST_DIST, "data",
+                                                   "fake-ffmpeg.sh", NULL);
+    g_autofree gchar *script = NULL;
+    g_autoptr(GError) error = NULL;
+    gsize len;
+
+    f->dir = g_dir_make_tmp ("reel-fake-ffmpeg-XXXXXX", &error);
+    g_assert_no_error (error);
+    f->ffmpeg = g_build_filename (f->dir, "ffmpeg", NULL);
+    g_assert_true (g_file_get_contents (src, &script, &len, &error));
+    g_assert_no_error (error);
+    g_assert_true (g_file_set_contents_full (f->ffmpeg, script, (gssize) len,
+                                             G_FILE_SET_CONTENTS_NONE, 0755, &error));
+    g_assert_no_error (error);
+
+    if (encoders != NULL)
+    {
+        g_autofree gchar *list = encoder_listing (encoders);
+        g_autofree gchar *p = g_build_filename (f->dir, "encoders.txt", NULL);
+
+        g_assert_true (g_file_set_contents (p, list, -1, &error));
+        g_assert_no_error (error);
+    }
+    if (works != NULL)
+    {
+        g_autofree gchar *joined = g_strjoinv ("\n", (gchar **) works);
+        g_autofree gchar *body = g_strconcat (joined, "\n", NULL);
+        g_autofree gchar *p = g_build_filename (f->dir, "works", NULL);
+
+        g_assert_true (g_file_set_contents (p, body, -1, &error));
+        g_assert_no_error (error);
+    }
+    return f;
+}
+
+static gchar *
+fake_ffmpeg_read (FakeFfmpeg  *f,
+                  const gchar *name)
+{
+    g_autofree gchar *p = g_build_filename (f->dir, name, NULL);
+    gchar *body = NULL;
+
+    if (!g_file_get_contents (p, &body, NULL, NULL))
+        return NULL;
+    return body;
+}
+
+static void
+fake_ffmpeg_free (FakeFfmpeg *f)
+{
+    const gchar *names[] = { "ffmpeg", "encoders.txt", "works", "probes.log",
+                             "trials.log", "argv.txt", NULL };
+    guint i;
+
+    for (i = 0; names[i] != NULL; i++)
+    {
+        g_autofree gchar *p = g_build_filename (f->dir, names[i], NULL);
+
+        g_unlink (p);
+    }
+    g_rmdir (f->dir);
+    g_free (f->dir);
+    g_free (f->ffmpeg);
+    g_free (f);
+}
+
+/*
+ * fake_export:
+ *
+ * Runs begin, two 64x36 frames and finish through @vid against @f.  On
+ * success returns the encode's argv as one string, one argument per line,
+ * wrapped in newlines so "\n-c:v\nlibx264\n" style searches are exact.
+ */
+static gchar *
+fake_export (FakeFfmpeg           *f,
+             LrgReelVideoExporter *vid,
+             GError              **error)
+{
+    GrlColor grey = { 90, 90, 90, 255 };
+    g_autoptr(GrlImage) frame = grl_image_new_color (64, 36, &grey);
+    g_autofree gchar *argv = NULL;
+
+    lrg_reel_video_exporter_set_ffmpeg_path (vid, f->ffmpeg);
+    if (!lrg_reel_exporter_begin (LRG_REEL_EXPORTER (vid), 64, 36, 24.0, error))
+        return NULL;
+    g_assert_true (lrg_reel_exporter_add_frame (LRG_REEL_EXPORTER (vid), frame, error));
+    g_assert_true (lrg_reel_exporter_add_frame (LRG_REEL_EXPORTER (vid), frame, error));
+    g_assert_true (lrg_reel_exporter_finish (LRG_REEL_EXPORTER (vid), error));
+
+    argv = fake_ffmpeg_read (f, "argv.txt");
+    g_assert_nonnull (argv);
+    return g_strconcat ("\n", argv, NULL);
+}
+
+#define ASSERT_ARGS(argv, seq) \
+    do { if (strstr ((argv), "\n" seq "\n") == NULL) \
+        g_error ("missing \"%s\" in ffmpeg argv:%s", seq, (argv)); } while (0)
+#define ASSERT_NO_ARGS(argv, seq) \
+    do { if (strstr ((argv), "\n" seq "\n") != NULL) \
+        g_error ("unexpected \"%s\" in ffmpeg argv:%s", seq, (argv)); } while (0)
+
+/* libx264 present: chosen first, with the x264 preset and CRF. */
+static void
+test_video_encoder_x264 (void)
+{
+    g_autofree gchar *trials = NULL;
+    const gchar *have[] = { "libx264", "libopenh264", "libvpx-vp9", NULL };
+    const gchar *works[] = { "libx264", "libopenh264", "libvpx-vp9", NULL };
+    FakeFfmpeg *f = fake_ffmpeg_new (have, works);
+    LrgReelVideoExporter *vid = lrg_reel_video_exporter_new ("/tmp/x.mp4",
+                                                             LRG_REEL_VIDEO_CODEC_H264);
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *argv = NULL;
+
+    g_assert_null (lrg_reel_video_exporter_get_encoder (vid));
+    argv = fake_export (f, vid, &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (lrg_reel_video_exporter_get_encoder (vid), ==, "libx264");
+    ASSERT_ARGS (argv, "-c:v\nlibx264");
+    ASSERT_ARGS (argv, "-preset\nveryfast");
+    ASSERT_ARGS (argv, "-crf\n23");
+    ASSERT_ARGS (argv, "-pix_fmt\nyuv420p");
+    trials = fake_ffmpeg_read (f, "trials.log");
+    g_assert_cmpstr (trials, ==, "libx264\n");
+
+    g_object_unref (vid);
+    fake_ffmpeg_free (f);
+}
+
+/* Fedora's ffmpeg with Cisco's openh264 installed: no libx264, so
+ * libopenh264 with a CRF-derived bitrate. */
+static void
+test_video_encoder_openh264 (void)
+{
+    const gchar *have[] = { "libopenh264", "h264_vaapi", "libvpx-vp9", NULL };
+    const gchar *works[] = { "libopenh264", "libvpx-vp9", NULL };
+    FakeFfmpeg *f = fake_ffmpeg_new (have, works);
+    LrgReelVideoExporter *vid = lrg_reel_video_exporter_new ("/tmp/x.mp4",
+                                                             LRG_REEL_VIDEO_CODEC_H264);
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *argv = NULL;
+
+    argv = fake_export (f, vid, &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (lrg_reel_video_exporter_get_encoder (vid), ==, "libopenh264");
+    ASSERT_ARGS (argv, "-c:v\nlibopenh264");
+    /* 64 x 36 x 24 fps x 0.1 bit at CRF 23 = 5.5 kbit/s, floored at 100. */
+    ASSERT_ARGS (argv, "-b:v\n100k");
+    ASSERT_NO_ARGS (argv, "-crf");
+    ASSERT_NO_ARGS (argv, "-preset");
+
+    g_object_unref (vid);
+    fake_ffmpeg_free (f);
+}
+
+/* The CRF-to-bitrate rule for libopenh264 at a real size, and with an
+ * explicit bitrate, which always wins. */
+static void
+test_video_encoder_openh264_rate (void)
+{
+    const gchar *have[] = { "libopenh264", NULL };
+    g_autoptr(GError) error = NULL;
+    FakeFfmpeg *f;
+    LrgReelVideoExporter *vid;
+    g_autofree gchar *argv = NULL;
+    g_autofree gchar *argv2 = NULL;
+    GrlColor grey = { 90, 90, 90, 255 };
+    g_autoptr(GrlImage) frame = grl_image_new_color (1280, 720, &grey);
+
+    /* 1280 x 720 x 24 x 0.1 x 2^((23 - 17) / 6) = 4423680 bit/s. */
+    f = fake_ffmpeg_new (have, have);
+    vid = lrg_reel_video_exporter_new ("/tmp/x.mp4", LRG_REEL_VIDEO_CODEC_H264);
+    lrg_reel_video_exporter_set_crf (vid, 17);
+    lrg_reel_video_exporter_set_ffmpeg_path (vid, f->ffmpeg);
+    g_assert_true (lrg_reel_exporter_begin (LRG_REEL_EXPORTER (vid), 1280, 720, 24.0, &error));
+    g_assert_true (lrg_reel_exporter_add_frame (LRG_REEL_EXPORTER (vid), frame, &error));
+    g_assert_true (lrg_reel_exporter_finish (LRG_REEL_EXPORTER (vid), &error));
+    g_assert_no_error (error);
+    argv = fake_ffmpeg_read (f, "argv.txt");
+    g_assert_nonnull (strstr (argv, "\n-b:v\n4424k\n"));
+    g_object_unref (vid);
+    fake_ffmpeg_free (f);
+
+    f = fake_ffmpeg_new (have, have);
+    vid = lrg_reel_video_exporter_new ("/tmp/x.mp4", LRG_REEL_VIDEO_CODEC_H264);
+    lrg_reel_video_exporter_set_bitrate (vid, 900);
+    argv2 = fake_export (f, vid, &error);
+    g_assert_no_error (error);
+    ASSERT_ARGS (argv2, "-b:v\n900k");
+    g_object_unref (vid);
+    fake_ffmpeg_free (f);
+}
+
+/* Listed encoders must pass a trial encode.  Stock Fedora: libopenh264 is
+ * listed but is the noopenh264 stub, nvenc is listed but there is no
+ * NVIDIA GPU; VA-API works, so VA-API is used with its device, upload
+ * filter and QP, and no -pix_fmt. */
+static void
+test_video_encoder_hardware (void)
+{
+    const gchar *have[] = { "libopenh264", "h264_nvenc", "h264_vaapi", NULL };
+    const gchar *ok[] = { "h264_vaapi", NULL };
+    FakeFfmpeg *f = fake_ffmpeg_new (have, ok);
+    LrgReelVideoExporter *vid = lrg_reel_video_exporter_new ("/tmp/x.mp4",
+                                                             LRG_REEL_VIDEO_CODEC_H264);
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *argv = NULL;
+    g_autofree gchar *trials = NULL;
+
+    argv = fake_export (f, vid, &error);
+    g_assert_no_error (error);
+    g_assert_cmpstr (lrg_reel_video_exporter_get_encoder (vid), ==, "h264_vaapi");
+    trials = fake_ffmpeg_read (f, "trials.log");
+    g_assert_cmpstr (trials, ==, "libopenh264\nh264_nvenc\nh264_vaapi\n");
+    ASSERT_ARGS (argv, "-vaapi_device\n/dev/dri/renderD128");
+    ASSERT_ARGS (argv, "-vf\nformat=nv12,hwupload");
+    ASSERT_ARGS (argv, "-rc_mode\nCQP\n-qp\n23");
+    ASSERT_NO_ARGS (argv, "-pix_fmt");
+
+    g_object_unref (vid);
+    fake_ffmpeg_free (f);
+}
+
+/* NVENC that works: preset p4, VBR with constant-quality target. */
+static void
+test_video_encoder_nvenc (void)
+{
+    const gchar *have[] = { "h264_nvenc", NULL };
+    const gchar *ok[] = { "h264_nvenc", NULL };
+    FakeFfmpeg *f = fake_ffmpeg_new (have, ok);
+    LrgReelVideoExporter *vid = lrg_reel_video_exporter_new ("/tmp/x.mp4",
+                                                             LRG_REEL_VIDEO_CODEC_H264);
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *argv = NULL;
+
+    lrg_reel_video_exporter_set_crf (vid, 20);
+    argv = fake_export (f, vid, &error);
+    g_assert_no_error (error);
+    ASSERT_ARGS (argv, "-c:v\nh264_nvenc");
+    ASSERT_ARGS (argv, "-preset\np4\n-rc\nvbr\n-cq\n20");
+
+    g_object_unref (vid);
+    fake_ffmpeg_free (f);
+}
+
+/* No usable H.264 encoder (nvenc and the openh264 stub are listed but fail
+ * their trials): ENCODER_NOT_FOUND naming every candidate, and no encode is
+ * started. */
+static void
+test_video_encoder_none (void)
+{
+    const gchar *have[] = { "libvpx-vp9", "libopenh264", "h264_nvenc", NULL };
+    FakeFfmpeg *f = fake_ffmpeg_new (have, NULL);
+    LrgReelVideoExporter *vid = lrg_reel_video_exporter_new ("/tmp/x.mp4",
+                                                             LRG_REEL_VIDEO_CODEC_H264);
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *argv = NULL;
+
+    argv = fake_export (f, vid, &error);
+    g_assert_null (argv);
+    g_assert_error (error, LRG_REEL_EXPORTER_ERROR,
+                    LRG_REEL_EXPORTER_ERROR_ENCODER_NOT_FOUND);
+    g_assert_nonnull (strstr (error->message, "H.264"));
+    g_assert_nonnull (strstr (error->message,
+                              "libx264, libopenh264, h264_nvenc, h264_qsv, h264_vaapi"));
+    g_assert_null (fake_ffmpeg_read (f, "argv.txt"));
+    g_assert_null (lrg_reel_video_exporter_get_encoder (vid));
+
+    g_object_unref (vid);
+    fake_ffmpeg_free (f);
+}
+
+/* Other codecs are checked too: VP9 without libvpx-vp9 fails up front. */
+static void
+test_video_encoder_vp9_missing (void)
+{
+    const gchar *have[] = { "libx264", NULL };
+    FakeFfmpeg *f = fake_ffmpeg_new (have, have);
+    LrgReelVideoExporter *vid = lrg_reel_video_exporter_new ("/tmp/x.webm",
+                                                             LRG_REEL_VIDEO_CODEC_VP9);
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *argv = NULL;
+
+    argv = fake_export (f, vid, &error);
+    g_assert_error (error, LRG_REEL_EXPORTER_ERROR,
+                    LRG_REEL_EXPORTER_ERROR_ENCODER_NOT_FOUND);
+    g_assert_nonnull (strstr (error->message, "VP9"));
+    g_assert_nonnull (strstr (error->message, "libvpx-vp9"));
+
+    g_object_unref (vid);
+    fake_ffmpeg_free (f);
+}
+
+/* set_encoder(): used as named (no trial encode, so even an encoder whose
+ * trial would fail is passed to ffmpeg), QSV rate control and
+ * NV12 input; a name ffmpeg lacks is an error; NULL and "" clear it. */
+static void
+test_video_encoder_override (void)
+{
+    const gchar *have[] = { "libx264", "h264_qsv", NULL };
+    const gchar *works[] = { "libx264", NULL };
+    FakeFfmpeg *f = fake_ffmpeg_new (have, works);
+    LrgReelVideoExporter *vid = lrg_reel_video_exporter_new ("/tmp/x.mp4",
+                                                             LRG_REEL_VIDEO_CODEC_H264);
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *argv = NULL;
+    g_autofree gchar *argv2 = NULL;
+
+    lrg_reel_video_exporter_set_encoder (vid, "h264_qsv");
+    g_assert_cmpstr (lrg_reel_video_exporter_get_encoder (vid), ==, "h264_qsv");
+    argv = fake_export (f, vid, &error);
+    g_assert_no_error (error);
+    ASSERT_ARGS (argv, "-c:v\nh264_qsv\n-pix_fmt\nnv12");
+    ASSERT_ARGS (argv, "-global_quality\n23");
+    g_assert_null (fake_ffmpeg_read (f, "trials.log"));
+    g_object_unref (vid);
+
+    /* A name this ffmpeg does not have. */
+    vid = lrg_reel_video_exporter_new ("/tmp/x.mp4", LRG_REEL_VIDEO_CODEC_H264);
+    lrg_reel_video_exporter_set_encoder (vid, "h264_amf");
+    g_assert_null (fake_export (f, vid, &error));
+    g_assert_error (error, LRG_REEL_EXPORTER_ERROR,
+                    LRG_REEL_EXPORTER_ERROR_ENCODER_NOT_FOUND);
+    g_assert_nonnull (strstr (error->message, "h264_amf"));
+    g_clear_error (&error);
+
+    /* Clearing the override returns to automatic choice. */
+    lrg_reel_video_exporter_set_encoder (vid, "");
+    g_assert_null (lrg_reel_video_exporter_get_encoder (vid));
+    lrg_reel_video_exporter_set_encoder (vid, NULL);
+    argv2 = fake_export (f, vid, &error);
+    g_assert_no_error (error);
+    ASSERT_ARGS (argv2, "-c:v\nlibx264");
+    g_object_unref (vid);
+
+    fake_ffmpeg_free (f);
+}
+
+/* A probe that fails (no listing) keeps the old behaviour: the codec's
+ * first encoder is passed straight to ffmpeg. */
+static void
+test_video_encoder_probe_fails (void)
+{
+    FakeFfmpeg *f = fake_ffmpeg_new (NULL, NULL);
+    LrgReelVideoExporter *vid = lrg_reel_video_exporter_new ("/tmp/x.mp4",
+                                                             LRG_REEL_VIDEO_CODEC_H264);
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *argv = NULL;
+
+    argv = fake_export (f, vid, &error);
+    g_assert_no_error (error);
+    ASSERT_ARGS (argv, "-c:v\nlibx264");
+
+    g_object_unref (vid);
+    fake_ffmpeg_free (f);
+}
+
+/* The encoder listing and the trial encodes run once per ffmpeg path. */
+static void
+test_video_encoder_probe_cache (void)
+{
+    const gchar *have[] = { "h264_nvenc", "h264_vaapi", NULL };
+    const gchar *ok[] = { "h264_vaapi", NULL };
+    FakeFfmpeg *f = fake_ffmpeg_new (have, ok);
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *probes = NULL;
+    g_autofree gchar *trials = NULL;
+    guint i;
+
+    for (i = 0; i < 3; i++)
+    {
+        LrgReelVideoExporter *vid = lrg_reel_video_exporter_new ("/tmp/x.mp4",
+                                                                 LRG_REEL_VIDEO_CODEC_H264);
+        g_autofree gchar *argv = fake_export (f, vid, &error);
+
+        g_assert_no_error (error);
+        ASSERT_ARGS (argv, "-c:v\nh264_vaapi");
+        g_object_unref (vid);
+    }
+    /* Three exports, one listing, one trial per hardware encoder (the
+     * failed nvenc trial is remembered too). */
+    probes = fake_ffmpeg_read (f, "probes.log");
+    trials = fake_ffmpeg_read (f, "trials.log");
+    g_assert_cmpstr (probes, ==, "probe\n");
+    g_assert_cmpstr (trials, ==, "h264_nvenc\nh264_vaapi\n");
+
+    fake_ffmpeg_free (f);
+}
+
+/* A real H.264 export through automatic encoder choice, on whatever ffmpeg
+ * this machine has: it must pick an encoder that works (libx264, a real
+ * libopenh264 or working hardware), or fail with ENCODER_NOT_FOUND, never
+ * with an ffmpeg error.  The output must decode at the reel's size. */
+static void
+test_video_encoder_h264_real (void)
+{
+    g_autofree gchar *dir = NULL;
+    g_autofree gchar *path = NULL;
+    g_autoptr(GError) error = NULL;
+    g_autoptr(LrgReel) reel = NULL;
+    g_autoptr(LrgReelRenderer) renderer = NULL;
+    LrgReelVideoExporter *vid;
+    LrgReelVideoSource *src;
+    gboolean ok;
+    Rgba blue = { 0, 0, 255, 255 };
+
+    if (!lrg_reel_video_exporter_is_ffmpeg_available ()
+        || !lrg_reel_video_source_is_ffmpeg_available ())
+    {
+        g_test_skip ("ffmpeg not available");
+        return;
+    }
+
+    dir = g_dir_make_tmp ("reel-h264-XXXXXX", &error);
+    g_assert_no_error (error);
+    path = g_build_filename (dir, "out.mp4", NULL);
+    reel = make_fill_reel (&blue, 6);
+    renderer = lrg_reel_renderer_new (reel);
+    vid = lrg_reel_video_exporter_new (path, LRG_REEL_VIDEO_CODEC_H264);
+    ok = lrg_reel_renderer_render_to_exporter (renderer, LRG_REEL_EXPORTER (vid), &error);
+    if (!ok)
+    {
+        g_assert_error (error, LRG_REEL_EXPORTER_ERROR,
+                        LRG_REEL_EXPORTER_ERROR_ENCODER_NOT_FOUND);
+        g_test_skip ("this ffmpeg has no working H.264 encoder");
+        g_object_unref (vid);
+        g_rmdir (dir);
+        return;
+    }
+    g_test_message ("H.264 encoder chosen: %s",
+                    lrg_reel_video_exporter_get_encoder (vid));
+    g_object_unref (vid);
+
+    src = lrg_reel_video_source_new_from_file (path, &error);
+    g_assert_no_error (error);
+    g_assert_cmpint (lrg_reel_video_source_get_width (src), ==,
+                     lrg_reel_get_width (reel));
+    g_object_unref (src);
+    g_unlink (path);
+    g_rmdir (dir);
+}
+
+/* ==========================================================================
  * transitions (CPU)
  * ========================================================================== */
 
@@ -1422,6 +1906,147 @@ test_text_clip (void)
         g_assert_cmpint (nonblank, >, 0);
     }
     g_object_unref (text);
+}
+
+/*
+ * text_ink:
+ *
+ * Renders @text in white on a transparent 240x64 frame with the given
+ * alignment, text-x and max-width (16 px bitmap font, text-y 8) and returns
+ * the leftmost and rightmost columns holding ink in rows [@row0, @row1).
+ * Returns FALSE when nothing was drawn.
+ */
+static gboolean
+text_ink (const gchar      *text,
+          LrgReelTextAlign  align,
+          gint              text_x,
+          gint              max_width,
+          gint              row0,
+          gint              row1,
+          gint             *out_left,
+          gint             *out_right)
+{
+    g_autoptr(LrgReel) reel = lrg_reel_new ("t", 240, 64, 30.0, 1);
+    GrlColor white = { 255, 255, 255, 255 };
+    LrgReelTextClip *clip = lrg_reel_text_clip_new (text);
+    g_autoptr(LrgReelRenderer) renderer = NULL;
+    g_autoptr(GrlImage) f = NULL;
+    gint x;
+    gint y;
+
+    lrg_reel_text_clip_set_color (clip, &white);
+    lrg_reel_text_clip_set_font_size (clip, 16);
+    lrg_reel_text_clip_set_text_x (clip, text_x);
+    lrg_reel_text_clip_set_text_y (clip, 8);
+    lrg_reel_text_clip_set_align (clip, align);
+    lrg_reel_text_clip_set_max_width (clip, max_width);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (clip));
+    g_object_unref (clip);
+
+    renderer = lrg_reel_renderer_new (reel);
+    f = lrg_reel_renderer_render_frame (renderer, 0);
+
+    *out_left = G_MAXINT;
+    *out_right = G_MININT;
+    for (y = row0; y < row1; y++)
+        for (x = 0; x < 240; x++)
+        {
+            Rgba px;
+
+            read_px (f, x, y, &px);
+            if (px.a > 0)
+            {
+                *out_left = MIN (*out_left, x);
+                *out_right = MAX (*out_right, x);
+            }
+        }
+    return *out_left != G_MAXINT;
+}
+
+/*
+ * Issue #4: with no max-width, CENTER centres on text-x and RIGHT ends at
+ * text-x; with a max-width, lines are aligned in [text-x, text-x + W].
+ * Every case is measured against the LEFT render of the same string, so the
+ * glyphs' own side bearings cancel out.
+ */
+static void
+test_text_clip_align (void)
+{
+    const gchar *word = "CENTRE";
+    gint w;
+    gint l0, r0;
+    gint l, r;
+
+    lrg_reel_measure_text (NULL, word, 16.0, &w, NULL);
+    g_assert_cmpint (w, >, 0);
+
+    /* Reference: left-aligned at x = 20, no max-width. */
+    g_assert_true (text_ink (word, LRG_REEL_TEXT_ALIGN_LEFT, 20, 0, 0, 64, &l0, &r0));
+    g_assert_cmpint (l0, >=, 20);
+
+    /* LEFT with a max-width is unchanged. */
+    g_assert_true (text_ink (word, LRG_REEL_TEXT_ALIGN_LEFT, 20, 160, 0, 64, &l, &r));
+    g_assert_cmpint (l, ==, l0);
+    g_assert_cmpint (r, ==, r0);
+
+    /* CENTER, no max-width: the text is centred on text-x = 120. */
+    g_assert_true (text_ink (word, LRG_REEL_TEXT_ALIGN_CENTER, 120, 0, 0, 64, &l, &r));
+    g_assert_cmpint (l, ==, l0 - 20 + 120 - w / 2);
+    g_assert_cmpint (r - l, ==, r0 - l0);
+
+    /* RIGHT, no max-width: the text ends at text-x = 200. */
+    g_assert_true (text_ink (word, LRG_REEL_TEXT_ALIGN_RIGHT, 200, 0, 0, 64, &l, &r));
+    g_assert_cmpint (l, ==, l0 - 20 + 200 - w);
+    g_assert_cmpint (r, <, 200);
+
+    /* CENTER with a max-width: centred in [20, 180], i.e. on 100. */
+    g_assert_true (text_ink (word, LRG_REEL_TEXT_ALIGN_CENTER, 20, 160, 0, 64, &l, &r));
+    g_assert_cmpint (l, ==, l0 + (160 - w) / 2);
+
+    /* RIGHT with a max-width: ends at the box's right edge, 180. */
+    g_assert_true (text_ink (word, LRG_REEL_TEXT_ALIGN_RIGHT, 20, 160, 0, 64, &l, &r));
+    g_assert_cmpint (l, ==, l0 + 160 - w);
+    g_assert_cmpint (r, <, 180);
+}
+
+/*
+ * Multi-line text keeps its lines aligned to each other: with CENTER and no
+ * max-width both lines are centred on text-x; with RIGHT both end at text-x.
+ */
+static void
+test_text_clip_align_multiline (void)
+{
+    gint w1, w2;
+    gint la, ra, lb, rb;
+    gint l1, r1, l2, r2;
+
+    lrg_reel_measure_text (NULL, "WIDEST", 16.0, &w1, NULL);
+    lrg_reel_measure_text (NULL, "AB", 16.0, &w2, NULL);
+
+    /* Left-aligned reference for each line on its own row band. */
+    g_assert_true (text_ink ("WIDEST\nAB", LRG_REEL_TEXT_ALIGN_LEFT, 20, 0, 8, 24, &la, &ra));
+    g_assert_true (text_ink ("WIDEST\nAB", LRG_REEL_TEXT_ALIGN_LEFT, 20, 0, 24, 48, &lb, &rb));
+
+    g_assert_true (text_ink ("WIDEST\nAB", LRG_REEL_TEXT_ALIGN_CENTER, 120, 0, 8, 24, &l1, &r1));
+    g_assert_true (text_ink ("WIDEST\nAB", LRG_REEL_TEXT_ALIGN_CENTER, 120, 0, 24, 48, &l2, &r2));
+    g_assert_cmpint (l1, ==, la - 20 + 120 - w1 / 2);
+    g_assert_cmpint (l2, ==, lb - 20 + (120 - w1 / 2) + (w1 - w2) / 2);
+
+    g_assert_true (text_ink ("WIDEST\nAB", LRG_REEL_TEXT_ALIGN_RIGHT, 200, 0, 8, 24, &l1, &r1));
+    g_assert_true (text_ink ("WIDEST\nAB", LRG_REEL_TEXT_ALIGN_RIGHT, 200, 0, 24, 48, &l2, &r2));
+    g_assert_cmpint (l1, ==, la - 20 + 200 - w1);
+    g_assert_cmpint (l2, ==, lb - 20 + 200 - w2);
+}
+
+/* Empty text draws nothing under every alignment and does not crash. */
+static void
+test_text_clip_align_empty (void)
+{
+    gint l, r;
+
+    g_assert_false (text_ink ("", LRG_REEL_TEXT_ALIGN_LEFT, 20, 0, 0, 64, &l, &r));
+    g_assert_false (text_ink ("", LRG_REEL_TEXT_ALIGN_CENTER, 120, 0, 0, 64, &l, &r));
+    g_assert_false (text_ink ("", LRG_REEL_TEXT_ALIGN_RIGHT, 200, 160, 0, 64, &l, &r));
 }
 
 static void
@@ -2005,6 +2630,7 @@ test_video_codec_h265 (void)
 
     if (!ok)
     {
+        /* ENCODER_NOT_FOUND when ffmpeg lacks libx265; skip either way. */
         g_test_skip ("libx265 encoder unavailable");
         g_clear_error (&error);
     }
@@ -2911,6 +3537,17 @@ main (int   argc,
     g_test_add_func ("/reel/exporter/gif", test_exporter_gif);
     g_test_add_func ("/reel/exporter/video", test_exporter_video_ffmpeg);
     g_test_add_func ("/reel/exporter/video-missing-ffmpeg", test_exporter_video_missing_ffmpeg);
+    g_test_add_func ("/reel/video-encoder/x264", test_video_encoder_x264);
+    g_test_add_func ("/reel/video-encoder/openh264", test_video_encoder_openh264);
+    g_test_add_func ("/reel/video-encoder/openh264-rate", test_video_encoder_openh264_rate);
+    g_test_add_func ("/reel/video-encoder/hardware", test_video_encoder_hardware);
+    g_test_add_func ("/reel/video-encoder/nvenc", test_video_encoder_nvenc);
+    g_test_add_func ("/reel/video-encoder/none", test_video_encoder_none);
+    g_test_add_func ("/reel/video-encoder/vp9-missing", test_video_encoder_vp9_missing);
+    g_test_add_func ("/reel/video-encoder/override", test_video_encoder_override);
+    g_test_add_func ("/reel/video-encoder/probe-fails", test_video_encoder_probe_fails);
+    g_test_add_func ("/reel/video-encoder/probe-cache", test_video_encoder_probe_cache);
+    g_test_add_func ("/reel/video-encoder/h264-real", test_video_encoder_h264_real);
 
     g_test_add_func ("/reel/transition/fade", test_transition_fade);
     g_test_add_func ("/reel/transition/wipe", test_transition_wipe);
@@ -2935,6 +3572,9 @@ main (int   argc,
     g_test_add_func ("/reel/clip/gradient", test_gradient_clip);
     g_test_add_func ("/reel/clip/image", test_image_clip);
     g_test_add_func ("/reel/clip/text", test_text_clip);
+    g_test_add_func ("/reel/text-clip/align", test_text_clip_align);
+    g_test_add_func ("/reel/text-clip/align-multiline", test_text_clip_align_multiline);
+    g_test_add_func ("/reel/text-clip/align-empty", test_text_clip_align_empty);
     g_test_add_func ("/reel/clip/shape-rect", test_shape_clip_rect);
     g_test_add_func ("/reel/clip/shape-circle", test_shape_clip_circle);
 

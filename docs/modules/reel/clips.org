@@ -427,6 +427,42 @@ lrg_reel_add_clip (reel, LRG_REEL_CLIP (label));
 
 To load a TTF/OTF font use =lrg_reel_text_clip_set_font_from_file()=.
 
+*** Alignment and text-x
+:PROPERTIES:
+:CUSTOM_ID: text-clip-alignment
+:END:
+=text-x= is the text's horizontal anchor. What it anchors depends on =align= and on whether =max-width= is set:
+
+| =max-width= | =align=  | =text-x= is                     | Each line is drawn                          |
+|-------------+----------+---------------------------------+---------------------------------------------|
+| 0 (default) | =left=   | the left edge of the text       | starting at =text-x=                        |
+| 0 (default) | =center= | the centre of the text          | centred on =text-x=                         |
+| 0 (default) | =right=  | the right edge of the text      | ending at =text-x=                          |
+| =W= > 0     | =left=   | the left edge of a =W=-wide box | at the box's left edge (=text-x=)           |
+| =W= > 0     | =center= | the left edge of a =W=-wide box | centred in the box, on =text-x + W / 2=     |
+| =W= > 0     | =right=  | the left edge of a =W=-wide box | ending at the box's right edge (=text-x + W=) |
+
+Multi-line text (explicit =\n= or word-wrap) is aligned line by line against the widest line, so a centred paragraph keeps its lines centred on each other. =text-y= is always the top edge of the first line.
+
+To centre a title on a 1280-wide frame, either set =text-x= to the centre and leave =max-width= at 0, or give the clip the whole width as its box:
+
+#+begin_src c
+/* Centred on x = 640. */
+lrg_reel_text_clip_set_align  (title, LRG_REEL_TEXT_ALIGN_CENTER);
+lrg_reel_text_clip_set_text_x (title, 640);
+
+/* The same, wrapping at the frame's width minus 80 px margins. */
+lrg_reel_text_clip_set_align     (title, LRG_REEL_TEXT_ALIGN_CENTER);
+lrg_reel_text_clip_set_text_x    (title, 40);
+lrg_reel_text_clip_set_max_width (title, 1200);
+#+end_src
+
+**** Migration from 0.13.5 and earlier
+:PROPERTIES:
+:CUSTOM_ID: text-clip-alignment-migration
+:END:
+Before 0.13.6, without a =max-width= the block always started at =text-x=, so =center= and =right= did nothing: a centred line with =text-x = 640= started at x = 640 and ran off to the right. Clips that set a =max-width= render exactly as before. Clips with =align: center= or =align: right= and no =max-width= now move left by half (centre) or all (right) of the text's width. If you had worked around the old behaviour with =text-x = x - W= and =max-width = 2 * W=, that still centres on =x= and needs no change; if you had moved =text-x= left by hand to fake centring, set it back to the centre point.
+
 Layout helpers are also provided as free functions:
 
 #+begin_src c
