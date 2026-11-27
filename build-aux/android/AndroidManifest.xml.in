@@ -32,9 +32,16 @@
                  android:extractNativeLibs="false"
                  android:appCategory="game"
                  android:isGame="true">
+        <!-- configChanges: the native code stays up through every change a
+             game can follow (raylib's state cannot be rebuilt in a new
+             activity); smallestScreenSize and screenLayout are a foldable
+             opened or closed, screenSize split screen and freeform windows.
+             The engine resizes its buffers to the new window
+             (lrg_platform_poll(), docs/platforms/android.org "Screen sizes"). -->
         <activity android:name="android.app.NativeActivity"
                   android:exported="true"
-                  android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|uiMode|density"
+                  android:resizeableActivity="true"
+                  android:configChanges="orientation|keyboardHidden|keyboard|navigation|screenSize|smallestScreenSize|screenLayout|uiMode|density"
                   android:screenOrientation="@ORIENTATION@"
                   android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
             <meta-data android:name="android.app.lib_name" android:value="@LIB_NAME@" />

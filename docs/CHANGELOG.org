@@ -16,6 +16,16 @@
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
 
+** 0.13.3
+:PROPERTIES:
+:CUSTOM_ID: changelog-0-13-3
+:END:
+Android games follow their window's size: a foldable opened or closed, split screen and freeform windows no longer stretch the first picture. The soft keyboard opens again on current Android. graylib 0.13.1 brings =grl_native_window_resize()=.
+
+- Android: the native buffers go back to the window's size and raylib takes it after every window, configuration or content-rect change; the activity keeps running through =smallestScreenSize= changes and is resizeable ([[file:platforms/android.org::#screen-sizes][Android, Screen sizes]]).
+- Core: =LrgPlatform::window-resized= on every platform, and =lrg_platform_apply_window_size()=.
+- Android: =lrg_platform_show_soft_keyboard()= opens the keyboard on current Android: it asks the =InputMethodManager= for the decor view (JNI); the NDK's call names a view the input method does not serve, and was ignored ([[file:platforms/android.org::#soft-keyboard][Android, Soft keyboard]]).
+
 ** 0.13.0
 :PROPERTIES:
 :CUSTOM_ID: changelog-0-13-0

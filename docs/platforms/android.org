@@ -135,6 +135,19 @@ On every other platform it returns =g_get_user_data_dir()/<prgname>= (=~/.local/
 :END:
 Open the window at the display's size: raylib renders a smaller window small and upscales it to the display, so everything placed in screen pixels (touch controls sized in dp, text) comes out too large, and its Android layer learns the display's size only once its window exists (asked for 0 x 0 it falls back to 800 x 600). =lrg_platform_get_display_size (&w, &h)= gives the size from the activity's configuration (dp size times the dp scale) before any window opens; it may still be in the launcher's orientation, so a landscape game takes the larger value as its width. Off Android it returns =FALSE=.
 
+*** Screen sizes, foldables and split screen
+:PROPERTIES:
+:CUSTOM_ID: screen-sizes
+:END:
+The window can change size while the game runs: a foldable opened or closed, split screen, a freeform window on a tablet or ChromeOS, a desktop dock. raylib's Android layer does not follow that: it sizes its EGL buffers, its screen and render sizes, the viewport and the 2D projection when the window first appears and keeps them, so the compositor scaled the old picture to the new window (stretched), and on a re-attached window (back from the background) raylib even set the old size again. Since 0.13.3 libregnum follows the window itself:
+
+- The manifest's =configChanges= keeps the activity (and the native code, whose raylib state cannot be rebuilt in a new activity) through =screenSize=, =smallestScreenSize= and =screenLayout= changes (a fold), besides orientation, keyboard, navigation, =uiMode= and density; =resizeableActivity= is =true= ([[#manifest][Manifest]]).
+- =APP_CMD_WINDOW_RESIZED=, =APP_CMD_CONFIG_CHANGED=, =APP_CMD_CONTENT_RECT_CHANGED= and =APP_CMD_INIT_WINDOW= (the hook in front of raylib's, [[#lifecycle][Lifecycle]]) mark the size to be checked; the next =lrg_platform_poll()= puts the native buffers back at the window's own size (=ANativeWindow_setBuffersGeometry (window, 0, 0, 0)=), and every frame compares the window's size with raylib's.
+- A different size goes through =lrg_platform_apply_window_size()=: graylib's =grl_native_window_resize()= sets raylib's screen, render, display and framebuffer sizes, the viewport and the projection (raylib has no setter for them on Android; graylib reaches its internal state through a checked mirror of its layout, graylib =docs/api/core.org=, "Native Window Resizes"), and =IsWindowResized()= is =TRUE= for one frame, as on the desktop. logcat shows =The window is now WxH=.
+- =LrgPlatform::window-resized (width, height)= is emitted then, from =lrg_platform_poll()= between frames; on the desktop it is emitted for the resizes raylib follows itself, so one handler serves both. Remake anything sized to the screen there (render targets, layouts in pixels); code that reads =GetScreenWidth()= / =GetScreenHeight()= every frame needs nothing.
+
+The dp scale (=lrg_platform_get_dp_scale()=) comes from the current configuration, so it is right on the new screen too. A fixed orientation (=APK_ORIENTATION=) is the system's to honour: on large screens (an unfolded inner screen, a tablet) Android may letterbox the game or, from Android 16, ignore the orientation; either way the game is told the window's real size and draws it one to one.
+
 ** Touch controls
 :PROPERTIES:
 :CUSTOM_ID: touch-controls
@@ -145,7 +158,7 @@ raylib turns touches into touch points (and the first one into the left mouse bu
 :PROPERTIES:
 :CUSTOM_ID: soft-keyboard
 :END:
-=lrg_platform_show_soft_keyboard()= and =lrg_platform_hide_soft_keyboard()= call =ANativeActivity_showSoftInput()= (with =ANATIVEACTIVITY_SHOW_SOFT_INPUT_FORCED=) and =ANativeActivity_hideSoftInput()=; they do nothing elsewhere. Show it when a text field gains focus and hide it when the field loses it; =lrg_platform_is_soft_keyboard_requested()= remembers which was asked last (the player can still close the keyboard with the back key; the NDK does not report that).
+=lrg_platform_show_soft_keyboard()= and =lrg_platform_hide_soft_keyboard()= ask the activity's =InputMethodManager= through JNI, for the window's decor view (=showSoftInput(decorView, 0)=, =hideSoftInputFromWindow(decorView.getWindowToken(), 0)=); they do nothing elsewhere. The NDK's =ANativeActivity_showSoftInput()= names =NativeActivity='s content view, which current Android's input method does not serve: logcat says =Ignoring showSoftInput() as view=android.app.NativeActivity$NativeContentView ... is not served= and no keyboard opens (seen on Android 15; libregnum 0.13.0 to 0.13.2 had this bug). The NDK calls remain the fallback when a JNI step fails. Show it when a text field gains focus and hide it when the field loses it; =lrg_platform_is_soft_keyboard_requested()= remembers which was asked last (the player can still close the keyboard with the back key; the NDK does not report that).
 
 *How typed text reaches the game.* raylib's Android layer turns key events into key codes (=IsKeyPressed()=, =GetKeyPressed()=) but never fills its character queue: =GetCharPressed()= is always 0 there. libregnum adds the characters without changing raylib:
 
@@ -158,7 +171,7 @@ raylib turns touches into touch points (and the first one into the left mouse bu
 - Characters that a key event can carry work: letters, digits and punctuation from the soft keyboard (most IMEs send these as key events to a =NativeActivity=), and everything a hardware keyboard layout types, including accented letters.
 - Text an IME commits as a string (composed text: CJK input, emoji, gesture typing, autocorrect, voice input) arrives as =AKEY_EVENT_ACTION_MULTIPLE= with =AKEYCODE_UNKNOWN=; the NDK cannot read its characters (=KeyEvent.getCharacters()= has no NDK equivalent and the event's Java object is not reachable), so it is lost. Fixing that needs a Java =InputConnection= (a =GameActivity= or a small Java view), which the no-Java APK does not have.
 - Backspace, Enter and arrows are keys, not characters: read them with =IsKeyPressed()= / =LrgCanvasInput= key events, as on the desktop.
-- Some devices ignore =ANativeActivity_showSoftInput()= unless the activity has focus; call it in response to a tap, not at start-up.
+- A request made before the window has the input focus is dropped (the input method serves only the focused window); show the keyboard again in response to a tap while the field has the focus, which also reopens it after the player closed it with Back.
 
 ** Lifecycle
 :PROPERTIES:
@@ -307,7 +320,7 @@ game-apk: libregnum $(GAME_OBJS)
 :PROPERTIES:
 :CUSTOM_ID: manifest
 :END:
-=hasCode="false"= (no Java), =android.app.NativeActivity= as the launcher with =android.app.lib_name= = =main=, GLES 3.2 required, =appCategory="game"=, fullscreen, configuration changes handled by the activity (raylib reacts to them) instead of restarting it. =minSdkVersion= 29, =targetSdkVersion= the platform's API (36).
+=hasCode="false"= (no Java), =android.app.NativeActivity= as the launcher with =android.app.lib_name= = =main=, GLES 3.2 required, =appCategory="game"=, fullscreen, configuration changes handled by the activity instead of restarting it (=configChanges= includes =screenSize|smallestScreenSize|screenLayout=, =resizeableActivity= is =true=: the engine follows a new window size, [[#screen-sizes][Screen sizes]]). =minSdkVersion= 29, =targetSdkVersion= the platform's API (36).
 
 ** Running on a device
 :PROPERTIES:

@@ -104,6 +104,17 @@ bs_contains 'no Java code' 'hasCode(0x0101000c)=false' "${xmltree}"
 bs_contains 'libraries mapped from the APK' 'extractNativeLibs(0x010104ea)=false' "${xmltree}"
 bs_contains 'loads libmain.so' '"main"' "$(grep -A1 'android.app.lib_name' <<< "${xmltree}")"
 bs_contains 'requires GLES 3.2' 'glEsVersion(0x01010281)=0x00030002' "${xmltree}"
+# a foldable opened or closed, split screen, a freeform window: the
+# activity keeps running (screenSize 0x400, smallestScreenSize 0x800,
+# screenLayout 0x100) and the engine follows the new size
+changes="$(sed -n 's/.*configChanges([^)]*)=\(0x[0-9a-fA-F]*\).*/\1/p' <<< "${xmltree}" | head -n 1)"
+if [[ -n "${changes}" ]] && (( (changes & 0xd00) == 0xd00 ))
+then
+	bs_pass 'screen size changes handled by the activity'
+else
+	bs_failed "screen size changes handled by the activity (configChanges ${changes:-none})"
+fi
+bs_contains 'resizeable activity' 'resizeableActivity(0x010104f6)=true' "${xmltree}"
 
 echo '== native library'
 listing="$(unzip -v "${apk}")"

@@ -32,6 +32,7 @@
 #include <gio/gio.h>
 
 #include <graylib.h>
+#include <raylib.h>
 
 #include "lrg-platform.h"
 #include "lrg-platform-private.h"
@@ -486,6 +487,7 @@ enum
 {
 	SIGNAL_PAUSED,
 	SIGNAL_RESUMED,
+	SIGNAL_WINDOW_RESIZED,
 	N_SIGNALS
 };
 
@@ -562,6 +564,25 @@ lrg_platform_class_init (LrgPlatformClass *klass)
 	signals[SIGNAL_RESUMED] =
 		g_signal_new ("resumed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
 		              0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_BOOLEAN);
+
+	/**
+	 * LrgPlatform::window-resized:
+	 * @self: the #LrgPlatform
+	 * @width: the new screen width, in pixels
+	 * @height: the new screen height, in pixels
+	 *
+	 * The window's size changed and raylib already reports it
+	 * (`GetScreenWidth()`, `GetScreenHeight()`; `IsWindowResized()` is
+	 * %TRUE this frame): a desktop window resized, or on Android a
+	 * foldable opened or closed, split screen, a freeform window.
+	 * Emitted from lrg_platform_poll(), between frames; render targets
+	 * sized to the screen are remade here.
+	 *
+	 * Since: 0.13.3
+	 */
+	signals[SIGNAL_WINDOW_RESIZED] =
+		g_signal_new ("window-resized", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+		              0, NULL, NULL, NULL, G_TYPE_NONE, 2, G_TYPE_INT, G_TYPE_INT);
 }
 
 static void
@@ -630,6 +651,25 @@ lrg_platform_simulate_resume (LrgPlatform *self,
 	set_running (self, TRUE, gl_context_lost);
 }
 
+/* lrg_platform_apply_window_size: documented in lrg-platform.h */
+gboolean
+lrg_platform_apply_window_size (LrgPlatform *self,
+                                gint         width,
+                                gint         height)
+{
+	g_return_val_if_fail (LRG_IS_PLATFORM (self), FALSE);
+
+	if (width <= 0 || height <= 0)
+		return FALSE;
+	if (width == GetScreenWidth () && height == GetScreenHeight ())
+		return FALSE;
+	if (!grl_native_window_resize (width, height))
+		return FALSE;
+	g_message ("The window is now %dx%d", width, height);
+	g_signal_emit (self, signals[SIGNAL_WINDOW_RESIZED], 0, width, height);
+	return TRUE;
+}
+
 /* ==========================================================================
  * Character queue (filled on Android by the input hook below)
  * ========================================================================== */
@@ -690,6 +730,11 @@ static gboolean app_activity_paused = FALSE;
 static gboolean window_was_terminated = FALSE;
 static gboolean context_lost_pending = FALSE;
 static EGLContext context_before_term = EGL_NO_CONTEXT;
+
+/* the native window may have a new size: raylib sizes its buffers once
+ * (and again, to the old size, when it re-attaches a new window), so
+ * the next lrg_platform_poll() looks (follow_window_size()) */
+static gboolean window_size_check = TRUE;
 
 /* KeyEvent's class and methods, looked up once (a global reference) */
 static jclass key_event_class = NULL;
@@ -829,6 +874,11 @@ on_app_cmd (struct android_app *app,
 
 	switch (cmd)
 	{
+	case APP_CMD_WINDOW_RESIZED:
+	case APP_CMD_CONFIG_CHANGED:
+	case APP_CMD_CONTENT_RECT_CHANGED:
+		window_size_check = TRUE;
+		break;
 	case APP_CMD_GAINED_FOCUS:
 		app_focused = TRUE;
 		break;
@@ -847,6 +897,7 @@ on_app_cmd (struct android_app *app,
 		break;
 	case APP_CMD_INIT_WINDOW:
 		app_has_window = app->window != NULL;
+		window_size_check = TRUE;
 		if (app_has_window && window_was_terminated)
 		{
 			/* raylib's eglMakeCurrent() was the last EGL call: its error
@@ -887,6 +938,32 @@ install_hooks (void)
 	}
 }
 
+/* follow_window_size: after a window, configuration or content-rect
+ * change, the native buffers go back to the window's own size (raylib
+ * fixed them at the size it first saw, which the compositor then
+ * stretches to the window), and raylib takes the window's size.  The size
+ * is read every frame: a resize can arrive before or after the command
+ * that flagged it, and reading it costs nothing. */
+static void
+follow_window_size (void)
+{
+	struct android_app *app = GetAndroidApp ();
+	int32_t width;
+	int32_t height;
+
+	if (app == NULL || app->window == NULL || !app_has_window || !IsWindowReady ())
+		return;
+	if (window_size_check)
+	{
+		/* 0, 0, 0: the window's base size and its current format */
+		ANativeWindow_setBuffersGeometry (app->window, 0, 0, 0);
+		window_size_check = FALSE;
+	}
+	width = ANativeWindow_getWidth (app->window);
+	height = ANativeWindow_getHeight (app->window);
+	(void) lrg_platform_apply_window_size (lrg_platform_get_default (), (gint) width, (gint) height);
+}
+
 #endif /* LRG_PLATFORM_ANDROID */
 
 /* lrg_platform_poll: documented in lrg-platform.h */
@@ -895,6 +972,15 @@ lrg_platform_poll (void)
 {
 #ifdef LRG_PLATFORM_ANDROID
 	install_hooks ();
+	follow_window_size ();
+#else
+	/* raylib follows the desktop window itself: report its resizes */
+	unsigned char ready = IsWindowReady ();
+	unsigned char resized = ready ? IsWindowResized () : 0;
+
+	if (resized)
+		g_signal_emit (lrg_platform_get_default (), signals[SIGNAL_WINDOW_RESIZED], 0,
+		               (gint) GetScreenWidth (), (gint) GetScreenHeight ());
 #endif
 }
 
@@ -984,6 +1070,124 @@ lrg_platform_get_display_size (gint *width,
 #endif
 }
 
+#ifdef LRG_PLATFORM_ANDROID
+/* ime_request: shows or hides the soft keyboard through the activity's
+ * InputMethodManager, for the window's decor view.
+ *
+ * ANativeActivity_showSoftInput() asks for NativeActivity's content view,
+ * which on current Android (seen on 15) the input method does not serve:
+ * InputMethodManager logs "Ignoring showSoftInput() as view=
+ * NativeActivity$NativeContentView is not served" and nothing shows.  The
+ * view it serves is the decor view, so this asks for that one:
+ *
+ *   activity.getSystemService("input_method").showSoftInput(
+ *       activity.getWindow().getDecorView(), 0)
+ *   ...hideSoftInputFromWindow(decorView.getWindowToken(), 0)
+ *
+ * Returns FALSE when any step fails (a missing method, an exception), for
+ * the caller to fall back to the NDK's call. */
+static gboolean
+ime_request (struct android_app *app,
+             gboolean            show)
+{
+	JavaVM *vm = app->activity->vm;
+	JNIEnv *env = NULL;
+	gboolean attached = FALSE;
+	gboolean ok = FALSE;
+	jobject activity = app->activity->clazz;
+	jclass activity_class = NULL;
+	jclass imm_class = NULL;
+	jclass window_class = NULL;
+	jclass view_class = NULL;
+	jstring service_name = NULL;
+	jobject imm = NULL;
+	jobject window = NULL;
+	jobject decor = NULL;
+	jobject token = NULL;
+	jmethodID method;
+
+	if ((*vm)->GetEnv (vm, (void **) &env, JNI_VERSION_1_6) != JNI_OK)
+	{
+		if ((*vm)->AttachCurrentThread (vm, &env, NULL) != JNI_OK)
+			return FALSE;
+		attached = TRUE;
+	}
+
+	/* the InputMethodManager and the decor view */
+	activity_class = (*env)->GetObjectClass (env, activity);
+	service_name = (*env)->NewStringUTF (env, "input_method");
+	method = (*env)->GetMethodID (env, activity_class, "getSystemService",
+	                              "(Ljava/lang/String;)Ljava/lang/Object;");
+	if (method == NULL || (*env)->ExceptionCheck (env))
+		goto out;
+	imm = (*env)->CallObjectMethod (env, activity, method, service_name);
+	method = (*env)->GetMethodID (env, activity_class, "getWindow", "()Landroid/view/Window;");
+	if (imm == NULL || method == NULL || (*env)->ExceptionCheck (env))
+		goto out;
+	window = (*env)->CallObjectMethod (env, activity, method);
+	if (window == NULL || (*env)->ExceptionCheck (env))
+		goto out;
+	window_class = (*env)->GetObjectClass (env, window);
+	method = (*env)->GetMethodID (env, window_class, "getDecorView", "()Landroid/view/View;");
+	if (method == NULL || (*env)->ExceptionCheck (env))
+		goto out;
+	decor = (*env)->CallObjectMethod (env, window, method);
+	if (decor == NULL || (*env)->ExceptionCheck (env))
+		goto out;
+	imm_class = (*env)->GetObjectClass (env, imm);
+
+	if (show)
+	{
+		method = (*env)->GetMethodID (env, imm_class, "showSoftInput", "(Landroid/view/View;I)Z");
+		if (method == NULL || (*env)->ExceptionCheck (env))
+			goto out;
+		(void) (*env)->CallBooleanMethod (env, imm, method, decor, (jint) 0);
+	}
+	else
+	{
+		view_class = (*env)->GetObjectClass (env, decor);
+		method = (*env)->GetMethodID (env, view_class, "getWindowToken", "()Landroid/os/IBinder;");
+		if (method == NULL || (*env)->ExceptionCheck (env))
+			goto out;
+		token = (*env)->CallObjectMethod (env, decor, method);
+		method = (*env)->GetMethodID (env, imm_class, "hideSoftInputFromWindow",
+		                              "(Landroid/os/IBinder;I)Z");
+		if (token == NULL || method == NULL || (*env)->ExceptionCheck (env))
+			goto out;
+		(void) (*env)->CallBooleanMethod (env, imm, method, token, (jint) 0);
+	}
+	ok = !(*env)->ExceptionCheck (env);
+
+out:
+	if ((*env)->ExceptionCheck (env))
+	{
+		(*env)->ExceptionClear (env);
+		ok = FALSE;
+	}
+	if (token != NULL)
+		(*env)->DeleteLocalRef (env, token);
+	if (decor != NULL)
+		(*env)->DeleteLocalRef (env, decor);
+	if (window != NULL)
+		(*env)->DeleteLocalRef (env, window);
+	if (imm != NULL)
+		(*env)->DeleteLocalRef (env, imm);
+	if (service_name != NULL)
+		(*env)->DeleteLocalRef (env, service_name);
+	if (view_class != NULL)
+		(*env)->DeleteLocalRef (env, view_class);
+	if (window_class != NULL)
+		(*env)->DeleteLocalRef (env, window_class);
+	if (imm_class != NULL)
+		(*env)->DeleteLocalRef (env, imm_class);
+	if (activity_class != NULL)
+		(*env)->DeleteLocalRef (env, activity_class);
+	if (attached)
+		(*vm)->DetachCurrentThread (vm);
+	return ok;
+}
+#endif
+
 /* lrg_platform_show_soft_keyboard: documented in lrg-platform.h */
 void
 lrg_platform_show_soft_keyboard (void)
@@ -991,7 +1195,9 @@ lrg_platform_show_soft_keyboard (void)
 #ifdef LRG_PLATFORM_ANDROID
 	struct android_app *app = GetAndroidApp ();
 
-	if (app != NULL && app->activity != NULL)
+	/* the input method's own manager first (the NDK's call is ignored on
+	 * current Android), the NDK's when that fails */
+	if (app != NULL && app->activity != NULL && !ime_request (app, TRUE))
 		ANativeActivity_showSoftInput (app->activity, ANATIVEACTIVITY_SHOW_SOFT_INPUT_FORCED);
 #endif
 	soft_keyboard_requested = TRUE;
@@ -1004,7 +1210,7 @@ lrg_platform_hide_soft_keyboard (void)
 #ifdef LRG_PLATFORM_ANDROID
 	struct android_app *app = GetAndroidApp ();
 
-	if (app != NULL && app->activity != NULL)
+	if (app != NULL && app->activity != NULL && !ime_request (app, FALSE))
 		ANativeActivity_hideSoftInput (app->activity, 0);
 #endif
 	soft_keyboard_requested = FALSE;
