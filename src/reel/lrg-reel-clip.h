@@ -55,7 +55,10 @@ typedef void (*LrgReelRenderFunc) (LrgReelClip    *clip,
 /**
  * LrgReelClipClass:
  * @parent_class: the parent class.
- * @render: draw the clip onto the canvas for the current frame.
+ * @render: draw the clip onto the canvas for the current frame.  The
+ *   canvas is in %GRL_IMAGE_BLEND_OVER, so translucent pixels blend over
+ *   what is below; set another mode on it to draw otherwise (the mode is
+ *   put back after @render returns).
  *
  * Class structure for #LrgReelClip.  Subclasses override @render to draw.
  *

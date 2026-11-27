@@ -155,6 +155,8 @@ reel_renderer_ensure_state (LrgReelRenderer *self)
     h = lrg_reel_get_height (self->reel);
 
     self->canvas = lrg_image_canvas_new (w, h, NULL);
+    /* Clips composite source-over (each clip's render also sets this). */
+    lrg_image_canvas_set_blend_mode (self->canvas, GRL_IMAGE_BLEND_OVER);
     self->ctx = lrg_reel_context_new (0,
                                       lrg_reel_get_fps (self->reel),
                                       w, h,
@@ -214,12 +216,12 @@ reel_renderer_render_into_canvas (LrgReelRenderer *self,
 {
     GrlImage *image;
     gdouble  *accum;
+    guint8   *px;
+    gsize     i;
     gint      n;
     gint      k;
     gint      w;
     gint      h;
-    gint      x;
-    gint      y;
 
     if (self->motion_blur_samples <= 1)
         return reel_renderer_render_pass (self, frame);
@@ -237,34 +239,21 @@ reel_renderer_render_into_canvas (LrgReelRenderer *self,
     {
         lrg_reel_context_set_subframe (self->ctx, (gdouble) k / (gdouble) n);
         image = reel_renderer_render_pass (self, frame);
+        px = grl_image_get_pixels (image, NULL);
 
-        for (y = 0; y < h; y++)
-            for (x = 0; x < w; x++)
-            {
-                g_autoptr(GrlColor) c = grl_image_get_pixel (image, x, y);
-                gsize idx = ((gsize) y * w + x) * 4;
-
-                accum[idx] += c->r;
-                accum[idx + 1] += c->g;
-                accum[idx + 2] += c->b;
-                accum[idx + 3] += c->a;
-            }
+        for (i = 0; i < (gsize) w * (gsize) h * 4; i++)
+            accum[i] += px[i];
     }
     lrg_reel_context_set_subframe (self->ctx, 0.0);
 
-    /* Write the averaged frame back into the (last pass's) canvas image. */
-    for (y = 0; y < h; y++)
-        for (x = 0; x < w; x++)
-        {
-            gsize    idx = ((gsize) y * w + x) * 4;
-            GrlColor c;
-
-            c.r = (guint8) (accum[idx] / n);
-            c.g = (guint8) (accum[idx + 1] / n);
-            c.b = (guint8) (accum[idx + 2] / n);
-            c.a = (guint8) (accum[idx + 3] / n);
-            grl_image_draw_pixel (image, x, y, &c);
-        }
+    /*
+     * Store the averaged frame into the (last pass's) canvas image.  This is
+     * a store, not a draw: the frame canvas is in OVER for its clips, and
+     * drawing the average would blend it over the last pass.
+     */
+    px = grl_image_get_pixels (image, NULL);
+    for (i = 0; i < (gsize) w * (gsize) h * 4; i++)
+        px[i] = (guint8) (accum[i] / n);
 
     g_free (accum);
     return image;

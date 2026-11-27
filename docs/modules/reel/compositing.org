@@ -12,6 +12,10 @@ are rasterised directly onto the frame canvas with no extra allocation.
 The layer pool keeps a small cache of reusable off-screen buffers so that most
 frames allocate nothing.
 
+Both the frame canvas and every scratch layer are in =GRL_IMAGE_BLEND_OVER= while a clip draws, so translucent pixels blend within the clip and over the frame alike ([[file:clips.org::#translucent-pixels][Translucent pixels inside a clip]]). Effects get their layer in =GRL_IMAGE_BLEND_REPLACE= (the mode is switched for =apply= and put back), because they rewrite pixels in place.
+
+Compositing a layer onto the frame (=grl_image_composite_layer()=) reads and writes the pixel buffers directly since graylib 0.13.2; an effect on a top-level clip used to cost about two thirds of a 720p frame's drawing time in that loop alone.
+
 ** LrgReelEffect — the filter base class
 :PROPERTIES:
 :CUSTOM_ID: lrgreeleffect
