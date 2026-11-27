@@ -14,6 +14,7 @@
 #include <graylib.h>
 #include <glib/gstdio.h>
 #include <math.h>
+#include <string.h>
 
 /* ==========================================================================
  * interpolate
@@ -2386,6 +2387,173 @@ test_parallel_determinism (void)
     g_object_unref (par_m);
 }
 
+/*
+ * frames_differ:
+ *
+ * Counts the frames of @a and @b (two mock exporters filled from the same
+ * reel) whose pixels are not byte-identical.  Both must hold @n frames.
+ */
+static guint
+frames_differ (TestMockExporter *a,
+               TestMockExporter *b,
+               guint             n)
+{
+    guint f;
+    guint bad;
+
+    g_assert_cmpuint (a->frames->len, ==, n);
+    g_assert_cmpuint (b->frames->len, ==, n);
+
+    bad = 0;
+    for (f = 0; f < n; f++)
+    {
+        guint8 *pa;
+        guint8 *pb;
+        gsize   sa;
+        gsize   sb;
+
+        pa = grl_image_get_pixels (g_ptr_array_index (a->frames, f), &sa);
+        pb = grl_image_get_pixels (g_ptr_array_index (b->frames, f), &sb);
+        g_assert_cmpuint (sa, ==, sb);
+        if (memcmp (pa, pb, sa) != 0)
+            bad++;
+    }
+    return bad;
+}
+
+/*
+ * assert_parallel_matches:
+ *
+ * Renders @reel once sequentially and three times with 16 threads, and
+ * asserts that every frame of every parallel run is byte-identical to the
+ * sequential one.  Races show up as a different set of bad frames per run,
+ * so one run is not enough.
+ */
+static void
+assert_parallel_matches (LrgReel *reel,
+                         guint    n_frames)
+{
+    g_autoptr(LrgReelRenderer) seq_r = lrg_reel_renderer_new (reel);
+    g_autoptr(GError) error = NULL;
+    TestMockExporter *seq_m = g_object_new (TEST_TYPE_MOCK_EXPORTER, NULL);
+    guint run;
+
+    g_assert_true (lrg_reel_renderer_render_to_exporter (seq_r,
+                                                         LRG_REEL_EXPORTER (seq_m),
+                                                         &error));
+    g_assert_no_error (error);
+
+    for (run = 0; run < 3; run++)
+    {
+        g_autoptr(LrgReelRenderer) par_r = lrg_reel_renderer_new (reel);
+        TestMockExporter *par_m = g_object_new (TEST_TYPE_MOCK_EXPORTER, NULL);
+
+        g_assert_true (lrg_reel_renderer_render_parallel (par_r, 16,
+                                                          LRG_REEL_EXPORTER (par_m),
+                                                          &error));
+        g_assert_no_error (error);
+        g_assert_cmpuint (frames_differ (seq_m, par_m, n_frames), ==, 0);
+        g_object_unref (par_m);
+    }
+
+    g_object_unref (seq_m);
+}
+
+/*
+ * make_dissolve_series:
+ *
+ * The reel from issue #6: a red solid (48 frames), a one-second dissolve
+ * (24 frames) and a frame-dependent clip (48 frames), so the overlap window
+ * is frames 24-47 and both sides of it change from frame to frame.
+ */
+static LrgReelTransitionSeries *
+make_dissolve_series (void)
+{
+    GrlColor red = { 220, 30, 30, 255 };
+    LrgReelTransitionSeries *series = lrg_reel_transition_series_new ();
+    LrgReelSolidClip *a = lrg_reel_solid_clip_new (&red);
+    LrgReelClip *b = lrg_reel_clip_new_with_func (frame_color_render, NULL, NULL);
+    LrgReelDissolveTransition *d = lrg_reel_dissolve_transition_new ();
+
+    lrg_reel_transition_series_add (series, LRG_REEL_CLIP (a), 48);
+    lrg_reel_transition_series_add_transition (series, LRG_REEL_TRANSITION (d), 24);
+    lrg_reel_transition_series_add (series, b, 48);
+    g_object_unref (a);
+    g_object_unref (b);
+    g_object_unref (d);
+    return series;
+}
+
+/*
+ * Issue #6: render_parallel corrupted frames inside a transition-series
+ * overlap, because the series kept its two scratch canvases on the object
+ * and every worker drew into them at once.
+ */
+static void
+test_parallel_transition_series (void)
+{
+    g_autoptr(LrgReel) reel = lrg_reel_new ("race", 160, 90, 24.0, 72);
+    LrgReelTransitionSeries *series = make_dissolve_series ();
+
+    g_assert_cmpint (lrg_reel_transition_series_get_total_frames (series), ==, 72);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (series));
+    g_object_unref (series);
+
+    assert_parallel_matches (reel, 72);
+}
+
+/*
+ * The same race one level down: a series used as a segment of another
+ * series (two overlaps in flight at once, four scratch buffers), with an
+ * iris transition on the outer one.
+ */
+static void
+test_parallel_nested_series (void)
+{
+    GrlColor blue = { 20, 40, 210, 255 };
+    g_autoptr(LrgReel) reel = lrg_reel_new ("nested", 96, 54, 24.0, 96);
+    LrgReelTransitionSeries *outer = lrg_reel_transition_series_new ();
+    LrgReelTransitionSeries *inner = make_dissolve_series ();
+    LrgReelSolidClip *tail = lrg_reel_solid_clip_new (&blue);
+    LrgReelIrisTransition *iris = lrg_reel_iris_transition_new ();
+
+    /* inner is 72 frames; the outer iris overlaps its last 24. */
+    lrg_reel_transition_series_add (outer, LRG_REEL_CLIP (inner), 72);
+    lrg_reel_transition_series_add_transition (outer, LRG_REEL_TRANSITION (iris), 24);
+    lrg_reel_transition_series_add (outer, LRG_REEL_CLIP (tail), 48);
+    g_assert_cmpint (lrg_reel_transition_series_get_total_frames (outer), ==, 96);
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (outer));
+    g_object_unref (inner);
+    g_object_unref (tail);
+    g_object_unref (iris);
+    g_object_unref (outer);
+
+    assert_parallel_matches (reel, 96);
+}
+
+/*
+ * A series inside an LrgReelSequence that carries a vignette: the effect
+ * sends the sequence through the composite path, so the series' scratch is
+ * taken while the sequence's own scratch buffer is checked out.
+ */
+static void
+test_parallel_series_in_sequence (void)
+{
+    g_autoptr(LrgReel) reel = lrg_reel_new ("seq", 96, 54, 24.0, 72);
+    LrgReelSequence *seq = lrg_reel_sequence_new (0, 72);
+    LrgReelTransitionSeries *series = make_dissolve_series ();
+    LrgReelVignetteEffect *v = lrg_reel_vignette_effect_new ();
+
+    lrg_reel_sequence_add_child (seq, LRG_REEL_CLIP (series));
+    lrg_reel_clip_add_effect (LRG_REEL_CLIP (seq), LRG_REEL_EFFECT (v));
+    lrg_reel_add_clip (reel, LRG_REEL_CLIP (seq));
+    g_object_unref (series);
+    g_object_unref (v);
+    g_object_unref (seq);
+
+    assert_parallel_matches (reel, 72);
+}
+
 /* ==========================================================================
  * Wave F: data-driven YAML + captions
  * ========================================================================== */
@@ -2644,6 +2812,9 @@ main (int   argc,
 
     g_test_add_func ("/reel/parallel/range", test_render_range);
     g_test_add_func ("/reel/parallel/determinism", test_parallel_determinism);
+    g_test_add_func ("/reel/parallel/transition-series", test_parallel_transition_series);
+    g_test_add_func ("/reel/parallel/nested-series", test_parallel_nested_series);
+    g_test_add_func ("/reel/parallel/series-in-sequence", test_parallel_series_in_sequence);
 
     g_test_add_func ("/reel/yaml/load", test_yaml_load);
     g_test_add_func ("/reel/yaml/unknown-type", test_yaml_unknown_type);
