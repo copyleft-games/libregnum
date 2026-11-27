@@ -158,6 +158,113 @@ For each run =r= of viseme =v= with half-blends =h_in= (at its start boundary) a
 :END:
 =lrg_lip_sync_new_from_wave()= reads =lrg_wave_data_get_samples()= (interleaved floats), averages the channels of each frame (a stereo pair that cancels out is silence), and measures the RMS of consecutive windows of =round (sample_rate / fps)= frames. Windows with an RMS at or above =threshold= are loud. Each run of loud windows becomes an =AA= phoneme (viseme =A=) and each run of quiet windows a =sil= phoneme (=rest=), with times on window boundaries. It cannot tell vowels apart or close the lips on M/B/P; use it for background characters or as a placeholder until an alignment exists.
 
+** End-to-end: a talking character
+:PROPERTIES:
+:CUSTOM_ID: end-to-end
+:END:
+Lip sync is one of four pieces that make a character talk on screen. The other three are the [[file:shape-sheet.org][shape sheet]] the character implements, the [[file:procedural.org][procedural layers]] that keep it alive between words, and something that draws it: a window through =LrgSkeleton2DComponent=, or headless through [[file:../reel/clips.org::#skeleton2d-clip][LrgReelSkeleton2DClip]], which draws on the CPU (=lrg_skeleton2d_draw_to_canvas()=) and shows blend shapes exactly as the GPU path does.
+
+The program below does all of it without a window: it loads a rig whose mouth slot implements the visemes and whose eyes slot implements =blink_l= and =blink_r=, keys a phoneme alignment onto the mouth, fades a mood in halfway, blinks with a seeded layer and renders the line to a PNG sequence on 8 threads (byte-identical to a sequential render). Swap the sequence exporter for =lrg_reel_video_exporter_new ("talk.mp4", LRG_REEL_VIDEO_CODEC_H264)= and =lrg_reel_video_exporter_set_audio()= to get a video with the voice.
+
+#+begin_src C
+/* talk.c: hero.rskel2d says voice/hello.yaml, rendered to talk/frame_NNNNN.png */
+#include <libregnum.h>
+
+/* runs after the clip on every frame: blinks (a pure function of time) */
+static void
+blink (LrgReelSkeleton2DClip *clip,
+       LrgSkeleton2D         *skel,
+       gdouble                seconds,
+       gpointer               user_data)
+{
+	lrg_skeleton2d_procedural_apply (LRG_SKELETON2D_PROCEDURAL (user_data), skel, seconds);
+}
+
+/* keys @shape on every slot whose attachment implements it */
+static void
+key_mood (LrgSkeleton2D     *skel,
+          LrgSkeleton2DClip *clip,
+          const gchar       *shape,
+          gfloat             time,
+          gfloat             weight)
+{
+	guint i;
+
+	for (i = 0; i < lrg_skeleton2d_get_slot_count (skel); i++)
+	{
+		const gchar      *name = lrg_skeleton2d_get_slot_attachment (skel, (gint)i);
+		LrgSkinnedSprite *s = name != NULL ? lrg_skeleton2d_get_attachment (skel, (gint)i, name) : NULL;
+
+		if (s != NULL && lrg_skinned_sprite_find_shape (s, shape) >= 0)
+			lrg_skeleton2d_clip_add_shape_key (clip, lrg_skeleton2d_get_slot_name (skel, (gint)i),
+			                                   shape, time, weight, LRG_SKELETON2D_CURVE_LINEAR);
+	}
+}
+
+int
+main (void)
+{
+	g_autoptr(GError)                  error = NULL;
+	g_autoptr(LrgSkeleton2D)           skel = NULL;
+	g_autoptr(LrgLipSync)              line = lrg_lip_sync_new ();
+	g_autoptr(LrgSkeleton2DClip)       talk = lrg_skeleton2d_clip_new ("talk");
+	g_autoptr(LrgSkeleton2DProcedural) layers = lrg_skeleton2d_procedural_new ();
+	g_autoptr(LrgReel)                 reel = NULL;
+	g_autoptr(LrgReelSolidClip)        bg = NULL;
+	g_autoptr(LrgReelSkeleton2DClip)   actor = NULL;
+	g_autoptr(LrgReelRenderer)         renderer = NULL;
+	g_autoptr(LrgReelSeqExporter)      frames = NULL;
+	GrlColor                           paper = { 250, 244, 232, 255 };
+	gfloat                             len;
+
+	/* the character (its images load relative to the .rskel2d) and the line */
+	skel = lrg_skeleton2d_new_from_file ("hero.rskel2d", &error);
+	if (skel == NULL || !lrg_lip_sync_load_file (line, "voice/hello.yaml", &error))
+	{
+		g_printerr ("%s\n", error->message);
+		return 1;
+	}
+
+	/* visemes on the mouth, then worried -> happy across the middle */
+	lrg_lip_sync_write_clip (line, talk, "mouth", LRG_LIP_SYNC_DEFAULT_CROSSFADE);
+	len = (gfloat)lrg_lip_sync_get_duration (line);
+	key_mood (skel, talk, LRG_SHAPE_SAD, 0.0f, 1.0f);
+	key_mood (skel, talk, LRG_SHAPE_SAD, len * 0.4f, 1.0f);
+	key_mood (skel, talk, LRG_SHAPE_SAD, len * 0.6f, 0.0f);
+	key_mood (skel, talk, LRG_SHAPE_HAPPY, len * 0.4f, 0.0f);
+	key_mood (skel, talk, LRG_SHAPE_HAPPY, len * 0.6f, 1.0f);
+	lrg_skeleton2d_clip_set_duration (talk, len);
+	lrg_skeleton2d_add_clip (skel, talk);
+
+	/* a blink every 1.5 to 3 s, the same on every run */
+	lrg_skeleton2d_procedural_add_blink (layers, "eyes", 1.5f, 3.0f, 0.2f, 42);
+
+	/* the reel: backdrop, then the character standing on the bottom edge */
+	reel = lrg_reel_new ("talk", 512, 512, 30.0, (gint)(len * 30.0f) + 1);
+	bg = lrg_reel_solid_clip_new (&paper);
+	lrg_reel_add_clip (reel, LRG_REEL_CLIP (bg));
+	actor = lrg_reel_skeleton2d_clip_new (skel, talk);
+	lrg_reel_skeleton2d_clip_set_loop (actor, FALSE);
+	lrg_reel_skeleton2d_clip_set_placement (actor, 256.0, 512.0, 1.0);
+	lrg_reel_skeleton2d_clip_set_pose_func (actor, blink, g_object_ref (layers), g_object_unref);
+	lrg_reel_add_clip (reel, LRG_REEL_CLIP (actor));
+
+	renderer = lrg_reel_renderer_new (reel);
+	frames = lrg_reel_seq_exporter_new ("talk", "frame_%05d", LRG_REEL_IMAGE_FORMAT_PNG);
+	if (!lrg_reel_renderer_render_parallel (renderer, 8, LRG_REEL_EXPORTER (frames), &error))
+	{
+		g_printerr ("%s\n", error->message);
+		return 1;
+	}
+	return 0;
+}
+#+end_src
+
+Notes:
+- The mood keys go on every slot that implements the mood (eyes, brows and mouth on a typical face), because shape weights belong to slots. Shapes add, so a mood's smile composes with every viseme; author moods and visemes on the same neutral face.
+- The blink layer runs in the reel clip's pose callback, after the clip, on a pose the clip reset; it is a pure function of the time, so frames may render in any order and on any thread (the clip serialises posing and drawing, see [[file:../reel/clips.org::#skeleton2d-clip][LrgReelSkeleton2DClip]]). Add a breathe layer the same way.
+- A full, runnable version with a character built in code (generated textures, the complete shape sheet), breathing, a head sway, an MP4 and a =--wave= option is [[file:../../examples/skeleton2d-talking-head.org][examples/skeleton2d-talking-head]]; =tests/test-skeleton2d-character.c= renders the same character headless in CI and checks the mouth, the blink and the parallel render.
+
 ** Errors
 :PROPERTIES:
 :CUSTOM_ID: errors
@@ -177,4 +284,5 @@ Messages name the source (=<data>= for text, the path for files) and the node (Y
 - [[file:shape-sheet.org][The standard shape sheet]] (the viseme shapes to author)
 - [[file:skeleton2d.org][LrgSkeleton2D]] (shape weight keys, the =.rskel2d= version 2 format that stores them)
 - [[file:procedural.org][LrgSkeleton2DProcedural]] (blinking and breathing while talking)
+- [[file:../../examples/skeleton2d-talking-head.org][Talking head example]] and [[file:../../examples/skeleton2d-shape-sheet.org][shape sheet example]]
 - [[file:../audio/wave-data.org][LrgWaveData]]

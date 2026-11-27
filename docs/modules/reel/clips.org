@@ -539,7 +539,7 @@ Draws an [[file:../animation/skeleton2d.org][LrgSkeleton2D]] character, posed fo
 Each frame the clip:
 1. resets the skeleton to its setup pose (=lrg_skeleton2d_reset_pose()=), so a frame never depends on the frame rendered before it;
 2. applies its animation (an =LrgSkeleton2DClip=) at the clip-relative time =lrg_reel_context_get_seconds()= (sub-frame included, so motion blur works) times the speed, wrapped into the animation's duration when looping (the default) or clamped to it otherwise (=lrg_reel_skeleton2d_clip_get_animation_time()= returns that time);
-3. calls the pose callback, if any (=LrgReelSkeleton2DPoseFunc=, set with =lrg_reel_skeleton2d_clip_set_pose_func()=): procedural layers such as blinks, breathing or a look-at go here, as pure functions of the time;
+3. calls the pose callback, if any (=LrgReelSkeleton2DPoseFunc=, set with =lrg_reel_skeleton2d_clip_set_pose_func()=): procedural layers such as blinks, breathing or a look-at go here, as pure functions of the time (=lrg_skeleton2d_procedural_apply()= of an [[file:../animation/procedural.org][LrgSkeleton2DProcedural]] fits as is);
 4. places the skeleton through its root transform (=lrg_reel_skeleton2d_clip_set_placement (clip, x, y, scale)=, =lrg_reel_skeleton2d_clip_set_flip_x()=), the way =LrgSkeleton2DComponent= places it from a game object, computes the world transforms and draws it with =lrg_skeleton2d_draw_to_canvas()=.
 
 The inherited clip transform, opacity, blend mode and effects work too: the canvas transform composes with the placement.  Attachment images load on the first frame relative to the skeleton's =base-dir= (or set CPU source images with =lrg_skinned_sprite_set_source_image()=); see [[file:../animation/skeleton2d.org::#cpu-drawing][Drawing on the CPU]].
@@ -628,6 +628,8 @@ main (void)
     return 0;
 }
 #+end_src
+
+Blend shapes render like everything else: the skeleton's per-slot shape weights (clip shape keys, procedural layers, =lrg_skeleton2d_set_shape_weight()= in the callback) reach the meshes through the same deform as on the GPU, so a lip-synced, blinking character renders headless; see [[file:../animation/lip-sync.org::#end-to-end][LrgLipSync: end-to-end]] and the [[file:../../examples/skeleton2d-talking-head.org][talking head example]].
 
 Loading a rig from disk is one call: =lrg_reel_skeleton2d_clip_new_from_file ("hero.rskel2d", "walk", &error)= loads the file and picks the clip by name (a missing name is an error).
 

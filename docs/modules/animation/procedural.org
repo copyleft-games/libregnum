@@ -83,6 +83,7 @@ pose_by_hand (LrgSkeleton2D           *skel,
 - =apply= reads and writes the weights with =lrg_skeleton2d_get_shape_weight()= and =lrg_skeleton2d_set_shape_weight()=, so the slot weights are clamped to 0 .. 1 and reach the attachment on the next deform or draw. A character without blink or breathe shapes is not changed visibly.
 - Run it *after* the clips and *after* =lrg_skeleton2d_reset_pose()=: the reset sets every weight back to 0, and applying the layers twice without a reset would add the breath twice.
 - The cache of blink start times grows by one entry per blink reached (a few hundred bytes per hour of play).
+- In a reel, call =apply= from the pose callback of an [[file:../reel/clips.org::#skeleton2d-clip][LrgReelSkeleton2DClip]] (=lrg_reel_skeleton2d_clip_set_pose_func()=), with the clip time: the layers are pure functions of the time, so frames may render in any order, and the clip runs every pose callback under its render lock, so the blink cache is never written from two threads at once (=render_parallel= output stays byte-identical). See [[file:lip-sync.org::#end-to-end][LrgLipSync: end-to-end]] and the [[file:../../examples/skeleton2d-talking-head.org][talking head example]].
 
 ** Errors
 :PROPERTIES:
