@@ -6477,7 +6477,6 @@ lrg_texture_fallback_format_get_type (void)
 
 GType
 lrg_resample_filter_get_type (void)
-lrg_frame_side_get_type (void)
 {
     static gsize g_define_type_id__volatile = 0;
 
@@ -6491,10 +6490,27 @@ lrg_frame_side_get_type (void)
         };
         GType g_define_type_id =
             g_enum_register_static (g_intern_static_string ("LrgResampleFilter"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_frame_side_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
             { LRG_FRAME_SIDE_ABOVE, "LRG_FRAME_SIDE_ABOVE", "above" },
             { LRG_FRAME_SIDE_BELOW, "LRG_FRAME_SIDE_BELOW", "below" },
             { LRG_FRAME_SIDE_LEFT, "LRG_FRAME_SIDE_LEFT", "left" },
             { LRG_FRAME_SIDE_RIGHT, "LRG_FRAME_SIDE_RIGHT", "right" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
             g_enum_register_static (g_intern_static_string ("LrgFrameSide"), values);
         g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
     }
@@ -6513,6 +6529,9 @@ lrg_frame_align_get_type (void)
             { LRG_FRAME_ALIGN_START, "LRG_FRAME_ALIGN_START", "start" },
             { LRG_FRAME_ALIGN_CENTER, "LRG_FRAME_ALIGN_CENTER", "center" },
             { LRG_FRAME_ALIGN_END, "LRG_FRAME_ALIGN_END", "end" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
             g_enum_register_static (g_intern_static_string ("LrgFrameAlign"), values);
         g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
     }

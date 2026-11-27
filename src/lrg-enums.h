@@ -7059,14 +7059,6 @@ GType lrg_texture_fallback_format_get_type (void) G_GNUC_CONST;
  * The reconstruction filter lrg_image_downsample() and
  * lrg_image_canvas_resolve() shrink an image with.  All filters run in
  * linear light on premultiplied alpha.
- * LrgFrameSide:
- * @LRG_FRAME_SIDE_ABOVE: above the other box (its bottom edge @gap above
- *   the other's top edge)
- * @LRG_FRAME_SIDE_BELOW: below the other box
- * @LRG_FRAME_SIDE_LEFT: left of the other box
- * @LRG_FRAME_SIDE_RIGHT: right of the other box
- * Which side of another box lrg_frame_layout_add_box_relative() puts a
- * box on (#LrgFrameLayout).
  *
  * Since: 0.14
  */
@@ -7080,13 +7072,32 @@ typedef enum
 LRG_AVAILABLE_IN_ALL
 GType lrg_resample_filter_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_RESAMPLE_FILTER (lrg_resample_filter_get_type ())
+
+/**
+ * LrgFrameSide:
+ * @LRG_FRAME_SIDE_ABOVE: above the other box (its bottom edge @gap above
+ *   the other's top edge)
+ * @LRG_FRAME_SIDE_BELOW: below the other box
+ * @LRG_FRAME_SIDE_LEFT: left of the other box
+ * @LRG_FRAME_SIDE_RIGHT: right of the other box
+ *
+ * Which side of another box lrg_frame_layout_add_box_relative() puts a
+ * box on (#LrgFrameLayout).
+ *
+ * Since: 0.14
+ */
+typedef enum
+{
     LRG_FRAME_SIDE_ABOVE,
     LRG_FRAME_SIDE_BELOW,
     LRG_FRAME_SIDE_LEFT,
     LRG_FRAME_SIDE_RIGHT
 } LrgFrameSide;
+
+LRG_AVAILABLE_IN_ALL
 GType lrg_frame_side_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_FRAME_SIDE (lrg_frame_side_get_type ())
+
 /**
  * LrgFrameAlign:
  * @LRG_FRAME_ALIGN_START: the left edges (above or below) or the top edges
@@ -7106,6 +7117,8 @@ typedef enum
     LRG_FRAME_ALIGN_CENTER,
     LRG_FRAME_ALIGN_END
 } LrgFrameAlign;
+
+LRG_AVAILABLE_IN_ALL
 GType lrg_frame_align_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_FRAME_ALIGN (lrg_frame_align_get_type ())
 
