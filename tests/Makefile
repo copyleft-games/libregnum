@@ -407,6 +407,7 @@ TEST_SOURCES := \
 	test-image-resample.c \
 	test-hdr-canvas.c \
 	test-frame-layout.c \
+	test-cookbook.c \
 	test-image-document.c \
 	test-vector-image.c \
 	test-reel.c \
@@ -762,6 +763,13 @@ $(TEST_BUILDDIR)/test-editor-sources: test-editor-sources.c editor-app-fixture.h
 		-DTEST_EDITOR_MODULE_PATH='"$(EDITOR_FIXTURE_SO_ABS)"' \
 		-DTEST_ARGS_MODULE_PATH='"$(FIXTURE_SO_ABS)"' \
 		-o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
+
+# test-cookbook renders the image-quality cookbook scenes, so it compiles
+# their shared source from examples/cookbook/ into the binary.
+COOKBOOK_DIR := ../examples/cookbook
+$(TEST_BUILDDIR)/test-cookbook$(EXE_EXT): test-cookbook.c $(COOKBOOK_DIR)/lrg-cookbook-scenes.c $(COOKBOOK_DIR)/lrg-cookbook-scenes.h $(GENERATED_HEADERS) | $(TEST_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(TEST_CFLAGS) -I$(COOKBOOK_DIR) -MMD -MP -MF $@.d -o $@ $< $(COOKBOOK_DIR)/lrg-cookbook-scenes.c $(TEST_LDFLAGS) $(TEST_LIBS)
 
 # Fixture script loaded by test-scripting-native: prebuilt here as a shared
 # object, and compiled from the same source by the Crispy backend at runtime.
