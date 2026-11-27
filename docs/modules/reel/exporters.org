@@ -126,10 +126,56 @@ lrg_reel_video_exporter_set_crf (vid, 18);
 lrg_reel_renderer_render_to_exporter (renderer, LRG_REEL_EXPORTER (vid), &error);
 #+end_src
 
-| Codec                       | Container | Encoder    |
-|-----------------------------+-----------+------------|
-| =LRG_REEL_VIDEO_CODEC_H264= | .mp4      | libx264    |
-| =LRG_REEL_VIDEO_CODEC_VP9=  | .webm     | libvpx-vp9 |
+| Codec                               | Container | Encoder (first usable)                                     |
+|-------------------------------------+-----------+------------------------------------------------------------|
+| =LRG_REEL_VIDEO_CODEC_H264=         | .mp4      | libx264, libopenh264, h264_nvenc, h264_qsv, h264_vaapi     |
+| =LRG_REEL_VIDEO_CODEC_H265=         | .mp4      | libx265                                                    |
+| =LRG_REEL_VIDEO_CODEC_VP9=          | .webm     | libvpx-vp9                                                 |
+| =LRG_REEL_VIDEO_CODEC_VP9_ALPHA=    | .webm     | libvpx-vp9                                                 |
+| =LRG_REEL_VIDEO_CODEC_AV1=          | .mp4      | libsvtav1                                                  |
+| =LRG_REEL_VIDEO_CODEC_PRORES=       | .mov      | prores_ks                                                  |
+| =LRG_REEL_VIDEO_CODEC_PRORES_ALPHA= | .mov      | prores_ks                                                  |
+
+*** Choosing the encoder
+:PROPERTIES:
+:CUSTOM_ID: video-encoder
+:END:
+A codec names a format; ffmpeg needs an encoder, and which encoders an ffmpeg has depends on how it was built. Fedora's packaged ffmpeg, for example, has no =libx264=. So when an export begins, the exporter:
+
+1. asks the ffmpeg it is about to run for its video encoders (=ffmpeg -hide_banner -encoders=);
+2. walks the codec's candidate list (the table above) in order and skips every encoder that ffmpeg does not list;
+3. runs a one-frame trial encode with each listed candidate and takes the first that succeeds.
+
+The trial is needed because listed is not the same as usable. Hardware encoders (=h264_nvenc=, =h264_qsv=, =h264_vaapi=) are listed whenever ffmpeg was built with them, whether or not the machine has the GPU. Fedora's ffmpeg also lists =libopenh264=, but the library installed by default is =noopenh264=, a stub that refuses to create an encoder. The real OpenH264 is the =openh264= package from the =fedora-cisco-openh264= repository.
+
+The listing and the trial results are cached per ffmpeg path for the life of the process, so the cost (a few tens of milliseconds per candidate) is paid once.
+
+When no candidate works, =begin()= fails with =LRG_REEL_EXPORTER_ERROR_ENCODER_NOT_FOUND=, and the message names every candidate it tried. If the listing itself cannot be read (an ffmpeg wrapper script, a very old ffmpeg), the exporter skips discovery and passes the codec's first encoder to ffmpeg, as before 0.13.7.
+
+After =begin()=, =lrg_reel_video_exporter_get_encoder()= returns the encoder that was chosen.
+
+To pick the encoder yourself, name it with =lrg_reel_video_exporter_set_encoder()=. The name must be in the ffmpeg's listing (otherwise =ENCODER_NOT_FOUND=); it gets no trial encode. =NULL= or an empty string returns to automatic choice. =reel render --encoder NAME= does the same from the CLI.
+
+#+begin_src c
+/* Use VA-API even when libx264 is available. */
+lrg_reel_video_exporter_set_encoder (vid, "h264_vaapi");
+#+end_src
+
+Each encoder family gets its own quality flags. =set_crf()= is translated as follows (when =set_bitrate()= is non-zero, every encoder except ProRes gets =-b:v= instead):
+
+| Encoder                 | Quality flags from =set_crf (N)=                       | Input pixel format              |
+|-------------------------+--------------------------------------------------------+---------------------------------|
+| libx264, libx265        | =-preset= (=set_preset()=, default veryfast) =-crf N=  | yuv420p                         |
+| libopenh264             | =-b:v= derived from N (see below)                      | yuv420p                         |
+| h264_nvenc              | =-preset p4 -rc vbr -cq N -b:v 0=                      | yuv420p                         |
+| h264_qsv                | =-global_quality N=                                    | nv12                            |
+| h264_vaapi              | =-rc_mode CQP -qp N=; device =/dev/dri/renderD128=     | nv12 uploaded (=hwupload=)      |
+| libvpx-vp9              | =-b:v 0 -crf N=                                        | yuv420p / yuva420p              |
+| libsvtav1               | =-preset 8 -crf N=                                     | yuv420p                         |
+| prores_ks               | =-profile:v= 3 or 4 (CRF ignored)                      | yuv422p10le / yuva444p10le      |
+| anything else (by name) | none: the encoder's own defaults                       | the codec's                     |
+
+OpenH264 has no constant-quality mode, so N becomes a bitrate: 0.1 bit per pixel per frame at N = 23, doubling for every 6 steps down and halving for every 6 up (the slope of x264's CRF scale), with a floor of 100 kbit/s. 1280x720 at 24 fps comes to about 2200 kbit/s at the default CRF and 4400 kbit/s at CRF 17.
 
 *** Adding audio
 
@@ -265,9 +311,6 @@ if (!lrg_reel_audio_exporter_export (ae, mix, &error))
   If =add_frame()= fails mid-run, previously written frames remain on disk.
 - =LrgReelExporter= is derivable; you can implement a custom sink by subclassing
   it and overriding the =begin= / =add_frame= / =finish= vfuncs.
-- =LRG_REEL_VIDEO_CODEC_H265= requires =libx265= to be compiled into the system
-  ffmpeg.  ProRes and VP9-alpha similarly require =prores_ks= and =libvpx-vp9=.
-  Test with =lrg_reel_video_exporter_is_ffmpeg_available()= and check the codec
-  by attempting a short test encode if codec availability matters at runtime.
+- Every codec needs its encoder in the ffmpeg that runs: =LRG_REEL_VIDEO_CODEC_H265= needs =libx265=, ProRes needs =prores_ks=, VP9 needs =libvpx-vp9=, AV1 needs =libsvtav1=. A missing one fails =begin()= up front with =LRG_REEL_EXPORTER_ERROR_ENCODER_NOT_FOUND= (since 0.13.7), before any frame is rendered. H.264 has a list of fallbacks ([[#video-encoder][Choosing the encoder]]).
 - =lrg_reel_renderer_render_still()= infers the image format from the file
   extension.  An unknown extension falls back to PNG.

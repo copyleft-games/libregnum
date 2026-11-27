@@ -155,6 +155,11 @@ parse_codec (const gchar *name, LrgReelVideoCodec *out_codec)
         *out_codec = LRG_REEL_VIDEO_CODEC_VP9_ALPHA;
         return TRUE;
     }
+    if (strcmp (name, "av1") == 0)
+    {
+        *out_codec = LRG_REEL_VIDEO_CODEC_AV1;
+        return TRUE;
+    }
     return FALSE;
 }
 
@@ -171,6 +176,7 @@ cmd_render (int argc, char **argv)
     g_autoptr(LrgReelRenderer) renderer = NULL;
     gchar *output = NULL;
     gchar *codec_str = NULL;
+    gchar *encoder = NULL;
     gint crf = -1;
     gint threads = 1;
     gboolean ok = FALSE;
@@ -182,8 +188,11 @@ cmd_render (int argc, char **argv)
         { "output",  'o', 0, G_OPTION_ARG_FILENAME, &output,
           "Output file path (default: out.mp4)", "PATH" },
         { "codec",   'c', 0, G_OPTION_ARG_STRING,   &codec_str,
-          "Video codec: h264 (default), vp9, h265, prores, prores-alpha, vp9-alpha",
+          "Video codec: h264 (default), vp9, h265, av1, prores, prores-alpha, vp9-alpha",
           "CODEC" },
+        { "encoder", 'e', 0, G_OPTION_ARG_STRING,   &encoder,
+          "ffmpeg encoder to use instead of the codec's default choice "
+          "(e.g. libopenh264, h264_nvenc, h264_vaapi)", "NAME" },
         { "crf",     0,   0, G_OPTION_ARG_INT,       &crf,
           "Encoder quality CRF (lower = better; 0-51 for H.264)", "N" },
         { "threads", 't', 0, G_OPTION_ARG_INT,       &threads,
@@ -193,6 +202,14 @@ cmd_render (int argc, char **argv)
 
     ctx = g_option_context_new ("<file.yaml> -- render to video or GIF");
     g_option_context_add_main_entries (ctx, entries, NULL);
+    g_option_context_set_description (ctx,
+        "Examples:\n"
+        "  reel render -o film.mp4 film.yaml\n"
+        "  reel render -t 0 -c vp9 -o film.webm film.yaml\n"
+        "  reel render -c h264 -e libopenh264 -o film.mp4 film.yaml\n"
+        "\n"
+        "Without --encoder, h264 uses the first of libx264, libopenh264,\n"
+        "h264_nvenc, h264_qsv and h264_vaapi that your ffmpeg has and can run.\n");
     g_option_context_set_help_enabled (ctx, TRUE);
 
     if (!g_option_context_parse (ctx, &argc, &argv, &error))
@@ -200,6 +217,7 @@ cmd_render (int argc, char **argv)
         g_printerr ("reel: %s\n", error->message);
         g_free (output);
         g_free (codec_str);
+        g_free (encoder);
         return 1;
     }
 
@@ -209,6 +227,7 @@ cmd_render (int argc, char **argv)
         g_printerr ("%s", g_option_context_get_help (ctx, TRUE, NULL));
         g_free (output);
         g_free (codec_str);
+        g_free (encoder);
         return 1;
     }
 
@@ -227,10 +246,11 @@ cmd_render (int argc, char **argv)
         if (!parse_codec (codec_str, &codec))
         {
             g_printerr ("reel: unknown codec '%s'; "
-                        "valid: h264, vp9, h265, prores, prores-alpha, vp9-alpha\n",
+                        "valid: h264, vp9, h265, av1, prores, prores-alpha, vp9-alpha\n",
                         codec_str);
             g_free (output);
             g_free (codec_str);
+            g_free (encoder);
             return 1;
         }
     }
@@ -241,6 +261,7 @@ cmd_render (int argc, char **argv)
         g_printerr ("reel: %s\n", error != NULL ? error->message : "unknown error");
         g_free (output);
         g_free (codec_str);
+        g_free (encoder);
         return 1;
     }
 
@@ -258,6 +279,7 @@ cmd_render (int argc, char **argv)
             g_printerr ("reel: %s\n", error != NULL ? error->message : "unknown error");
             g_free (output);
             g_free (codec_str);
+            g_free (encoder);
             return 1;
         }
 
@@ -279,6 +301,8 @@ cmd_render (int argc, char **argv)
 
         if (crf >= 0)
             lrg_reel_video_exporter_set_crf (vid_exp, crf);
+        if (encoder != NULL)
+            lrg_reel_video_exporter_set_encoder (vid_exp, encoder);
 
         if (threads != 1)
             ok = lrg_reel_renderer_render_parallel (renderer, threads,
@@ -295,12 +319,14 @@ cmd_render (int argc, char **argv)
         g_printerr ("reel: %s\n", error != NULL ? error->message : "unknown error");
         g_free (output);
         g_free (codec_str);
+        g_free (encoder);
         return 1;
     }
 
     g_print ("wrote %s (%d frames)\n", output, frames);
     g_free (output);
     g_free (codec_str);
+    g_free (encoder);
     return 0;
 }
 

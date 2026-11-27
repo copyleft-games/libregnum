@@ -28,7 +28,7 @@ include $(PROJECT_ROOT)/build-aux/mk/target.mk
 # "Versioning". API_VERSION and SO_VERSION below are separate.
 VERSION_MAJOR := 0
 VERSION_MINOR := 13
-VERSION_MICRO := 6
+VERSION_MICRO := 7
 VERSION := $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_MICRO)
 
 # API version for parallel installability (bump on ABI breaks)
@@ -398,7 +398,11 @@ MCP ?= 0
 ifeq ($(MCP),1)
     MCP_GLIB_DIR := $(PROJECT_ROOT)/deps/mcp-glib
     MCP_CFLAGS := -I$(MCP_GLIB_DIR)/src -DLRG_ENABLE_MCP=1
-    MCP_LIBS := -L$(MCPGLIB_BUILDDIR) -lmcp-glib-1.0
+    # Recursive (=), not :=: MCPGLIB_BUILDDIR is set further down (with the
+    # other dependency build dirs), so an immediate expansion here gave
+    # "-L -lmcp-glib-1.0", where -L swallowed the library flag as its
+    # directory and mcp-glib was never linked.
+    MCP_LIBS = -L$(MCPGLIB_BUILDDIR) -lmcp-glib-1.0
 else
     MCP_CFLAGS :=
     MCP_LIBS :=

@@ -10,6 +10,7 @@
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <libregnum.h>
+#include <string.h>
 
 #ifdef LRG_ENABLE_MCP
 
@@ -729,6 +730,68 @@ test_mcp_tool_schema_lifecycle (void)
     }
 }
 
+/*
+ * reel_render advertises the optional "encoder" argument (issue #3), and an
+ * encoder this ffmpeg lacks fails the call with an error that names it
+ * instead of a bare ffmpeg exit code.
+ */
+static void
+test_mcp_reel_render_encoder (void)
+{
+    g_autoptr(LrgMcpReelTools) reel = lrg_mcp_reel_tools_new ();
+    GList *tools = lrg_mcp_tool_provider_list_tools (LRG_MCP_TOOL_PROVIDER (reel));
+    GList *iter;
+    gboolean found = FALSE;
+
+    for (iter = tools; iter != NULL; iter = iter->next)
+    {
+        JsonObject *props;
+
+        if (g_strcmp0 (mcp_tool_get_name (iter->data), "reel_render") != 0)
+            continue;
+        found = TRUE;
+        props = json_object_get_object_member (
+            json_node_get_object (mcp_tool_get_input_schema (iter->data)), "properties");
+        g_assert_true (json_object_has_member (props, "codec"));
+        g_assert_true (json_object_has_member (props, "encoder"));
+    }
+    g_list_free_full (tools, g_object_unref);
+    g_assert_true (found);
+
+    if (!lrg_reel_video_exporter_is_ffmpeg_available ())
+    {
+        g_test_skip ("ffmpeg not available");
+        return;
+    }
+
+    {
+        g_autoptr(GError) error = NULL;
+        g_autofree gchar *dir = g_dir_make_tmp ("mcp-reel-XXXXXX", &error);
+        g_autofree gchar *yaml = g_build_filename (dir, "r.yaml", NULL);
+        g_autofree gchar *mp4 = g_build_filename (dir, "r.mp4", NULL);
+        g_autofree gchar *args = NULL;
+        g_autoptr(JsonParser) parser = json_parser_new ();
+        g_autoptr(McpToolResult) result = NULL;
+
+        g_assert_no_error (error);
+        g_assert_true (g_file_set_contents (yaml,
+            "id: r\nwidth: 16\nheight: 16\nfps: 24\nduration-in-frames: 2\n"
+            "clips:\n  - type: solid-clip\n    color: \"#ff0000ff\"\n", -1, &error));
+        args = g_strdup_printf ("{\"path\": \"%s\", \"output\": \"%s\", "
+                                "\"encoder\": \"no_such_encoder\"}", yaml, mp4);
+        g_assert_true (json_parser_load_from_data (parser, args, -1, &error));
+        result = lrg_mcp_tool_provider_call_tool (LRG_MCP_TOOL_PROVIDER (reel), "reel_render",
+                                                 json_node_get_object (json_parser_get_root (parser)),
+                                                 &error);
+        g_assert_null (result);
+        g_assert_nonnull (error);
+        g_assert_nonnull (strstr (error->message, "no_such_encoder"));
+        g_unlink (yaml);
+        g_unlink (mp4);
+        g_rmdir (dir);
+    }
+}
+
 /* Calls a tool whose result is plain text and asserts it succeeded. */
 static void
 call_ok (LrgMcpToolProvider *provider,
@@ -1056,6 +1119,7 @@ main (int   argc,
 	g_test_add_func ("/mcp/tools/ecs/new", test_mcp_ecs_tools_new);
 	g_test_add_func ("/mcp/tools/save/new", test_mcp_save_tools_new);
 	g_test_add_func ("/mcp/tools/debug/new", test_mcp_debug_tools_new);
+	g_test_add_func ("/mcp/tools/reel/render-encoder", test_mcp_reel_render_encoder);
 
 	/* Tool Provider Interface - List Tools */
 	g_test_add ("/mcp/tools/input/list-tools",
