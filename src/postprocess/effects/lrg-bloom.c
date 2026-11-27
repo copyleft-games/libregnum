@@ -12,6 +12,7 @@
 #include <rlgl.h>
 #include "core/lrg-prewarm.h"
 #include "graphics/lrg-glsl-private.h"
+#include "postprocess/lrg-post-cpu-private.h"
 
 #define BLOOM_MAX_LEVELS (8)
 
@@ -32,6 +33,8 @@
  *
  * Levels = iterations, capped by the quality tier (3/4/6/8) and by the
  * image size. Targets are RGBA16F when the driver can render to them.
+ * lrg_bloom_real_apply_cpu() runs the same chain on float images in
+ * memory (lrg_post_effect_apply_cpu()).
  */
 static const gchar bloom_prefilter_fs[] =
     LRG_GLSL_HEADER
@@ -431,6 +434,201 @@ lrg_bloom_real_apply (LrgPostEffect *effect,
     grl_shader_end (composite);
 }
 
+/* ==========================================================================
+ * CPU path: the same mip chain in memory
+ * ========================================================================== */
+
+/*
+ * lrg_bloom_real_apply_cpu: the four GPU passes on float images.
+ *
+ * Not an approximation of the chain but the chain itself: the levels
+ * have the GPU's sizes (half the image, a quarter at the low tier, then
+ * halving while both sides stay >= 2, at most bloom_levels()), every tap
+ * is a bilinear clamp-to-edge sample at the shader's texture coordinate
+ * (lrg_post_cpu_sample_uv()), and the upsample adds into the next larger
+ * level as the GPU's additive blend does. Differences from the GPU: full
+ * float precision (the GPU levels are RGBA16F, or RGBA8 on drivers
+ * without float targets) and the GPU's reduced bilinear-weight precision.
+ * Every tap pattern is symmetric, so the CPU's top-down rows need no
+ * mirroring. The levels hold RGB only (the shaders write alpha 1, which
+ * the composite ignores).
+ */
+static gboolean
+lrg_bloom_real_apply_cpu (LrgPostEffect *effect,
+                          gfloat        *rgba,
+                          guint          width,
+                          guint          height,
+                          gfloat         time)
+{
+    LrgBloom *self = LRG_BLOOM (effect);
+    LrgPostQuality q;
+    gfloat *mips[BLOOM_MAX_LEVELS];
+    guint mw[BLOOM_MAX_LEVELS];
+    guint mh[BLOOM_MAX_LEVELS];
+    guint levels;
+    guint count;
+    guint w;
+    guint h;
+    guint i;
+    gfloat k;
+    gfloat knee;
+    gfloat radius;
+    gfloat tint[3];
+
+    (void)time;
+
+    k = self->intensity * lrg_post_effect_get_intensity (effect);
+    if (k <= 0.0f)
+        return TRUE;
+
+    /* the chain's sizes, as ensure_chain() builds them */
+    q = lrg_post_effect_get_quality_tier (effect);
+    levels = bloom_levels (self);
+    w = width / (q == LRG_POST_QUALITY_LOW ? 4u : 2u);
+    h = height / (q == LRG_POST_QUALITY_LOW ? 4u : 2u);
+    count = 0;
+    for (i = 0; i < levels && w >= 2 && h >= 2; i++)
+    {
+        mw[i] = w;
+        mh[i] = h;
+        mips[i] = g_new0 (gfloat, (gsize)w * h * 3);
+        count = i + 1;
+        w /= 2;
+        h /= 2;
+    }
+    /* no chain (a tiny image): the GPU draws the source unchanged */
+    if (count == 0)
+        return TRUE;
+
+    /* 1. prefilter: four taps half a source texel around each level-0
+     * texel centre, then the soft-knee threshold */
+    knee = MAX (self->threshold * self->soft_knee, 0.0001f);
+    for (h = 0; h < mh[0]; h++)
+    {
+        for (w = 0; w < mw[0]; w++)
+        {
+            gfloat *o = mips[0] + ((gsize)h * mw[0] + w) * 3;
+            gfloat u = ((gfloat)w + 0.5f) / (gfloat)mw[0];
+            gfloat v = ((gfloat)h + 0.5f) / (gfloat)mh[0];
+            gfloat tu = 1.0f / (gfloat)width;
+            gfloat tv = 1.0f / (gfloat)height;
+            gfloat t[4][3];
+            gfloat c[3];
+            gfloat l;
+            gfloat soft;
+            gfloat wgt;
+            guint j;
+
+            lrg_post_cpu_sample_uv (rgba, 4, width, height, u - 0.5f * tu, v - 0.5f * tv, t[0]);
+            lrg_post_cpu_sample_uv (rgba, 4, width, height, u + 0.5f * tu, v - 0.5f * tv, t[1]);
+            lrg_post_cpu_sample_uv (rgba, 4, width, height, u - 0.5f * tu, v + 0.5f * tv, t[2]);
+            lrg_post_cpu_sample_uv (rgba, 4, width, height, u + 0.5f * tu, v + 0.5f * tv, t[3]);
+            for (j = 0; j < 3; j++)
+                c[j] = 0.25f * (t[0][j] + t[1][j] + t[2][j] + t[3][j]);
+            l = MAX (c[0], MAX (c[1], c[2]));
+            soft = CLAMP (l - self->threshold + knee, 0.0f, 2.0f * knee);
+            soft = soft * soft / (4.0f * knee);
+            wgt = MAX (soft, l - self->threshold) / MAX (l, 0.0001f);
+            for (j = 0; j < 3; j++)
+                o[j] = c[j] * wgt;
+        }
+    }
+
+    /* 2. downsample: centre x4 plus four diagonal taps one source texel
+     * away, / 8 */
+    for (i = 1; i < count; i++)
+    {
+        const gfloat *s = mips[i - 1];
+        guint sw = mw[i - 1];
+        guint sh = mh[i - 1];
+        gfloat tu = 1.0f / (gfloat)sw;
+        gfloat tv = 1.0f / (gfloat)sh;
+
+        for (h = 0; h < mh[i]; h++)
+        {
+            for (w = 0; w < mw[i]; w++)
+            {
+                gfloat *o = mips[i] + ((gsize)h * mw[i] + w) * 3;
+                gfloat u = ((gfloat)w + 0.5f) / (gfloat)mw[i];
+                gfloat v = ((gfloat)h + 0.5f) / (gfloat)mh[i];
+                gfloat t[5][3];
+                guint j;
+
+                lrg_post_cpu_sample_uv (s, 3, sw, sh, u, v, t[0]);
+                lrg_post_cpu_sample_uv (s, 3, sw, sh, u - tu, v - tv, t[1]);
+                lrg_post_cpu_sample_uv (s, 3, sw, sh, u + tu, v - tv, t[2]);
+                lrg_post_cpu_sample_uv (s, 3, sw, sh, u - tu, v + tv, t[3]);
+                lrg_post_cpu_sample_uv (s, 3, sw, sh, u + tu, v + tv, t[4]);
+                for (j = 0; j < 3; j++)
+                    o[j] = (t[0][j] * 4.0f + t[1][j] + t[2][j] + t[3][j] + t[4][j]) * 0.125f;
+            }
+        }
+    }
+
+    /* 3. upsample: a 9-tap tent of radius blur-size / 4 texels of the
+     * smaller level, added onto the larger one, smallest first */
+    radius = self->blur_size * 0.25f;
+    for (i = count - 1; i >= 1; i--)
+    {
+        const gfloat *s = mips[i];
+        guint sw = mw[i];
+        guint sh = mh[i];
+        gfloat du = radius / (gfloat)sw;
+        gfloat dv = radius / (gfloat)sh;
+
+        for (h = 0; h < mh[i - 1]; h++)
+        {
+            for (w = 0; w < mw[i - 1]; w++)
+            {
+                gfloat *o = mips[i - 1] + ((gsize)h * mw[i - 1] + w) * 3;
+                gfloat u = ((gfloat)w + 0.5f) / (gfloat)mw[i - 1];
+                gfloat v = ((gfloat)h + 0.5f) / (gfloat)mh[i - 1];
+                gfloat t[9][3];
+                guint j;
+
+                lrg_post_cpu_sample_uv (s, 3, sw, sh, u, v, t[0]);
+                lrg_post_cpu_sample_uv (s, 3, sw, sh, u - du, v, t[1]);
+                lrg_post_cpu_sample_uv (s, 3, sw, sh, u + du, v, t[2]);
+                lrg_post_cpu_sample_uv (s, 3, sw, sh, u, v - dv, t[3]);
+                lrg_post_cpu_sample_uv (s, 3, sw, sh, u, v + dv, t[4]);
+                lrg_post_cpu_sample_uv (s, 3, sw, sh, u - du, v - dv, t[5]);
+                lrg_post_cpu_sample_uv (s, 3, sw, sh, u + du, v + dv, t[6]);
+                lrg_post_cpu_sample_uv (s, 3, sw, sh, u - du, v + dv, t[7]);
+                lrg_post_cpu_sample_uv (s, 3, sw, sh, u + du, v - dv, t[8]);
+                for (j = 0; j < 3; j++)
+                    o[j] += (t[0][j] * 4.0f +
+                             (t[1][j] + t[2][j] + t[3][j] + t[4][j]) * 2.0f +
+                             t[5][j] + t[6][j] + t[7][j] + t[8][j]) / 16.0f;
+            }
+        }
+    }
+
+    /* 4. composite: source + level 0 * tint * intensity / levels, alpha kept */
+    k /= (gfloat)count;
+    tint[0] = self->tint_r * k;
+    tint[1] = self->tint_g * k;
+    tint[2] = self->tint_b * k;
+    for (h = 0; h < height; h++)
+    {
+        for (w = 0; w < width; w++)
+        {
+            gfloat *p = rgba + ((gsize)h * width + w) * 4;
+            gfloat b[3];
+            guint j;
+
+            lrg_post_cpu_sample_uv (mips[0], 3, mw[0], mh[0],
+                                    ((gfloat)w + 0.5f) / (gfloat)width,
+                                    ((gfloat)h + 0.5f) / (gfloat)height, b);
+            for (j = 0; j < 3; j++)
+                p[j] += b[j] * tint[j];
+        }
+    }
+
+    for (i = 0; i < count; i++)
+        g_free (mips[i]);
+    return TRUE;
+}
+
 /* lrg_bloom_prewarm: compiles the four pass shaders ahead of the first frame */
 static gboolean
 lrg_bloom_prewarm (LrgPrewarmable *prewarmable)
@@ -553,6 +751,7 @@ lrg_bloom_class_init (LrgBloomClass *klass)
     effect_class->initialize = lrg_bloom_real_initialize;
     effect_class->shutdown = lrg_bloom_real_shutdown;
     effect_class->apply = lrg_bloom_real_apply;
+    effect_class->apply_cpu = lrg_bloom_real_apply_cpu;
     effect_class->resize = lrg_bloom_real_resize;
     effect_class->get_name = lrg_bloom_real_get_name;
 

@@ -10,6 +10,7 @@
 #include <raylib.h>
 #include <rlgl.h>
 #include <string.h>
+#include <math.h>
 #include <gio/gio.h>
 #include "graphics/lrg-glsl.h"
 
@@ -28,6 +29,10 @@
  * 3. Application (lrg_post_effect_apply) - called each frame
  * 4. Resize (lrg_post_effect_resize) - called when render target changes
  * 5. Shutdown (lrg_post_effect_shutdown) - release GPU resources
+ *
+ * Effects that implement #LrgPostEffectClass.apply_cpu also run on a
+ * float image in memory without a GL context (lrg_post_effect_has_cpu(),
+ * lrg_post_effect_apply_cpu(), lrg_post_processor_apply_to_image()).
  *
  * Example of a custom effect:
  * |[<!-- language="C" -->
@@ -650,6 +655,50 @@ lrg_post_effect_set_quality_tier (LrgPostEffect  *self,
         return;
     priv->quality = quality;
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_QUALITY_TIER]);
+}
+
+/* ==========================================================================
+ * The CPU path
+ * ========================================================================== */
+
+gboolean
+lrg_post_effect_has_cpu (LrgPostEffect *self)
+{
+    g_return_val_if_fail (LRG_IS_POST_EFFECT (self), FALSE);
+
+    return LRG_POST_EFFECT_GET_CLASS (self)->apply_cpu != NULL;
+}
+
+gboolean
+lrg_post_effect_apply_cpu (LrgPostEffect *self,
+                           gfloat        *rgba,
+                           guint          width,
+                           guint          height,
+                           gfloat         time)
+{
+    LrgPostEffectClass   *klass;
+    LrgPostEffectPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_POST_EFFECT (self), FALSE);
+    g_return_val_if_fail (rgba != NULL, FALSE);
+    g_return_val_if_fail (width > 0 && height > 0, FALSE);
+
+    /* As lrg_post_effect_apply(): a disabled effect is skipped. Unlike
+     * the GPU path no initialisation is needed (there are no GPU
+     * resources); the intensity is the implementation's business, as it
+     * is for the shaders. */
+    priv = lrg_post_effect_get_instance_private (self);
+    if (!priv->enabled)
+        return FALSE;
+
+    klass = LRG_POST_EFFECT_GET_CLASS (self);
+    if (klass->apply_cpu == NULL)
+        return FALSE;
+
+    /* a non-finite clock would make the grain frame undefined */
+    if (!isfinite (time))
+        time = 0.0f;
+    return klass->apply_cpu (self, rgba, width, height, time);
 }
 
 /* ==========================================================================

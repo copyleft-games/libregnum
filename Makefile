@@ -594,6 +594,7 @@ PUBLIC_HEADERS := \
 	src/postprocess/effects/lrg-palettize.h \
 	src/postprocess/effects/lrg-fxaa.h \
 	src/postprocess/effects/lrg-tonemap.h \
+	src/postprocess/effects/lrg-blur.h \
 	src/animation/lrg-bone-pose.h \
 	src/animation/lrg-bone.h \
 	src/animation/lrg-skeleton.h \
@@ -1448,6 +1449,7 @@ SOURCES := \
 	src/postprocess/effects/lrg-palettize.c \
 	src/postprocess/effects/lrg-fxaa.c \
 	src/postprocess/effects/lrg-tonemap.c \
+	src/postprocess/effects/lrg-blur.c \
 	src/animation/lrg-bone-pose.c \
 	src/animation/lrg-bone.c \
 	src/animation/lrg-skeleton.c \
@@ -3101,7 +3103,7 @@ DOCS_CHECK_HEADERS := src/scripting/lrg-script-debugger.h src/scripting/lrg-scri
 	$(wildcard src/world3d/components/*.h) \
 	src/core/lrg-asset-meta.h src/core/lrg-pack-writer.h src/core/lrg-asset-manager.h \
 	$(wildcard src/ai/*.h) \
-	src/graphics/lrg-light-set.h src/scene/lrg-material3d.h src/postprocess/lrg-post-processor.h src/postprocess/lrg-post-effect.h \
+	src/graphics/lrg-light-set.h src/scene/lrg-material3d.h src/postprocess/lrg-post-processor.h src/postprocess/lrg-post-effect.h src/postprocess/effects/lrg-blur.h \
 	src/pathfinding/lrg-nav-bake.h src/pathfinding/lrg-nav-agent.h src/ai/lrg-bt-asset.h src/ai/lrg-logic-machine.h src/particles/lrg-particle-asset.h src/particles/lrg-particle-ribbon-renderer.h src/particles/lrg-particle-mesh-renderer.h src/particles/lrg-gpu-particles.h src/core/lrg-color-gradient.h src/weather/lrg-weather-asset.h src/graphics/lrg-terrain-asset.h src/graphics/lrg-terrain-brush.h src/graphics/lrg-foliage.h src/graphics/lrg-water-body.h src/audio/lrg-mixer-asset.h src/tilemap/lrg-rule-tile.h src/atlas/lrg-sprite-animation.h src/world3d/components/lrg-nav-agent-component.h src/world3d/components/lrg-ai-component.h src/world3d/components/lrg-particle-component.h src/world3d/components/lrg-terrain-component.h src/world3d/components/lrg-foliage-component.h src/world3d/components/lrg-water-component.h \
 	src/tilemap/lrg-tiled-map.h $(wildcard src/worldui/*.h) src/pathfinding/lrg-actor-mover.h $(wildcard src/stage/*.h) src/graphics/lrg-beam.h $(filter-out %-private.h,$(wildcard src/remote/*.h)) src/atlas/lrg-sprite-sheet-builder.h \
 	src/physics/lrg-dynamics.h src/physics/lrg-physics-shape.h src/physics/lrg-collide.h src/physics/lrg-broadphase.h src/physics/lrg-physics-layers.h src/physics/lrg-contact-solver.h src/physics/lrg-island.h src/physics/lrg-joint.h src/physics/lrg-ragdoll.h src/physics/lrg-cloth.h src/physics/lrg-fracture.h src/world3d/components/lrg-rigid-body-component.h src/world3d/components/lrg-collider-component3d.h src/world3d/components/lrg-joint-component.h src/world3d/components/lrg-cloth-component.h src/world3d/components/lrg-destructible-component.h \

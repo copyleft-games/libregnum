@@ -199,6 +199,8 @@ Screen-space effects pipeline:
 - *[[file:postprocess/post-processor.org][LrgPostProcessor]]* - Effect chain manager
 - *[[file:postprocess/effects.org][Effects]]* - Bloom, vignette, color grade, FXAA, film grain, screen shake
 - *[[file:postprocess/accessibility.org][Accessibility]]* - Colorblind simulation and correction
+- *[[file:postprocess/blur.org][LrgBlur]]* - Separable Gaussian blur
+- *[[file:postprocess/cpu.org][CPU path]]* - The post stack on images in memory (headless and offline renders)
 
 *** [[file:animation/index.org][Animation Module]] - Skeletal Animation
 :PROPERTIES:

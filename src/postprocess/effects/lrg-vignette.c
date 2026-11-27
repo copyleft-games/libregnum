@@ -11,6 +11,8 @@
 #include <rlgl.h>
 #include "core/lrg-prewarm.h"
 #include "graphics/lrg-glsl-private.h"
+#include "../lrg-post-cpu-private.h"
+#include <math.h>
 
 /*
  * One pass: darken towards @color with distance from the centre. The
@@ -174,6 +176,57 @@ lrg_vignette_real_apply (LrgPostEffect *effect,
         grl_shader_end (shader);
 }
 
+/*
+ * lrg_vignette_real_apply_cpu: the fragment shader per pixel. The texture
+ * coordinate of pixel (x, y) is its centre over the image size; the
+ * shader is symmetric about the centre, so the CPU's top-down rows give
+ * the GPU's result unmirrored.
+ */
+static gboolean
+lrg_vignette_real_apply_cpu (LrgPostEffect *effect,
+                             gfloat        *rgba,
+                             guint          width,
+                             guint          height,
+                             gfloat         time)
+{
+    LrgVignette *self = LRG_VIGNETTE (effect);
+    gfloat strength;
+    gfloat aspect;
+    gfloat sx;
+    gfloat edge1;
+    guint x;
+    guint y;
+
+    (void)time;
+
+    /* the uniforms: params = (strength, radius, smoothness, roundness) */
+    strength = self->intensity * lrg_post_effect_get_intensity (effect);
+    if (strength <= 0.0f)
+        return TRUE;
+    aspect = (gfloat)width / MAX ((gfloat)height, 1.0f);
+    sx = 1.0f + (aspect - 1.0f) * self->roundness;
+    edge1 = self->radius + MAX (self->smoothness, 0.001f);
+
+    for (y = 0; y < height; y++)
+    {
+        gfloat dy = ((gfloat)y + 0.5f) / (gfloat)height - 0.5f;
+
+        for (x = 0; x < width; x++)
+        {
+            gfloat *p = rgba + ((gsize)y * width + x) * 4;
+            gfloat dx = (((gfloat)x + 0.5f) / (gfloat)width - 0.5f) * sx;
+            gfloat dist = sqrtf (dx * dx + dy * dy) * 1.41421f;
+            gfloat v = lrg_post_cpu_smoothstep (self->radius, edge1, dist) * strength;
+
+            /* mix (c.rgb, color, v); alpha untouched */
+            p[0] += (self->color_r - p[0]) * v;
+            p[1] += (self->color_g - p[1]) * v;
+            p[2] += (self->color_b - p[2]) * v;
+        }
+    }
+    return TRUE;
+}
+
 static const gchar *
 lrg_vignette_real_get_name (LrgPostEffect *effect)
 {
@@ -276,6 +329,7 @@ lrg_vignette_class_init (LrgVignetteClass *klass)
     effect_class->initialize = lrg_vignette_real_initialize;
     effect_class->shutdown = lrg_vignette_real_shutdown;
     effect_class->apply = lrg_vignette_real_apply;
+    effect_class->apply_cpu = lrg_vignette_real_apply_cpu;
     effect_class->resize = lrg_vignette_real_resize;
     effect_class->get_name = lrg_vignette_real_get_name;
 

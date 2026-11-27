@@ -846,6 +846,7 @@
 #include "postprocess/effects/lrg-palettize.h"
 #include "postprocess/effects/lrg-fxaa.h"
 #include "postprocess/effects/lrg-tonemap.h"
+#include "postprocess/effects/lrg-blur.h"
 
 /* Animation module (Phase 3) */
 #include "animation/lrg-bone-pose.h"

@@ -11,7 +11,8 @@ The post-processing module runs screen-space effects over a finished frame: the 
 - *LrgPostProcessor* runs the chain: capture targets (RGBA16F, RGBA8 fallback), ping-pong passes, composite, resize, quality tier ([[file:post-processor.org][post-processor.org]]).
 - *LrgPostEffect* is the base class of every effect, with the apply contract and helpers to write your own ([[file:post-effect.org][post-effect.org]]).
 - *LrgPostStack* is a look as data: the =.rpost= format, building into a processor, blending two looks by weight ([[file:post-stack.org][post-stack.org]]).
-- *Built-in effects*: bloom, tonemap, vignette, colour grade, FXAA, film grain, screen shake, heat haze ([[file:effects.org][effects.org]]), the colour-blindness filter ([[file:accessibility.org][accessibility.org]]), sharpen ([[file:sharpen.org][sharpen.org]]) and palettize ([[file:palettize.org][palettize.org]]).
+- *Built-in effects*: bloom, tonemap, vignette, colour grade, FXAA, film grain, screen shake, heat haze ([[file:effects.org][effects.org]]), the colour-blindness filter ([[file:accessibility.org][accessibility.org]]), sharpen ([[file:sharpen.org][sharpen.org]]), palettize ([[file:palettize.org][palettize.org]]) and blur ([[file:blur.org][blur.org]]).
+- *CPU path*: the same stack on an image in memory, without a window or GL context: =lrg_post_processor_apply_to_image()= / =apply_to_buffer()=, the buffer convention, which effects run there ([[file:cpu.org][cpu.org]]).
 - *LrgColorLut* is a 3D colour lookup table (=.cube=) that [[file:effects.org::#lrgcolorgrade][LrgColorGrade]] applies after its grade ([[file:color-lut.org][color-lut.org]]).
 
 ** Quick start
@@ -80,6 +81,7 @@ Renderers that own their scene target call =lrg_post_processor_process()= instea
 | =LrgColorblindFilter= | =colorblind-filter= | Daltonize/simulate | Accessibility |
 | =LrgSharpen= | =sharpen= | Contrast-adaptive sharpening | After upscaling or TAA |
 | =LrgPalettize= | =palettize= | Palette, ordered dither | Retro 8-bit look |
+| =LrgBlur= | =blur= | Separable Gaussian blur | Pause menus, out-of-focus backgrounds |
 
 ** Files
 :PROPERTIES:
@@ -95,3 +97,5 @@ Renderers that own their scene target call =lrg_post_processor_process()= instea
 | [[file:sharpen.org]] | Contrast-adaptive sharpening |
 | [[file:palettize.org]] | Palettize and dither |
 | [[file:color-lut.org]] | Colour lookup tables |
+| [[file:blur.org]] | Separable Gaussian blur |
+| [[file:cpu.org]] | The stack on the CPU: images in memory, headless renders |
