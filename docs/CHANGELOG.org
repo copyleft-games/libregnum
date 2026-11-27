@@ -16,6 +16,16 @@
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
 
+** 0.13.5
+:PROPERTIES:
+:CUSTOM_ID: changelog-0-13-5
+:END:
+=lrg_reel_renderer_render_parallel()= no longer corrupts the frames inside a transition of an =LrgReelTransitionSeries= (issue #6). The series kept the two canvases it draws the outgoing and incoming scenes into on the series object, which every worker thread shares, so the workers drew into the same two canvases at once: black bands and pieces of other frames in every overlap window (21 of 72 frames in the issue's repro).
+
+- Reel: the series takes its overlap buffers from the renderer's =LrgReelContext= scratch pool, one per thread. Output is byte-identical to a sequential render.
+- Docs: the rule behind it, that a clip, effect or transition keeps no mutable render state on its object, is written down for custom clips ([[file:modules/reel/rendering.org::#parallel-rendering][Parallel rendering]], [[file:modules/reel/clips.org::#pitfalls][Clips, Pitfalls]]).
+- Tests: =/reel/parallel/transition-series=, =/reel/parallel/nested-series= and =/reel/parallel/series-in-sequence= render each case sequentially and three times on 16 threads and compare every frame.
+
 ** 0.13.4
 :PROPERTIES:
 :CUSTOM_ID: changelog-0-13-4
